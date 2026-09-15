@@ -126,16 +126,53 @@ actual value diverged silently — see `references/bug-ledger.md`.
 Report measured values (actual gap lengths, actual loudness, actual duration), not
 targets.
 
+**Measure cheaply.** A single-value `ffprobe` beats decoding; a null-muxer run beats
+a trial encode; a per-segment `framemd5` answers "did the pixels change?" without
+re-reading anything. Recipes in `references/cost-techniques.md` §1.
+
+### 7. Show a draft before the real thing
+
+When the change is visual or structural, render a **draft** first — reduced scale,
+lower fps, `-preset ultrafast -crf 28`, or a single segment — and present that at
+the approval gate. Resolution scale is the biggest single lever: halving it
+roughly halves render time.
+
+Keep draft settings in `knobs.json` under `render.preview` rather than inventing
+them each session. See `references/cost-techniques.md` §3.
+
 ## Reference files
 
 Load these **only when the task needs them**:
 
 | File | Read it when |
 |---|---|
+| `references/cost-techniques.md` | Making an expensive stage cheaper, or needing a cheap way to check "did anything change?" Covers `framemd5`, `ffprobe` probes, null-muxer gates, segment concat, draft settings, TTS metadata, deterministic capture. |
 | `references/pipeline-contract.md` | Setting up a new pipeline, or adapting a renderer that isn't the reference one |
 | `references/bug-ledger.md` | **Before any audio mix, remux, or timing solve.** Cheap to read, expensive to rediscover |
 | `templates/knobs.json` | Starting a new project |
 | `templates/render-log.md` | Starting a new project |
+
+## These rules have a shelf life
+
+**The reference pipeline (SizzleCraft) is new and still moving.** A number of rules
+here exist to work around gaps in its current implementation rather than anything
+fundamental — notably the all-or-nothing capture, the absence of segment-level
+re-rendering, and the per-project script duplication.
+
+**Treat the cost table as a measurement, not a law.** If the tool gains incremental
+capture, a content-hash cache, or a proxy-render mode, the routing in this file
+needs revisiting and some of it becomes obsolete.
+
+**Re-check periodically** — a sensible trigger is whenever you come back to make a
+new video after a gap:
+
+1. Has the pipeline gained partial/segment rendering or caching? (See
+   `references/cost-techniques.md` §2 and §6 for the design to build toward.)
+2. Are the measured stage costs in `render-log.md` still accurate?
+3. Has anything in `cost-techniques.md` §7 (*Volatile*) changed — the TTS backend,
+   Chrome headless flags, upstream library versions?
+
+If any answer surprises you, fix this skill before running the next render.
 
 ## Series continuity
 
@@ -157,4 +194,8 @@ For multi-part series:
 - Creating `<script>2.mjs` instead of adding a parameter.
 - Reporting target values as if they were measured.
 - Rediscovering a bug that is already in `references/bug-ledger.md`.
+- Using a technique from `references/cost-techniques.md` §8 (*Explicitly
+  unverified*) — those are listed precisely because they could not be confirmed.
+- Trying to replace the silence-gap solve with SSML `<break>` tags. It does not work
+  on this TTS backend (bug ledger entry 10).
 - Assuming target length, tone, or audience instead of asking.

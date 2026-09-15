@@ -6,6 +6,15 @@ implementation (SizzleCraft) maps onto it.
 Read this when setting up a new pipeline or adapting a renderer that isn't the
 reference one. For routine tweaks you only need the cost table in `SKILL.md`.
 
+## Contents
+
+1. [Stages](#stages)
+2. [The dependency rule](#the-dependency-rule)
+3. [Change routing](#change-routing)
+4. [Verification points](#verification-points)
+5. [Reference implementation: SizzleCraft](#reference-implementation-sizzlecraft)
+6. [Adapting a different renderer](#adapting-a-different-renderer)
+
 ## Stages
 
 Any narrated-demo pipeline decomposes into these stages. Names differ; the

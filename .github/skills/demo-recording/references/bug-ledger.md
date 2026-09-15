@@ -9,6 +9,33 @@ them worth recording.
 
 Format: **Symptom → Cause → Fix**, with the measurement that exposes it.
 
+**Numbers are stable identifiers, not an ordering** — other files cite them
+(`knobs.json`, `cost-techniques.md`). Never renumber an existing entry; append.
+
+## Contents
+
+**Audio mixing**
+1. [`alimiter` silently gain-rides the whole mix](#1-alimiter-silently-gain-rides-the-whole-mix)
+2. [`-shortest` truncates the end card](#2--shortest-truncates-the-end-card)
+3. [Mono→stereo upmix costs 3 dB](#3-monostereo-upmix-costs-3-db)
+4. [Fade-in longer than the lead-in](#4-fade-in-longer-than-the-lead-in)
+
+**Timing**
+5. [TTS tail silence cannot be derived from word-boundary metadata](#5-tts-tail-silence-cannot-be-derived-from-word-boundary-metadata)
+6. [Perceived gap ≠ inserted silence](#6-perceived-gap--inserted-silence)
+
+**TTS**
+7. [Re-synthesis appears safe — but is not guaranteed](#7-re-synthesis-appears-safe--but-do-not-depend-on-it-being-guaranteed)
+10. [SSML break tags are not available](#10-ssml-break-tags-are-not-available--the-silence-solve-is-not-a-workaround)
+11. [The TTS backend is an unofficial, moving surface](#11-the-tts-backend-is-an-unofficial-moving-surface)
+
+**Assembly**
+12. [Do not concatenate audio per-segment](#12-do-not-concatenate-audio-per-segment-pre-emptive)
+
+**Tooling hygiene**
+8. [Hard-referenced optional config keys](#8-hard-referenced-optional-config-keys)
+9. [Measure the output, not the input](#9-measure-the-output-not-the-input)
+
 ---
 
 ## Audio mixing
@@ -121,17 +148,87 @@ gap corresponds to a ~1.08 s inserted file.
 
 ---
 
-### 7. Re-synthesis is safe; re-solving is not always
+## TTS
+
+### 7. Re-synthesis appears safe — but do not depend on it being guaranteed
 
 **Symptom.** Worry that regenerating cleaned-up TTS clips will shift the timeline.
 
-**Cause / reassurance.** The reference TTS is **deterministic** — identical text,
-voice, and speed return byte-identical durations (verified to the millisecond
-across a full regeneration).
+**What was observed `[OBSERVED]`.** A full regeneration of unchanged text returned
+**byte-identical durations to the millisecond** (`what` 19,944 ms, `pipeline`
+27,864 ms, …). Empirically, the reference TTS is deterministic.
 
-**Implication.** Deleted intermediate clips can be regenerated without re-solving
-timing. But this holds only while text, voice, **and speed** are unchanged. A speed
-change invalidates every downstream duration.
+**What is NOT true.** Determinism is **not documented** by `msedge-tts` or by the
+Edge Read Aloud backend — neither client library addresses it. It is an
+unofficial API that has already changed once (see entry 11). An observed property
+of one run is not a contract.
+
+**Fix.** **Make the cache authoritative rather than asserting determinism.** Key
+cached clips by a hash of `(text, voice, rate, pitch, volume)`; on a hit, reuse the
+existing file and never re-synthesise. That is correct whether or not the service
+is deterministic, and it survives the service changing.
+
+**Still true regardless:** a change to text, voice, **or speed** invalidates every
+downstream duration.
+
+---
+
+### 10. SSML break tags are not available — the silence solve is not a workaround
+
+**Symptom.** A reasonable-looking idea: replace inserted silence assets with
+`<break time="1500ms"/>` in SSML and skip the timing solve entirely.
+
+**Cause.** `msedge-tts` supports **only** `speak`, `voice`, and `prosody`. The
+backend rejects anything Edge itself would not emit — a single `<voice>` with a
+single `<prosody>` inside. `<break>` is not available at any level.
+
+**Fix.** Don't try. The available levers are `rate`, `pitch`, and `volume`.
+**Inserted-silence gap solving is the correct architecture for this stack**, not a
+crutch to be engineered away.
+
+**Detect.** Not applicable — this is a "do not attempt" entry. Cited sources are in
+`cost-techniques.md` §4.
+
+---
+
+### 11. The TTS backend is an unofficial, moving surface
+
+**Symptom.** Synthesis that worked yesterday starts failing, or returns different
+output.
+
+**Cause.** Edge Read Aloud is not a supported public API. A December 2025 change
+began requiring a user agent matching Microsoft Edge. Server-side Node is
+unaffected *for now*.
+
+**Fix.** Treat synthesis as a stage that can break independently of your code.
+Cache by content hash (entry 7) so a backend change does not invalidate finished
+work, and pin the client library version.
+
+**Detect.** If durations shift on unchanged text, suspect the backend before
+suspecting the solve.
+
+---
+
+## Assembly
+
+### 12. Do not concatenate audio per-segment (pre-emptive)
+
+**Symptom.** Audio drifts progressively out of sync across a video assembled from
+separately-rendered segments. Worse the further in you go.
+
+**Cause.** AAC encoder delay/priming accumulates per segment. Concatenating
+per-segment audio stacks that padding.
+
+This has **not** been hit in this project — because the current pipeline keeps
+narration as one continuous track. It is recorded pre-emptively because it is the
+first thing that would break any attempt at segment-level video rendering. Revideo
+documents hitting it in production (`cost-techniques.md` §2).
+
+**Fix.** Keep video **muted** through segment assembly, concatenate the **full
+audio** as one continuous stream, and mux audio to video **last**.
+
+**Detect.** Check A/V sync at the *end* of a concatenated output, not the start —
+drift accumulates.
 
 ---
 

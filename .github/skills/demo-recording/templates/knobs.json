@@ -83,10 +83,17 @@
   "render": {
     "captureDedup": true,
     "previewSegment": null,
+    "preview": {
+      "scale": 0.5,
+      "fps": 15,
+      "preset": "ultrafast",
+      "crf": 28,
+      "_note": "Draft settings for the approval gate. Declared here so they are not reinvented each session. Scale is the biggest lever — 0.5 roughly halves render time."
+    },
     "estimatedFullRenderMinutes": 40,
     "estimatedForVideoLength": "4:20",
     "_note": "estimatedFullRenderMinutes is FOR A VIDEO OF estimatedForVideoLength — roughly 9-10x runtime in the reference implementation. Scale it to the video actually being rendered, and quote it when asking for render approval.",
     "_previewNote": "Set previewSegment to a segment id to render just that one before committing to a full pass.",
-    "_measureNote": "Replace both values from the first real run on this machine. The defaults are from the reference implementation's hardware, not yours."
+    "_measureNote": "Replace both estimates from the first real run on this machine. The defaults are from the reference implementation's hardware, not yours."
   }
 }
