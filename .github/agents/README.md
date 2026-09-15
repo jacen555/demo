@@ -19,6 +19,7 @@ custom agents + prompts), not runtime application code.
 | `../checklists/*-design-checklist.md` | Per-kind design checklists used at planning, build, and review. |
 | `../prompts/speckit.*.prompt.md` | Self-contained spec → plan → tasks → implement workflow. |
 | `../skills/scaffold-domain/SKILL.md` | Creates and registers a new domain (optionally with its own agent pair). |
+| `../skills/demo-recording/SKILL.md` | Plans and renders narrated demo/educational videos, routing changes to the cheapest pipeline stage. |
 
 ## How this differs from a product repo
 
