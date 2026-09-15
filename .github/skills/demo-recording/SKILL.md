@@ -26,9 +26,18 @@ description: >
 | Change | Path | Cost |
 |---|---|---|
 | Music, volume, ducking, fades | Swap audio track, keep video stream | **~minutes** |
-| Narration text, voice, speed | Re-synthesise → rebuild → capture → encode | **~tens of minutes** |
-| Gaps, silence, lead-in | Re-solve timing → rebuild → capture → encode | **~tens of minutes** |
-| Visuals, scenes, on-screen text | Rebuild → capture → encode | **~tens of minutes** |
+| Narration text, voice, speed | Re-synthesise → rebuild → capture → encode | **full render** |
+| Gaps, silence, lead-in | Re-solve timing → rebuild → capture → encode | **full render** |
+| Visuals, scenes, on-screen text | Rebuild → capture → encode | **full render** |
+
+**What "full render" costs.** In the reference implementation, roughly **9–10×
+the runtime of the finished video** — measured at ~40 minutes for a ~4:20 video
+(capture alone was 22 minutes for a 3:07 cut at 25% dedup). An audio-only swap was
+~4 minutes regardless of length.
+
+Scale that to the video in front of you, and quote the estimate in minutes when you
+ask for approval. Record the real number in `render-log.md` on first run so later
+sessions stop guessing.
 
 Everything except the first row changes the **video timeline**, which forces a
 re-capture. So:

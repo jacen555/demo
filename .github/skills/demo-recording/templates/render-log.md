@@ -54,6 +54,10 @@ Played back-to-back or standalone? _(changes how much the opening re-establishes
 ## Render cost (measured)
 
 Update on first real run so later sessions quote real numbers instead of guessing.
+**Record the video length alongside** — render cost scales with runtime (~9–10× in
+the reference implementation), so a bare minute figure is not portable.
+
+Video length these were measured against: _______
 
 | Stage | Wall-clock |
 |---|---|
@@ -62,7 +66,7 @@ Update on first real run so later sessions quote real numbers instead of guessin
 | Encode | |
 | Audio mix + remux | |
 | **Full render** | |
-| **Audio-only remux** | |
+| **Audio-only remux** | _(near-independent of length)_ |
 
 ## Pending changes
 

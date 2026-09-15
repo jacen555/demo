@@ -98,6 +98,10 @@ this skill's "never spawn a one-off script" rule targets.
 
 ### Known SizzleCraft characteristics
 
+- **Measured render cost:** ~40 minutes for a ~4:20 video — roughly **9–10× the
+  finished runtime**. Capture alone was 22 minutes for a 3:07 cut at 25% dedup.
+  An audio-only remux was ~4 minutes and near-independent of length. These are one
+  machine's numbers; re-measure and record in `render-log.md`.
 - **TTS is deterministic.** Re-synthesising unchanged text returns identical
   durations. Safe to regenerate cleaned-up clips without re-solving timing.
 - **Perceived gap ≠ inserted silence.** Real gap is
@@ -105,6 +109,14 @@ this skill's "never spawn a one-off script" rule targets.
   ~276–312 ms, heads ~130 ms. Solve against perceived gap.
 - **Music is generated, not sampled** (`make-music.mjs`) — no licensing to clear.
 - **Capture dedup** materially reduces frame count on largely static scenes.
+
+> **SizzleCraft is new and moving.** Several rules here exist to work around gaps
+> in the current implementation rather than anything fundamental — notably the
+> all-or-nothing capture, the absence of segment-level re-rendering, and the
+> per-project script duplication. **Re-check these periodically**; if the tool gains
+> incremental capture or a proper caching layer, the routing table in `SKILL.md`
+> needs revisiting and some of this becomes obsolete. Treat the cost table as a
+> measurement, not a law.
 
 ## Adapting a different renderer
 

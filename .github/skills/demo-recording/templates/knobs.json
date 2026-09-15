@@ -84,6 +84,9 @@
     "captureDedup": true,
     "previewSegment": null,
     "estimatedFullRenderMinutes": 40,
-    "_note": "Set previewSegment to a segment id to render just that one before committing to a full pass. Update estimatedFullRenderMinutes from the first real run so later sessions quote a real number."
+    "estimatedForVideoLength": "4:20",
+    "_note": "estimatedFullRenderMinutes is FOR A VIDEO OF estimatedForVideoLength — roughly 9-10x runtime in the reference implementation. Scale it to the video actually being rendered, and quote it when asking for render approval.",
+    "_previewNote": "Set previewSegment to a segment id to render just that one before committing to a full pass.",
+    "_measureNote": "Replace both values from the first real run on this machine. The defaults are from the reference implementation's hardware, not yours."
   }
 }

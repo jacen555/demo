@@ -20,11 +20,9 @@
 
 ## Domains
 
-_No domains yet._
-
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| _(none)_ | | | | | |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 12 passing | Extracted shared demo-video engine. 9 scripts, ~124 KB, de-duplicated from two `~/SizzleCraft/` projects. CLI scripts, not yet a library — 8 of 9 export nothing. Originals do not point here yet. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -51,7 +49,9 @@ _No spikes yet._
 | Researcher agent | ✅ `researcher` |
 | Design checklists | ✅ app, service, tooling, script |
 | Spec Kit prompts | ✅ specify, plan, tasks, implement, analyze |
-| `scaffold-domain` skill | ✅ SKILL.md + `New-ForgeDomain.ps1` — **verified end to end** for lib, spike, script, tool, and `-WithAgents` |
+| `scaffold-domain` skill | ✅ SKILL.md + `New-ForgeDomain.ps1` — **verified end to end** for lib, spike, script, tool, `-WithAgents`, and `-Language node` |
+| `demo-recording` skill | ✅ SKILL.md + pipeline contract + bug ledger + knobs/render-log templates |
+| Node.js support | ✅ Constitution §IV subsection, registry `languages` block, `-Language node` scaffolding, ADR 0002 |
 | Single-agent workflow | ✅ `.github/instructions/single-agent-workflow.instructions.md` |
 | Memory bank | ✅ 6 core files seeded |
 | .NET baseline | ✅ `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, `.csharpierrc.json`, `global.json`, `.gitignore`, `Forge.sln` |
@@ -90,6 +90,14 @@ Three real bugs were found and fixed by this testing:
 3. **`script` kind crashed** — its empty template value failed the `-Template` parameter's
    own `[ValidateNotNullOrEmpty()]` on reassignment. Fixed with a local variable.
 
+A fourth was found when Node support was added:
+
+4. **`node --test <dir>` does not work** on Node 22 — it resolves the directory path as a
+   module and fails with `MODULE_NOT_FOUND`. Registry `test_cmd` for Node domains must use
+   a glob (`node --test "path/tests/**/*.test.mjs"`) so it works from the repo root; bare
+   `node --test` works from the domain folder. `npm --prefix <path> test` does **not** work
+   — it does not change the working directory.
+
 **Not yet exercised:** the plan → build → review agent loop itself. No domain has been
 built through `forge-team` with a real builder and reviewer. That is the next real test.
 
@@ -98,17 +106,24 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 1. **The agent loop itself is unproven.** `scaffold-domain` is verified, but no domain has
    been taken through `forge-team` → planner → builder → reviewer → PASS. Until that runs,
    the orchestration is configuration, not a demonstrated workflow.
-2. **No formatting enforcement yet.** CSharpier is the declared authority (§IV) but is not
-   installed and no hook runs it.
-3. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
-   (zero Error-severity findings, Pester tests) has never actually been executed.
-4. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
-   base SDK. WinUI 3 is arguably the better target; worth a spike and an ADR before the
-   first real desktop app rather than defaulting by accident.
-5. **`Directory.Packages.props` versions were not verified against the feed.** They were
-   written from knowledge, not resolved. The lib smoke test restored successfully, so the
-   test stack is good; the hosting and CLI entries are unproven until something references
-   them.
+2. **The SizzleCraft extraction is not yet banked.** The two original projects under
+   `~/SizzleCraft/` still hold their own copies of the 9 scripts. Until they point at
+   `tools/SizzleCraft`, the duplication is *recorded*, not *removed*.
+3. **5 diverged SizzleCraft scripts left unextracted** — `write-script`, `write-storyboard`,
+   `make-music`, `preview`, `validate-timing`. Some diverged by design, some by drift;
+   telling them apart needs a diff review.
+4. **No formatting enforcement.** CSharpier is the declared authority (§IV) but is not
+   installed and no hook runs it. Prettier likewise for Node domains.
+5. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
+   has never actually been executed.
+6. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
+   cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
+   complete story.
+7. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
+   base SDK. Worth a spike and an ADR before the first real desktop app.
+8. **`Directory.Packages.props` versions were not verified against the feed.** The lib
+   smoke test restored successfully, so the test stack is good; the hosting and CLI entries
+   are unproven until something references them.
 
 ## Next
 
