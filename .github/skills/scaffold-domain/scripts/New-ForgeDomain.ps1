@@ -35,9 +35,14 @@
     The one falsifiable question a spike answers. Mandatory for -Kind spike; a spike
     without a stated question is a tool or an app in disguise.
 
+.PARAMETER Language
+    Implementation language. 'dotnet' (default) or 'node'. Orthogonal to -Kind: a Node
+    tool is still a tool at tier 2. PowerShell is implied by -Kind script. Node is
+    permitted where the ecosystem is the reason for the work — see ADR 0002.
+
 .PARAMETER Template
     Overrides the default 'dotnet new' template for the kind. Use this for WinUI 3 or any
-    template pack not in the base SDK.
+    template pack not in the base SDK. Ignored when -Language is node.
 
 .PARAMETER NoTests
     Skips the test project. Rejected for tier 1 kinds (service, lib) because
@@ -93,6 +98,10 @@ param(
     [Parameter()]
     [ValidateNotNullOrEmpty()]
     [string] $Question,
+
+    [Parameter()]
+    [ValidateSet('dotnet', 'node')]
+    [string] $Language = 'dotnet',
 
     [Parameter()]
     [ValidateNotNullOrEmpty()]
@@ -153,6 +162,10 @@ if ($NoTests -and $config.Tier -eq 1) {
     throw "-NoTests is rejected for '$Kind' (tier 1). Failing-test-first is mandatory in services/ and libs/ (constitution section VI)."
 }
 
+if ($Language -eq 'node' -and $Kind -eq 'script') {
+    throw "-Language node is not valid for -Kind script. The scripts/ root is PowerShell automation by definition (constitution section I). Use -Kind tool for Node tooling."
+}
+
 $registryContent = Get-Content -LiteralPath $registryPath -Raw
 if ($registryContent -match "(?m)^\s*-\s*id:\s*$([regex]::Escape($Id))\s*$") {
     throw "Domain id '$Id' is already registered in .github/domains.yaml. Pick a different id."
@@ -188,6 +201,16 @@ if ($Kind -eq 'script') {
     $testCmd     = if ($NoTests) { 'none' } else { "Invoke-Pester -Path $relTests" }
     $relTestProj = "$relTests/$Name.Tests.ps1"
 }
+elseif ($Language -eq 'node') {
+    # Node domains are not compiled and are not part of Forge.sln. ESM only, no bundler
+    # (constitution section IV / JavaScript).
+    # `node --test <dir>` is NOT supported (Node treats the path as a module); use a glob
+    # so the command works when run from the repo root.
+    $relProject  = "$relDomain/package.json"
+    $buildCmd    = 'none'
+    $relTestProj = "$relTests"
+    $testCmd     = if ($includeTests) { "node --test `"$relTests/**/*.test.mjs`"" } else { 'none' }
+}
 else {
     $relProject  = "$relSource/$projectName.csproj"
     $buildCmd    = "dotnet build $relProject"
@@ -195,7 +218,10 @@ else {
     $testCmd     = if ($includeTests) { "dotnet test $relTestProj" } else { 'none' }
 }
 
-Write-Verbose "Domain '$Id' -> $relDomain (kind=$Kind, tier=$($config.Tier), template='$effectiveTemplate')"
+# Only compiled .NET projects go in the solution.
+$inSolution = $config.InSolution -and ($Language -ne 'node')
+
+Write-Verbose "Domain '$Id' -> $relDomain (kind=$Kind, language=$Language, tier=$($config.Tier), template='$effectiveTemplate')"
 
 # --- Helpers ----------------------------------------------------------------------------
 
@@ -268,12 +294,13 @@ function ConvertTo-CentralPackageManagement {
 
 # --- Apply ------------------------------------------------------------------------------
 
-$target = "$relDomain (kind=$Kind, tier=$($config.Tier))"
+$target = "$relDomain (kind=$Kind, language=$Language, tier=$($config.Tier))"
 if (-not $PSCmdlet.ShouldProcess($target, 'Scaffold and register Forge domain')) {
     Write-Verbose 'WhatIf: no changes made.'
     return [PSCustomObject]@{
         Id            = $Id
         Kind          = $Kind
+        Language      = $Language
         Tier          = $config.Tier
         Path          = $relDomain
         Project       = $relProject
@@ -343,6 +370,52 @@ Describe '$Name' {
         Write-TextFile -Path (Join-Path $RepoRoot $relTestProj) -Content $pesterBody
     }
 }
+elseif ($Language -eq 'node') {
+    $pkg = @"
+{
+  "name": "@forge/$Id",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TODO: one line describing what $Name does.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "format": "npx prettier --write ."
+  }
+}
+"@
+    Write-TextFile -Path (Join-Path $RepoRoot $relProject) -Content $pkg
+
+    $entry = @"
+/**
+ * $Name — TODO: one line describing what this does.
+ *
+ * ESM only, no bundler, pinned engines (constitution section IV / JavaScript).
+ * Validate external input. Exit non-zero on failure.
+ */
+
+export function domainId() {
+  return '$Id';
+}
+"@
+    Write-TextFile -Path (Join-Path $RepoRoot $relSource "$Name.mjs") -Content $entry
+
+    if ($includeTests) {
+        $nodeTest = @"
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { domainId } from '../src/$Name.mjs';
+
+test('domainId_returns_registry_id', () => {
+  assert.equal(domainId(), '$Id');
+});
+"@
+        Write-TextFile -Path (Join-Path $RepoRoot $relTests "$Name.test.mjs") -Content $nodeTest
+    }
+}
 else {
     Invoke-Dotnet @('new', $effectiveTemplate, '-n', $projectName, '-o', (Join-Path $RepoRoot $relSource))
     ConvertTo-CentralPackageManagement -ProjectPath (Join-Path $RepoRoot $relProject) -PackagesPropsPath $packagesPropsPath
@@ -397,8 +470,8 @@ public static class $Name
     }
 }
 
-# 2. Solution wiring (spikes and scripts excluded — constitution section XI)
-if ($config.InSolution) {
+# 2. Solution wiring (spikes, scripts and Node domains excluded — nothing to compile)
+if ($inSolution) {
     if (-not (Test-Path -LiteralPath $solutionPath)) {
         Invoke-Dotnet @('new', 'sln', '-n', 'Forge', '-o', $RepoRoot)
     }
@@ -440,11 +513,14 @@ _(pending)_
 "@
 }
 else {
-    $runLine = if ($Kind -eq 'script') { "./$relProject -WhatIf" } else { "dotnet run --project $relSource" }
+    $runLine = if ($Kind -eq 'script') { "./$relProject -WhatIf" }
+               elseif ($Language -eq 'node') { "node $relSource/$Name.mjs" }
+               else { "dotnet run --project $relSource" }
+    $langLine = if ($Language -eq 'node') { " · **Language:** ``node`` (ESM, no bundler — ADR 0002)" } else { '' }
     $readme = @"
 # $Name
 
-> **Kind:** ``$Kind`` · **Tier:** $($config.Tier) · **Registry id:** ``$Id``
+> **Kind:** ``$Kind`` · **Tier:** $($config.Tier) · **Registry id:** ``$Id``$langLine
 
 ## What this is
 
@@ -514,12 +590,13 @@ if ($WithAgents) {
 # 5. Registry row
 $checklistPath = if ($config.Checklist -eq 'none') { 'none' } else { ".github/checklists/$($config.Checklist)" }
 $questionLine = if ($Kind -eq 'spike') { "`n    question: '$($Question -replace "'", "''")'" } else { '' }
+$languageLine = if ($Language -ne 'dotnet') { "`n    language: $Language" } else { '' }
 $testsLine = if ($includeTests -or ($Kind -eq 'script' -and -not $NoTests)) { $relTests } else { 'none' }
 
 $entry = @"
 
   - id: $Id
-    kind: $Kind
+    kind: $Kind$languageLine
     path: $relDomain
     source: $relSource
     tests: $testsLine
@@ -548,6 +625,7 @@ Write-Warning "Next: (1) run '$buildCmd', (2) fill in $relDomain/README.md — t
 [PSCustomObject]@{
     Id            = $Id
     Kind          = $Kind
+    Language      = $Language
     Tier          = $config.Tier
     Path          = $relDomain
     Project       = $relProject

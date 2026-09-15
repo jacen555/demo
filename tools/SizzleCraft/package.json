@@ -1,0 +1,19 @@
+{
+  "name": "@forge/sizzlecraft",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared engine for narrated demo video generation — TTS, timing solve, scene build, frame capture, encode.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "format": "npx prettier --write ."
+  },
+  "dependencies": {
+    "msedge-tts": "^2.0.7",
+    "music-metadata": "^11.14.0",
+    "playwright": "^1.62.1"
+  }
+}

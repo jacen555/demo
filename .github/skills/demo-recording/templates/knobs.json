@@ -1,0 +1,99 @@
+{
+  "_readme": [
+    "Every tunable value for one demo video. This is the ONLY file an agent edits",
+    "for a parameter change — never the generated timing/storyboard artifact, which",
+    "is routinely 50-100 KB and costs thousands of tokens to read.",
+    "",
+    "The build step projects these values into the renderer's own format.",
+    "",
+    "Before changing anything here, check the cost table in SKILL.md: only the",
+    "'audio' block is cheap to change. Everything else forces a full re-render, so",
+    "batch those changes and render once.",
+    "",
+    "Defaults below are the validated values from the reference implementation."
+  ],
+
+  "project": {
+    "name": "my-demo",
+    "title": "Human-readable title shown on the title card",
+    "part": null,
+    "series": null,
+    "seriesNote": "If part of a series, keep voice/timing/audio identical across parts unless deliberately varied — mismatched loudness is obvious on back-to-back playback."
+  },
+
+  "output": {
+    "dir": "C:\\dev\\temp",
+    "basename": "my-demo",
+    "fps": 30,
+    "width": 1920,
+    "height": 1080
+  },
+
+  "voice": {
+    "engine": "msedge-tts",
+    "name": "en-US-AndrewNeural",
+    "speed": 1.2,
+    "_note": "Changing engine, name, or speed invalidates every downstream duration. Expensive."
+  },
+
+  "timing": {
+    "targetDurationMs": 240000,
+    "toleranceMs": 15000,
+    "leadInMs": 2000,
+    "perceivedGapMs": 1500,
+    "perceivedGapOverrides": {},
+    "outroMs": 4000,
+    "_note": "perceivedGap is what a viewer HEARS: tail(clip N) + inserted silence + head(clip N+1). It is not the length of the inserted file. See bug-ledger entry 6.",
+    "_overridesNote": "Map of segmentId -> ms, e.g. {\"origin\": 4000} to hold a longer beat after one segment. Leave empty for uniform gaps. Treat as optional everywhere — see bug-ledger entry 8."
+  },
+
+  "audio": {
+    "_note": "THE CHEAP BLOCK. Changes here swap the audio track and reuse the video stream byte-for-byte. Minutes, not tens of minutes.",
+    "music": {
+      "enabled": true,
+      "generated": true,
+      "progression": "Fmaj9 - Cmaj9 - Dm9 - Bbmaj9",
+      "seed": null,
+      "_note": "Generated rather than sampled, so there is no licensing to clear."
+    },
+    "levels": {
+      "musicUnderSpeechDb": -36,
+      "musicInGapsDb": -30,
+      "targetIntegratedDb": -19.5,
+      "truePeakCeilingDb": -1.0,
+      "_note": "Music lifting ~6 dB in the gaps turns tuned silence into something deliberate. Keep narration level identical across a series."
+    },
+    "fades": {
+      "inMs": 1400,
+      "outMs": 4500,
+      "_note": "fades.inMs MUST be shorter than timing.leadInMs or the bed arrives under the narration. See bug-ledger entry 4."
+    },
+    "limiter": {
+      "autoLevel": false,
+      "_note": "MUST stay false. ffmpeg alimiter defaults to level=true and will gain-ride the entire mix, silently undoing every adjustment. See bug-ledger entry 1."
+    }
+  },
+
+  "theme": {
+    "background": "white",
+    "palette": "default",
+    "engagementLevel": "rich"
+  },
+
+  "render": {
+    "captureDedup": true,
+    "previewSegment": null,
+    "preview": {
+      "scale": 0.5,
+      "fps": 15,
+      "preset": "ultrafast",
+      "crf": 28,
+      "_note": "Draft settings for the approval gate. Declared here so they are not reinvented each session. Scale is the biggest lever — 0.5 roughly halves render time."
+    },
+    "estimatedFullRenderMinutes": 40,
+    "estimatedForVideoLength": "4:20",
+    "_note": "estimatedFullRenderMinutes is FOR A VIDEO OF estimatedForVideoLength — roughly 9-10x runtime in the reference implementation. Scale it to the video actually being rendered, and quote it when asking for render approval.",
+    "_previewNote": "Set previewSegment to a segment id to render just that one before committing to a full pass.",
+    "_measureNote": "Replace both estimates from the first real run on this machine. The defaults are from the reference implementation's hardware, not yours."
+  }
+}

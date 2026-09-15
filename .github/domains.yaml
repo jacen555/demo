@@ -10,6 +10,34 @@
 version: 1
 
 # ---------------------------------------------------------------------------
+# Languages.
+#
+# .NET is the default. A domain may declare `language:` to opt into another.
+# `language` is orthogonal to `kind` — a Node tool is still a `tool` at tier 2.
+# Adding a language requires a constitution section, scaffolding support, and an
+# ADR (see docs/adr/0002). Do not admit one by precedent.
+# ---------------------------------------------------------------------------
+languages:
+  dotnet:
+    default: true
+    test: node:test is not applicable — xUnit + FluentAssertions + NSubstitute
+    format: dotnet csharpier format .
+    constitution: "IV / C# / .NET"
+  powershell:
+    implied_by_kind: script
+    test: Pester v5
+    lint: Invoke-ScriptAnalyzer -Severity Error
+    constitution: "IV / PowerShell"
+  node:
+    test: node --test
+    format: npx prettier --write .
+    constitution: "IV / JavaScript / Node.js"
+    rationale: >
+      Permitted where the ecosystem is the reason for the work — headless browser
+      automation, ffmpeg orchestration. ESM only, no bundler, pinned engines.
+      See docs/adr/0002-admit-nodejs-for-ecosystem-bound-tooling.md.
+
+# ---------------------------------------------------------------------------
 # Kind defaults — a domain inherits these from the root folder it lives under.
 # A domain entry may override `tier`, `builder`, or `reviewer` with justification.
 # ---------------------------------------------------------------------------
@@ -96,12 +124,13 @@ repo:
 # Domains.
 #
 # Each entry:
-#   id:        kebab-case, unique. Used as the Conventional Commit scope (§X).
+#   id:        kebab-case, unique. Used as the Conventional Commit scope (SS X).
 #   kind:      app | service | lib | tool | script | spike
+#   language:  dotnet (default, omit) | node | powershell
 #   path:      domain root, relative to repo root
 #   source:    production code path
 #   tests:     test project path, or `none`
-#   project:   .csproj / .psd1 path, or `none`
+#   project:   .csproj / package.json / .ps1 path, or `none`
 #   build:     exact build command, or `none`
 #   test_cmd:  exact test command, or `none`
 #   tier:      inherited from kind unless overridden (state why in `notes`)
@@ -123,7 +152,21 @@ repo:
 #     status: active
 #     notes: Depends on libs/Core for the Money type.
 # ---------------------------------------------------------------------------
-domains: []
-  # No domains registered yet. The repo is freshly scaffolded.
-  # Add the first one with the `scaffold-domain` skill.
+domains:
+  - id: sizzlecraft
+    kind: tool
+    language: node
+    path: tools/SizzleCraft
+    source: tools/SizzleCraft/src
+    tests: tools/SizzleCraft/tests
+    project: tools/SizzleCraft/package.json
+    build: none
+    test_cmd: node --test "tools/SizzleCraft/tests/**/*.test.mjs"
+    tier: 2
+    builder: tooling-builder
+    reviewer: tooling-reviewer
+    checklist: .github/checklists/tooling-design-checklist.md
+    status: active
+    notes: ''
+
 

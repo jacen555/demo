@@ -151,6 +151,41 @@ Applies at **every tier**.
 - Support `-WhatIf`/`-Confirm` via `SupportsShouldProcess` for anything destructive.
 - Must pass PSScriptAnalyzer with no Error-severity findings.
 
+### JavaScript / Node.js
+
+.NET is the default stack. **Node.js is permitted where the ecosystem is the reason
+for the work** — headless browser automation, ffmpeg orchestration, and similar
+tooling where the mature libraries are JavaScript and a .NET port would be net
+negative. See ADR 0002.
+
+A Node domain declares `language: node` in `.github/domains.yaml`. Its `kind` and
+therefore its **tier are unchanged** — a Node tool is a Tier 2 tool.
+
+- **ESM only.** `"type": "module"` in `package.json`; `.mjs` for standalone entry
+  points. No CommonJS in new code.
+- **No transpilation and no bundler** unless something concretely requires it.
+  Target the Node version in `engines`; run the source directly.
+- **Pin the runtime.** `engines.node` in `package.json`, and commit the lockfile.
+- **Dependencies are a liability.** Prefer the standard library. Justify each new
+  dependency in the domain README.
+- **Async:** `async`/`await` for all I/O. No blocking calls (`execSync`,
+  `readFileSync`) on a hot path. Propagate `AbortSignal` where cancellation is
+  meaningful.
+- **Fail loud.** Exit non-zero on failure. Never swallow a rejected promise; set
+  `process.exitCode` rather than `process.exit()` mid-stream so buffered output
+  flushes.
+- **Validate external input** — argv, environment, file contents, and subprocess
+  output. Never interpolate unvalidated input into a shell command; pass argument
+  arrays rather than concatenated strings.
+- **Testing:** the built-in `node:test` runner. Do not add a test framework to a
+  domain that does not already have one.
+- **Formatting:** Prettier defaults. CSharpier governs C# only and has no opinion
+  here.
+
+Other languages are **not** admitted by precedent. Adding one requires the same
+treatment this got: a constitution section, registry support, scaffolding, and an
+ADR.
+
 ### Universal
 
 - **Surgical diffs.** Smallest change that fully solves the request. Do NOT rename,
@@ -211,6 +246,7 @@ Write tests if they help you learn faster. Nothing is required.
   introduce a new one into an existing domain.
 - .NET default stack for new domains: **xUnit + FluentAssertions + NSubstitute**.
 - PowerShell default stack: **Pester v5**.
+- Node.js default stack: the built-in **`node:test`** runner.
 - Run the domain's `test` command from `.github/domains.yaml`. Prefer a targeted run for
   fast feedback, then the full domain run to confirm no regressions.
 

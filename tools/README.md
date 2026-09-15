@@ -44,6 +44,20 @@ tool that compiles but has never been run has not been verified.
     -Id repo-stats -Kind tool -Name RepoStats -WhatIf
 ```
 
+For Node tooling (permitted where the ecosystem is the reason for the work — see
+[ADR 0002](../docs/adr/0002-admit-nodejs-for-ecosystem-bound-tooling.md)):
+
+```powershell
+.\.github\skills\scaffold-domain\scripts\New-ForgeDomain.ps1 `
+    -Id my-tool -Kind tool -Name MyTool -Language node -WhatIf
+```
+
+Node domains are excluded from `Forge.sln` — there is nothing to compile. Their
+`test_cmd` uses a glob, because `node --test <dir>` resolves the path as a module
+and fails.
+
 ## Domains
 
-_None yet._
+| Domain | Language | Purpose |
+|---|---|---|
+| [`SizzleCraft`](SizzleCraft/) | `node` | Shared engine for narrated demo/educational videos. Paired with the [`demo-recording` skill](../.github/skills/demo-recording/SKILL.md). |
