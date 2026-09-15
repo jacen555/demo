@@ -1,0 +1,48 @@
+<Project>
+
+  <!--
+    Forge — Central Package Management.
+    Governed by .github/instructions/constitution.instructions.md §VII.
+
+    NEVER pin a package version in a .csproj. Add it here and reference it there with
+    <PackageReference Include="Name" /> — no Version attribute.
+
+    Keep this list small. A workshop repo accumulates dependencies fast; every entry here
+    is one more thing to keep current.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="Testing — the standard stack (§VI). Do not introduce a second one.">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageVersion Include="xunit" Version="2.9.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="FluentAssertions" Version="6.12.2" />
+    <PackageVersion Include="NSubstitute" Version="5.3.0" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup Label="Hosting, DI, configuration, logging">
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="CLI tooling (tools/**)">
+    <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageVersion Include="Spectre.Console" Version="0.49.1" />
+  </ItemGroup>
+
+  <!--
+    Resolves conflicts
+    Transitive packages pinned only to resolve a deprecation or vulnerability advisory.
+    Add here with a one-line reason; remove once the direct dependency catches up.
+  -->
+  <ItemGroup Label="Resolves conflicts">
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,58 @@
+<Project>
+
+  <!--
+    Forge — repo-wide build defaults.
+    Governed by .github/instructions/constitution.instructions.md §IV and §VII.
+
+    A domain that needs to differ must override deliberately and say why in its README.
+  -->
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- §IV: write code that passes analyzers by hand. Warnings are not optional. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- §VII: Central Package Management. Never pin a version in a .csproj. -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!--
+    XML docs are REQUIRED on public surfaces in libs/** (§IV) — CS1591 stays an error there.
+    Elsewhere an undocumented internal detail is noise, not a defect, so it is downgraded.
+  -->
+  <PropertyGroup Condition="!$(MSBuildProjectDirectory.Contains('$([System.IO.Path]::DirectorySeparatorChar)libs$([System.IO.Path]::DirectorySeparatorChar)'))">
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- Test projects: relax doc requirements, enable the standard test harness properties. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CA1707</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    §XI: nothing outside spike/ may depend on anything inside it, and spikes are excluded
+    from Forge.sln. Spikes still must build and must not leak secrets (§IV, §V), but they
+    are not held to the documentation bar.
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('$([System.IO.Path]::DirectorySeparatorChar)spike$([System.IO.Path]::DirectorySeparatorChar)'))">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AnalysisMode>Default</AnalysisMode>
+  </PropertyGroup>
+
+</Project>

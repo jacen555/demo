@@ -1,0 +1,118 @@
+root = true
+
+# Forge — editor and analyzer style.
+# CSharpier (.csharpierrc.json) is the FORMATTING AUTHORITY (constitution §IV).
+# Layout/spacing rules that would fight CSharpier are disabled below, with rationale.
+
+[*]
+charset = utf-8
+end_of_line = crlf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{yml,yaml,json,jsonc}]
+indent_size = 2
+
+[*.md]
+# Markdown uses trailing double-space for hard line breaks.
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1,psd1}]
+indent_size = 4
+
+[*.{csproj,props,targets,sln,config}]
+indent_size = 2
+
+[*.cs]
+indent_size = 4
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+
+# --- Usings ---------------------------------------------------------------------------
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:warning
+
+# --- Language preferences (§IV) --------------------------------------------------------
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = true:warning
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_pattern_matching_over_is_with_cast_check = true:warning
+csharp_style_pattern_matching_over_as_with_null_check = true:warning
+csharp_style_throw_expression = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+
+dotnet_style_readonly_field = true:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+
+# --- Naming ----------------------------------------------------------------------------
+dotnet_naming_rule.interfaces_start_with_i.severity = warning
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_start_with_i.style = prefix_i_pascal
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_style.prefix_i_pascal.required_prefix = I
+dotnet_naming_style.prefix_i_pascal.capitalization = pascal_case
+
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_field_symbols
+dotnet_naming_rule.private_fields_underscore.style = prefix_underscore_camel
+dotnet_naming_symbols.private_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.private_field_symbols.applicable_accessibilities = private
+dotnet_naming_style.prefix_underscore_camel.required_prefix = _
+dotnet_naming_style.prefix_underscore_camel.capitalization = camel_case
+
+# --- Enforced by the constitution -------------------------------------------------------
+
+# §IV: never block on async. These are errors, not suggestions.
+dotnet_diagnostic.CA1849.severity = error   # Call async methods in an async method
+dotnet_diagnostic.VSTHRD002.severity = error # Avoid problematic synchronous waits
+
+# §IV: propagate CancellationToken through every async call chain.
+dotnet_diagnostic.CA2016.severity = error   # Forward the CancellationToken parameter
+
+# §V: parameterize data access — no string-concatenated SQL.
+dotnet_diagnostic.CA2100.severity = error   # Review SQL queries for security vulnerabilities
+
+# §IV: no silent hard failures — an empty catch hides the signal entirely.
+dotnet_diagnostic.CA1031.severity = warning # Do not catch general exception types
+
+# §IV: XML docs are required on public surfaces in libs/**.
+# Downgraded to a suggestion elsewhere by Directory.Build.props via NoWarn.
+dotnet_diagnostic.CS1591.severity = warning
+
+# --- Disabled: CSharpier owns formatting (§IV) -------------------------------------------
+# These are layout/spacing rules. CSharpier decides layout; leaving them on produces
+# unfixable churn where the two disagree. When they disagree, CSharpier is correct.
+dotnet_diagnostic.IDE0055.severity = none   # Fix formatting
+
+# --- Disabled: AI agents cannot lawfully assert authorship (§IV) --------------------------
+# An agent MUST NOT add a copyright/authorship header it cannot legally assert, and a
+# missing header is not a defect. Existing headers are left untouched.
+dotnet_diagnostic.IDE0073.severity = none   # Require file header
+dotnet_diagnostic.SA1633.severity = none    # File must have header
+dotnet_diagnostic.SA1634.severity = none
+dotnet_diagnostic.SA1635.severity = none
+dotnet_diagnostic.SA1636.severity = none
+dotnet_diagnostic.SA1637.severity = none
+dotnet_diagnostic.SA1638.severity = none
+dotnet_diagnostic.SA1639.severity = none
+dotnet_diagnostic.SA1640.severity = none
+dotnet_diagnostic.SA1641.severity = none
+
+[*.Tests.cs]
+# Test names follow <Method>_<Scenario>_<ExpectedOutcome> (§VI), which trips the
+# underscore-in-identifier rule by design.
+dotnet_diagnostic.CA1707.severity = none

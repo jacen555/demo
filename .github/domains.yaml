@@ -1,0 +1,129 @@
+# Forge — Domain Registry
+#
+# AUTHORITATIVE. Agents resolve every path, command, tier, and agent assignment from
+# this file. Do not guess paths or invent build commands — if a domain is not listed
+# here, that is a blocking error: run the `scaffold-domain` skill
+# (.github/skills/scaffold-domain/SKILL.md) to register it.
+#
+# See .github/instructions/constitution.instructions.md §I (ownership) and §II (tiers).
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# Kind defaults — a domain inherits these from the root folder it lives under.
+# A domain entry may override `tier`, `builder`, or `reviewer` with justification.
+# ---------------------------------------------------------------------------
+kinds:
+  app:
+    root: apps
+    tier: 2
+    builder: app-builder
+    reviewer: app-reviewer
+    checklist: .github/checklists/app-design-checklist.md
+    description: Desktop applications — WinUI 3, WPF, console UX.
+
+  service:
+    root: services
+    tier: 1
+    builder: service-builder
+    reviewer: service-reviewer
+    checklist: .github/checklists/service-design-checklist.md
+    description: Long-running services and HTTP APIs — ASP.NET Core, workers.
+
+  lib:
+    root: libs
+    tier: 1
+    builder: service-builder
+    reviewer: service-reviewer
+    checklist: .github/checklists/service-design-checklist.md
+    description: Shared libraries consumed by more than one domain. Highest blast radius.
+
+  tool:
+    root: tools
+    tier: 2
+    builder: tooling-builder
+    reviewer: tooling-reviewer
+    checklist: .github/checklists/tooling-design-checklist.md
+    description: Developer tooling — CLIs, generators, analyzers.
+
+  script:
+    root: scripts
+    tier: 2
+    builder: tooling-builder
+    reviewer: tooling-reviewer
+    checklist: .github/checklists/script-design-checklist.md
+    description: PowerShell automation and useful one-liners.
+
+  spike:
+    root: spike
+    tier: 0
+    builder: researcher
+    reviewer: none
+    checklist: none
+    description: >
+      Throwaway experiments answering one question. Excluded from Forge.sln.
+      Nothing outside spike/ may depend on anything inside it. Graduates or
+      retires per constitution §XI.
+
+# ---------------------------------------------------------------------------
+# Model pinning — constitution §VIII. The orchestrator MUST pass these explicitly.
+# Never rely on a default model; never run builder and reviewer in the same family.
+# ---------------------------------------------------------------------------
+models:
+  builder: claude-opus-4.8
+  reviewer: gpt-5.6-sol
+  planner: claude-opus-4.8
+  researcher: claude-opus-4.8
+  # If a pinned model is unavailable, substitute the newest model of the SAME family.
+  families:
+    claude-opus-4.8: anthropic
+    gpt-5.6-sol: openai
+
+# ---------------------------------------------------------------------------
+# Repo-wide commands.
+# ---------------------------------------------------------------------------
+repo:
+  solution: Forge.sln
+  build: dotnet build Forge.sln
+  test: dotnet test Forge.sln
+  format: dotnet csharpier format .
+  format_check: dotnet csharpier check .
+  script_lint: Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
+  github_repo: jacen555/demo
+  default_branch: master
+
+# ---------------------------------------------------------------------------
+# Domains.
+#
+# Each entry:
+#   id:        kebab-case, unique. Used as the Conventional Commit scope (§X).
+#   kind:      app | service | lib | tool | script | spike
+#   path:      domain root, relative to repo root
+#   source:    production code path
+#   tests:     test project path, or `none`
+#   project:   .csproj / .psd1 path, or `none`
+#   build:     exact build command, or `none`
+#   test_cmd:  exact test command, or `none`
+#   tier:      inherited from kind unless overridden (state why in `notes`)
+#   question:  REQUIRED for spikes — the one question the spike answers
+#   status:    active | parked | answered | graduated | retired
+#   notes:     free text — overrides, dependencies, gotchas
+#
+# Template (copy, do not edit in place):
+#
+#   - id: ledger
+#     kind: service
+#     path: services/Ledger
+#     source: services/Ledger/src
+#     tests: services/Ledger/tests
+#     project: services/Ledger/src/Forge.Ledger.csproj
+#     build: dotnet build services/Ledger/src/Forge.Ledger.csproj
+#     test_cmd: dotnet test services/Ledger/tests/Forge.Ledger.Tests.csproj
+#     tier: 1
+#     status: active
+#     notes: Depends on libs/Core for the Money type.
+# ---------------------------------------------------------------------------
+domains: []
+  # No domains registered yet. The repo is freshly scaffolded.
+  # Add the first one with the `scaffold-domain` skill.
+

@@ -1,0 +1,67 @@
+# --- .NET ---------------------------------------------------------------------------
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+project.lock.json
+project.fragment.lock.json
+artifacts/
+TestResults/
+coverage/
+*.coverage
+*.coverlet.json
+*.trx
+BenchmarkDotNet.Artifacts/
+
+# --- Visual Studio / Rider / VS Code --------------------------------------------------
+.vs/
+.idea/
+*.DotSettings.user
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# --- Secrets — constitution §V ---------------------------------------------------------
+# No secrets, connection strings, credentials, tokens, or personal data in the repo.
+# Local overrides go in *.local.json / *.local.ps1 and never get committed.
+*.local.json
+*.local.ps1
+appsettings.Development.json
+appsettings.Local.json
+secrets.json
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.snk
+*.key
+*.pem
+
+# --- PowerShell ------------------------------------------------------------------------
+*.ps1xml.bak
+PesterResults.xml
+
+# --- OS --------------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+.DS_Store
+
+# --- Misc ------------------------------------------------------------------------------
+*.log
+*.tmp
+node_modules/
