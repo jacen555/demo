@@ -118,7 +118,7 @@ repo:
   format_check: dotnet csharpier check .
   script_lint: Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
   github_repo: jacen555/demo
-  default_branch: master
+  default_branch: main
 
 # ---------------------------------------------------------------------------
 # Domains.

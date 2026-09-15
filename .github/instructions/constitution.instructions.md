@@ -347,7 +347,7 @@ is missing, or the two are the same model or same model family.
 ## X. Commit & PR Conventions
 
 Forge uses **Conventional Commits** grammar, scoped to exactly one thing: the **title of
-a pull request whose target branch is `master`**. PRs are squash-merged, so that title
+a pull request whose target branch is `main`**. PRs are squash-merged, so that title
 becomes the permanent commit.
 
 ```
@@ -369,7 +369,7 @@ chore(repo): pin analyzer versions in Directory.Packages.props
 
 **Everything else is exempt** — local feature-branch commit messages are discarded on
 squash-merge, so commit locally however you like. Agents MUST author conforming titles
-for PRs into `master` and MUST NOT rewrite, reword, or gate anything outside that scope.
+for PRs into `main` and MUST NOT rewrite, reword, or gate anything outside that scope.
 
 **Agents do not push, open PRs, or create issues without an explicit user request.**
 

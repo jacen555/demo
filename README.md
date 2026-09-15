@@ -130,7 +130,7 @@ Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser
 ## Conventions
 
 - **Commits:** local commits are yours. The one thing that must conform is the **title of a
-  PR into `master`** (squash-merged, so it becomes the permanent commit):
+  PR into `main`** (squash-merged, so it becomes the permanent commit):
   `<type>(<domain-id>): <imperative subject>` — e.g. `feat(ledger): add idempotent posting`.
 - **Work items:** GitHub issues on `jacen555/demo`, labelled by kind.
 - **Spikes graduate by rewrite**, not by moving the folder. A spike proves the approach; the
