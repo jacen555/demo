@@ -80,10 +80,17 @@ reordering segments), never to read or set a value.
 
 ### 3. Authoring — plan fully before rendering anything
 
-1. **Gather intent.** Target length, audience, what to emphasise (decisions vs.
-   mechanics), tone, and whether it is part of a series. Ask rather than assume —
-   these change the whole script.
+1. **Run intake.** Work through `references/planning.md` §2. Answer what you can from
+   context, then ask only what is genuinely unresolved — max three questions at a time,
+   each with a recommended default. The one group you must never assume is **Evidence**:
+   every figure needs a named source before it reaches a script.
 2. **Write the narration script and the storyboard.** Text and visual plan only.
+   Two constraints that are easy to miss and expensive to retrofit:
+   - **Narration must convey everything visually essential** — it is this pipeline's only
+     audio track, so it doubles as the audio description (WCAG G226). Name buttons and
+     labels; never "this" or "here".
+   - **Do not put the narration on screen as bullets.** Visuals complement; they don't
+     duplicate.
 3. **STOP. Present both for approval.** See the gate below.
 4. Only then: synthesise → solve timing → build → capture → encode → mix.
 
@@ -93,9 +100,10 @@ reordering segments), never to read or set a value.
 
 1. The full narration text, per segment
 2. The storyboard — what is on screen for each segment
-3. Target vs. estimated duration
-4. The knob values that will be used
-5. The estimated render cost in wall-clock minutes
+3. **Every figure with its source**, so a wrong number is caught while it is still text
+4. Target vs estimated duration
+5. The knob values that will be used
+6. The estimated render cost in wall-clock minutes
 
 Ask: **"Approve for render? This takes ~N minutes. Reply yes, or give changes."**
 
@@ -146,7 +154,8 @@ Load these **only when the task needs them**:
 
 | File | Read it when |
 |---|---|
-| `references/cost-techniques.md` | Making an expensive stage cheaper, or needing a cheap way to check "did anything change?" Covers `framemd5`, `ffprobe` probes, null-muxer gates, segment concat, draft settings, TTS metadata, deterministic capture. |
+| `references/planning.md` | **Authoring a new video, or when the subject changes.** Intake checklist, accessibility constraints, claims/provenance, narration craft, length evidence |
+| `references/cost-techniques.md` | Making an expensive stage cheaper, or needing a cheap way to check "did anything change?" Covers `framemd5`, `ffprobe` probes, null-muxer gates, segment concat, draft settings, TTS metadata, deterministic capture |
 | `references/pipeline-contract.md` | Setting up a new pipeline, or adapting a renderer that isn't the reference one |
 | `references/bug-ledger.md` | **Before any audio mix, remux, or timing solve.** Cheap to read, expensive to rediscover |
 | `templates/knobs.json` | Starting a new project |
@@ -198,4 +207,9 @@ For multi-part series:
   unverified*) — those are listed precisely because they could not be confirmed.
 - Trying to replace the silence-gap solve with SSML `<break>` tags. It does not work
   on this TTS backend (bug ledger entry 10).
+- Putting a figure in narration without a source (`references/planning.md` §4).
+- Writing a storyboard whose meaning lives only in the visuals — narration is this
+  pipeline's only audio track and must carry it (`references/planning.md` §3).
+- Justifying a length target by citing the "six-minute rule" — it is a misquote with a
+  published rebuttal (`references/planning.md` §6).
 - Assuming target length, tone, or audience instead of asking.

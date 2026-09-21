@@ -1,9 +1,9 @@
 // Original ambient bed generator — no sampled or licensed material, everything is synthesised
 // from first principles here.
 //
-// Composition: a slow four-chord loop voiced as five sine voices per chord with two soft
-// harmonics each, crossfaded with a raised cosine. Each voice has its own slow tremolo and a
-// slightly detuned right channel for width.
+// Composition: a slow four-chord loop voiced as five detuned-unison voices per chord, run
+// through an LFO-swept low-pass filter and a small stereo reverb. Each voice has its own slow
+// tremolo so the pad breathes rather than pulses.
 //
 // Usage: node make-music.mjs <outWav> <durationSec> [envelopeJson] [preset]
 //   envelopeJson (optional) = voiceover RMS envelope, used to sidechain-duck the bed under speech.
@@ -37,7 +37,8 @@ const BEDS = {
     chordSec: 15.7,
     xfadeSec: 5.2,
     voiceGain: [1.00, 0.72, 0.52, 0.34, 0.26],
-    harm: [1.0, 0.18, 0.075],   // fundamental + 2nd + 3rd, organ-ish and soft
+    filterBaseHz: 560,          // warmer — filter sits lower, fewer upper partials survive
+    filterSweepHz: 300,
     detuneR: 1.0015,
   },
   // vi-IV-I-V in G. Brighter, shorter chords, a touch more movement.
@@ -51,7 +52,8 @@ const BEDS = {
     chordSec: 13.3,
     xfadeSec: 4.4,
     voiceGain: [1.00, 0.68, 0.55, 0.38, 0.22],
-    harm: [1.0, 0.15, 0.09],
+    filterBaseHz: 700,          // brighter — more of the wavetable's upper partials pass
+    filterSweepHz: 380,
     detuneR: 1.0012,
   },
 };
@@ -68,13 +70,78 @@ const CHORDS = bed.chords;
 const CHORD_SEC = bed.chordSec;
 const XFADE_SEC = bed.xfadeSec;
 const VOICE_GAIN = bed.voiceGain;
-const HARM = bed.harm;
 const DETUNE_R = bed.detuneR;
 
 // per-voice tremolo (slow, uncorrelated so the pad breathes rather than pulses)
 const TREM_RATE = [0.037, 0.063, 0.052, 0.075, 0.045];
 const TREM_DEPTH = 0.15;
 const TREM_PHASE = [1.1, 4.2, 0.6, 2.8, 5.4];
+
+// ---- oscillator ------------------------------------------------------------------------------
+// A wavetable replaces the previous per-harmonic Math.sin stack. Two reasons: it gives a much
+// richer starting spectrum for the filter to shape (a bare sine has nothing to take away), and
+// a table lookup is cheaper than N sine calls per sample, so the detuned voices below cost less
+// than the additive stack they replace.
+const TABLE_BITS = 12;
+const TABLE_SIZE = 1 << TABLE_BITS;
+const TABLE_MASK = TABLE_SIZE - 1;
+const WAVE = new Float32Array(TABLE_SIZE);
+{
+  // Soft sawtooth: 1/n rolloff, extra-damped above the 6th so it stays warm rather than buzzy.
+  const PARTIALS = 14;
+  let max = 0;
+  for (let i = 0; i < TABLE_SIZE; i++) {
+    const ph = (2 * Math.PI * i) / TABLE_SIZE;
+    let s = 0;
+    for (let n = 1; n <= PARTIALS; n++) {
+      const damp = n <= 6 ? 1 : 1 / (1 + 0.55 * (n - 6));
+      s += (Math.sin(n * ph) / n) * damp;
+    }
+    WAVE[i] = s;
+    if (Math.abs(s) > max) max = Math.abs(s);
+  }
+  for (let i = 0; i < TABLE_SIZE; i++) WAVE[i] /= max;
+}
+
+function wave(phase) {
+  // phase in [0,1)
+  const x = phase * TABLE_SIZE;
+  const i0 = x | 0;
+  const frac = x - i0;
+  const a = WAVE[i0 & TABLE_MASK];
+  const b = WAVE[(i0 + 1) & TABLE_MASK];
+  return a + (b - a) * frac;
+}
+
+// Three oscillators per voice, detuned in cents. This is what stops it reading as a test tone:
+// the slow beating between near-unison partials is most of what "an instrument" sounds like.
+const DETUNE_CENTS = [-6.5, 0, 6.5];
+const DETUNE = DETUNE_CENTS.map(c => Math.pow(2, c / 1200));
+const UNISON_GAIN = 1 / DETUNE.length;
+
+// ---- filter ----------------------------------------------------------------------------------
+// Chamberlin state-variable low-pass, cutoff swept by a slow LFO. Replaces the previous static
+// harmonic weights: the spectrum now moves, which is the difference between a pad that breathes
+// and one that sits still.
+const FILT_BASE_HZ = bed.filterBaseHz;
+const FILT_SWEEP_HZ = bed.filterSweepHz;
+const FILT_LFO_RATE = 0.021;
+const FILT_Q = 0.62;
+
+// ---- reverb ----------------------------------------------------------------------------------
+// Small Schroeder network: four parallel combs into two series allpasses, per channel, with
+// different delay lengths L/R for real stereo space rather than only a detuned right channel.
+const COMB_L = [1687, 1759, 1621, 1543];
+const COMB_R = [1733, 1801, 1667, 1597];
+const COMB_FB = 0.79;
+const ALLPASS_L = [241, 607];
+const ALLPASS_R = [263, 641];
+const ALLPASS_FB = 0.62;
+const REVERB_WET = 0.28;
+
+function makeDelays(lengths) {
+  return lengths.map(n => ({ buf: new Float32Array(n), idx: 0, n }));
+}
 
 const left = new Float32Array(N);
 const right = new Float32Array(N);
@@ -104,8 +171,36 @@ function chordWeights(t) {
 }
 
 console.log(`synthesising ${DUR.toFixed(1)}s of pad at ${SR} Hz…`);
-const phaseL = CHORDS.map(c => c.f.map(() => HARM.map(() => 0)));
-const phaseR = CHORDS.map(c => c.f.map(() => HARM.map(() => 0)));
+
+// phase accumulators, normalised to [0,1) — one per chord/voice/unison-oscillator, per channel
+const phaseL = CHORDS.map(c => c.f.map(() => DETUNE.map(() => 0)));
+const phaseR = CHORDS.map(c => c.f.map(() => DETUNE.map(() => 0)));
+
+// filter state
+let lowL = 0, bandL = 0, lowR = 0, bandR = 0;
+
+// reverb state
+const combL = makeDelays(COMB_L), combR = makeDelays(COMB_R);
+const apL = makeDelays(ALLPASS_L), apR = makeDelays(ALLPASS_R);
+
+function reverb(x, combs, allpasses) {
+  let acc = 0;
+  for (const d of combs) {
+    const y = d.buf[d.idx];
+    d.buf[d.idx] = x + y * COMB_FB;
+    d.idx = (d.idx + 1) % d.n;
+    acc += y;
+  }
+  acc /= combs.length;
+  for (const d of allpasses) {
+    const y = d.buf[d.idx];
+    const out = -acc + y;
+    d.buf[d.idx] = acc + y * ALLPASS_FB;
+    d.idx = (d.idx + 1) % d.n;
+    acc = out;
+  }
+  return acc;
+}
 
 for (let i = 0; i < N; i++) {
   const t = i / SR;
@@ -116,17 +211,35 @@ for (let i = 0; i < N; i++) {
     const chord = CHORDS[ci];
     for (let v = 0; v < chord.f.length; v++) {
       const trem = 1 + TREM_DEPTH * Math.sin(2 * Math.PI * TREM_RATE[v] * t + TREM_PHASE[v]);
-      const g = cw * VOICE_GAIN[v] * trem;
-      for (let h = 0; h < HARM.length; h++) {
-        const base = chord.f[v] * (h + 1);
-        phaseL[ci][v][h] += 2 * Math.PI * base / SR;
-        phaseR[ci][v][h] += 2 * Math.PI * base * DETUNE_R / SR;
-        l += Math.sin(phaseL[ci][v][h]) * HARM[h] * g;
-        r += Math.sin(phaseR[ci][v][h]) * HARM[h] * g;
+      const g = cw * VOICE_GAIN[v] * trem * UNISON_GAIN;
+      const base = chord.f[v];
+      for (let d = 0; d < DETUNE.length; d++) {
+        const fL = (base * DETUNE[d]) / SR;
+        const fR = (base * DETUNE[d] * DETUNE_R) / SR;
+        phaseL[ci][v][d] = (phaseL[ci][v][d] + fL) % 1;
+        phaseR[ci][v][d] = (phaseR[ci][v][d] + fR) % 1;
+        l += wave(phaseL[ci][v][d]) * g;
+        r += wave(phaseR[ci][v][d]) * g;
       }
     }
   }
-  left[i] = l; right[i] = r;
+
+  // moving low-pass — the LFO is 90 degrees apart per channel so the sweep widens the image
+  const lfo = Math.sin(2 * Math.PI * FILT_LFO_RATE * t);
+  const fcL = FILT_BASE_HZ + FILT_SWEEP_HZ * lfo;
+  const fcR = FILT_BASE_HZ + FILT_SWEEP_HZ * Math.sin(2 * Math.PI * FILT_LFO_RATE * t + Math.PI / 2);
+  const fL = 2 * Math.sin((Math.PI * fcL) / SR);
+  const fR = 2 * Math.sin((Math.PI * fcR) / SR);
+
+  lowL += fL * bandL;
+  bandL += fL * (l - lowL - FILT_Q * bandL);
+  lowR += fR * bandR;
+  bandR += fR * (r - lowR - FILT_Q * bandR);
+
+  const dryL = lowL, dryR = lowR;
+  left[i] = dryL * (1 - REVERB_WET) + reverb(dryL, combL, apL) * REVERB_WET;
+  right[i] = dryR * (1 - REVERB_WET) + reverb(dryR, combR, apR) * REVERB_WET;
+
   if ((i & 0x3fffff) === 0) process.stdout.write('.');
 }
 process.stdout.write('\n');

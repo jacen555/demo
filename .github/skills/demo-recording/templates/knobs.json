@@ -17,9 +17,54 @@
     "name": "my-demo",
     "title": "Human-readable title shown on the title card",
     "lede": "One-line summary shown under the storyboard heading.",
+    "objective": "Viewer will be able to <action verb> <what>.",
+    "audience": "Who is watching, and what they already know.",
+    "callToAction": "What the viewer should do next.",
+    "framing": "celebratory",
+    "emphasis": "decisions",
+    "noGo": [],
+    "platform": "async link",
+    "_objectiveNote": "Use an action verb — configure, explain, compare, decide. Defining this before scripting is established instructional-design sequencing, and it is what disciplines `framing` from being merely a tone.",
+    "_framingNote": "celebratory = lead with wins, don't dwell on gaps. balanced = name limitations too. Changes wording throughout, not just tone.",
+    "_emphasisNote": "decisions | mechanics | impact — these produce very different scripts.",
+    "_noGoNote": "Topics, names, or figures that must not appear.",
     "part": null,
     "series": null,
-    "seriesNote": "If part of a series, keep voice/timing/audio identical across parts unless deliberately varied — mismatched loudness is obvious on back-to-back playback."
+    "seriesNote": "If part of a series, keep voice/timing/audio identical across parts unless deliberately varied — mismatched loudness is obvious on back-to-back playback.",
+    "playback": "standalone",
+    "_playbackNote": "back-to-back = don't retread the earlier part. standalone = re-establish context. both = soften the opening.",
+    "preTraining": null,
+    "_preTrainingNote": "Terms/components an earlier part already established, which this video may assume. Null = assume nothing."
+  },
+
+  "accessibility": {
+    "_note": "Planning-time constraints, not post-production additions. See references/planning.md §3.",
+    "narrationCoversVisuals": null,
+    "_narrationNote": "REQUIRED before render. This pipeline has one audio track, so narration doubles as audio description (WCAG G226). Confirm every meaningful diagram, UI state change, and on-screen text is named in narration. Never 'this' or 'here' — name the actual label.",
+    "colorNotSoleChannel": null,
+    "_colorNote": "Diffs, state indicators, and highlights need a second channel — glyph, shape, label, or narration (WCAG 1.4.1).",
+    "contrastChecked": null,
+    "_contrastNote": "4.5:1 normal text, 3:1 large text and diagram elements. Includes the code theme in any screen recording.",
+    "flashingChecked": null,
+    "_flashingNote": "No more than 3 flashes in any 1s period, including decorative transitions (WCAG 2.3.1).",
+    "captionPlan": null
+  },
+
+  "narration": {
+    "pronunciations": {},
+    "_pronunciationsNote": "Map term -> how it should be read, e.g. {\"KQL\": \"K Q L\", \"Kusto\": \"KOO-stoh\"}. Build this as a planning artifact. TTS will not improvise correctly the way a voice actor would.",
+    "numbersConvention": "Write numbers as they should be spoken.",
+    "_numbersNote": "Versions, dates, percentages, currency. The most common cause of an otherwise-perfect render needing a redo."
+  },
+
+  "downstream": {
+    "reuse": null,
+    "_reuseNote": "Will this material also become slides or a doc? If so, as what MODE? Per Diátaxis a tutorial walkthrough and a reference doc serve different needs — video is not a lossless source for documentation."
+  },
+
+  "signOff": {
+    "approver": null,
+    "_note": "Who must approve the script and final cut. Distinct from the render approval gate, which is about spending render time; this is about who owns the content being correct."
   },
 
   "output": {
@@ -33,7 +78,9 @@
   "voice": {
     "engine": "msedge-tts",
     "name": "en-US-AndrewNeural",
+    "tier": "neural",
     "speed": 1.2,
+    "_tierNote": "neural | legacy. Engine tier matters more than identity-matching across a series: a modern neural voice is materially better than a legacy one, and that gap is larger than the cost of an inconsistent-but-good voice between parts.",
     "_note": "Changing engine, name, or speed invalidates every downstream duration. Expensive."
   },
 
