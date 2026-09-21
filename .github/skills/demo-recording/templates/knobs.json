@@ -16,6 +16,7 @@
   "project": {
     "name": "my-demo",
     "title": "Human-readable title shown on the title card",
+    "lede": "One-line summary shown under the storyboard heading.",
     "part": null,
     "series": null,
     "seriesNote": "If part of a series, keep voice/timing/audio identical across parts unless deliberately varied — mismatched loudness is obvious on back-to-back playback."
@@ -43,6 +44,9 @@
     "perceivedGapMs": 1500,
     "perceivedGapOverrides": {},
     "outroMs": 4000,
+    "wordsPerSecond": 3.0,
+    "wpsSafetyMargin": 0.95,
+    "_wpsNote": "Effective speech rate for the word-budget check in validate-timing. Measure it from a real render and record it here (or in calibration-observed.json, which wins). This is calibration data, not logic — it was the ONLY divergence between project copies of that script.",
     "_note": "perceivedGap is what a viewer HEARS: tail(clip N) + inserted silence + head(clip N+1). It is not the length of the inserted file. See bug-ledger entry 6.",
     "_overridesNote": "Map of segmentId -> ms, e.g. {\"origin\": 4000} to hold a longer beat after one segment. Leave empty for uniform gaps. Treat as optional everywhere — see bug-ledger entry 8."
   },
@@ -52,8 +56,9 @@
     "music": {
       "enabled": true,
       "generated": true,
-      "progression": "Fmaj9 - Cmaj9 - Dm9 - Bbmaj9",
+      "preset": "warm",
       "seed": null,
+      "_presetNote": "Named bed in make-music.mjs: 'warm' (I-V-ii-IV in F, settled) or 'bright' (vi-IV-I-V in G, more movement). Sibling videos in a series should use DIFFERENT presets — related, not a repeat. Add a new preset rather than editing one, so rendered videos keep their bed.",
       "_note": "Generated rather than sampled, so there is no licensing to clear."
     },
     "levels": {

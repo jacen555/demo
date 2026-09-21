@@ -22,7 +22,7 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 12 passing | Extracted shared demo-video engine. 9 scripts, ~124 KB, de-duplicated from two `~/SizzleCraft/` projects. CLI scripts, not yet a library — 8 of 9 export nothing. Originals do not point here yet. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 13 passing | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -107,11 +107,12 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    been taken through `forge-team` → planner → builder → reviewer → PASS. Until that runs,
    the orchestration is configuration, not a demonstrated workflow.
 2. **The SizzleCraft extraction is not yet banked.** The two original projects under
-   `~/SizzleCraft/` still hold their own copies of the 9 scripts. Until they point at
+   `~/SizzleCraft/` still hold their own copies of the scripts. Until they point at
    `tools/SizzleCraft`, the duplication is *recorded*, not *removed*.
-3. **5 diverged SizzleCraft scripts left unextracted** — `write-script`, `write-storyboard`,
-   `make-music`, `preview`, `validate-timing`. Some diverged by design, some by drift;
-   telling them apart needs a diff review.
+3. **`write-script.mjs` (S1) is still unextracted.** It diverged ~120% between projects —
+   genuinely rewritten rather than drifted — and needs a review to separate shared logic
+   from per-video content. The other four "diverged" scripts turned out to be hardcoded
+   config and are now parameterized.
 4. **No formatting enforcement.** CSharpier is the declared authority (§IV) but is not
    installed and no hook runs it. Prettier likewise for Node domains.
 5. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
