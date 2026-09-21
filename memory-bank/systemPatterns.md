@@ -100,7 +100,7 @@ Agent memory resets. The repo's memory does not. So:
 | PowerShell script | `Verb-PascalNoun.ps1`, approved verb | `New-ForgeDomain.ps1` |
 | ADR | `NNNN-kebab-title.md`, sequential | `0001-multi-agent-orchestration-...md` |
 | Spike folder | kebab-case, names the question | `spike/channel-vs-blockingcollection` |
-| PR title into `master` | `<type>(<domain-id>): <imperative subject>` | `feat(ledger): add idempotent posting` |
+| PR title into `main` | `<type>(<domain-id>): <imperative subject>` | `feat(ledger): add idempotent posting` |
 
 ## Default stacks for a new domain
 

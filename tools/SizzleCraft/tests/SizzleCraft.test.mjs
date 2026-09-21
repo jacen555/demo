@@ -81,3 +81,29 @@ test('engineScripts_allParseAsEsm', () => {
     );
   }
 });
+
+// The first extraction shipped only the middle of the pipeline: script/storyboard generation
+// (S1/S2) and the music + remux path (S8/S9) were left behind, so the documented cheap
+// audio-only path had no implementation in the repo. This pins every stage so that a partial
+// extraction fails loudly instead of silently.
+test('engineScripts_coverEveryPipelineStage', () => {
+  const required = {
+    'S2 storyboard': 'write-storyboard.mjs',
+    'S3 synthesis': 'voice.mjs',
+    'S4 timing solve': 'remix.mjs',
+    'S4 silence': 'silence-gen.mjs',
+    'S4 measurement': 'silence-scan.mjs',
+    'S5 scene build': 'write-build-html.mjs',
+    'S6 capture': 'frame-capture.mjs',
+    'S7 encode': 'encode-mp4.mjs',
+    'S8 music': 'make-music.mjs',
+    'S8/S9 remux': 'remux-music.mjs',
+  };
+
+  const present = new Set(readdirSync(srcDir));
+  const missing = Object.entries(required)
+    .filter(([, file]) => !present.has(file))
+    .map(([stage, file]) => `${stage} (${file})`);
+
+  assert.deepEqual(missing, [], `pipeline stages missing from the engine: ${missing.join(', ')}`);
+});

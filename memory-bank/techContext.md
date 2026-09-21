@@ -7,7 +7,7 @@
 - **OS:** Windows
 - **Shell:** PowerShell 7+ (all commands in this repo assume it; `scripts/**` declares
   `#Requires -Version 7.0`)
-- **Repo:** `jacen555/demo`, default branch `master`, GitHub-hosted
+- **Repo:** `jacen555/demo`, default branch `main`, GitHub-hosted
 
 ## .NET
 

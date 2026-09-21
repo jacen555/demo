@@ -152,7 +152,7 @@ domains):
 
 - Do NOT push, open PRs, or create GitHub issues unless the user explicitly asks. If
   asked, use the conventions in Constitution §IX and §X (Conventional Commit title for
-  PRs into `master`, scoped to the domain id).
+  PRs into `main`, scoped to the domain id).
 
 ## Loop Diagram
 

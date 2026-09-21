@@ -30,18 +30,25 @@ place to fix a bug.
 
 | Script | Stage | Role |
 |---|---|---|
-| `canonical-json.mjs` | — | Deterministic JSON serialiser. **The hashing backbone** — `remix` and `voice` use it for cache keys, so changing its output silently invalidates every stored timing hash. The only module here with a real exported API, and the only one under test. |
-| `voice.mjs` | S3 | TTS synthesis via `msedge-tts` → per-segment MP3. Deterministic: identical text/voice/speed returns identical durations. |
-| `silence-gen.mjs` | S4 | Generates gap audio assets. |
+| `canonical-json.mjs` | — | Deterministic JSON serialiser. **The hashing backbone** — `remix` and `voice` use it for cache keys, so changing its output silently invalidates every stored timing hash. The only module here with a real exported API, and the only one under direct test. |
+| `write-storyboard.mjs` | S2 | Emits `storyboard.html`. Lede text comes from `project.lede`. |
+| `voice.mjs` | S3 | TTS synthesis via `msedge-tts` → per-segment MP3. |
+| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate gap audio assets. |
 | `silence-scan.mjs` | S4 | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5). |
-| `remix.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. |
+| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. |
 | `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. |
 | `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
 | `frame-capture.mjs` | S6 | Headless-browser frame capture with dedup. **The long pole.** |
-| `encode-mp4.mjs` | S7 | Frames → MP4. |
+| `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
+| `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). |
+| `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. |
+| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
+| `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
 
 Stage numbers refer to the pipeline contract in
 [`references/pipeline-contract.md`](../../.github/skills/demo-recording/references/pipeline-contract.md).
+
+**`write-script.mjs` (S1) is deliberately not here** — see below.
 
 ## How to run
 
@@ -49,36 +56,47 @@ Stage numbers refer to the pipeline contract in
 npm install                 # first time — pulls playwright, msedge-tts, music-metadata
 node --test                 # run the tests
 node src/canonical-json.mjs fixed-key-order-json-utf8-v1 < input.json
+node src/make-music.mjs bed.wav 240 vo-envelope.json bright
+node src/preview.mjs                    # preview every segment
+node src/preview.mjs flywheel explorer  # preview just these
 ```
 
-Every other script is a CLI entry point invoked by a project's build sequence, not
+Most scripts are CLI entry points invoked by a project's build sequence rather than
 directly by hand. See the skill for the stage ordering.
 
 ## Current state
 
-**`partial` — an extracted set of scripts, not yet a library.**
-
-Honest assessment of what this extraction did and did not achieve:
+**`partial` — the full pipeline except S1, but still scripts rather than a library.**
 
 **Done**
-- 124 KB of byte-identical duplication collapsed to one copy.
-- All 9 scripts verified to parse as ESM, with no hardcoded project paths.
-- `canonical-json.mjs` now has a real test suite (12 tests) — it had none, despite
-  being the integrity backbone.
-- Internal coupling preserved: `remix` and `voice` both import `canonical-json`.
+- **Every pipeline stage except S1 is present**, including the S8/S9 music and remux
+  path that implements the cheap audio-only route the skill is built around. A test
+  (`engineScripts_coverEveryPipelineStage`) pins this so a partial extraction fails
+  loudly instead of silently.
+- ~124 KB of byte-identical duplication collapsed to one copy, plus 11 further scripts
+  brought over.
+- **Four scripts that "diverged" turned out to be the same script with project data
+  hardcoded.** Each difference was a value, not logic, and is now a parameter:
+
+  | Script | Was | Now |
+  |---|---|---|
+  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json`, then `intake.wordsPerSecond`, then a default |
+  | `write-storyboard.mjs` | Hardcoded per-video lede string | `project.lede` |
+  | `preview.mjs` | Hardcoded list of segment ids | Defaults to all segments; pass ids to narrow |
+  | `make-music.mjs` | Forked chord progression | Named presets (`warm`, `bright`), selectable by argv |
+
+- `canonical-json.mjs` has a real test suite — it had none, despite being the integrity
+  backbone.
 
 **Not done**
-- **8 of 9 scripts export nothing.** They execute on import, so they cannot be
+- **`write-script.mjs` (S1) is not extracted.** It diverged ~120% between projects —
+  genuinely rewritten, not drifted — and needs a real review to decide what is shared
+  versus per-video. This is the one honest exclusion.
+- **8 of the scripts export nothing.** They execute on import, so they cannot be
   imported as modules or unit-tested directly — the test suite parses them instead.
   Turning them into a library with a real API is a separate, larger refactor.
-- **The 5 diverged scripts were deliberately left out**: `write-script.mjs`,
-  `write-storyboard.mjs`, `make-music.mjs`, `preview.mjs`, `validate-timing.mjs`.
-  Some diverged legitimately (each video wants different music and different
-  narration), some are probably drift. Separating those two cases needs a diff
-  review that has not happened yet.
-- **The original projects still hold their own copies.** Nothing points at this
-  domain yet. Pointing them here is the next step, and is what actually banks the
-  benefit.
+- **The original projects still hold their own copies.** Nothing points at this domain
+  yet. Pointing them here is what actually banks the benefit.
 - No lockfile committed yet — run `npm install` and commit `package-lock.json`.
 
 ## Dependencies

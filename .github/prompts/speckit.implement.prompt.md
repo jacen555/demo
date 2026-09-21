@@ -90,7 +90,7 @@ Summarize: what changed per domain, every verdict, and residual Low/Medium findi
 Relay builder reports and reviewer FINDINGS **in full — never truncate them**.
 
 Do NOT push, open PRs, or create GitHub issues unless explicitly asked. If asked, use the
-conventions in §IX and §X (Conventional Commit title for PRs into `master`, scoped to the
+conventions in §IX and §X (Conventional Commit title for PRs into `main`, scoped to the
 domain id).
 
 ## Rules

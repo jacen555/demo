@@ -86,24 +86,30 @@ values.
 
 ## Reference implementation: SizzleCraft
 
-Bespoke Node/ffmpeg tooling under `~/SizzleCraft/<project>/`. Not an installed
-package — it is rebuilt or copied per project, which is exactly the duplication
-this skill's "never spawn a one-off script" rule targets.
+Reference implementation: bespoke Node/ffmpeg tooling, now consolidated as the
+`sizzlecraft` domain at **`tools/SizzleCraft/`** (ADR 0002). It was previously copied
+per project under `~/SizzleCraft/<project>/`, which is the duplication this skill's
+"never spawn a one-off script" rule targets.
 
 | Stage | Script | Notes |
 |---|---|---|
 | S0 | `timing.json` → `intake` block | The knobs live here today; project `knobs.json` should be the edit surface |
-| S1 | `write-script.mjs` | Emits `script.md` |
-| S2 | `write-storyboard.mjs` | Emits `storyboard.html` |
-| S3 | `voice.mjs` | msedge-tts → `segment_NN.mp3`. **Deterministic** — re-synthesis reproduces byte-identical lengths |
-| S4 | `remix.mjs`, `silence-gen.mjs` | Solves perceived gaps, emits `gap_NN.mp3` |
+| S1 | `write-script.mjs` | Emits `script.md`. **Not yet extracted** — diverged heavily between projects, pending review |
+| S2 | `write-storyboard.mjs` | Emits `storyboard.html`. Lede text comes from `project.lede` |
+| S3 | `voice.mjs` | msedge-tts → `segment_NN.mp3`. Observed deterministic — but see bug ledger entry 7 |
+| S4 | `remix.mjs`, `silence-gen.mjs`, `silence-asset.mjs`, `concat-audio.mjs` | Solves perceived gaps, emits `gap_NN.mp3` |
+| S4 | `silence-scan.mjs`, `vo-envelope.mjs` | Measures head/tail by decoding; builds the ducking envelope |
 | S5 | `write-build-html.mjs` | Emits `video-auto.html` |
 | S6 | `frame-capture.mjs` | Frame capture with dedup. The long pole |
-| S7 | `encode-mp4.mjs` | |
-| S8 | `make-music.mjs`, `remux-music.mjs` | Generated music bed, sidechain ducking |
-| S9 | `remux-music.mjs` | Swaps audio, preserves video stream |
-| — | `preview.mjs`, `preview-seg.mjs` | **Single-segment preview — use before committing to a full render** |
+| S7 | `encode-mp4.mjs`, `append-outro.mjs` | |
+| S8 | `make-music.mjs` | Generated bed. Named presets (`warm`, `bright`) — pass as argv or set `audio.music.preset` |
+| S9 | `remux-music.mjs` | **The cheap path** — swaps audio, preserves the video stream byte-for-byte |
+| — | `preview.mjs`, `preview-seg.mjs` | **Segment preview — use before committing to a full render.** `preview.mjs` defaults to all segments; pass ids to narrow |
 | — | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | Verification |
+
+All of the above are checked in at `tools/SizzleCraft/src/` **except `write-script.mjs`**.
+A test (`engineScripts_coverEveryPipelineStage`) pins the rest so a partial extraction fails
+loudly rather than silently.
 
 ### Known SizzleCraft characteristics
 
