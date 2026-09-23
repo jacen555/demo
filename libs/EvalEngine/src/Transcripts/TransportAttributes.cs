@@ -142,6 +142,24 @@ public static class ExchangeState
     public const string NotAttempted = "notAttempted";
 
     /// <summary>
+    /// The participant failed while producing a stimulus, so the run could not continue.
+    /// </summary>
+    /// <remarks>
+    /// <b>A statement about the harness, not about the system under test.</b> A simulated caller
+    /// that cannot say what comes next — its model call failed, a replaying client held no
+    /// recording for the request, the model returned nothing usable — has not tested anything. The
+    /// turns already recorded stand, because they happened, but
+    /// <see cref="IsHarnessFailure(string?)"/> reports the run as ungradeable so a conversation cut
+    /// short by the <i>caller</i> cannot be read as the system declining to continue.
+    /// <para>
+    /// Recorded rather than thrown, by the same reasoning as <see cref="AdapterFailed"/>: a
+    /// participant is supplied per run and one run's caller failing must not take down a mixed
+    /// suite.
+    /// </para>
+    /// </remarks>
+    public const string ParticipantFailed = "participantFailed";
+
+    /// <summary>
     /// This build cannot speak the transport the scenario declared, so no exchange was attempted.
     /// </summary>
     /// <remarks>
@@ -212,7 +230,21 @@ public static class StopReason
     public const string TerminalOutcome = "terminalOutcome";
 
     /// <summary>The run reached <see cref="Scenarios.TerminalCondition.MaxTurns"/>.</summary>
+    /// <remarks>
+    /// Or the runner's own ceiling, where it has one. A
+    /// <see cref="Runners.LlmConversationRunner"/> caps every conversation whether the scenario
+    /// declared a ceiling or not, so this value also means "the harness stopped it" — which is
+    /// the point: termination must never belong to the participant.
+    /// </remarks>
     public const string TurnCeiling = "turnCeiling";
+
+    /// <summary>The participant failed while producing a stimulus.</summary>
+    /// <remarks>
+    /// Paired with <see cref="ExchangeState.ParticipantFailed"/>, which is what makes the run
+    /// ungradeable. This says only that the loop ended for that reason; the detail is in
+    /// <see cref="TransportAttributes.Failure"/>.
+    /// </remarks>
+    public const string ParticipantFailed = "participantFailed";
 
     /// <summary>
     /// The exchange did not complete successfully, so there was no sound basis for another turn.

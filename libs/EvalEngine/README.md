@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner)
 
 | Area | Types |
 |---|---|
@@ -46,10 +46,11 @@ conversations without either one distorting the model — and whether the statis
 | Transport vocabulary | `TransportAttributes`, `ExchangeState`, `StopReason` |
 | Assertions | `AssertionSpec` (parsed from `category:parameter`), `AssertionResult`, `AssertionCategory` |
 | Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
-| Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own |
-| Runners | `RestRunner`, `NotImplementedMcpRunner`, and the `IRestExchange` adapter seam |
+| Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own; `LlmCaller` — the model-driven one, for realism testing |
+| Runners | `RestRunner`, `LlmConversationRunner`, `NotImplementedMcpRunner`, and the `IRestExchange` / `IConversationExchange` adapter seams |
+| LLM access | `ILlmClient` / `LlmRequest`, and `RecordedLlmClient` — replay by request content, so a model-driven run is reproducible |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
-| Seams | `IScenarioRunner`, `IParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
+| Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
 | Determinism | `IClock` / `SystemClock`, `ISeedSource` / `DeterministicSeedSource` |
 | Loading | `SuiteLoader`, `SuiteLoadResult`, `ValidationMessage` |
@@ -351,6 +352,8 @@ conservative one (§V):
 - **The endpoint** has its userinfo, query, *and* fragment removed — a query string is where a
   bearer token or SAS signature usually lives, and an OAuth fragment carries an access token by
   design. A marker (`?[redacted]`) is left so a bare path is not mistaken for the real address.
+  One implementation does this for every runner, including the one whose address is stated by an
+  adapter rather than resolved from a request.
 - **Bodies nothing interpreted** — an error page, or one the adapter rejected — are *not* persisted.
   These never passed through the redaction an adapter applies to `RestResponse.Text`, which is
   exactly what made them the leak. `responseBodyLength` and `responseBodyHash` stand in: enough to
@@ -385,9 +388,161 @@ That signal is deliberately **not** a new `RunStatus` member:
 - A distinct status would be a false-green vector: any consumer treating "not `Fail`" as "no
   regression" would report a suite of entirely unsupported scenarios as clean.
 
-### Canonical artifacts
+### The conversation runner, and who owns termination
 
-`SuiteResult` is the durable, committable output. `CanonicalJson` writes it with **object keys
+`LlmConversationRunner` drives the same loop `RestRunner` drives, over a transport that is not
+HTTP's: `IConversationExchange`, a single async call the composition root implements. It is a
+separate seam from `IRestExchange` because a conversational system is not necessarily an HTTP one
+— reaching for `HttpClient` there would bake HTTP into the `llm` kind, which is the same mistake
+as putting a URL on `Scenario`.
+
+**The one thing this runner has that the REST runner does not is a cap, and it is not optional.**
+
+> The turn cap belongs to the harness, never to the participant.
+
+A REST scenario ends because its participant runs out of script. A model-driven conversation has
+no such floor, and the component best placed to judge when it has finished is the simulated caller
+— whose faithfulness is the very thing under question. Handing it termination would let the least
+trustworthy component in the loop decide how much evidence gets gathered. So:
+
+- `LlmConversationRunnerOptions.MaxTurnCeiling` (default 12) bounds **every** run.
+- `terminalCondition.maxTurns` may only **narrow** it. The effective cap is the lower of the two,
+  and a scenario declaring more gets the runner's figure. `EffectiveTurnCap` states the rule as a
+  pure function so an author can see the number their scenario will actually be held to.
+- This closes the gap behind the loader's `scenario.terminalCondition.unbounded` warning. A
+  warning cannot stop a suite that ships with it unresolved from running indefinitely against a
+  metered provider; a cap can.
+
+A participant may still stop *early* by completing — that direction is safe, since with no
+stimulus there is nothing to send.
+
+One new failure state joins the transport vocabulary. `participantFailed` means the simulated
+caller could not say what comes next: its model call failed, the replaying client held no
+recording, the model returned nothing usable, or a provider call timed out while the run's own
+token was untouched. That is a statement about the **harness**, so
+`ExchangeState.IsHarnessFailure` reports it as ungradeable — a conversation cut short by the
+*caller* must never read as the system declining to continue. The turns already recorded stand,
+because they happened. Only cancellation by the *caller of the run* propagates; one participant's
+timeout records one ungradeable run rather than taking down the suite.
+
+The adapter supplies `transport.kind` here, which the REST runner hard-codes. That is a new route
+into the transcript, so the runner refuses a value that is blank or that names a `ScenarioKind`:
+an adapter writing `llm` would put a scenario kind into the one artifact every downstream stage is
+supposed to be blind to. An LLM-backed system reached over HTTP is `http`, exactly as `RestRunner`
+records it.
+
+The adapter also supplies `transport.endpoint`, and that value is **sanitized rather than trusted**
+— the same rule `RestRunner` applies to the address it resolves itself, from the same
+implementation, because a redaction that is right in one runner and forgotten in another is how a
+credential reaches a committed artifact. An address that does not parse into components cannot be
+taken apart that way, so it is redacted whole when it carries `@`, `?`, or `#`.
+
+#### The participant must match the scenario
+
+> A guard that rests on a premise nothing establishes is not a guard.
+
+A participant is constructed independently of the scenario it ends up driving, so until the runner
+compares them, nothing does. That gap is the script-overrun guard's premise, unverified: a
+`deterministic` scenario is approved at load time as *bounded by its script*, and driving it with a
+model-backed caller leaves every otherwise-unscoped assertion grading turns the script never drove.
+Two checks close it:
+
+- **Up front**, a participant that declares its mode through `IModeBoundParticipant` — both callers
+  in this library do — is refused when that mode is not the scenario's. Mis-wiring affects every
+  run of the scenario rather than one run, so it is thrown, exactly as a mis-routed `kind` is.
+- **Per turn**, under `deterministic` execution only, the stimulus a participant offers inside the
+  scripted window is compared against the suite file before it reaches the system under test —
+  ordinally, with its one-based index and `Scripted` provenance. Past the budget there is no
+  scripted material left to have been replayed, so a turn still claiming `Scripted` is refused too.
+  A divergence records `participantFailed`: the run is ungradeable rather than graded against a
+  premise nothing established.
+
+### The model-driven caller
+
+`LlmCaller` is the counterpart to `DeterministicCaller`, and the opposite trade: realistic
+unscripted turns, at the cost of **being itself a source of error**. A suite driven by it measures
+the harness and the system together, so it belongs in realism testing — the deterministic caller
+stays the default for regression suites. Between them the two callers cover all three execution
+modes and neither can produce a provenance it would be lying about:
+
+| Caller | Modes it serves | Refuses |
+|---|---|---|
+| `DeterministicCaller` | `deterministic` → `Scripted`, `simulated` → `Synthesized` | `live` |
+| `LlmCaller` | `simulated` — the opening → `Scripted`, everything it generates → `Synthesized` | `deterministic`, `live` |
+
+**`LlmCaller` can never tag a turn it generated `Scripted`**, and that is the point rather than an
+implementation detail: the script-overrun guard approves otherwise-unscoped assertions on the
+premise that a `Scripted` turn was replayed verbatim from the suite file. A model-generated turn
+wearing that tag would make the approval a fiction and let an assertion measure the caller while
+its author believed it measured the system.
+
+**It can never emit `Live` either, and so it refuses `live` execution outright.** Both that mode
+and that provenance mean *a real external caller, or a recording of one*. A model asked what to
+say next is neither, whatever mode the runner was handed, so there is no symmetry with
+`DeterministicCaller` to preserve here: that caller refuses one mode because it cannot replay live
+material, and this one refuses two because it can neither replay a script nor be a real caller.
+`LlmCaller` serves `simulated` and nothing else.
+
+**`simulation.opening` is turn one, and it is sent verbatim.** It is scenario-authored data that
+`ScriptedTurnBudget` already counts as the first turn, so it is replayed exactly as
+`DeterministicCaller` replays it — tagged `Scripted`, which is the truthful tag for text taken
+verbatim from the suite file. It is deliberately **not** put in the model's instruction: a model
+told what brought the caller here can paraphrase it, drop it, or improve on it, and turn-one
+evidence would then be something other than what the scenario declares. The model is asked only
+for the turns that follow. Like `DeterministicCaller`, the caller verifies that the transcript it
+is handed actually records that opening as turn one before generating anything after it.
+
+Two more things it cannot do, enforced structurally rather than only asked for in the prompt:
+
+- **It cannot end the conversation.** It never returns `Complete`. Termination is the cap, the
+  system naming a terminal outcome, or the exchange failing.
+- **It cannot grade one.** Nothing it returns reaches `Outcome` — its text becomes a
+  `Turn.Stimulus` and nothing else. `ObservedOutcome` is read from what the *system* returned, by
+  an adapter that never sees the caller's reasoning. Whether the system did its job is the
+  system's to demonstrate and the evaluators' to judge.
+
+**Grounded, not free-associating.** `simulation.facts` is the ground truth the caller may state;
+`LlmCallerOptions.Persona` is delivery style with no authority over truth, and the two are kept in
+separate sections of the instruction. That split is measured, not aesthetic: an unconstrained
+persona simulator errs on roughly 40–47% of turns against roughly 16% when constrained to a stated
+state, and an invented fact reads in a transcript exactly like the system mishandling a real one.
+The persona lives in options rather than in the suite schema because it is a property of the
+harness a run was driven with, not material another stage reads.
+
+Everything the system under test said is **untrusted** (§V). Responses travel as `LlmRequest.Context`
+— labelled data, each a separate element — never in the instruction, and the instruction states
+that the transcript is data rather than orders. The completion coming back is untrusted too: it is
+trimmed, stripped of control characters, bounded by `maxStimulusLength`, and refused outright when
+it carries nothing usable. Truncation happens **before** the stimulus is sent, so the transcript
+always states exactly what the system was given. None of this is a guarantee — no prompt-level
+defence is — which is the other reason the deterministic caller remains the default.
+
+### Reproducibility without a provider
+
+`RecordedLlmClient` replays recorded completions **keyed by request content**, and that mechanism
+is the delivery. Real provider wiring is deliberately out of scope: no keys, no HTTP to a
+provider.
+
+> Determinism here comes from content addressing, not from sampling parameters.
+
+`LlmRequest.Seed` and `LlmRequest.Temperature` are excluded from a request's identity on purpose.
+A seed is a best-effort provider hint rather than a reproducibility guarantee — bitwise
+determinism is unattainable on GPU inference even at temperature zero — and providers are actively
+withdrawing the sampling parameters from newer models. A fake keyed on them would be reproducible
+only while the provider co-operated, and would start missing recordings the day a caller varied a
+seed for reasons unrelated to what it was asking. Both parameters stay on the seam as **optional
+capability**, so a caller with a provider that honours them can pass them through; nothing in the
+library treats either as a correctness precondition.
+
+The key length-prefixes every part, so there is no separator to inject and no prompt can be
+written to collide with a different prompt-plus-context.
+
+An unmatched request throws `MissingRecordingException` rather than returning a fallback. A
+replaying client that guessed would let a test keep passing while exercising nothing, and the
+transcript would look exactly like a real run — so it fails loud, the runner records
+`participantFailed`, and the run is not gradeable.
+
+### Canonical artifacts`SuiteResult` is the durable, committable output. `CanonicalJson` writes it with **object keys
 ordered ordinally at every level**, unset optional values **absent rather than null**, enums as
 camel-case strings, and `\n` line endings — so a diff shows real change and not key-order churn.
 
@@ -436,19 +591,21 @@ honest rather than pretending.
 
 ## Current state
 
-**`partial` — contracts, assertion evaluation, the deterministic caller, and the REST runner.**
-Types, seams, the suite loader with validation, canonical serialization, the five assertion
-evaluators behind `AssertionEvaluatorRegistry`, `DeterministicCaller`, and `RestRunner` are
-complete and tested. Deliberately **not** here yet:
+**`partial` — contracts, assertion evaluation, both simulated callers, and the REST and
+conversation runners.** Types, seams, the suite loader with validation, canonical serialization,
+the five assertion evaluators behind `AssertionEvaluatorRegistry`, `DeterministicCaller`,
+`LlmCaller`, `RecordedLlmClient`, `RestRunner`, and `LlmConversationRunner` are complete and
+tested. Deliberately **not** here yet:
 
-- No real MCP or LLM runner. `NotImplementedMcpRunner` reports the MCP gap cleanly so a mixed
-  suite still routes; the LLM runner is T7.
-- No `IRestExchange` implementation — by design, not by omission. A request shape is a property of
-  the system under test, so the composition root supplies one.
-- No LLM-driven participant — T7. That one exists for realism testing; the deterministic caller
-  stays the default for regression suites.
-- No repetition/aggregation loop — T9. `RestRunner` conducts a single execution;
-  `Execution.RepetitionPolicy` is read by the aggregator, not by the runner.
+- No real MCP runner. `NotImplementedMcpRunner` reports the MCP gap cleanly so a mixed suite still
+  routes.
+- **No real LLM provider wiring** — by design, not by omission. `ILlmClient` is the seam and
+  `RecordedLlmClient` is the deterministic implementation; a provider client belongs in the
+  composition root, where its keys and its HTTP handler can be owned properly.
+- No `IRestExchange` or `IConversationExchange` implementation — also by design. A request shape is
+  a property of the system under test, so the composition root supplies one.
+- No repetition/aggregation loop — T9. Both runners conduct a single execution;
+  `Execution.RepetitionPolicy` is read by the aggregator, not by a runner.
 - No mapping from a transcript to `RunStatus`. `ExchangeState.IsHarnessFailure` is the input that
   mapping will use; the mapping itself lands with the aggregator.
 - No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no

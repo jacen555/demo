@@ -77,6 +77,32 @@ public interface IParticipant
 }
 
 /// <summary>
+/// A participant that states the <see cref="ExecutionMode"/> it was built to serve, so a runner
+/// can refuse one that does not match the scenario it is about to drive.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A participant is constructed independently of the scenario it ends up driving, and until the
+/// runner can compare the two, nothing does. That gap is not cosmetic: the suite loader approves
+/// otherwise-unscoped assertions on the premise that a <see cref="ExecutionMode.Deterministic"/>
+/// scenario is bounded by its script, and a model-backed caller handed that scenario makes the
+/// approval a fiction — every such assertion then grades turns the script never drove.
+/// </para>
+/// <para>
+/// Separate from <see cref="IParticipant"/> rather than a member of it, because the check is a
+/// property of the participants this library ships and of any participant that chooses to be
+/// checkable — not a burden every adapter must carry. A participant that does not implement this
+/// is still checked turn by turn against the scenario's scripted prefix; declaring the mode only
+/// moves the refusal earlier, before a stimulus reaches the system under test.
+/// </para>
+/// </remarks>
+public interface IModeBoundParticipant : IParticipant
+{
+    /// <summary>Gets the execution mode this participant produces stimuli for.</summary>
+    ExecutionMode Mode { get; }
+}
+
+/// <summary>
 /// What a runner needs beyond the scenario itself.
 /// </summary>
 public sealed record RunContext
