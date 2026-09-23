@@ -1,0 +1,184 @@
+{
+  "experiment": "e4-speed",
+  "question": "Can N frames be emitted per action, and what is the cleanest authoring model?",
+  "model": {
+    "authoringUnit": "milliseconds per step",
+    "executionUnit": "frame-indexed plan walked by the capture loop",
+    "rationale": "ms matches the audio timing solve (S4), so a step duration can be derived from a narration segment length directly; frames are derived, so render fps is a render knob, not a script rewrite."
+  },
+  "fpsIndependence": {
+    "authoredDurationMs": 7500,
+    "matrix": [
+      {
+        "fps": 24,
+        "frames": 180,
+        "durationMs": 7500,
+        "driftMs": 0,
+        "naiveRoundingFrames": 181,
+        "naiveRoundingDriftMs": 42
+      },
+      {
+        "fps": 25,
+        "frames": 188,
+        "durationMs": 7520,
+        "driftMs": 20,
+        "naiveRoundingFrames": 191,
+        "naiveRoundingDriftMs": 140
+      },
+      {
+        "fps": 30,
+        "frames": 225,
+        "durationMs": 7500,
+        "driftMs": 0,
+        "naiveRoundingFrames": 225,
+        "naiveRoundingDriftMs": 0
+      },
+      {
+        "fps": 60,
+        "frames": 450,
+        "durationMs": 7500,
+        "driftMs": 0,
+        "naiveRoundingFrames": 450,
+        "naiveRoundingDriftMs": 0
+      }
+    ],
+    "durationStableAcrossFps": true,
+    "worstDriftMs": 20,
+    "worstNaiveDriftMs": 140,
+    "frameCountsScale": "24fps=180f 25fps=188f 30fps=225f 60fps=450f",
+    "note": "Boundary rounding keeps total drift under one frame at every fps. Rounding each step independently drifts up to 140 ms, which would desynchronise narration."
+  },
+  "perStepBudgets": {
+    "steps": [
+      {
+        "label": "establish the UI",
+        "kind": "settle",
+        "authoredMs": 400,
+        "frames": 12,
+        "expectedFrames": 12
+      },
+      {
+        "label": "travel to Service",
+        "kind": "move",
+        "authoredMs": 500,
+        "frames": 15,
+        "expectedFrames": 15
+      },
+      {
+        "label": "focus Service",
+        "kind": "click",
+        "authoredMs": 200,
+        "frames": 6,
+        "expectedFrames": 6
+      },
+      {
+        "label": "skim-type service",
+        "kind": "type",
+        "authoredMs": 600,
+        "frames": 18,
+        "expectedFrames": 18
+      },
+      {
+        "label": "travel to Tag",
+        "kind": "move",
+        "authoredMs": 300,
+        "frames": 9,
+        "expectedFrames": 9
+      },
+      {
+        "label": "focus Tag",
+        "kind": "click",
+        "authoredMs": 200,
+        "frames": 6,
+        "expectedFrames": 6
+      },
+      {
+        "label": "skim-type tag",
+        "kind": "type",
+        "authoredMs": 500,
+        "frames": 15,
+        "expectedFrames": 15
+      },
+      {
+        "label": "travel to Environment",
+        "kind": "move",
+        "authoredMs": 300,
+        "frames": 9,
+        "expectedFrames": 9
+      },
+      {
+        "label": "choose staging",
+        "kind": "select",
+        "authoredMs": 300,
+        "frames": 9,
+        "expectedFrames": 9
+      },
+      {
+        "label": "travel to the hint",
+        "kind": "move",
+        "authoredMs": 300,
+        "frames": 9,
+        "expectedFrames": 9
+      },
+      {
+        "label": "reveal the tooltip",
+        "kind": "hover",
+        "authoredMs": 500,
+        "frames": 15,
+        "expectedFrames": 15
+      },
+      {
+        "label": "travel to Deploy",
+        "kind": "move",
+        "authoredMs": 400,
+        "frames": 12,
+        "expectedFrames": 12
+      },
+      {
+        "label": "press Deploy (long hold)",
+        "kind": "click",
+        "authoredMs": 400,
+        "frames": 12,
+        "expectedFrames": 12
+      },
+      {
+        "label": "watch the rollout animate",
+        "kind": "settle",
+        "authoredMs": 1200,
+        "frames": 36,
+        "expectedFrames": 36
+      },
+      {
+        "label": "watch it land",
+        "kind": "settle",
+        "authoredMs": 1400,
+        "frames": 42,
+        "expectedFrames": 42
+      }
+    ],
+    "allExact": true
+  },
+  "speedKnob": {
+    "fast": {
+      "authoredMs": 800,
+      "frames": 24,
+      "wallClockMs": 922,
+      "distinctFrames": 20
+    },
+    "slow": {
+      "authoredMs": 2200,
+      "frames": 66,
+      "wallClockMs": 2298,
+      "distinctFrames": 53
+    },
+    "framesScaledWithDuration": true,
+    "slowVariantDedupPercent": 20,
+    "fastVariantDedupPercent": 17
+  },
+  "verdict": {
+    "framesPerActionControllable": true,
+    "fpsIndependent": true,
+    "recommendedModel": "duration-per-step (ms) authored; frame-indexed plan executed",
+    "holdingCreatesDedupableFrames": true
+  }
+}

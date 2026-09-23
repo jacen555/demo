@@ -70,3 +70,4 @@ observations. No hand-waving.>
 |---|---|---|---|
 | [0001](0001-multi-agent-orchestration-for-a-workshop-repo.md) | Tier multi-agent rigor by repository location | Accepted | 2026-09-15 |
 | [0002](0002-admit-nodejs-for-ecosystem-bound-tooling.md) | Admit Node.js for ecosystem-bound tooling | Accepted | 2026-09-15 |
+| [0003](0003-drive-real-uis-with-scripted-playwright-frame-capture.md) | Drive real UIs with scripted Playwright frame capture | Accepted | 2026-09-23 |

@@ -198,3 +198,33 @@ domains:
     status: active
     notes: ''
 
+  - id: playwright-ui-capture
+    kind: spike
+    language: node
+    path: spike/playwright-ui-capture
+    source: spike/playwright-ui-capture/src
+    tests: none
+    project: spike/playwright-ui-capture/package.json
+    build: npm --prefix spike/playwright-ui-capture run build
+    test_cmd: none
+    tier: 0
+    builder: researcher
+    reviewer: none
+    checklist: none
+    question: >
+      Can Playwright drive a real web UI while capturing deterministic, frame-accurate
+      output suitable for the existing SizzleCraft video pipeline — including a visible
+      synthetic cursor, per-segment speed control, and zoom?
+    status: answered
+    notes: >
+      Resolved the design fork between Playwright recordVideo (Option A) and scripted
+      interaction + per-frame capture with page.clock pinning (Option B). Answer: Option B
+      — recordVideo is structurally disqualified (fps hardcoded to 25, frames bucketed by
+      compositor wall-clock, >=1s wall-clock tail). See
+      docs/adr/0003-drive-real-uis-with-scripted-playwright-frame-capture.md.
+      Disposition: graduate into tools/SizzleCraft (sizzlecraft, tier 2) as a SIBLING
+      capture path — must be rewritten under tier-2 gates, not moved (constitution §XI).
+      Retain until that task lands: this is the executable reference for the three
+      determinism controls. Excluded from Forge.sln; nothing outside spike/ references it.
+      `build` is a syntax gate (node --check over src), not a compile step.
+

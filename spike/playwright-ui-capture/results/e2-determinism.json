@@ -1,0 +1,180 @@
+{
+  "experiment": "e2-determinism",
+  "question": "Does page.clock stay pinned while Playwright actions run, giving reproducible frame-accurate output?",
+  "fps": 30,
+  "scriptSteps": 15,
+  "rasterArgs": [
+    "--disable-partial-raster",
+    "--disable-checker-imaging",
+    "--disable-image-animation-resync",
+    "--force-color-profile=srgb",
+    "--hide-scrollbars",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows"
+  ],
+  "arms": [
+    {
+      "arm": "naive",
+      "useClock": false,
+      "freezeAnimations": false,
+      "runs": 2,
+      "frames": 225,
+      "logical": {
+        "allIdentical": false,
+        "identicalFrames": 0,
+        "divergentFrames": 225,
+        "firstDivergentFrame": 0,
+        "example": {
+          "frame": 0,
+          "runA": "t=1790187944853;perf=148;status=status idle|Idle;clock=18:25:44.819;bar=0%;service=|focus=false;tag=|focus=false;env=dev|focus=false;rows=3;tipVisible=hidden;cursor=40.00,40.00,0.000",
+          "runB": "t=1790187963230;perf=136;status=status idle|Idle;clock=18:26:03.204;bar=0%;service=|focus=false;tag=|focus=false;env=dev|focus=false;rows=3;tipVisible=hidden;cursor=40.00,40.00,0.000"
+        }
+      },
+      "raster": {
+        "allIdentical": false,
+        "identicalFrames": 0,
+        "firstDivergentFrame": 0,
+        "noise": {
+          "divergentFrames": 225,
+          "sampled": 40,
+          "worstChannelDelta": 216,
+          "worstDifferingPercent": 0.0487,
+          "meanRmse": 1.2033,
+          "withinOneLsb": false
+        }
+      },
+      "frameCountStable": true,
+      "frameCounts": [
+        225,
+        225
+      ],
+      "dedup": {
+        "total": 225,
+        "distinct": 225,
+        "consecutiveDuplicates": 0,
+        "dedupPercent": 0
+      },
+      "wallClockMs": {
+        "runs": [
+          17881,
+          17823
+        ],
+        "min": 17823,
+        "max": 17881,
+        "mean": 17852,
+        "spreadMs": 58
+      },
+      "actionsDispatched": 7
+    },
+    {
+      "arm": "clockOnly",
+      "useClock": true,
+      "freezeAnimations": false,
+      "runs": 2,
+      "frames": 225,
+      "logical": {
+        "allIdentical": true,
+        "identicalFrames": 225,
+        "divergentFrames": 0,
+        "firstDivergentFrame": -1,
+        "example": null
+      },
+      "raster": {
+        "allIdentical": false,
+        "identicalFrames": 161,
+        "firstDivergentFrame": 147,
+        "noise": {
+          "divergentFrames": 64,
+          "sampled": 40,
+          "worstChannelDelta": 186,
+          "worstDifferingPercent": 0.0194,
+          "meanRmse": 0.2034,
+          "withinOneLsb": false
+        }
+      },
+      "frameCountStable": true,
+      "frameCounts": [
+        225,
+        225
+      ],
+      "dedup": {
+        "total": 225,
+        "distinct": 196,
+        "consecutiveDuplicates": 29,
+        "dedupPercent": 13
+      },
+      "wallClockMs": {
+        "runs": [
+          7894,
+          7971
+        ],
+        "min": 7894,
+        "max": 7971,
+        "mean": 7933,
+        "spreadMs": 77
+      },
+      "actionsDispatched": 7
+    },
+    {
+      "arm": "full",
+      "useClock": true,
+      "freezeAnimations": true,
+      "runs": 3,
+      "frames": 225,
+      "logical": {
+        "allIdentical": true,
+        "identicalFrames": 225,
+        "divergentFrames": 0,
+        "firstDivergentFrame": -1,
+        "example": null
+      },
+      "raster": {
+        "allIdentical": true,
+        "identicalFrames": 225,
+        "firstDivergentFrame": -1,
+        "noise": {
+          "divergentFrames": 0,
+          "sampled": 0,
+          "worstChannelDelta": 0,
+          "worstDifferingPercent": 0,
+          "meanRmse": 0,
+          "withinOneLsb": true
+        }
+      },
+      "frameCountStable": true,
+      "frameCounts": [
+        225,
+        225,
+        225
+      ],
+      "dedup": {
+        "total": 225,
+        "distinct": 196,
+        "consecutiveDuplicates": 29,
+        "dedupPercent": 13
+      },
+      "wallClockMs": {
+        "runs": [
+          7902,
+          7863,
+          7932
+        ],
+        "min": 7863,
+        "max": 7932,
+        "mean": 7899,
+        "spreadMs": 69
+      },
+      "actionsDispatched": 7
+    }
+  ],
+  "verdict": {
+    "logicallyDeterministic": true,
+    "clockSurvivesActions": true,
+    "frameCountStable": true,
+    "controlsAreLoadBearing": true,
+    "cssAnimationNeedsSeparateFreeze": true,
+    "rasterBitExact": true,
+    "rasterNoiseWithinOneLsb": true,
+    "summary": "225/225 frames logically identical across 3 runs. Raster bytes differ on 0 frames, worst case 0/255 on 0% of pixels."
+  }
+}

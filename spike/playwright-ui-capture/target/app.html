@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Forge Deploy Console — spike target</title>
+<style>
+  /* Deterministic-by-construction styling: no web fonts (network), no system-dependent
+     font stack beyond a fixed family list, no randomised colours. */
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --line: #26304a; --ink: #e6ecf7;
+    --muted: #8a97b1; --accent: #4f8cff; --ok: #35c28a; --warn: #f0a33a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", Arial, sans-serif; font-size: 15px;
+  }
+  #app { display: grid; grid-template-rows: 56px 1fr; height: 100%; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 0 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .brand { font-weight: 600; letter-spacing: .2px; }
+  .brand span { color: var(--accent); }
+  /* Live wall-clock readout — the determinism canary. */
+  #clock { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums;
+           font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+
+  main { display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
+  .pane { padding: 20px; min-width: 0; }
+  .pane + .pane { border-left: 1px solid var(--line); }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 5px; }
+  .field { margin-bottom: 14px; }
+  input[type=text], select {
+    width: 100%; padding: 9px 11px; border-radius: 6px; font: inherit;
+    background: #101725; color: var(--ink); border: 1px solid var(--line); outline: none;
+  }
+  input[type=text]:focus, select:focus { border-color: var(--accent); }
+
+  button {
+    padding: 9px 16px; border-radius: 6px; border: 1px solid transparent; font: inherit;
+    font-weight: 600; background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: transparent; border-color: var(--line); color: var(--ink); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  /* Hover-reveal target: proves a hover action is observable in a screenshot. */
+  .hint { position: relative; display: inline-block; margin-left: 10px;
+          color: var(--muted); border-bottom: 1px dotted var(--muted); cursor: help; }
+  .hint .tip {
+    visibility: hidden; position: absolute; left: 0; top: 140%; width: 230px; z-index: 5;
+    background: #0b101b; border: 1px solid var(--line); border-radius: 6px;
+    padding: 9px 11px; font-size: 12px; color: var(--ink); line-height: 1.45;
+  }
+  .hint:hover .tip { visibility: visible; }
+
+  /* CSS keyframe animation — runs off the compositor clock, not JS. */
+  .spinner {
+    width: 15px; height: 15px; border-radius: 50%; display: inline-block;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin 900ms linear infinite; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .status { display: flex; align-items: center; gap: 9px; margin-top: 16px;
+            font-size: 13px; min-height: 22px; }
+  .status.idle   { color: var(--muted); }
+  .status.saving { color: var(--warn); }
+  .status.done   { color: var(--ok); }
+
+  /* rAF-driven progress bar. */
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 12px; }
+  .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  /* Small dense text — the zoom-legibility subject (E5). */
+  td { font-size: 12px; font-family: Consolas, "Courier New", monospace; }
+  td.sha { color: var(--muted); }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #14314a; color: #7fc0ff; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">forge<span>/</span>deploy</div>
+    <div id="clock">--:--:--.---</div>
+  </header>
+
+  <main>
+    <section class="pane">
+      <h2>Release</h2>
+
+      <div class="field">
+        <label for="service">Service</label>
+        <input id="service" type="text" placeholder="service name" autocomplete="off" />
+      </div>
+
+      <div class="field">
+        <label for="tag">Image tag</label>
+        <input id="tag" type="text" placeholder="v0.0.0" autocomplete="off" />
+      </div>
+
+      <div class="field">
+        <label for="env">Environment</label>
+        <select id="env">
+          <option value="dev">dev</option>
+          <option value="staging">staging</option>
+          <option value="prod">prod</option>
+        </select>
+      </div>
+
+      <button id="deploy">Deploy</button>
+      <span class="hint" id="hint">what happens?
+        <span class="tip">Rolls the selected tag onto the environment one replica at a time, pausing on a failed health check.</span>
+      </span>
+
+      <div class="status idle" id="status"><span>Idle</span></div>
+      <div class="bar"><i id="bar"></i></div>
+    </section>
+
+    <section class="pane">
+      <h2>Recent activity</h2>
+      <table>
+        <thead><tr><th>When</th><th>Service</th><th>Tag</th><th>Commit</th><th>State</th></tr></thead>
+        <tbody id="log">
+          <tr><td>08:14:02</td><td>ledger</td><td>v1.4.2</td><td class="sha">9f3c1ab</td><td><span class="pill">healthy</span></td></tr>
+          <tr><td>08:02:41</td><td>gateway</td><td>v2.0.7</td><td class="sha">c81de04</td><td><span class="pill">healthy</span></td></tr>
+          <tr><td>07:55:19</td><td>eval-engine</td><td>v0.9.1</td><td class="sha">44a7be9</td><td><span class="pill">healthy</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script>
+  'use strict';
+
+  // --- Determinism canary 1: a live wall-clock readout on a timer. ------------
+  const clockEl = document.getElementById('clock');
+  function paintClock() {
+    const d = new Date();
+    const p = (n, w) => String(n).padStart(w, '0');
+    clockEl.textContent =
+      `${p(d.getUTCHours(), 2)}:${p(d.getUTCMinutes(), 2)}:${p(d.getUTCSeconds(), 2)}.${p(d.getUTCMilliseconds(), 3)}`;
+  }
+  paintClock();
+  setInterval(paintClock, 50);
+
+  // --- Determinism canary 2: a rAF loop reading performance.now(). -----------
+  const barEl = document.getElementById('bar');
+  const statusEl = document.getElementById('status');
+  let runStart = null;
+  const RUN_MS = 2400;
+
+  function frame() {
+    if (runStart !== null) {
+      const pct = Math.min(100, ((performance.now() - runStart) / RUN_MS) * 100);
+      barEl.style.width = pct.toFixed(2) + '%';
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // --- Determinism canary 3: a setTimeout state machine. ---------------------
+  const deployBtn = document.getElementById('deploy');
+  const serviceEl = document.getElementById('service');
+  const tagEl = document.getElementById('tag');
+  const envEl = document.getElementById('env');
+
+  function setStatus(cls, html) {
+    statusEl.className = 'status ' + cls;
+    statusEl.innerHTML = html;
+  }
+
+  deployBtn.addEventListener('click', () => {
+    // Recorded so E3 can prove whether an overlay stole the click.
+    window.__clicks = (window.__clicks || 0) + 1;
+    deployBtn.disabled = true;
+    runStart = performance.now();
+    setStatus('saving', '<span class="spinner"></span><span>Rolling out&hellip;</span>');
+
+    setTimeout(() => {
+      setStatus('done', '<span>&#10003;</span><span>Deployed to ' + envEl.value + '</span>');
+      barEl.style.width = '100%';
+      const row = document.createElement('tr');
+      // textContent-only cell construction: no innerHTML from input values, so a
+      // typed string can never be parsed as markup (constitution SS V — validate and
+      // encode at boundaries, even in a spike).
+      const cells = [
+        clockEl.textContent.slice(0, 8),
+        serviceEl.value || 'unnamed',
+        tagEl.value || 'v0.0.0',
+        '7c0ffee',
+      ];
+      for (const [i, text] of cells.entries()) {
+        const td = document.createElement('td');
+        if (i === 3) td.className = 'sha';
+        td.textContent = text;
+        row.appendChild(td);
+      }
+      const stateTd = document.createElement('td');
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = 'healthy';
+      stateTd.appendChild(pill);
+      row.appendChild(stateTd);
+      document.getElementById('log').prepend(row);
+      deployBtn.disabled = false;
+      runStart = null;
+    }, RUN_MS);
+  });
+
+  // Signals the capture loop can await instead of sleeping on wall-clock.
+  window.__appReady = true;
+</script>
+</body>
+</html>

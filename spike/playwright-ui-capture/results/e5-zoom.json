@@ -1,0 +1,95 @@
+{
+  "experiment": "e5-zoom",
+  "zoom": 2.5,
+  "focus": {
+    "x": 660,
+    "y": 165
+  },
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "region": {
+    "x": 396,
+    "y": 99,
+    "width": 512,
+    "height": 288
+  },
+  "groundTruth": {
+    "source": "deviceScaleFactor=2.5 clipped render",
+    "width": 1280,
+    "height": 720,
+    "meanGradient": 2.661
+  },
+  "method1CssTransform": {
+    "vsGroundTruth": {
+      "comparable": true,
+      "width": 1280,
+      "height": 720,
+      "pixels": 921600,
+      "differingPixels": 13457,
+      "differingPercent": 1.4602,
+      "maxChannelDelta": 216,
+      "rmse": 5.8882
+    },
+    "acutance": 2.661,
+    "clickWorksUnderZoom": true,
+    "clickError": null,
+    "clickedPointUnderZoom": {
+      "zoomedBoxWidth": 205.7,
+      "unzoomedBoxWidth": 82.3,
+      "scaleObserved": 2.5
+    },
+    "offscreenTargetClickable": false,
+    "file": "results/zoom/method1-css-transform.png"
+  },
+  "method2CropAndScale": {
+    "vsGroundTruth": {
+      "comparable": true,
+      "width": 1280,
+      "height": 720,
+      "pixels": 921600,
+      "differingPixels": 43751,
+      "differingPercent": 4.7473,
+      "maxChannelDelta": 209,
+      "rmse": 7.8073
+    },
+    "acutance": 2.0591,
+    "sourcePixelsAvailable": 147456,
+    "outputPixels": 921600,
+    "pixelDeficitFactor": 6.25,
+    "file": "results/zoom/method2-crop-and-scale.png"
+  },
+  "ramp": {
+    "steps": 12,
+    "scales": [
+      1,
+      1.0045,
+      1.0361,
+      1.1217,
+      1.2885,
+      1.5635,
+      1.9365,
+      2.2115,
+      2.3783,
+      2.4639,
+      2.4955,
+      2.5
+    ],
+    "distinctFrames": 12,
+    "deterministic": true,
+    "easing": "easeInOutCubic applied to the scale factor"
+  },
+  "verdict": {
+    "winner": "css-transform",
+    "rmseCss": 5.8882,
+    "rmseCrop": 7.8073,
+    "acutanceGroundTruth": 2.661,
+    "acutanceCss": 2.661,
+    "acutanceCrop": 2.0591,
+    "cssPreservesHitTesting": true,
+    "zoomCanHideTargets": true,
+    "acutanceLossCropPercent": 22.6,
+    "rampSmoothAndDeterministic": true
+  }
+}
