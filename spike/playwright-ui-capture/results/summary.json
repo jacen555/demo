@@ -1,0 +1,70 @@
+{
+  "generatedBy": "npm run experiments",
+  "experiments": [
+    {
+      "id": "e1",
+      "name": "recordVideo (Option A)",
+      "seconds": 4,
+      "verdict": {
+        "deterministic": false,
+        "frameAccurate": false,
+        "honoursPipelineFps": false,
+        "summary": "Non-deterministic: identical scripted input produced different artifacts."
+      }
+    },
+    {
+      "id": "e2",
+      "name": "determinism (Option B)",
+      "seconds": 82.7,
+      "verdict": {
+        "logicallyDeterministic": true,
+        "clockSurvivesActions": true,
+        "frameCountStable": true,
+        "controlsAreLoadBearing": true,
+        "cssAnimationNeedsSeparateFreeze": true,
+        "rasterBitExact": true,
+        "rasterNoiseWithinOneLsb": true,
+        "summary": "225/225 frames logically identical across 3 runs. Raster bytes differ on 0 frames, worst case 0/255 on 0% of pixels."
+      }
+    },
+    {
+      "id": "e3",
+      "name": "synthetic cursor",
+      "seconds": 3.7,
+      "verdict": {
+        "coordinatesPredictable": true,
+        "cursorVisibleInCapture": true,
+        "pointerEventsNoneRequired": true,
+        "clickAffordanceIsProgressDriven": true
+      }
+    },
+    {
+      "id": "e4",
+      "name": "speed control",
+      "seconds": 3.8,
+      "verdict": {
+        "framesPerActionControllable": true,
+        "fpsIndependent": true,
+        "recommendedModel": "duration-per-step (ms) authored; frame-indexed plan executed",
+        "holdingCreatesDedupableFrames": true
+      }
+    },
+    {
+      "id": "e5",
+      "name": "zoom",
+      "seconds": 3.3,
+      "verdict": {
+        "winner": "css-transform",
+        "rmseCss": 5.8882,
+        "rmseCrop": 7.8073,
+        "acutanceGroundTruth": 2.661,
+        "acutanceCss": 2.661,
+        "acutanceCrop": 2.0591,
+        "cssPreservesHitTesting": true,
+        "zoomCanHideTargets": true,
+        "acutanceLossCropPercent": 22.6,
+        "rampSmoothAndDeterministic": true
+      }
+    }
+  ]
+}

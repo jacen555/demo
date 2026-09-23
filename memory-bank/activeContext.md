@@ -1,71 +1,94 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-23
 
 ## Current focus
 
-**Bootstrapping the repository.** The multi-agent orchestration, constitution, domain
-registry, checklists, prompts, and .NET baseline have just been established. No application
-code exists yet.
+**Building the generic evaluation harness** (`libs/EvalEngine` + `tools/EvalCli`), generalized
+from a domain-specific harness in another repo. Running through the multi-agent loop:
+planner → builder → cross-family reviewer → iterate.
 
-## What just happened
+## Where the harness stands
 
-The repo was empty. It now has:
+| Task | State | Tests |
+|---|---|---|
+| T0–T2 scaffold, model pins, CSharpier | done | — |
+| T3 contracts, seams, canonical serialization | done | 309 |
+| T4 assertion evaluators | done | 553 |
+| T5 deterministic caller | done | 597 |
+| T6 REST runner + MCP stub | done | 694 |
+| T7 LLM runner, caller, `ILlmClient` seam | done | 824 |
+| **T8 coordinator + `Ui` kind stub** | **in flight** | — |
+| T9–T15 | not started | — |
 
-- **Constitution** (`.github/instructions/constitution.instructions.md`) — §I–§XI, with
-  rigor tiers keyed to location as the central idea.
-- **Domain registry** (`.github/domains.yaml`) — authoritative paths, tiers, build/test
-  commands, and model pins. Currently holds **zero domains**.
-- **Agent roster** (`.github/agents/`) — orchestrator (`forge-team`), planner, three
-  parameterized builder/reviewer pairs (`app`, `service`, `tooling`), and a `researcher`.
-- **Design checklists** (`.github/checklists/`) — one per kind.
-- **Spec Kit prompt chain** (`.github/prompts/`) — specify → plan → tasks → implement, plus
-  analyze.
-- **`scaffold-domain` skill** (`.github/skills/scaffold-domain/`) — the only supported way
-  to add and register a domain. **Verified end to end** across lib, spike, script, and tool
-  kinds, including `-WithAgents`; three real bugs were found and fixed in the process (see
-  `progress.md`).
-- **Two workflow modes** — multi-agent (`forge-team`) and single-agent
-  (`.github/instructions/single-agent-workflow.instructions.md`).
-- **.NET baseline** — `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`,
-  `.csharpierrc.json`, `global.json`, `.gitignore`, `Forge.sln`.
+Remaining: aggregator + statistics seam (T9), comparator + baseline providers (T10),
+impacted-selection matcher (T11), CLI skeleton/wiring/artifacts (T12–T14), the two reports
+(T15), ADR (T16), memory-bank update (T17).
 
-Key decisions are recorded in `docs/adr/0001-multi-agent-orchestration-for-a-workshop-repo.md`.
+## The design idea everything rests on
 
-## Immediate next step
+**Every runner produces the same kind-agnostic `Transcript` + `Outcome`.** Everything
+downstream — assertions, aggregation, comparison, reporting — operates only on those two
+types. REST-once is the degenerate one-turn case of the same pipeline, not a separate code
+path; a conversation loop is an emergent composition of a multi-turn participant and a
+terminal condition. `KindAgnosticismGuardTests` enforces it.
 
-**Add the first domain**, then take it through the full agent loop. `scaffold-domain` is
-proven; the plan → build → review loop is not — no domain has yet been built by
-`forge-team` with a real builder and an independent reviewer.
+Core vocabulary is `stimulus` / `response` / `turn` / `terminalCondition` — never
+`question` / `answer`. If interview-loop vocabulary reaches the core types, the "generic"
+engine has quietly encoded one domain's assumptions.
 
-```powershell
-.\.github\skills\scaffold-domain\scripts\New-ForgeDomain.ps1 -Id <id> -Kind <kind> -Name <Name> -WhatIf
-```
+## The recurring defect this project keeps producing
 
-Then drop `-WhatIf`, fill in the domain README, and update `progress.md`.
+The cross-family reviewer has caught **the same false-green class at seven successive
+layers**. Every instance is *evidence from one context graded as though it came from
+another*:
 
-## Open questions
+1. T3 — the overrun guard fired only when an author *declared* a turn dependency
+2. T4 — the evaluator then ignored that declared scope
+3. T5 — the caller derived its position from an unverified transcript
+4. T6 — a stale outcome survived into a failed final turn
+5. T6 — stale transport attributes survived an omitted key
+6. T6 — a broken *adapter* was graded as a broken *system*
+7. T7 — the participant was never checked against the scenario's execution mode
+8. T7 — the model could rewrite the scenario's authored opening
 
-- **First domain?** Unchosen. A `libs/` domain would exercise the Tier 1 path (mandatory
-  failing-test-first, downstream-impact reporting); an `apps/` domain would exercise Tier 2
-  and the desktop checklist.
-- **WinUI 3 vs WPF for desktop work?** The scaffold defaults to `wpf` because it ships with
-  the base SDK. WinUI 3 needs a template pack and can be passed via `-Template`. Worth a
-  `researcher` spike + ADR before the first real desktop app, rather than defaulting by
-  accident.
-- **PSScriptAnalyzer is not installed** on this machine. The constitution requires zero
-  Error-severity findings for `scripts/**` (§IV), so install it before the first script
-  domain: `Install-Module PSScriptAnalyzer -Scope CurrentUser`.
-- **CSharpier is not yet installed** as a local tool. `dotnet csharpier` is the formatting
-  authority (§IV) — wire it up (and optionally a pre-commit hook) before the first C#
-  domain lands.
+The UI spike hit the same class independently: its determinism control passed when it
+should have failed, because a silently-discarded `page.evaluate` string made every check
+vacuous — and a wrong conclusion had already been written before the tell was noticed.
+
+**This is structural, not incidental.** Keep the cross-family reviewer on every remaining
+task, and design each new layer against cross-context bleed rather than waiting for review
+to find it.
+
+## Open decisions
+
+- **`TurnDependency` is a ceiling, not an exact turn** (turns with index ≤ T). Reasoning is
+  sound — `SuiteValidator` documents an undeclared turn as "the last turn the run could
+  reach", which only coheres under a ceiling reading — but T8+ build on it. Worth
+  confirming.
+- **`Ui` as a fourth scenario kind.** Being added as a not-implemented stub in T8, mirroring
+  the MCP stub. Driven by Cortex adding UI interaction to its own eval loop. ADR 0003 proved
+  deterministic scripted capture is achievable; the real runner is a later task.
+
+## Known open work
+
+- **`SuiteLoader` path confinement** — accepted as a separate task, not fixed. Unix symlink
+  following, a validate-then-open race, a volume-root separator bug. Fix before the harness
+  loads a suite file an untrusted party can write.
+- **`RestRunner` has no `try`/`catch` around `Participant.NextAsync`**, so a participant
+  failure there takes down the suite — the asymmetry T7 fixed on the LLM side.
+- **The scripted-prefix check is wired into the conversation runner only.**
+- **`playwright-ui-capture` spike is `answered` but not graduated** — debt under §XI until
+  the sibling capture script is built in `tools/SizzleCraft` under Tier 2 gates.
 
 ## Watch out for
 
-- **The registry is the single point of truth.** If a domain folder ever exists without a
-  registry row, every builder targeting it will correctly refuse to work. Always scaffold
-  through the skill.
-- **Tier is not negotiable after the fact.** Choosing `spike/` for something that will be
-  depended on skips every gate that matters (§II). Choose the root deliberately.
-- **Builders must not touch `memory-bank/`.** This file and `progress.md` are owned by the
-  orchestrator or the single-agent coordinator (§IX).
+- **Builders misreport their own model.** Several reported `claude-opus-4.5`, which is not an
+  available model here. The dispatch is correct (`read_agent` confirms `model: claude-opus-5`);
+  models are simply unreliable at self-identification. Independence has held throughout —
+  Anthropic builder, OpenAI reviewer.
+- **Push is blocked from this environment.** The linked account is an Enterprise Managed User
+  with read-only access to `jacen555/demo`; forking is blocked by enterprise policy. The user
+  pushes manually.
+- **`Directory.Packages.props` is orchestrator-owned** — builders must stop and report rather
+  than adding a package.

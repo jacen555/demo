@@ -77,6 +77,29 @@ public sealed record ScenarioResult
     public required RepetitionPolicy RepetitionPolicyUsed { get; init; }
 
     /// <summary>
+    /// Gets the <see cref="Scenarios.ScenarioFingerprint"/> of the definition these runs were
+    /// produced from, or <see langword="null"/> when the artifact's writer recorded none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The id is a join key; this is the evidence that two artifacts mean the same thing by it.
+    /// Without it, a suite author can edit <see cref="Scenarios.Grading.ExpectedOutcome"/>, leave
+    /// the assertion spec untouched, and have an unchanged system response reported as a fix the
+    /// change earned.
+    /// </para>
+    /// <para>
+    /// Optional rather than required, because an artifact outlives the engine that wrote it and
+    /// one written before this field existed is still readable — an additive field that
+    /// serializes as absent does not bump
+    /// <see cref="SchemaVersions.SuiteResult"/>. A missing fingerprint is not treated as a
+    /// match: <see cref="Comparison.SuiteComparator"/> reports the scenario
+    /// <see cref="Comparison.ScenarioClassification.NotComparable"/>, which is the safe
+    /// direction.
+    /// </para>
+    /// </remarks>
+    public string? DefinitionFingerprint { get; init; }
+
+    /// <summary>
     /// Gets the scenario's slicing dimensions, copied in so the artifact can be sliced on its own.
     /// </summary>
     public IReadOnlyDictionary<string, string> Tags { get; init; } =

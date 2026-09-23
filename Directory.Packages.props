@@ -28,6 +28,11 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+    <!--
+      Abstractions-only, for libs/** that must satisfy the no-silent-hard-failure rule
+      (constitution SS IV) without dragging a logging implementation into a library.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.0" />
   </ItemGroup>
 

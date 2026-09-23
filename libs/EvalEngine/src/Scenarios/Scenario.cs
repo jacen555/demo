@@ -22,6 +22,27 @@ public enum ScenarioKind
 
     /// <summary>A multi-turn exchange with a language-model-backed system.</summary>
     Llm,
+
+    /// <summary>
+    /// A scripted interaction with a real user interface, driven through a browser.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>No runner in this build conducts one.</b>
+    /// <see cref="Runners.NotImplementedUiRunner"/> reports the gap cleanly so that a mixed suite
+    /// still routes, and so that a real runner can be registered later without reshaping anything
+    /// around it.
+    /// </para>
+    /// <para>
+    /// The kind needs no new transcript shape, which is the point of admitting it now rather than
+    /// alongside its implementation. A UI turn's stimulus is an <i>action</i> — click this, fill
+    /// that — and its response is the page state the action produced. Structurally that is the
+    /// same <see cref="Transcripts.Turn"/> a request and a reply are: something sent, something
+    /// observed back. Nothing downstream of
+    /// <see cref="Abstractions.IScenarioRunner"/> has to learn a new vocabulary for it.
+    /// </para>
+    /// </remarks>
+    Ui,
 }
 
 /// <summary>

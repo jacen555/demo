@@ -1,0 +1,79 @@
+{
+  "experiment": "e3-cursor",
+  "coordinatePrediction": {
+    "targets": [
+      {
+        "selector": "#service",
+        "predicted": {
+          "x": 170,
+          "y": 148
+        },
+        "actual": {
+          "x": 170,
+          "y": 148,
+          "targetId": "service"
+        },
+        "deltaPx": 0
+      },
+      {
+        "selector": "#tag",
+        "predicted": {
+          "x": 170,
+          "y": 223
+        },
+        "actual": {
+          "x": 170,
+          "y": 223,
+          "targetId": "tag"
+        },
+        "deltaPx": 0
+      },
+      {
+        "selector": "#deploy",
+        "predicted": {
+          "x": 61.14,
+          "y": 354
+        },
+        "actual": {
+          "x": 61,
+          "y": 354,
+          "targetId": "deploy"
+        },
+        "deltaPx": 0.14
+      }
+    ],
+    "worstDeltaPx": 0.14,
+    "predictable": true
+  },
+  "visibility": {
+    "cursorPixelsDrawn": 882,
+    "differingPercent": 0.0957,
+    "maxChannelDelta": 239,
+    "visibleInScreenshot": true,
+    "sample": "results/cursor/with-cursor.png"
+  },
+  "hitTesting": {
+    "variants": [
+      {
+        "pointerEvents": "none",
+        "clickSucceeded": true,
+        "handlerRuns": 1,
+        "error": null
+      },
+      {
+        "pointerEvents": "auto",
+        "clickSucceeded": false,
+        "handlerRuns": 0,
+        "error": "page.click: Timeout 2500ms exceeded."
+      }
+    ],
+    "pointerEventsNoneRequired": true,
+    "conclusion": "pointer-events:none is REQUIRED — with 'auto' the overlay intercepts the click and the app never sees it."
+  },
+  "verdict": {
+    "coordinatesPredictable": true,
+    "cursorVisibleInCapture": true,
+    "pointerEventsNoneRequired": true,
+    "clickAffordanceIsProgressDriven": true
+  }
+}

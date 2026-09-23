@@ -1,0 +1,56 @@
+{
+  "probe": "capture-cost",
+  "cores": 16,
+  "fps": 30,
+  "rows": [
+    {
+      "resolution": "1280x720",
+      "frames": 30,
+      "repeats": 3,
+      "msPerFrame": [
+        37.8,
+        34.4,
+        35.3
+      ],
+      "meanMsPerFrame": 35.8,
+      "minMsPerFrame": 34.4,
+      "maxMsPerFrame": 37.8,
+      "spreadMsPerFrame": 3.4
+    },
+    {
+      "resolution": "1920x1080",
+      "frames": 30,
+      "repeats": 3,
+      "msPerFrame": [
+        54.1,
+        54.3,
+        55.7
+      ],
+      "meanMsPerFrame": 54.7,
+      "minMsPerFrame": 54.1,
+      "maxMsPerFrame": 55.7,
+      "spreadMsPerFrame": 1.6
+    },
+    {
+      "resolution": "3840x2160",
+      "frames": 30,
+      "repeats": 3,
+      "msPerFrame": [
+        157.1,
+        158.1,
+        158.7
+      ],
+      "meanMsPerFrame": 158,
+      "minMsPerFrame": 157.1,
+      "maxMsPerFrame": 158.7,
+      "spreadMsPerFrame": 1.6
+    }
+  ],
+  "interpretation": {
+    "drivenCaptureIsSequential": "A driven UI is a stateful sequence — frame N depends on frames 0..N-1 — so the worker slicing in frame-capture.mjs (which relies on every frame being a pure function of masterTimeline.seek(t)) cannot be applied to a driven segment.",
+    "generatedWorkersAt4k": 6,
+    "drivenWorkers": 1,
+    "drivenSecondsPerSecondOfVideo4k": 4.7,
+    "note": "Driven segments cost roughly 6x more wall-clock per frame than generated ones at 4K, purely from lost parallelism. Budget driven segments as a minority of total runtime, or capture them at a lower resolution and upscale at encode."
+  }
+}

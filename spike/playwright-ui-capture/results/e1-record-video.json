@@ -1,0 +1,45 @@
+{
+  "experiment": "e1-record-video",
+  "question": "Does recordVideo produce deterministic, frame-accurate, pipeline-usable output?",
+  "sourceEvidence": {
+    "file": "playwright-core/src/server/videoRecorder.ts (bundled in lib/coreBundle.js)",
+    "findings": [
+      "fps is a module-level constant `var fps = 25` — recordVideo exposes no fps option.",
+      "onFrame timestamps come from `frame.frameSwapWallTime` — compositor WALL-CLOCK, not page.clock virtual time.",
+      "frameNumber = Math.floor((timestamp - firstFrameTimestamp) * fps): frames are bucketed by real arrival time; two frames landing in one 40 ms bucket means the earlier one is DISCARDED.",
+      "Frames are only produced when the compositor swaps — a static page emits nothing, so frame count tracks visual change AND machine load.",
+      "Encoder args are fixed: -c:v vp8 -b:v 1M -crf 8 -qmin 0 -qmax 50 -deadline realtime -speed 8 -threads 1 (lossy, speed-optimised, ~1 Mbps).",
+      "_stop() pads the tail using monotonicTime() with Math.max(addTime, 1) — at least 1 s of wall-clock-dependent tail is always appended."
+    ]
+  },
+  "measured": {
+    "runs": [
+      {
+        "bytes": 149565,
+        "sha256": "793acdcabc5c897e",
+        "codedFrames": 58,
+        "scriptWallMs": 1307
+      },
+      {
+        "bytes": 78164,
+        "sha256": "97ec1b30e616eb0f",
+        "codedFrames": 57,
+        "scriptWallMs": 1319
+      }
+    ],
+    "bytesIdentical": false,
+    "sha256Identical": false,
+    "frameCountIdentical": false,
+    "frameCountDelta": 1,
+    "decodedFramesIdentical": false,
+    "nominalFps": 25,
+    "pipelineFps": 30,
+    "fpsConfigurable": false
+  },
+  "verdict": {
+    "deterministic": false,
+    "frameAccurate": false,
+    "honoursPipelineFps": false,
+    "summary": "Non-deterministic: identical scripted input produced different artifacts."
+  }
+}

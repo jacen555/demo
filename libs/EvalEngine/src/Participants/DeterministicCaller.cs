@@ -38,7 +38,7 @@ namespace Forge.EvalEngine.Participants;
 /// its author believed it measured the system.
 /// </para>
 /// </remarks>
-public sealed class DeterministicCaller : IParticipant
+public sealed class DeterministicCaller : IModeBoundParticipant
 {
     private readonly ExecutionMode _mode;
     private readonly string[] _script;
@@ -92,6 +92,15 @@ public sealed class DeterministicCaller : IParticipant
         _pool = simulation.StimulusPool.Where(entry => !string.IsNullOrWhiteSpace(entry)).ToArray();
         _poolTokens = _pool.Select(Tokenize).ToArray();
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The mode this caller was constructed for. Stated rather than inferred so a runner can
+    /// refuse it before it drives a scenario declaring another mode — a deterministic scenario is
+    /// approved by the suite loader as bounded by its script, and a caller that falls through to
+    /// the pool instead would leave that approval resting on nothing.
+    /// </remarks>
+    public ExecutionMode Mode => _mode;
 
     /// <summary>
     /// Supplies the next stimulus: the scripted line for this turn, a pool entry chosen by token

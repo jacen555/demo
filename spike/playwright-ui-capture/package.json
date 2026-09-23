@@ -1,0 +1,17 @@
+{
+  "name": "@forge/spike-playwright-ui-capture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tier-0 spike: can Playwright drive a real web UI while capturing deterministic, frame-accurate output for the SizzleCraft pipeline?",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node --check src/timeline.mjs && node --check src/cursor.mjs && node --check src/driver.mjs && node --check src/lib/frames.mjs && node --check src/lib/pixels.mjs && node --check src/lib/ffmpeg.mjs && node --check src/e1-record-video.mjs && node --check src/e2-determinism.mjs && node --check src/e3-cursor.mjs && node --check src/e4-speed.mjs && node --check src/e5-zoom.mjs && node --check src/run-experiments.mjs && node --check src/diagnose-divergence.mjs && node --check src/probe-raster-flags.mjs && node --check src/probe-capture-cost.mjs",
+    "experiments": "node src/run-experiments.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

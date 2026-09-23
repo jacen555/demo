@@ -31,11 +31,9 @@ Add a row whenever `scaffold-domain` creates a domain. Cross-check this table ag
 
 ## Spike ledger
 
-_No spikes yet._
-
 | Spike | Question | Status | Disposition | ADR |
 |---|---|---|---|---|
-| _(none)_ | | | | |
+| `playwright-ui-capture` | Can Playwright drive a real web UI while capturing deterministic, frame-accurate output suitable for the SizzleCraft pipeline — with a synthetic cursor, speed control, and zoom? | `answered` | **graduate** → `tools/SizzleCraft` (Tier 2), rewritten under the gates the spike skipped | [0003](../docs/adr/0003-drive-real-uis-with-scripted-playwright-frame-capture.md) |
 
 **A spike with `status: answered` that has neither graduated nor retired is debt**
 (Constitution §XI). Surface it here and in planning, don't let it accumulate quietly.

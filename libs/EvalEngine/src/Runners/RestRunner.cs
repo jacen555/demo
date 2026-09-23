@@ -56,9 +56,6 @@ namespace Forge.EvalEngine.Runners;
 /// </remarks>
 public sealed class RestRunner : IScenarioRunner
 {
-    private const string RedactedQuery = "?[redacted]";
-    private const string RedactedFragment = "#[redacted]";
-
     private readonly HttpClient _client;
     private readonly IRestExchange _exchange;
     private readonly IClock _clock;
@@ -447,40 +444,13 @@ public sealed class RestRunner : IScenarioRunner
         };
 
     /// <summary>
-    /// Strips credentials from the recorded address. The endpoint travels into a committed
-    /// artifact, so every part of a URI that can carry one is removed: the userinfo segment, the
-    /// query, and the fragment (§V).
+    /// Strips credentials from the recorded address.
     /// </summary>
     /// <remarks>
-    /// A query string is where a bearer token, a SAS signature, or an API key most often lives,
-    /// and an OAuth fragment carries an access token by design — so neither survives. A marker is
-    /// left in place of what was dropped, because silently recording a bare path would claim an
-    /// address the run never used, and would make two runs that differed only by query string
-    /// look identical.
+    /// Delegated to <see cref="RunnerSupport.SanitizeEndpoint(Uri?)"/> rather than implemented
+    /// here, so that this runner and <see cref="LlmConversationRunner"/> cannot disagree about
+    /// what a committed transcript may carry. Getting a redaction right in one runner and wrong
+    /// in another is how a library like this rots.
     /// </remarks>
-    private static string? Sanitize(Uri? uri)
-    {
-        if (uri is null)
-        {
-            return null;
-        }
-
-        var hasQuery = !string.IsNullOrEmpty(uri.Query);
-        var hasFragment = !string.IsNullOrEmpty(uri.Fragment);
-
-        if (!hasQuery && !hasFragment && string.IsNullOrEmpty(uri.UserInfo))
-        {
-            return uri.ToString();
-        }
-
-        var address = new UriBuilder(uri)
-        {
-            UserName = string.Empty,
-            Password = string.Empty,
-            Query = string.Empty,
-            Fragment = string.Empty,
-        }.Uri.ToString();
-
-        return address + (hasQuery ? RedactedQuery : string.Empty) + (hasFragment ? RedactedFragment : string.Empty);
-    }
+    private static string? Sanitize(Uri? uri) => RunnerSupport.SanitizeEndpoint(uri);
 }
