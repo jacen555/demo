@@ -1,5 +1,4 @@
 <Project>
-
   <!--
     Forge — Central Package Management.
     Governed by .github/instructions/constitution.instructions.md §VII.
@@ -42,7 +41,5 @@
     Transitive packages pinned only to resolve a deprecation or vulnerability advisory.
     Add here with a one-line reason; remove once the direct dependency catches up.
   -->
-  <ItemGroup Label="Resolves conflicts">
-  </ItemGroup>
-
+  <ItemGroup Label="Resolves conflicts"></ItemGroup>
 </Project>

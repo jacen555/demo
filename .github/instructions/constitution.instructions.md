@@ -304,13 +304,15 @@ The orchestrator MUST dispatch builders and reviewers with **explicit model assi
 
 | Role | Model |
 |---|---|
-| All builders (`app-builder`, `service-builder`, `tooling-builder`, scaffolded pairs) | `claude-opus-4.8` |
-| All reviewers (`app-reviewer`, `service-reviewer`, `tooling-reviewer`, scaffolded pairs) | `gpt-5.6-sol` |
-| Planner (`forge-team.planner`) | `claude-opus-4.8` |
-| Researcher (`researcher`) | `claude-opus-4.8` |
+| All builders (`app-builder`, `service-builder`, `tooling-builder`, scaffolded pairs) | `claude-opus-5` |
+| All reviewers (`app-reviewer`, `service-reviewer`, `tooling-reviewer`, scaffolded pairs) | `gpt-6-sol` |
+| Planner (`forge-team.planner`) | `claude-opus-5` |
+| Researcher (`researcher`) | `claude-opus-5` |
 
 If either pinned model is unavailable, substitute the latest available model of the
 **same family** — never fall back to the other family, which would collapse independence.
+The two rows above MUST stay in different families; upgrading one requires upgrading the
+other within its own family, not converging them.
 
 Every builder report MUST include `BUILDER-MODEL: <model>`.
 Every reviewer report MUST include `REVIEWER-MODEL: <model>` and

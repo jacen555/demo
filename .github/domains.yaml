@@ -98,14 +98,15 @@ kinds:
 # Never rely on a default model; never run builder and reviewer in the same family.
 # ---------------------------------------------------------------------------
 models:
-  builder: claude-opus-4.8
-  reviewer: gpt-5.6-sol
-  planner: claude-opus-4.8
-  researcher: claude-opus-4.8
+  builder: claude-opus-5
+  reviewer: gpt-6-sol
+  planner: claude-opus-5
+  researcher: claude-opus-5
   # If a pinned model is unavailable, substitute the newest model of the SAME family.
+  # builder and reviewer MUST stay in different families (constitution SS VIII).
   families:
-    claude-opus-4.8: anthropic
-    gpt-5.6-sol: openai
+    claude-opus-5: anthropic
+    gpt-6-sol: openai
 
 # ---------------------------------------------------------------------------
 # Repo-wide commands.
@@ -168,5 +169,32 @@ domains:
     checklist: .github/checklists/tooling-design-checklist.md
     status: active
     notes: ''
-
+  - id: eval-engine
+    kind: lib
+    path: libs/EvalEngine
+    source: libs/EvalEngine/src
+    tests: libs/EvalEngine/tests
+    project: libs/EvalEngine/src/Forge.EvalEngine.csproj
+    build: dotnet build libs/EvalEngine/src/Forge.EvalEngine.csproj
+    test_cmd: dotnet test libs/EvalEngine/tests/Forge.EvalEngine.Tests.csproj
+    tier: 1
+    builder: service-builder
+    reviewer: service-reviewer
+    checklist: .github/checklists/service-design-checklist.md
+    status: active
+    notes: ''
+  - id: eval-cli
+    kind: tool
+    path: tools/EvalCli
+    source: tools/EvalCli/src
+    tests: tools/EvalCli/tests
+    project: tools/EvalCli/src/Forge.EvalCli.csproj
+    build: dotnet build tools/EvalCli/src/Forge.EvalCli.csproj
+    test_cmd: dotnet test tools/EvalCli/tests/Forge.EvalCli.Tests.csproj
+    tier: 2
+    builder: tooling-builder
+    reviewer: tooling-reviewer
+    checklist: .github/checklists/tooling-design-checklist.md
+    status: active
+    notes: ''
 

@@ -78,7 +78,7 @@ and pairs with a builder it did not write. Dispatch sub-agents with the `task` t
 ### Step 1 — Spec, Clarify & Plan
 
 - For anything beyond a one-file change, dispatch `forge-team.planner` (model
-  `claude-opus-4.8`). It produces a **lightweight spec**, runs a **clarify** pass (pausing
+  `claude-opus-5`). It produces a **lightweight spec**, runs a **clarify** pass (pausing
   to ask up to 3 targeted questions when a high-impact ambiguity exists), performs
   **design validation** against the constitution and the per-kind design checklists
   (`.github/checklists/<kind>-design-checklist.md`), and returns the ordered,
@@ -115,7 +115,7 @@ domains):
    - `PRE-EDIT-APPROVAL: yes` plus the approved plan summary
    - on re-runs, the reviewer's prior FINDINGS
 
-   **Pin the builder model explicitly**: `model: "claude-opus-4.8"` (Constitution §VIII).
+   **Pin the builder model explicitly**: `model: "claude-opus-5"` (Constitution §VIII).
    Wait for its structured report (CHANGED FILES / TIER / BUILD / TESTS / TEST-DECISION /
    TEST-FIRST-EVIDENCE / BUILDER-MODEL / CONSTITUTION-CHECK).
 
@@ -124,7 +124,7 @@ domains):
 
 3. **Review** (Tier 1 and 2) — dispatch the paired `*-reviewer` with the changed
    files/diff plus the builder's report. **Pin the reviewer model explicitly**:
-   `model: "gpt-5.6-sol"` — a different family from the builder. The reviewer verifies the
+   `model: "gpt-6-sol"` — a different family from the builder. The reviewer verifies the
    change against the constitution *and* the kind design checklist, checks
    `TEST-FIRST-EVIDENCE`, and verifies model independence (`INDEPENDENCE-CHECK`). Wait for
    `VERDICT: PASS | FAIL` + FINDINGS.
@@ -164,8 +164,8 @@ graph LR
   P --> S[spec + clarify + design validation]
   S -.blocking ambiguity.-> U
   S --> A[Pre-edit approval gate]
-  A -->|approved| B["*-builder (claude-opus-4.8)"]
-  B -->|build+tests pass| R["*-reviewer (gpt-5.6-sol)"]
+  A -->|approved| B["*-builder (claude-opus-5)"]
+  B -->|build+tests pass| R["*-reviewer (gpt-6-sol)"]
   B -.build/tests fail.-> B
   R -->|FAIL + findings| B
   R -->|PASS| D[Integrate & verify]
@@ -190,3 +190,4 @@ graph LR
 - Letting a domain builder edit `memory-bank/`, `.github/`, `docs/`, or root build files.
 - Marking a task done on a FAIL verdict or a red build/test.
 - Pushing or creating PRs/issues without explicit user request.
+

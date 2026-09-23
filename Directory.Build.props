@@ -1,5 +1,4 @@
 <Project>
-
   <!--
     Forge — repo-wide build defaults.
     Governed by .github/instructions/constitution.instructions.md §IV and §VII.
@@ -54,5 +53,4 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <AnalysisMode>Default</AnalysisMode>
   </PropertyGroup>
-
 </Project>
