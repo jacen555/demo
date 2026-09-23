@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller)
 
 | Area | Types |
 |---|---|
@@ -45,6 +45,7 @@ conversations without either one distorting the model — and whether the statis
 | Transcript model | `Transcript`, `Turn`, `TurnProvenance`, `Outcome`, `TransportMetadata` |
 | Assertions | `AssertionSpec` (parsed from `category:parameter`), `AssertionResult`, `AssertionCategory` |
 | Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
+| Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
 | Seams | `IScenarioRunner`, `IParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
@@ -217,6 +218,58 @@ The scripted turn budget counts only material that can actually drive a turn, so
 missing entry cannot widen it — and such an entry is refused at the loading boundary anyway,
 rather than being carried as a stimulus the participant could never send.
 
+### The deterministic caller
+
+`DeterministicCaller` is the harness's **primary variance-reduction mechanism**. It replays
+`scriptedStimuli` and — in `simulated` mode only — picks from `stimulusPool` by token overlap with
+the system's last response. It never asks a model what to say next, so:
+
+> **The only stochastic element in a run is the system under test.**
+
+A persona-driven model standing in for the caller is itself a source of error, so a suite driven
+by one measures the harness and the system together. This caller contributes none: re-running a
+scenario changes the result only if the system changed. That makes it the right default for a
+regression suite, and confines a model-driven caller to scenarios whose purpose is realism
+testing.
+
+**Two trade-offs worth knowing before you write a scenario:**
+
+1. **A synthesized caller can only ever stay ON topic.** It answers out of the scenario's own
+   material, so a whole class of bug — how the system copes with an irrelevant, adversarial, or
+   abruptly changed subject — is not merely untested but *inexpressible* by pool selection.
+   `scriptedStimuli` is the escape hatch: a line written there is replayed verbatim, however
+   off-topic, and is tagged `Scripted`.
+2. **Asserting on a turn after the script runs out measures the caller, not the system.** That is
+   what the script-overrun guard defends at load time and what assertion turn-scoping defends at
+   grading time. Both rely on this caller tagging provenance exactly, so turns
+   `1..scriptedTurnBudget` are `Scripted` and anything past them is `Synthesized`.
+
+What happens when the script runs out depends on the mode, and the difference is deliberate:
+
+| Mode | Past the script | Why |
+|---|---|---|
+| `deterministic` | Signals completion | `stopOnParticipantCompletion` bounds the run to `scriptedTurnBudget`, and the loader approves otherwise-unscoped assertions on the strength of it. A caller that kept talking would make that approval false. |
+| `simulated` | Falls through to `stimulusPool` | This is the mode the overrun guard deliberately does not police. |
+
+Because position is derived from the transcript rather than from mutable internal state, **the
+transcript is verified, not trusted**. Before selecting a turn the caller checks that the prefix
+it claims authorship of is the prefix it would have produced — the script's text compared
+ordinally, one-based turn indices, and `Scripted` provenance — and throws `ArgumentException` if
+it is not. Without that check, a two-turn script handed a transcript whose opening came from
+somewhere else would emit the *second* line, tag it `Scripted`, and complete, leaving the loader's
+approval of unscoped assertions resting on a premise nothing established. It refuses rather than
+completing because a corrupt transcript is a *harness* fault (`RunStatus.Error`), and completing
+would be indistinguishable from a clean end-of-script — a graded verdict about the system drawn
+from evidence its caller never produced. Turns past the scripted budget are deliberately not
+checked: nothing derives scope from them.
+
+Selection is stated rather than incidental, because a rule left implicit is a rule that drifts:
+entries already sent are excluded so the caller cannot loop, **ties are resolved by pool order**,
+a blank or absent response scores everything zero so the first unused entry is taken, and folding
+is invariant so a run cannot grade differently on a build agent than on a developer's box. When
+nothing is left the caller completes, and a REST scenario — an opening and nothing else — is the
+degenerate one-turn case of exactly this path.
+
 ### Canonical artifacts
 
 `SuiteResult` is the durable, committable output. `CanonicalJson` writes it with **object keys
@@ -268,11 +321,15 @@ honest rather than pretending.
 
 ## Current state
 
-**`partial` — contracts, plus assertion evaluation.** Types, seams, the suite loader with
-validation, canonical serialization, and the five assertion evaluators behind
-`AssertionEvaluatorRegistry` are complete and tested. Deliberately **not** here yet:
+**`partial` — contracts, assertion evaluation, and the deterministic caller.** Types, seams, the
+suite loader with validation, canonical serialization, the five assertion evaluators behind
+`AssertionEvaluatorRegistry`, and `DeterministicCaller` are complete and tested. Deliberately
+**not** here yet:
 
-- No `IScenarioRunner` implementations (REST, MCP, LLM) — T5 and later.
+- No `IScenarioRunner` implementations (REST, MCP, LLM) — T6 and later. `DeterministicCaller`
+  supplies stimuli, but nothing yet drives the turn loop that feeds it a transcript.
+- No LLM-driven participant — T7. That one exists for realism testing; the deterministic caller
+  stays the default for regression suites.
 - No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no
   implementations, and `StatisticalSummary.Interval` / `.Comparison` are never populated — T9.
 - No baseline **comparator** — T10. `baseline:*` assertions grade against the transcript handed to
