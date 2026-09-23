@@ -37,15 +37,17 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners)
 
 | Area | Types |
 |---|---|
 | Scenario model | `Scenario` composed of `ScenarioIdentity`, `Execution`, `Simulation`, `Grading`, `Selection`, `Slicing` |
 | Transcript model | `Transcript`, `Turn`, `TurnProvenance`, `Outcome`, `TransportMetadata` |
+| Transport vocabulary | `TransportAttributes`, `ExchangeState`, `StopReason` |
 | Assertions | `AssertionSpec` (parsed from `category:parameter`), `AssertionResult`, `AssertionCategory` |
 | Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
 | Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own |
+| Runners | `RestRunner`, `NotImplementedMcpRunner`, and the `IRestExchange` adapter seam |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
 | Seams | `IScenarioRunner`, `IParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
@@ -270,6 +272,119 @@ is invariant so a run cannot grade differently on a build agent than on a develo
 nothing is left the caller completes, and a REST scenario — an opening and nothing else — is the
 degenerate one-turn case of exactly this path.
 
+### The runners
+
+`IScenarioRunner` is **the entire extent of kind-specific behaviour in the engine**. A runner
+conducts exactly one execution and returns a `Transcript`; it does not decide how many repetitions
+to run (the aggregator's job) and it does not grade (the evaluators').
+
+`RestRunner` drives the same turn loop every runner drives. It asks the injected `IParticipant`
+for a stimulus, sends it over an **injected typed `HttpClient`** — it constructs nothing, so the
+composition root keeps control of handler lifetime — and repeats until the participant completes,
+the system reaches a terminal outcome, `maxTurns` is hit, or the exchange fails. A REST scenario
+takes one lap of that loop because its participant completes after the opening. **There is no
+one-turn branch**: the moment the runner can tell, so can everything downstream.
+
+A `Scenario` carries no URL, method, or payload shape, deliberately — it is the one record every
+kind travels through, and HTTP's vocabulary entering it is how a "generic" engine quietly encodes
+one transport's assumptions. That knowledge lives in `IRestExchange` instead, a two-method adapter
+that builds a request from a stimulus and interprets a reply. **The library ships no default
+implementation**, because a request shape and the extraction of an outcome, a route, and fields
+from a body are entirely properties of the system being evaluated; a "default" would be one
+system's JSON shape frozen into a generic library.
+
+A completed participant always ends the loop, whatever `terminalCondition.stopOnParticipantCompletion`
+says — with no stimulus there is nothing to send, and a runner that invented one would be measuring
+itself. That flag governs whether completion is a *declared* terminal condition, which is what the
+suite loader reads when it scopes an assertion.
+
+#### Expected failure is outcome data, never an exception
+
+A 429, a 4xx, a refusal, a body that will not parse — these are frequently the *point* of a
+scenario, so they are recorded as structured transport attributes an `expectedBehavior` assertion
+can pass on, rather than thrown. `TransportAttributes` names the keys once, so a suite file and a
+later stage cannot drift apart on a magic string:
+
+| `exchange` | Meaning | Harness failure? |
+|---|---|---|
+| `responded` | The system answered — 2xx, 4xx, and 5xx alike | no |
+| `malformedResponse` | It answered and the adapter **reported** it could not read the body, by throwing `MalformedResponseException` | no — the *system* misbehaved |
+| `adapterFailed` | The adapter threw something else, or returned nothing — it reached no verdict at all | yes — the *adapter* misbehaved |
+| `timedOut` | The request did not complete in time | yes |
+| `requestFailed` | The request never arrived | yes |
+| `notAttempted` | The participant completed before offering a stimulus | yes |
+| `unsupported` | This build cannot speak the declared transport | yes |
+
+`ExchangeState.IsHarnessFailure` answers the only question a later stage needs — "is a verdict from
+this run trustworthy?" — and **fails closed**: an absent or unrecognised state reports as a harness
+failure, because reading "I do not know what happened" as "nothing went wrong" is the shape of
+every false green this library guards against. `stoppedBy` answers the separate question of *why
+the loop ended*, which on a healthy run is not derivable from `exchange`.
+
+The `malformedResponse` / `adapterFailed` split is the same principle one layer down. An adapter
+that rejects a body has judged the *system* and the run stays gradeable. An adapter that fell over
+has judged nothing, so grading the run would let **a defective adapter manufacture a passing
+assertion about a system it never successfully read**.
+
+**The one failure that propagates is cancellation by the caller.** Returning a transcript for a run
+the caller abandoned would hand the aggregator a result nobody waited for. A non-success status
+ends the run instead of being interpreted — an error page is not the shape the adapter agreed to
+parse, and driving a further turn against a system that has already refused would produce stimuli
+that answer an error body, which measures the simulated caller rather than the system.
+
+Reserved keys are written **last**, so an adapter may add to the record of what happened on the
+wire but may not rewrite it.
+
+#### A transcript describes the turn the run ended on
+
+Run-level evidence — the outcome, the adapter's attributes, the observed status code — is reset at
+the start of every turn rather than merged across them. Without that, a run whose first turn
+succeeded and whose second returned a 500 would still carry the first turn's outcome, and
+`exactMatch:path` would pass while attributing a success to the failed final turn. The same applies
+to a key the final response omitted: it must not stay assertable from a response two turns back.
+
+#### What reaches a committed artifact
+
+A transcript is written to disk, diffed, and attached to pull requests, so the default is the
+conservative one (§V):
+
+- **The endpoint** has its userinfo, query, *and* fragment removed — a query string is where a
+  bearer token or SAS signature usually lives, and an OAuth fragment carries an access token by
+  design. A marker (`?[redacted]`) is left so a bare path is not mistaken for the real address.
+- **Bodies nothing interpreted** — an error page, or one the adapter rejected — are *not* persisted.
+  These never passed through the redaction an adapter applies to `RestResponse.Text`, which is
+  exactly what made them the leak. `responseBodyLength` and `responseBodyHash` stand in: enough to
+  tell two error bodies apart and to see one change, without committing the text.
+- **Exception messages** are not persisted either. A message is authored by whatever threw it and
+  routinely names the endpoint or connection string it failed on, so `failure` records what failed
+  and the type that reported it.
+
+`RestRunnerOptions { RetainUnredactedEvidence = true }` turns the first two back into verbatim
+capture for a system with no real credentials — a local fake, a throwaway environment. The endpoint
+stays redacted regardless.
+
+#### `NotImplementedMcpRunner`, and why "unsupported" is not a new `RunStatus`
+
+Real MCP transport is out of scope. A stub is still registered so that routing stays uniform —
+every kind has a runner, every runner returns a transcript, and one unsupported scenario cannot
+take down a mixed suite. It reports `exchange=unsupported` with a reason, observes nothing, never
+consults the participant, and does not throw.
+
+That signal is deliberately **not** a new `RunStatus` member:
+
+- `RunStatus` is a *grading verdict*; "this build cannot speak MCP" is a *capability* fact. A new
+  member would oblige aggregation, comparison, reporting, and the statistics each to grow a
+  branch — the `IScenarioRunner` rule that adding a kind must not require a change anywhere else,
+  violated for a gap instead of for a kind.
+- It is an enum serialized into the committed artifact, so every existing reader would meet a
+  member it does not know. That is a schema decision, not a runner's.
+- `RunStatus.Error` already fits. A transport the harness cannot speak *is* a harness failure;
+  what makes it feel different is that it is known rather than surprising, and "known" is what
+  `RunResult.ErrorDetail` is for. The status answers "can a verdict from this run be trusted?" —
+  no, either way — and the detail answers "why not".
+- A distinct status would be a false-green vector: any consumer treating "not `Fail`" as "no
+  regression" would report a suite of entirely unsupported scenarios as clean.
+
 ### Canonical artifacts
 
 `SuiteResult` is the durable, committable output. `CanonicalJson` writes it with **object keys
@@ -321,15 +436,21 @@ honest rather than pretending.
 
 ## Current state
 
-**`partial` — contracts, assertion evaluation, and the deterministic caller.** Types, seams, the
-suite loader with validation, canonical serialization, the five assertion evaluators behind
-`AssertionEvaluatorRegistry`, and `DeterministicCaller` are complete and tested. Deliberately
-**not** here yet:
+**`partial` — contracts, assertion evaluation, the deterministic caller, and the REST runner.**
+Types, seams, the suite loader with validation, canonical serialization, the five assertion
+evaluators behind `AssertionEvaluatorRegistry`, `DeterministicCaller`, and `RestRunner` are
+complete and tested. Deliberately **not** here yet:
 
-- No `IScenarioRunner` implementations (REST, MCP, LLM) — T6 and later. `DeterministicCaller`
-  supplies stimuli, but nothing yet drives the turn loop that feeds it a transcript.
+- No real MCP or LLM runner. `NotImplementedMcpRunner` reports the MCP gap cleanly so a mixed
+  suite still routes; the LLM runner is T7.
+- No `IRestExchange` implementation — by design, not by omission. A request shape is a property of
+  the system under test, so the composition root supplies one.
 - No LLM-driven participant — T7. That one exists for realism testing; the deterministic caller
   stays the default for regression suites.
+- No repetition/aggregation loop — T9. `RestRunner` conducts a single execution;
+  `Execution.RepetitionPolicy` is read by the aggregator, not by the runner.
+- No mapping from a transcript to `RunStatus`. `ExchangeState.IsHarnessFailure` is the input that
+  mapping will use; the mapping itself lands with the aggregator.
 - No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no
   implementations, and `StatisticalSummary.Interval` / `.Comparison` are never populated — T9.
 - No baseline **comparator** — T10. `baseline:*` assertions grade against the transcript handed to
