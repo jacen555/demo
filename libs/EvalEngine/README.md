@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator + T9 statistics)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator + T9 statistics + T10 comparator)
 
 | Area | Types |
 |---|---|
@@ -54,6 +54,8 @@ conversations without either one distorting the model — and whether the statis
 | Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IParticipantFactory`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
 | Statistics | `ScenarioAggregator`, `ProportionInterval` (Wilson, Agresti-Coull), `McNemarTest`, `PairedBootstrapTest`, `BenjaminiHochbergCorrection` |
+| Comparison | `SuiteComparator`, `ComparisonResult`, `ScenarioComparison`, `ScenarioClassification`, `ScenarioOutcome`, `ComparisonRefusedException` |
+| Baselines | `ArtifactBaseline` (committed file), `LiveEndpointBaseline` (deployed system) |
 | Determinism | `IClock` / `SystemClock`, `ISeedSource` / `DeterministicSeedSource` |
 | Loading | `SuiteLoader`, `SuiteLoadResult`, `ValidationMessage` |
 | Serialization | `CanonicalJson`, `SchemaVersions`, `SchemaVersionException` |
@@ -702,18 +704,213 @@ the artifact schema did not have to change for it.
 
 What is still not computed: `ComparisonSummary` is only produced by the significance tests when a
 caller supplies paired observations. `RunCoordinator` has no baseline to build them from, so
-`ScenarioResult.Summary.Comparison` stays unset until T10 — honest rather than pretending.
+`ScenarioResult.Summary.Comparison` stays unset — the comparison is produced by
+`SuiteComparator` from two artifacts rather than stamped into one of them.
+
+## Comparison (T10)
+
+`SuiteComparator` diffs two `SuiteResult`s into a `ComparisonResult`. It is **source-agnostic**:
+it neither knows nor cares whether an artifact came from a committed file or from a run against a
+deployed baseline, which is what lets `ArtifactBaseline` and `LiveEndpointBaseline` share it.
+
+### `newlyCovered` is the headline
+
+Each scenario is classified `fixed` · `regressed` · `stablePass` · `stableFail` · `new` ·
+`removed` · `notComparable`, and `ComparisonResult.NewlyCovered` is `fixed` plus `new`-and-passing.
+A harness that only reports what broke is a worse version of a test suite; the reason to run a
+suite against two variants is to show what a change **fixed**. A new scenario that fails, and a
+new scenario that produced no gradeable evidence, are both excluded — neither is coverage gained.
+
+Classification never depends on the statistics. It is a factual statement about what the two
+artifacts recorded, and it is produced whether or not a significance test was supplied.
+
+### The pairing is verified, not assumed
+
+A scenario id is a join key, and a join key is only worth what the claim that both sides mean the
+same thing by it is worth. Two artifacts can agree on every id and still describe different work.
+**Two artifacts are comparable when they agree on** the suite name, the root seed, and every entry
+of `EvaluationEnvironment.HarnessConfig`; anything else throws `ComparisonRefusedException`, which
+names the property that diverged. `Endpoint`, `BaselineRef`, and `Timestamp` are deliberately not
+compared — two variants at two addresses at two times is the case this stage exists for.
+
+**Two scenarios are comparable when they agree on** the kind, the **definition fingerprint** of
+what each was run from, the repetition policy used, the runs actually recorded under it, the set
+of assertions they were graded against, the seed of every repetition pairwise and in order, and
+both having produced at least one gradeable paired run. A scenario failing any of those is
+reported as `notComparable` with a stated reason, logged once, and excluded from `newlyCovered`
+and from the observations handed to the significance test — but it does not veto the rest of the
+suite.
+
+The seed check is the load-bearing one. `PairedObservation.Seed` exists precisely so a reader can
+confirm two runs were driven identically; comparing repetitions driven from different seeds
+attributes seed variation to the change under review.
+
+#### The definition fingerprint, and why the assertion specs are not enough
+
+`ScenarioFingerprint.Of` hashes a scenario's **execution inputs** (`Execution`, `Simulation`) and
+its **grading expectations** (`Grading`) into a `sha256:…` value that `RunCoordinator` stamps onto
+`ScenarioResult.DefinitionFingerprint`.
+
+This exists because an assertion spec names *what* is checked, never the value it is checked
+**against**. Keep `exactMatch:outcome`, edit `grading.expectedOutcome`, and an unchanged system
+response turns from a failure into a pass — the emitted specs are byte-identical on both sides, so
+a comparator that pairs on them alone reports `fixed` and puts the scenario in `newlyCovered`.
+That is the headline output of the harness fabricated by editing the expectation rather than
+changing the system. A differing fingerprint is `notComparable`, and so is a **missing** one:
+absent is not the same as matching, and an artifact that never said what it was run against cannot
+establish that both sides were run against the same thing.
+
+The field is optional and does not bump `SchemaVersions.SuiteResult` — an additive field that
+serializes as absent does not, per the version policy — because an artifact written before it
+existed is still readable and is refused for comparison rather than mis-compared.
+
+#### Outcomes come from every graded run, and a transition has to be paired
+
+What an artifact says about a scenario is a statement about **that artifact's own runs**, so it
+counts all of them. Deriving it from only the mutually gradeable repetitions discards graded
+evidence that contradicts the verdict: baseline `[Fail, Error]` against candidate `[Pass, Fail]`
+would report `fixed` with `candidateOutcome: passed` while the candidate's graded failure sat in
+plain sight. It is `stableFail`.
+
+Symmetrically, a `fixed` or `regressed` that **no repetition pair demonstrates** is
+`notComparable`. Baseline `[Fail, Pass]` against candidate `[Error, Pass]` has every graded
+candidate run passing and a graded baseline run failing, but the only evidence for the transition
+would be one variant's repetition read against the other's — which is not a matched pair. The
+stable classifications need no pair: they assert that nothing changed.
+
+`SuiteResult.SchemaVersion` is deliberately **not** among these checks. It is stamped rather than
+settable, so two instances cannot disagree on it — the guard that matters lives where an artifact
+is *read*, in `CanonicalJson.DeserializeSuiteResult`, which `ArtifactBaseline` goes through. A
+check here could never fail, and a check that cannot fail reads like protection that is not there.
+
+### The evidence is the runs, not the reported summary
+
+Classification and effect size are derived from `ScenarioResult.Runs`, not from
+`ScenarioResult.Summary`. A committed baseline is untrusted input (§V) and a summary is a derived
+claim about the runs, so a hand-edited point estimate cannot manufacture a fix or hide a
+regression. An undeclared `RunStatus` is refused rather than graded, exactly as
+`ScenarioAggregator` refuses one.
+
+Reading the runs only helps if the runs themselves are coherent, so each artifact is checked
+before either is indexed:
+
+- **A run's transcript must name its enclosing scenario.** Otherwise one scenario's evidence is
+  filed, and graded, under another's id — the same misattribution `RunCoordinator` refuses at
+  dispatch, reaching the comparator through a file instead of a runner.
+- **A `pass` must not sit beside a failed assertion verdict.** The verdicts are the evidence and
+  the status is a claim about them, so a run that contradicts itself cannot establish coverage.
+- **Repetition seeds must be distinct within a scenario.** A run is identified by its scenario and
+  its seed. Six repetitions from one seed are one observation recorded six times; paired against
+  six of the other verdict they read as six discordant pairs and return an exact p-value of
+  0.03125 — a significant finding manufactured from a single run. `RunCoordinator` establishes
+  this at plan time for artifacts it produces; the comparator establishes it for artifacts it did
+  not.
+
+### Two statistical levels, and why only one goes through the seam
+
+- **Suite-wide**, through the injected `ISignificanceTest`: one `PairedObservation` per comparable
+  scenario, which is exactly the cross-scenario shape `PairedObservations` was built for. It
+  carries no adjusted p-value, because one test is not a family.
+- **Per scenario**, from the exact conditional test on that scenario's discordant repetitions.
+  This does **not** go through `ISignificanceTest`: `PairedObservations` admits exactly one pair
+  per scenario, deliberately, so a family drawn from one scenario's repetitions is not expressible
+  through it — and synthesizing a composite identifier to get around that would be the precise
+  cross-context misattribution this stage exists to prevent. The arithmetic is `McNemarTest`'s own
+  exact branch (`SignTest`), not a second implementation. The exact test is used at every count
+  rather than only below `McNemarTest.ExactThreshold`, because a repetition count is small by
+  nature and the exact conditional test is valid at every size.
+
+`BenjaminiHochbergCorrection` is then applied across that per-scenario family, and each verdict is
+judged on the **adjusted** value — judging the raw one would make the correction decorative. Only
+scenarios that actually produced a p-value form the family: counting the ones that reported
+`notComputed` would inflate its size and weaken every real finding in it.
+
+#### Edge cases that would otherwise be silent
+
+- **No discordant repetitions.** The statistic is `0 / 0`, so the p-value is withheld and the
+  verdict is `notComputed`. The effect size, which really is zero, is still stated.
+- **A single discordant repetition.** The exact test reports `p = 1.0`: one flip is no evidence at
+  all. The classification still says `fixed` or `regressed`, because that is what happened — the
+  two answer different questions.
+- **A repetition that errored under either variant.** It produced no verdict about the change, so
+  it is conditioned out of the pair count rather than counted as a failure. `GradedPairs` reports
+  what survived, and both pass rates are drawn from the same repetitions so the delta stays a
+  paired quantity.
+- **Non-binary pass rates with McNemar.** A scenario passing three of four repetitions has a
+  statistic of 0.75, and `McNemarTest` refuses it rather than returning a number that does not
+  mean what it says. The comparator propagates that refusal instead of binarising. Use
+  `PairedBootstrapTest`, which is why `PairedObservation` carries a `double`.
+- **Nothing comparable at all.** The suite delta is `null` and the fact is logged, rather than a
+  zero standing in for a figure nobody computed.
+
+### Baseline providers
+
+Both implement `IBaselineProvider` and both yield a `SuiteResult`, so one comparator serves both.
+
+- **`ArtifactBaseline`** reads a committed artifact from a confined root, for evaluations with
+  nothing to deploy. The reference is untrusted: it is refused on the text alone if it reads
+  outside the root, then resolved through `RealPath` — following links at every segment, with the
+  boundary handed in — and checked again. That is the same pair of checks, through the same
+  implementation, that `SuiteLoader` applies, because a containment rule implemented twice is a
+  containment rule that will eventually disagree with itself. Oversized artifacts are refused
+  against the file length **before** anything is allocated. Existence is asked through
+  `File.GetAttributes` rather than `FileInfo.Exists`, which answers "is there a readable file
+  here" and returns `false` for three different reasons — absent, a directory, or metadata that
+  could not be inspected. Only the first is "no baseline".
+- **`LiveEndpointBaseline`** runs the suite against a baseline endpoint, for a deployed system. It
+  takes a `Func<Uri, RunCoordinator>`, because a coordinator is built around runners already bound
+  to a transport and re-pointing one is not possible — which is correct, since that is a
+  composition-root decision. Only absolute `http`/`https` references are dialled, and a reference
+  carrying userinfo is refused outright rather than stripped: a credential in a reference ends up
+  wherever the reference is recorded.
+
+#### Redaction and verification pull against each other
+
+`LiveEndpointBaseline` has to prove the artifact it got back describes the system that was asked
+for, and everything it could prove that from is redacted on the way into the artifact. The query
+and fragment of every recorded address are replaced by a fixed marker, because that is where a
+bearer token, a SAS signature, or an OAuth access token lives — so `?deployment=old` and
+`?deployment=new` are the *same recorded text*, and a check over that text would pair two
+different deployments with confidence.
+
+Resolved deliberately, in the direction that keeps the credential out:
+
+- **A reference carrying a query or a fragment is refused.** The part of an address that cannot
+  survive redaction is not admitted at all; select the deployment by path, or from the composition
+  root. Nothing is persisted to make it verifiable.
+- **The runs are checked, not just the label.** `EvaluationEnvironment.Endpoint` is copied from
+  `RunCoordinatorOptions.Endpoint` — a label the composition root supplied, not evidence of where
+  a request went. Each run's recorded transport address is compared on scheme, host, port, and
+  path: everything that survives redaction. A run that recorded `null` is skipped, because
+  `IConversationExchange.Endpoint` documents that as "no address to report" and refusing those
+  would refuse honest runners rather than miswired ones. A run that recorded something which is
+  **not** an address is refused — that is a positive claim about a destination which cannot be
+  reconciled with the one asked for, and admitting an unverifiable claim is the false green this
+  check exists to prevent. The deliberate consequence: an adapter that names a model deployment
+  rather than an address cannot sit behind a baseline requested by URL. So this catches a runner
+  that says where it went and went elsewhere; it cannot catch one that says nothing, which is why
+  the endpoint label check is kept alongside it rather than replaced by it.
+
+**Only a genuinely absent artifact yields `null`.** A reference naming a directory, one whose
+metadata cannot be inspected, and a file that exists but cannot be read, is too large, is
+malformed, or declares an unreadable schema version all throw — and `LiveEndpointBaseline` never
+returns `null` at all. Returning `null` for any of those would tell the caller there is no
+baseline, the caller would report "no regression", and the reason would be that nothing was ever
+compared.
 
 ## Current state
 
 **`partial` — contracts, assertion evaluation, both simulated callers, the REST and conversation
-runners, the run coordinator, and the statistics.** Types, seams, the suite loader with
-validation, canonical serialization, the five assertion evaluators behind
+runners, the run coordinator, the statistics, and the comparator.** Types, seams, the suite loader
+with validation, canonical serialization, the five assertion evaluators behind
 `AssertionEvaluatorRegistry`, `DeterministicCaller`, `LlmCaller`, `RecordedLlmClient`,
 `RestRunner`, `LlmConversationRunner`, `RunCoordinator`, `ScenarioAggregator`,
-`ProportionInterval`, `McNemarTest`, `PairedBootstrapTest` and `BenjaminiHochbergCorrection` are
-complete and tested. A mixed suite of all four kinds runs end to end and produces a `SuiteResult`
-carrying a populated `StatisticalSummary`. Deliberately **not** here yet:
+`ProportionInterval`, `McNemarTest`, `PairedBootstrapTest`, `BenjaminiHochbergCorrection`,
+`SuiteComparator`, `ArtifactBaseline` and `LiveEndpointBaseline` are complete and tested. A mixed
+suite of all four kinds runs end to end and produces a `SuiteResult` carrying a populated
+`StatisticalSummary`, and two artifacts diff into a `ComparisonResult` carrying classifications,
+`newlyCovered`, per-scenario corrected p-values, and a suite-wide delta. Deliberately **not** here
+yet:
 
 - No real MCP runner and no real UI runner. `NotImplementedMcpRunner` and `NotImplementedUiRunner`
   report those gaps cleanly so a mixed suite still routes.
@@ -724,21 +921,21 @@ carrying a populated `StatisticalSummary`. Deliberately **not** here yet:
   a property of the system under test, so the composition root supplies one.
 - No `IParticipantFactory` implementation. Which caller a scenario deserves is a composition-root
   decision; `DeterministicCaller` and `LlmCaller` are what one would return.
-- No **baseline comparison** in the artifact. The significance tests exist and are tested, but
-  `RunCoordinator` has nothing to compare against, so `StatisticalSummary.Comparison` is never
-  populated by a run and no p-value reaches an artifact yet — T10.
-- No **multiple-comparison correction applied across a suite**. `BenjaminiHochbergCorrection`
-  adjusts a family of p-values, but nothing yet produces that family; it is wired in with the
-  comparator — T10.
+- No comparison stamped **into** the artifact. `SuiteComparator` produces a `ComparisonResult`
+  from two `SuiteResult`s; `RunCoordinator` still has no baseline of its own, so
+  `StatisticalSummary.Comparison` inside a `SuiteResult` remains unset. Which of the two is the
+  right home for it is a reporting decision that has not been made.
+- `baseline:*` **assertions still refuse themselves.** `RunCoordinator` passes
+  `EvaluationContext.Baseline = null`, so an assertion graded against a recorded baseline
+  *transcript* has nothing to compare against. That is a different seam from `IBaselineProvider`,
+  which resolves a whole baseline *artifact* and now has two implementations.
 - No repetition **override**. `ScenarioResult.RepetitionPolicyUsed` always reports the scenario's
   declared policy, because nothing can yet tell the harness to run a different count.
-- No baseline **comparator** — T10. `RunCoordinator` passes `EvaluationContext.Baseline = null`,
-  so `baseline:*` assertions refuse themselves rather than comparing against nothing; resolving a
-  baseline reference remains `IBaselineProvider`'s job and has no implementation.
 - `RunStatus.ExpectedFailure` is never produced. Nothing in `Scenario` declares that a scenario is
   expected to fail — `expectedBehavior` asserts the named behaviour and **passes** when the system
-  does it — so the member stays unused rather than being inferred from a guess. The aggregator
-  nonetheless has a stated rule for it, so the meaning is fixed before anything emits one.
+  does it — so the member stays unused rather than being inferred from a guess. The aggregator and
+  the comparator nonetheless have stated rules for it, so the meaning is fixed before anything
+  emits one.
 - No reporter, no CLI wiring.
 
 ### Known sharp edge
@@ -815,6 +1012,55 @@ var coordinator = new RunCoordinator(
 // Throws on cancellation rather than returning a partial artifact.
 SuiteResult artifact = await coordinator.RunAsync(suite, cancellationToken);
 File.WriteAllText("eval.json", CanonicalJson.Serialize(artifact));
+```
+
+Then diff it against a baseline. The provider decides where the baseline comes from; the
+comparator does not care:
+
+```csharp
+// A committed artifact, confined to a root. Null means there genuinely is no baseline at that
+// reference — everything else throws rather than reporting "no baseline" for a file it refused.
+IBaselineProvider provider = new ArtifactBaseline(@"C:\repo\eval-baselines");
+
+// ...or the deployed version, evaluated now. The factory supplies a coordinator wired for the
+// endpoint it is handed, and the artifact that comes back is checked against it.
+IBaselineProvider live = new LiveEndpointBaseline(suite, endpoint => BuildCoordinator(endpoint));
+
+var baseline = await provider.TryGetBaselineAsync("main.json", cancellationToken);
+
+if (baseline is null)
+{
+    // No baseline is not "no regression". Say so rather than reporting a green.
+    return;
+}
+
+var comparator = new SuiteComparator(new McNemarTest(), BenjaminiHochbergCorrection.Instance);
+
+// Throws ComparisonRefusedException when the two runs were not conducted alike — a different
+// suite, a different root seed, or different harness settings.
+ComparisonResult comparison = comparator.Compare(baseline, artifact, cancellationToken);
+
+// The headline: what this change covered that the baseline did not.
+foreach (var scenarioId in comparison.NewlyCovered)
+{
+    Console.WriteLine($"newly covered: {scenarioId}");
+}
+
+foreach (var scenario in comparison.ScenarioComparisons)
+{
+    // Significant is judged on the *adjusted* p-value, and is NotComputed wherever no test
+    // could honestly be run — never a figure that was not calculated.
+    Console.WriteLine(
+        $"{scenario.ScenarioId}: {scenario.Classification} "
+            + $"(delta {scenario.Comparison?.EffectSize}, {scenario.Comparison?.Significant})"
+    );
+
+    // A scenario that could not be diffed says why, rather than being dropped or guessed at.
+    if (scenario.NotComparableReason is { } reason)
+    {
+        Console.Error.WriteLine(reason);
+    }
+}
 ```
 
 ## Build and test

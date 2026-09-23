@@ -610,6 +610,68 @@ public sealed class RunCoordinatorAttributionTests
 
         CoordinatorFixtures.Runs(result).Should().ContainSingle();
     }
+
+    // ---------------------------------------------------------------------------------------
+    // The artifact has to carry what the runs were produced from, or a later comparison can
+    // only pair on an id and a set of assertion specs — neither of which carries the values
+    // those specs are checked against.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RunAsync_Always_StampsEachScenarioWithTheFingerprintOfItsOwnDefinition()
+    {
+        var scenario = CoordinatorFixtures.Scenario(assertions: ["exactMatch:outcome"]);
+        var coordinator = CoordinatorFixtures.Coordinator([new StubRunner(ScenarioKind.Rest)]);
+
+        var result = await coordinator.RunAsync(CoordinatorFixtures.Suite(scenario), CancellationToken.None);
+
+        result
+            .ScenarioResults.Should()
+            .ContainSingle()
+            .Which.DefinitionFingerprint.Should()
+            .Be(ScenarioFingerprint.Of(scenario));
+    }
+
+    [Fact]
+    public async Task RunAsync_TwoRunsOfDefinitionsDifferingOnlyInTheirExpectation_StampDifferentFingerprints()
+    {
+        // The fabrication the fingerprint closes, driven end to end: the assertion spec is
+        // `exactMatch:outcome` in both suites and only grading.expectedOutcome moved.
+        var before = Expecting("escalated");
+        var after = Expecting("resolved");
+
+        var first = await CoordinatorFixtures
+            .Coordinator([new StubRunner(ScenarioKind.Rest)])
+            .RunAsync(CoordinatorFixtures.Suite(before), CancellationToken.None);
+        var second = await CoordinatorFixtures
+            .Coordinator([new StubRunner(ScenarioKind.Rest)])
+            .RunAsync(CoordinatorFixtures.Suite(after), CancellationToken.None);
+
+        first.ScenarioResults[0].DefinitionFingerprint.Should().NotBe(second.ScenarioResults[0].DefinitionFingerprint);
+    }
+
+    [Fact]
+    public async Task RunAsync_TheSameDefinitionRunTwice_StampsTheSameFingerprint()
+    {
+        var first = await CoordinatorFixtures
+            .Coordinator([new StubRunner(ScenarioKind.Rest)])
+            .RunAsync(CoordinatorFixtures.Suite(Expecting("resolved")), CancellationToken.None);
+        var second = await CoordinatorFixtures
+            .Coordinator([new StubRunner(ScenarioKind.Rest)])
+            .RunAsync(CoordinatorFixtures.Suite(Expecting("resolved")), CancellationToken.None);
+
+        first.ScenarioResults[0].DefinitionFingerprint.Should().Be(second.ScenarioResults[0].DefinitionFingerprint);
+    }
+
+    private static Scenario Expecting(string expectedOutcome)
+    {
+        var scenario = CoordinatorFixtures.Scenario(assertions: ["exactMatch:outcome"]);
+
+        return scenario with
+        {
+            Grading = scenario.Grading with { ExpectedOutcome = expectedOutcome },
+        };
+    }
 }
 
 /// <summary>

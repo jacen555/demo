@@ -810,6 +810,14 @@ public sealed partial class RunCoordinator
                     RepetitionPolicyUsed = scenario.Execution.RepetitionPolicy,
                     Tags = new Dictionary<string, string>(scenario.Slicing.Tags, StringComparer.Ordinal),
 
+                    // What these runs were produced from, so a later comparison can establish
+                    // that two artifacts filed under one id mean the same thing by it. An id and
+                    // a set of assertion specs cannot: the specs name what is checked, not the
+                    // expectation they are checked against, so editing grading.expectedOutcome
+                    // alone turns an unchanged response from a failure into a pass and the
+                    // comparator would report a fix the change never made (§V).
+                    DefinitionFingerprint = ScenarioFingerprint.Of(scenario),
+
                     // Repetition is collapsed here, which is the first point results from more
                     // than one run of one scenario sit together. The aggregator withholds the
                     // summary entirely when no run produced a gradeable verdict, so a scenario
