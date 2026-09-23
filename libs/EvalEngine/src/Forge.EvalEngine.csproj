@@ -13,4 +13,16 @@
     -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The statistical primitives under Statistics/ (normal and chi-squared tails, the exact
+      binomial tail) stay internal: they are an implementation detail, not a contract this
+      library wants to own. They are still pinned directly against published critical values,
+      because a wrong tail probability there is silent — it yields a confident, wrong verdict
+      rather than a crash — and testing it only through its callers would leave the arithmetic
+      unchecked at the boundaries where published formulas and naive ones diverge.
+    -->
+    <InternalsVisibleTo Include="Forge.EvalEngine.Tests" />
+  </ItemGroup>
 </Project>

@@ -7,6 +7,7 @@ using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Runners;
 using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Serialization;
+using Forge.EvalEngine.Statistics;
 using Forge.EvalEngine.Tests.Runners;
 using Forge.EvalEngine.Transcripts;
 
@@ -822,17 +823,147 @@ public sealed class RunCoordinatorTests
     }
 
     /// <summary>
-    /// Statistics are a later stage. Reporting an aggregate this library did not compute would be
-    /// the same dishonesty <see cref="SignificanceVerdict.NotComputed"/> exists to avoid.
+    /// The aggregate is the statistics stage's job and the coordinator is where it is applied.
+    /// Three passes out of three repetitions is a point estimate of one, and — because a Wilson
+    /// interval does not collapse at the boundary the way a normal approximation does — a lower
+    /// bound well below it. The bound is the published Wilson value for 3/3 at 95%.
     /// </summary>
     [Fact]
-    public async Task RunAsync_Always_LeavesTheStatisticalSummaryUnset()
+    public async Task RunAsync_Always_PopulatesTheStatisticalSummaryForEachScenario()
     {
         var result = await CoordinatorFixtures
             .Coordinator([new StubRunner(ScenarioKind.Rest)])
+            .RunAsync(
+                CoordinatorFixtures.Suite(
+                    CoordinatorFixtures.Scenario(repetitions: 3, assertions: ["expectedBehavior:outcome/resolved"])
+                ),
+                default
+            );
+
+        var summary = result.ScenarioResults.Single().Summary;
+
+        summary.Should().NotBeNull();
+        summary!.N.Should().Be(3);
+        summary.PointEstimate.Should().Be(1);
+        summary.Dispersion.Should().Be(0);
+        summary.Interval!.Method.Should().Be(IntervalMethod.Wilson);
+        summary.Interval.Lower.Should().BeApproximately(0.438502968245, 1e-11);
+        summary.Interval.Upper.Should().Be(1);
+        summary.Comparison.Should().BeNull("there is no baseline to compare against yet");
+    }
+
+    /// <summary>
+    /// A scenario whose runs all errored produced no verdict about the system under test, so
+    /// there is no pass rate to state. The runs are still recorded in full; what is withheld is
+    /// the figure that was never computed.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ScenarioWhoseRunsAllErrored_LeavesTheStatisticalSummaryUnset()
+    {
+        var result = await CoordinatorFixtures
+            .Coordinator([])
             .RunAsync(CoordinatorFixtures.Suite(CoordinatorFixtures.Scenario(repetitions: 3)), default);
 
-        result.ScenarioResults.Single().Summary.Should().BeNull();
+        var scenario = result.ScenarioResults.Single();
+
+        scenario.Runs.Should().HaveCount(3).And.AllSatisfy(run => run.Status.Should().Be(RunStatus.Error));
+        scenario.Summary.Should().BeNull("an ungradeable run is not evidence the system failed");
+    }
+
+    /// <summary>
+    /// An ungradeable run must not be counted as a failure. Two graded passes beside one errored
+    /// run is a pass rate of one over two runs, not two thirds over three.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SomeRunsErrored_ExcludesThemFromTheEstimateRatherThanFailingThem()
+    {
+        var conducted = 0;
+        var runner = new StubRunner(
+            ScenarioKind.Rest,
+            (scenario, context, _) =>
+                Task.FromResult(
+                    Interlocked.Increment(ref conducted) == 1
+                        ? CoordinatorFixtures.Transcript(scenario, context, exchange: ExchangeState.RunnerFailed)
+                        : CoordinatorFixtures.Transcript(scenario, context)
+                )
+        );
+
+        var result = await CoordinatorFixtures
+            .Coordinator([runner])
+            .RunAsync(
+                CoordinatorFixtures.Suite(
+                    CoordinatorFixtures.Scenario(repetitions: 3, assertions: ["expectedBehavior:outcome/resolved"])
+                ),
+                default
+            );
+
+        var scenario = result.ScenarioResults.Single();
+
+        scenario.Runs.Count(run => run.Status == RunStatus.Error).Should().Be(1);
+        scenario.Summary!.N.Should().Be(2, "only the graded runs are evidence");
+        scenario.Summary.PointEstimate.Should().Be(1);
+    }
+
+    /// <summary>
+    /// An interval means nothing without the confidence level it was computed at, and
+    /// <see cref="ConfidenceInterval"/> has nowhere to carry one. It goes into the harness
+    /// configuration, beside the throttle, where a reader reproducing the run will look.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_Always_RecordsTheIntervalSettingsItComputedUnder()
+    {
+        var result = await CoordinatorFixtures
+            .Coordinator(
+                [new StubRunner(ScenarioKind.Rest)],
+                options: new RunCoordinatorOptions
+                {
+                    Aggregator = new ScenarioAggregator(IntervalMethod.AgrestiCoull, 0.99),
+                }
+            )
+            .RunAsync(CoordinatorFixtures.Suite(CoordinatorFixtures.Scenario()), default);
+
+        result.Environment.HarnessConfig.Should().ContainKey("intervalMethod").WhoseValue.Should().Be("agrestiCoull");
+        result.Environment.HarnessConfig.Should().ContainKey("intervalConfidence").WhoseValue.Should().Be("0.99");
+        result.ScenarioResults.Single().Summary!.Interval!.Method.Should().Be(IntervalMethod.AgrestiCoull);
+    }
+
+    /// <summary>
+    /// The summary is written into the committed artifact, so it has to survive the round trip
+    /// the comparator will put it through — including doubles that are not exactly representable.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithASummary_ProducesAnArtifactThatStillRoundTripsThroughCanonicalJson()
+    {
+        var passes = 0;
+        var runner = new StubRunner(
+            ScenarioKind.Rest,
+            (scenario, context, _) =>
+                Task.FromResult(
+                    CoordinatorFixtures.Transcript(
+                        scenario,
+                        context,
+                        observedOutcome: Interlocked.Increment(ref passes) % 3 == 0 ? "escalated" : "resolved"
+                    )
+                )
+        );
+
+        var result = await CoordinatorFixtures
+            .Coordinator([runner])
+            .RunAsync(
+                CoordinatorFixtures.Suite(
+                    CoordinatorFixtures.Scenario(repetitions: 7, assertions: ["expectedBehavior:outcome/resolved"])
+                ),
+                default
+            );
+
+        var summary = result.ScenarioResults.Single().Summary;
+        summary!.N.Should().Be(7);
+        summary.PointEstimate.Should().BeApproximately(5.0 / 7.0, 1e-15);
+
+        var json = CanonicalJson.Serialize(result);
+
+        json.Should().NotContain("NaN").And.NotContain("Infinity");
+        CanonicalJson.DeserializeSuiteResult(json).Should().Be(result);
     }
 
     [Fact]

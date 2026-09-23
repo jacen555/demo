@@ -1,3 +1,5 @@
+using Forge.EvalEngine.Statistics;
+
 namespace Forge.EvalEngine.Coordination;
 
 /// <summary>
@@ -11,6 +13,7 @@ public sealed record RunCoordinatorOptions
 {
     private readonly int _maxConcurrency = 1;
     private readonly int _maxTotalRuns = DefaultMaxTotalRuns;
+    private readonly ScenarioAggregator _aggregator = ScenarioAggregator.Default;
 
     /// <summary>The run budget a caller gets without asking for one.</summary>
     private const int DefaultMaxTotalRuns = 100_000;
@@ -87,4 +90,28 @@ public sealed record RunCoordinatorOptions
     /// access token by design, so neither survives into a committed artifact (§V).
     /// </remarks>
     public string? Endpoint { get; init; }
+
+    /// <summary>
+    /// Gets how a scenario's repetitions are collapsed into a
+    /// <see cref="Results.StatisticalSummary"/>. A Wilson interval at 95% confidence by default.
+    /// </summary>
+    /// <remarks>
+    /// The confidence level and the interval method are reporting choices rather than execution
+    /// ones, so they live here instead of growing the coordinator a set of statistics knobs.
+    /// Whatever is configured is recorded in
+    /// <see cref="Results.EvaluationEnvironment.HarnessConfig"/>: an interval without the level
+    /// it was computed at is not interpretable, and <see cref="Results.ConfidenceInterval"/> has
+    /// no room to carry one.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">The value is null.</exception>
+    public ScenarioAggregator Aggregator
+    {
+        get => _aggregator;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+
+            _aggregator = value;
+        }
+    }
 }

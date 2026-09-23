@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator + T9 statistics)
 
 | Area | Types |
 |---|---|
@@ -53,6 +53,7 @@ conversations without either one distorting the model — and whether the statis
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
 | Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IParticipantFactory`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
+| Statistics | `ScenarioAggregator`, `ProportionInterval` (Wilson, Agresti-Coull), `McNemarTest`, `PairedBootstrapTest`, `BenjaminiHochbergCorrection` |
 | Determinism | `IClock` / `SystemClock`, `ISeedSource` / `DeterministicSeedSource` |
 | Loading | `SuiteLoader`, `SuiteLoadResult`, `ValidationMessage` |
 | Serialization | `CanonicalJson`, `SchemaVersions`, `SchemaVersionException` |
@@ -631,14 +632,15 @@ identical data are equal. `CanonicalJson.AreEquivalent(left, right)` is the same
 any other type. It costs a serialization per comparison, which is the right trade for types whose
 whole identity is their committed text.
 
-### Statistics: decided, not yet computed
+### Statistics: decided, and now computed
 
-`StatisticalSummary` carries its full shape now so the artifact schema does not change when the
-statistics land. The methods are already settled and recorded in the XML docs so they are not
-relitigated:
+`StatisticalSummary` carried its full shape from T3 so the artifact schema would not change when
+the statistics landed. It has not. The methods were settled in advance and are recorded in the
+XML docs so they are not relitigated:
 
 - **Wilson or Agresti-Coull** intervals. Never normal/Wald — it misbehaves at small n and at
-  extreme proportions, which is exactly where an eval suite lives.
+  extreme proportions, which is exactly where an eval suite lives. `ProportionInterval` implements
+  both; `ScenarioAggregator` defaults to Wilson at 95%.
 - **McNemar's test or a paired bootstrap.** The comparison is *paired by construction* (same
   scenarios, same seeds, two variants); an unpaired two-proportion z-test is a documented footgun.
   `PairedObservation` carries one scenario's identity, the seed both variants ran with, and a
@@ -650,17 +652,68 @@ relitigated:
 - **Benjamini-Hochberg FDR**, not Bonferroni — but this one is a *deliberate design choice*, not
   settled convention, and is flagged as such in the doc comment.
 
-Today the library reports raw deltas with `significant = notComputed` and no interval. That is
-honest rather than pretending.
+**Every expected value in the statistics tests comes from outside this library** — Newcombe's
+1998 comparison table for the Wilson intervals, the published chi-squared critical points, the
+worked McNemar tables, the Benjamini-Hochberg 1995 example and its stated four discoveries, and
+exact binomial fractions a reader can redo by hand. A test asserting that a Wilson interval
+matches what the Wilson code computes would prove nothing; a wrong interval does not crash, it
+produces a confident wrong verdict, which is why the boundaries (n = 1, p = 0, p = 1, zero
+discordant pairs, a single scenario) are each pinned explicitly.
+
+#### The aggregator, and what an error does to the estimate
+
+`ScenarioAggregator` collapses a scenario's repetitions into `n`, a pass-rate `pointEstimate`,
+a `dispersion` (the population standard deviation `sqrt(p(1-p))`, which is the figure T3 already
+committed to the artifact and which stays defined at a single repetition), and an `interval`.
+Repetition is one code path: `RepetitionPolicy.Once` is `Repeat(1)`, so a one-run REST scenario
+and a twenty-run model scenario travel the same route.
+
+**An ungradeable run is not evidence the system failed.** A `RunStatus.Error` run never produced
+a verdict — the transport fell over, the participant could not be built, an assertion could not
+be evaluated — so counting it as a failure would manufacture a regression out of a harness fault
+and counting it as a pass would manufacture a green. It is excluded from both the denominator and
+the estimate. The consequence is visible rather than hidden: `n` falls, the interval widens to
+match the thinner evidence, and the errored runs stay in `ScenarioResult.Runs` with their
+`errorDetail`, already logged once by the coordinator. A scenario whose runs *all* errored has no
+pass rate at all, so `Summary` is left unset rather than filled with a zero nobody measured.
+`ExpectedFailure` is different: it ran and it did not pass, so it counts as a graded non-pass.
+
+An interval means nothing without the confidence level it was computed at, and
+`ConfidenceInterval` has nowhere to carry one. The coordinator records `intervalMethod` and
+`intervalConfidence` in `EvaluationEnvironment.HarnessConfig` beside `maxConcurrency` instead —
+the artifact schema did not have to change for it.
+
+#### Edge cases that would otherwise be silent
+
+- **No discordant pairs.** McNemar's statistic is `0 / 0`. `McNemarTest` reports
+  `notComputed` with no p-value rather than letting a NaN reach a merge decision.
+- **Few discordant pairs.** Below 25 the chi-squared approximation is untrustworthy, so the
+  exact conditional binomial test is used.
+- **A perfectly balanced table.** Edwards' continuity correction subtracts one before squaring,
+  so an uncorrected implementation reports a *positive* statistic when the null holds exactly.
+  The corrected difference is floored at zero.
+- **A single scenario in a bootstrap.** Every resample is that same scenario, so the naive
+  formula reports `1 / (B + 1)` — an overwhelming result manufactured from one observation.
+  `PairedBootstrapTest` refuses below two scenarios. Its p-value is also floored at `1 / (B + 1)`
+  by construction, and it says so rather than claiming a precision it never computed.
+- **Bootstrap determinism.** The seed is injected and stamped on `PairedBootstrapTest.Seed`;
+  the generator is the same SplitMix64 as `DeterministicSeedSource`. There is no ambient
+  randomness anywhere in this library.
+
+What is still not computed: `ComparisonSummary` is only produced by the significance tests when a
+caller supplies paired observations. `RunCoordinator` has no baseline to build them from, so
+`ScenarioResult.Summary.Comparison` stays unset until T10 — honest rather than pretending.
 
 ## Current state
 
 **`partial` — contracts, assertion evaluation, both simulated callers, the REST and conversation
-runners, and the run coordinator.** Types, seams, the suite loader with validation, canonical
-serialization, the five assertion evaluators behind `AssertionEvaluatorRegistry`,
-`DeterministicCaller`, `LlmCaller`, `RecordedLlmClient`, `RestRunner`, `LlmConversationRunner`,
-and `RunCoordinator` are complete and tested. A mixed suite of all four kinds runs end to end and
-produces a `SuiteResult`. Deliberately **not** here yet:
+runners, the run coordinator, and the statistics.** Types, seams, the suite loader with
+validation, canonical serialization, the five assertion evaluators behind
+`AssertionEvaluatorRegistry`, `DeterministicCaller`, `LlmCaller`, `RecordedLlmClient`,
+`RestRunner`, `LlmConversationRunner`, `RunCoordinator`, `ScenarioAggregator`,
+`ProportionInterval`, `McNemarTest`, `PairedBootstrapTest` and `BenjaminiHochbergCorrection` are
+complete and tested. A mixed suite of all four kinds runs end to end and produces a `SuiteResult`
+carrying a populated `StatisticalSummary`. Deliberately **not** here yet:
 
 - No real MCP runner and no real UI runner. `NotImplementedMcpRunner` and `NotImplementedUiRunner`
   report those gaps cleanly so a mixed suite still routes.
@@ -671,11 +724,12 @@ produces a `SuiteResult`. Deliberately **not** here yet:
   a property of the system under test, so the composition root supplies one.
 - No `IParticipantFactory` implementation. Which caller a scenario deserves is a composition-root
   decision; `DeterministicCaller` and `LlmCaller` are what one would return.
-- No **aggregation** of repetitions into a statistic — T9. `RunCoordinator` runs them and records
-  each one; `ScenarioResult.Summary` is left unset rather than filled with a figure this library
-  did not compute.
-- No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no
-  implementations, and `StatisticalSummary.Interval` / `.Comparison` are never populated — T9.
+- No **baseline comparison** in the artifact. The significance tests exist and are tested, but
+  `RunCoordinator` has nothing to compare against, so `StatisticalSummary.Comparison` is never
+  populated by a run and no p-value reaches an artifact yet — T10.
+- No **multiple-comparison correction applied across a suite**. `BenjaminiHochbergCorrection`
+  adjusts a family of p-values, but nothing yet produces that family; it is wired in with the
+  comparator — T10.
 - No repetition **override**. `ScenarioResult.RepetitionPolicyUsed` always reports the scenario's
   declared policy, because nothing can yet tell the harness to run a different count.
 - No baseline **comparator** — T10. `RunCoordinator` passes `EvaluationContext.Baseline = null`,
@@ -683,7 +737,8 @@ produces a `SuiteResult`. Deliberately **not** here yet:
   baseline reference remains `IBaselineProvider`'s job and has no implementation.
 - `RunStatus.ExpectedFailure` is never produced. Nothing in `Scenario` declares that a scenario is
   expected to fail — `expectedBehavior` asserts the named behaviour and **passes** when the system
-  does it — so the member stays unused rather than being inferred from a guess.
+  does it — so the member stays unused rather than being inferred from a guess. The aggregator
+  nonetheless has a stated rule for it, so the meaning is fixed before anything emits one.
 - No reporter, no CLI wiring.
 
 ### Known sharp edge

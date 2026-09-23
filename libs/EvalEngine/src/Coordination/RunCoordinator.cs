@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.Json;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Assertions;
 using Forge.EvalEngine.Results;
@@ -809,12 +810,12 @@ public sealed partial class RunCoordinator
                     RepetitionPolicyUsed = scenario.Execution.RepetitionPolicy,
                     Tags = new Dictionary<string, string>(scenario.Slicing.Tags, StringComparer.Ordinal),
 
-                    // Summary is deliberately left unset. Aggregating repetitions into a point
-                    // estimate is the statistics stage's job, and reporting a figure this library
-                    // did not compute is the dishonesty SignificanceVerdict.NotComputed exists to
-                    // avoid. It serializes as absent, so a committed baseline will not churn when
-                    // it starts being populated.
-                    Summary = null,
+                    // Repetition is collapsed here, which is the first point results from more
+                    // than one run of one scenario sit together. The aggregator withholds the
+                    // summary entirely when no run produced a gradeable verdict, so a scenario
+                    // that only ever errored still reports no pass rate rather than a zero it
+                    // did not measure.
+                    Summary = _options.Aggregator.Summarize(results[index]),
                 }
             );
         }
@@ -840,6 +841,16 @@ public sealed partial class RunCoordinator
                     // The throttle changes what a run against a rate-limited system observes, so
                     // a reader trying to reproduce the run needs the figure it ran under.
                     ["maxConcurrency"] = Render(_options.MaxConcurrency),
+
+                    // An interval is uninterpretable without the confidence level it was
+                    // computed at, and ConfidenceInterval has nowhere to carry one — adding a
+                    // member would churn a schema T3 deliberately fixed in advance. It goes here
+                    // instead, named the same way the artifact names the method itself so the
+                    // two read as one setting.
+                    ["intervalMethod"] = JsonNamingPolicy.CamelCase.ConvertName(
+                        _options.Aggregator.IntervalMethod.ToString()
+                    ),
+                    ["intervalConfidence"] = _options.Aggregator.ConfidenceLevel.ToString(CultureInfo.InvariantCulture),
                 },
             },
         };
