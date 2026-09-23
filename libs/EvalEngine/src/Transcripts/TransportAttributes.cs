@@ -171,6 +171,32 @@ public static class ExchangeState
     /// </remarks>
     public const string Unsupported = "unsupported";
 
+    /// <summary>
+    /// No usable transcript was produced for the run, so there is nothing that could be graded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Written by the <see cref="Coordination.RunCoordinator"/> rather than by a runner, because
+    /// it describes the case where a runner did not return a transcript at all: no runner was
+    /// registered for the scenario's kind, the participant could not be built, the runner threw,
+    /// it returned <see langword="null"/>, or it returned a transcript describing a
+    /// <i>different</i> run.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="AdapterFailed"/>, which is a statement about an adapter that
+    /// fell over while reading a response the system genuinely sent. Nothing was sent here. The
+    /// distinction matters for the same reason that one does: a reader of the artifact must be
+    /// able to tell "the system was asked and the harness mishandled the reply" from "the system
+    /// was never asked".
+    /// </para>
+    /// <para>
+    /// Recorded rather than thrown, by the same reasoning as <see cref="Unsupported"/>: one
+    /// broken or unregistered runner must not decide whether the rest of a mixed suite produces
+    /// evidence at all. It is a harness failure by <see cref="IsHarnessFailure(string?)"/>.
+    /// </para>
+    /// </remarks>
+    public const string RunnerFailed = "runnerFailed";
+
     /// <summary>Reads the exchange state a transcript recorded.</summary>
     /// <param name="transcript">The transcript to read.</param>
     /// <returns>The recorded state, or <see langword="null"/> when none was recorded.</returns>
@@ -259,4 +285,12 @@ public static class StopReason
 
     /// <summary>No loop ran: this build cannot speak the transport the scenario declared.</summary>
     public const string Unsupported = "unsupported";
+
+    /// <summary>No loop ran: the harness could not obtain a transcript for the run.</summary>
+    /// <remarks>
+    /// Paired with <see cref="ExchangeState.RunnerFailed"/>, which is what makes the run
+    /// ungradeable. This says only that no turn loop ever started; the detail is in
+    /// <see cref="TransportAttributes.Failure"/>.
+    /// </remarks>
+    public const string RunnerFailed = "runnerFailed";
 }

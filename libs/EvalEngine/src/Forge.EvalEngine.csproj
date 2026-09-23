@@ -4,4 +4,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Abstractions only. A terminal failure in this library must leave an observable signal
+      (§IV), and a library that took a logging *implementation* would impose one on every
+      consumer. Callers that supply no logger get NullLogger.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
 </Project>

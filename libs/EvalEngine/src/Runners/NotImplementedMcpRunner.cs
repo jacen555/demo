@@ -56,9 +56,12 @@ namespace Forge.EvalEngine.Runners;
 /// <para>
 /// So the signal lives where a runner's signals belong — in the transcript's transport metadata,
 /// as <see cref="ExchangeState.Unsupported"/> with a
-/// <see cref="TransportAttributes.Failure"/> reason — and a suite can assert on it today with
-/// <c>expectedBehavior:transport/exchange=unsupported</c>. Real MCP transport is out of scope;
-/// when it lands, this type is deleted and nothing else changes.
+/// <see cref="TransportAttributes.Failure"/> reason. A suite cannot turn that into a <i>passing
+/// assertion</i>, though: <see cref="Coordination.RunCoordinator"/> classifies the run as a
+/// harness failure and does not evaluate its assertions at all, so the gap surfaces as a
+/// <see cref="Results.RunStatus.Error"/> with a stated reason. That is deliberate — grading a run
+/// that gathered no evidence is the false green this whole design avoids. Real MCP transport is
+/// out of scope; when it lands, this type is deleted and nothing else changes.
 /// </para>
 /// </remarks>
 public sealed class NotImplementedMcpRunner : IScenarioRunner

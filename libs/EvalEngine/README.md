@@ -5,10 +5,10 @@
 ## What this is
 
 A generic evaluation harness for running a suite of scenarios against a system under test and
-producing a durable, diff-able artifact of what happened. It handles three kinds of scenario in
-one suite — REST calls, MCP tool invocations, and multi-turn LLM conversations — and its purpose
-is **before/after comparison for pull requests**: attaching evidence that shows regressions *and*
-newly-covered scenarios.
+producing a durable, diff-able artifact of what happened. It handles four kinds of scenario in
+one suite — REST calls, MCP tool invocations, multi-turn LLM conversations, and scripted UI
+interaction — and its purpose is **before/after comparison for pull requests**: attaching
+evidence that shows regressions *and* newly-covered scenarios.
 
 The central design idea, which everything else follows from:
 
@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator)
 
 | Area | Types |
 |---|---|
@@ -47,10 +47,11 @@ conversations without either one distorting the model — and whether the statis
 | Assertions | `AssertionSpec` (parsed from `category:parameter`), `AssertionResult`, `AssertionCategory` |
 | Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
 | Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own; `LlmCaller` — the model-driven one, for realism testing |
-| Runners | `RestRunner`, `LlmConversationRunner`, `NotImplementedMcpRunner`, and the `IRestExchange` / `IConversationExchange` adapter seams |
+| Runners | `RestRunner`, `LlmConversationRunner`, `NotImplementedMcpRunner`, `NotImplementedUiRunner`, and the `IRestExchange` / `IConversationExchange` adapter seams |
+| Coordination | `RunCoordinator`, `RunCoordinatorOptions` — routing, repetition, throttling, grading, and the artifact |
 | LLM access | `ILlmClient` / `LlmRequest`, and `RecordedLlmClient` — replay by request content, so a model-driven run is reproducible |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
-| Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
+| Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IParticipantFactory`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
 | Determinism | `IClock` / `SystemClock`, `ISeedSource` / `DeterministicSeedSource` |
 | Loading | `SuiteLoader`, `SuiteLoadResult`, `ValidationMessage` |
@@ -366,12 +367,23 @@ conservative one (§V):
 capture for a system with no real credentials — a local fake, a throwaway environment. The endpoint
 stays redacted regardless.
 
-#### `NotImplementedMcpRunner`, and why "unsupported" is not a new `RunStatus`
+#### The not-implemented stubs, and why "unsupported" is not a new `RunStatus`
 
-Real MCP transport is out of scope. A stub is still registered so that routing stays uniform —
-every kind has a runner, every runner returns a transcript, and one unsupported scenario cannot
-take down a mixed suite. It reports `exchange=unsupported` with a reason, observes nothing, never
-consults the participant, and does not throw.
+Real MCP transport and real UI driving are both out of scope. A stub is still registered for each
+— `NotImplementedMcpRunner` and `NotImplementedUiRunner` — so that routing stays uniform: every
+kind has a runner, every runner returns a transcript, and one unsupported scenario cannot take
+down a mixed suite. Each reports `exchange=unsupported` with a reason, observes nothing, never
+consults the participant, and does not throw. They are classified through the same
+`ExchangeState.IsHarnessFailure` path, so the two are indistinguishable downstream apart from the
+transport they name.
+
+`ScenarioKind.Ui` exists now rather than alongside its runner because it needs **no new transcript
+shape**: a UI turn's stimulus is an *action* — click this, fill that — and its response is the
+page state the action produced, which is structurally the same `Turn` a request and a reply are.
+Admitting the kind early is what lets a mixed suite route today and lets a real runner be
+registered later without reshaping anything. Driving a real UI deterministically is achievable and
+needs three determinism controls applied together; none of that is built here, because a seam
+built ahead of its implementation is speculation.
 
 That signal is deliberately **not** a new `RunStatus` member:
 
@@ -517,6 +529,58 @@ it carries nothing usable. Truncation happens **before** the stimulus is sent, s
 always states exactly what the system was given. None of this is a guarantee — no prompt-level
 defence is — which is the other reason the deterministic caller remains the default.
 
+### The run coordinator
+
+`RunCoordinator` is where the pipeline first runs end to end: it routes each scenario to the
+runner registered for its kind, applies `Execution.RepetitionPolicy`, grades each transcript
+through `AssertionEvaluatorRegistry`, and assembles the `SuiteResult`.
+
+**Repetition belongs here, not in a runner.** A runner conducts exactly one execution.
+`RepetitionPolicy.Once` is `Repeat(1)` and the type makes zero and negative counts
+unrepresentable, so repetition is one code path with no "run once" branch anywhere.
+
+**Every run is independent, by construction rather than by care.** Aggregation is the first place
+results from different contexts sit side by side, so the thing to design against is one run's
+evidence being graded as another's:
+
+- A participant comes from `IParticipantFactory`, **once per run**, never reused. A stateful
+  caller shared across repetitions would make repetition two a continuation of repetition one
+  rather than an independent sample — and under concurrency it would have no defined behaviour.
+- **Seeds are drawn before anything is dispatched**, sequentially, in suite order. A run's seed is
+  therefore a function of its position and the root seed, never of which worker reached it first.
+  Drawing them inside workers would make the artifact depend on the throttle, and `ISeedSource`
+  implementations are not required to be thread-safe.
+- Each result is written into the slot reserved for its own run. There is no shared accumulator,
+  so suite order is structural rather than restored by sorting.
+- A returned transcript is **checked against the run it claims to describe**. One naming another
+  scenario, or stamped with a seed this run was not driven with, is refused rather than graded —
+  the scenario id is the baseline join key, and such a transcript would grade exactly like a real
+  one.
+
+**The throttle is a hard ceiling, not a target.** `RunCoordinatorOptions.MaxConcurrency` bounds
+in-flight runs across the whole suite, defaulting to **one** — concurrency against a system
+somebody else operates is opted into, not inherited. It is also the lever for deliberately
+exercising that system's own throttling, so it has to be honest; the count is recorded in
+`EvaluationEnvironment.HarnessConfig`.
+
+**What the harness failed to do is never graded.** A run whose exchange
+`ExchangeState.IsHarnessFailure` classifies as a harness failure becomes `RunStatus.Error` and its
+assertions are **not evaluated at all** — recording green verdicts beside a run that asked nothing
+is how a suite of unsupported scenarios comes to read as clean. An `AssertionEvaluationException`
+is `Error` too, keeping T4's refusal-versus-failure line.
+
+**One broken runner does not take down a mixed suite.** A runner that throws, returns nothing, or
+was never registered for a kind yields a recorded error carrying an ungradeable transcript
+(`exchange=runnerFailed`) for the runs it affected. The blast radius of a misconfiguration must
+not depend on where in the suite it sat. The one failure that propagates is **cancellation**:
+scheduling stops promptly, in-flight runs see the token, and `RunAsync` throws rather than
+returning a partial artifact that would read as a complete one.
+
+Exception **messages** never reach the artifact — they are authored elsewhere and routinely name
+an endpoint or a connection string — so a failure is recorded by what failed and the type that
+reported it. `RunCoordinatorOptions.Endpoint` is stripped by the same single implementation every
+runner uses.
+
 ### Reproducibility without a provider
 
 `RecordedLlmClient` replays recorded completions **keyed by request content**, and that mechanism
@@ -591,28 +655,35 @@ honest rather than pretending.
 
 ## Current state
 
-**`partial` — contracts, assertion evaluation, both simulated callers, and the REST and
-conversation runners.** Types, seams, the suite loader with validation, canonical serialization,
-the five assertion evaluators behind `AssertionEvaluatorRegistry`, `DeterministicCaller`,
-`LlmCaller`, `RecordedLlmClient`, `RestRunner`, and `LlmConversationRunner` are complete and
-tested. Deliberately **not** here yet:
+**`partial` — contracts, assertion evaluation, both simulated callers, the REST and conversation
+runners, and the run coordinator.** Types, seams, the suite loader with validation, canonical
+serialization, the five assertion evaluators behind `AssertionEvaluatorRegistry`,
+`DeterministicCaller`, `LlmCaller`, `RecordedLlmClient`, `RestRunner`, `LlmConversationRunner`,
+and `RunCoordinator` are complete and tested. A mixed suite of all four kinds runs end to end and
+produces a `SuiteResult`. Deliberately **not** here yet:
 
-- No real MCP runner. `NotImplementedMcpRunner` reports the MCP gap cleanly so a mixed suite still
-  routes.
+- No real MCP runner and no real UI runner. `NotImplementedMcpRunner` and `NotImplementedUiRunner`
+  report those gaps cleanly so a mixed suite still routes.
 - **No real LLM provider wiring** — by design, not by omission. `ILlmClient` is the seam and
   `RecordedLlmClient` is the deterministic implementation; a provider client belongs in the
   composition root, where its keys and its HTTP handler can be owned properly.
 - No `IRestExchange` or `IConversationExchange` implementation — also by design. A request shape is
   a property of the system under test, so the composition root supplies one.
-- No repetition/aggregation loop — T9. Both runners conduct a single execution;
-  `Execution.RepetitionPolicy` is read by the aggregator, not by a runner.
-- No mapping from a transcript to `RunStatus`. `ExchangeState.IsHarnessFailure` is the input that
-  mapping will use; the mapping itself lands with the aggregator.
+- No `IParticipantFactory` implementation. Which caller a scenario deserves is a composition-root
+  decision; `DeterministicCaller` and `LlmCaller` are what one would return.
+- No **aggregation** of repetitions into a statistic — T9. `RunCoordinator` runs them and records
+  each one; `ScenarioResult.Summary` is left unset rather than filled with a figure this library
+  did not compute.
 - No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no
   implementations, and `StatisticalSummary.Interval` / `.Comparison` are never populated — T9.
-- No baseline **comparator** — T10. `baseline:*` assertions grade against the transcript handed to
-  them through `EvaluationContext.Baseline`; resolving a baseline reference remains
-  `IBaselineProvider`'s job and has no implementation.
+- No repetition **override**. `ScenarioResult.RepetitionPolicyUsed` always reports the scenario's
+  declared policy, because nothing can yet tell the harness to run a different count.
+- No baseline **comparator** — T10. `RunCoordinator` passes `EvaluationContext.Baseline = null`,
+  so `baseline:*` assertions refuse themselves rather than comparing against nothing; resolving a
+  baseline reference remains `IBaselineProvider`'s job and has no implementation.
+- `RunStatus.ExpectedFailure` is never produced. Nothing in `Scenario` declares that a scenario is
+  expected to fail — `expectedBehavior` asserts the named behaviour and **passes** when the system
+  does it — so the member stays unused rather than being inferred from a guess.
 - No reporter, no CLI wiring.
 
 ### Known sharp edge
@@ -664,6 +735,31 @@ foreach (var assertion in scenario.Grading.Assertions)
     // record the run as RunStatus.Error rather than letting it read as a pass or a regression.
     var result = await registry.EvaluateAsync(assertion, context, cancellationToken);
 }
+```
+
+Or hand the whole suite to the coordinator, which routes, repeats, throttles, and grades:
+
+```csharp
+var coordinator = new RunCoordinator(
+    runners:
+    [
+        new RestRunner(httpClient, restExchange, SystemClock.Instance),
+        new LlmConversationRunner(conversationExchange, SystemClock.Instance),
+        new NotImplementedMcpRunner(SystemClock.Instance),
+        new NotImplementedUiRunner(SystemClock.Instance),
+    ],
+    assertions: AssertionEvaluatorRegistry.CreateDefault(),
+
+    // A fresh caller per run — never one instance shared across repetitions.
+    participants: participantFactory,
+    clock: SystemClock.Instance,
+    seeds: new DeterministicSeedSource(rootSeed),
+    options: new RunCoordinatorOptions { MaxConcurrency = 4, Endpoint = "https://localhost:5001" }
+);
+
+// Throws on cancellation rather than returning a partial artifact.
+SuiteResult artifact = await coordinator.RunAsync(suite, cancellationToken);
+File.WriteAllText("eval.json", CanonicalJson.Serialize(artifact));
 ```
 
 ## Build and test

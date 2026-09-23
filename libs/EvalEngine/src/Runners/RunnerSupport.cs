@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Transcripts;
@@ -297,6 +299,44 @@ internal static class RunnerSupport
         }.Uri.ToString();
 
         return address + (hasQuery ? RedactedQuery : string.Empty) + (hasFragment ? RedactedFragment : string.Empty);
+    }
+
+    /// <summary>
+    /// Describes text this library cannot vouch for, without recording it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counterpart to <see cref="SanitizeEndpoint(string?)"/> for values that are not
+    /// addresses: an identifier a runner returned, a message an injected evaluator composed. Both
+    /// travel into a committed artifact, and error paths are exactly where a credential or a raw
+    /// payload surfaces (§V).
+    /// </para>
+    /// <para>
+    /// A length and a truncated fingerprint are recorded instead of the text, which is the same
+    /// trade <see cref="Transcripts.TransportAttributes.ResponseBodyLength"/> and
+    /// <see cref="Transcripts.TransportAttributes.ResponseBodyHash"/> already make for an
+    /// uninterpreted response body: enough to tell two failures apart, to recognise the same one
+    /// recurring across a suite, and to confirm a fix changed it — without carrying the text.
+    /// </para>
+    /// </remarks>
+    /// <param name="untrusted">The text of unknown provenance, which may be null or blank.</param>
+    /// <returns>A description that is always safe to commit.</returns>
+    public static string Redact(string? untrusted)
+    {
+        if (untrusted is null)
+        {
+            return "[redacted: none]";
+        }
+
+        if (untrusted.Length == 0)
+        {
+            return "[redacted: empty]";
+        }
+
+        var length = untrusted.Length.ToString(CultureInfo.InvariantCulture);
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(untrusted)))[..16];
+
+        return $"[redacted: {length} chars, sha256:{fingerprint}]";
     }
 
     /// <summary>
