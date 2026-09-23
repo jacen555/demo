@@ -37,13 +37,14 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 — contracts, seams and serialization)
+## What is here today (T3 contracts + T4 assertion evaluators)
 
 | Area | Types |
 |---|---|
 | Scenario model | `Scenario` composed of `ScenarioIdentity`, `Execution`, `Simulation`, `Grading`, `Selection`, `Slicing` |
 | Transcript model | `Transcript`, `Turn`, `TurnProvenance`, `Outcome`, `TransportMetadata` |
 | Assertions | `AssertionSpec` (parsed from `category:parameter`), `AssertionResult`, `AssertionCategory` |
+| Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
 | Seams | `IScenarioRunner`, `IParticipant`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
@@ -86,6 +87,85 @@ depends on:
 ```json
 { "expression": "reachedDepth:4", "turn": 4 }
 ```
+
+### The five evaluator categories
+
+Every assertion is served by one of five evaluators, selected by its category token through
+`AssertionEvaluatorRegistry`. A new behaviour is a **new row in a suite file**, not a new class —
+and at worst one new evaluator, never a fork of an existing one.
+
+| Category | Selectors | Judges |
+|---|---|---|
+| `exactMatch` | `outcome`, `path` | The observed value equals the expectation `grading` declared. |
+| `structural` | `pathPresent`, `pathDepth/<n>`, `levelsPopulated`, `turnDepth/<n>` | The shape of what came back, independent of its values. |
+| `presence` | `field/<key>`, `response/<token>`, `stimulus/<token>`, `anyResponse`, `repeatedResponse` | Something is in the evidence, or is not. |
+| `baseline` | `outcome`, `path`, `fields` | The run against the recorded baseline transcript. |
+| `expectedBehavior` | `outcome/<token>`, `path/<route>`, `field/<key>=<value>`, `fieldAtLeast/<key>=<n>`, `transport/<key>=<value>` | The system behaved a named way — including failing correctly. |
+
+A parameter is `selector/operand`, split on the **first** `/` for the same reason an expression
+splits on its first `:` — an operand may carry further slashes, such as the flattened field key
+`scope/confirm` or the route `triage/resolve`.
+
+**Polarity supplies the other half of each claim**, which is what collapses matched pairs of
+origin checks into one evaluator: `presence:field/x` is "observed", `!presence:field/x` is
+"absent", and `!structural:pathDepth/5` is "did not run deeper than four levels".
+
+```
+exactMatch:outcome                            # ended on the outcome the scenario declared
+!structural:pathPresent                       # no route came back
+presence:response/please confirm              # the system asked for confirmation
+!presence:repeatedResponse                    # the system never repeated itself
+baseline:fields                               # every returned field is unchanged
+expectedBehavior:transport/statusCode=429     # this request was supposed to be refused
+```
+
+#### Expected failure is a first-class case
+
+`expectedBehavior` exists because asserting that a system *correctly fails* — an expected error
+code, a refusal, out-of-scope handling, graceful degradation — is a real requirement rather than
+an afterthought. A scenario whose whole point is "this should 429" is one data row, and it
+**passes** when the system does exactly that.
+
+It names its expected value *in the assertion*, where `exactMatch` reads one from `grading`. That
+is the distinction: `exactMatch` asks "did it do what this scenario declared it should",
+`expectedBehavior` asks "did it do this specific named thing" — which is what a suite needs when
+the interesting behaviour is a refusal no `expectedOutcome` would sensibly describe.
+
+A *conditional* expectation — "the route survives when it escalates" — is two rows in the same
+scenario, not a conditional evaluator. Two assertions are already a conjunction, and a branch
+operator in the expression grammar would start the slide back towards code.
+
+#### Refused, not graded
+
+An assertion that cannot be evaluated throws `AssertionEvaluationException` rather than returning
+a verdict, and a caller records the run as `RunStatus.Error` with `ErrorDetail` set. This is the
+line `RunStatus` already draws: `Fail` is "the run completed and an assertion did not hold",
+`Error` is "configuration or harness failure". Refused cases:
+
+- An **unknown category** — a typo'd assertion that always passes is far worse than one that
+  always fails, so it is never skipped.
+- A **malformed or missing parameter** — a blank token would match everything, and an assertion
+  that can never fail is not an assertion.
+- An **expectation that was never declared**, for `exactMatch`.
+- A **missing or mis-joined baseline**. Passing would report "no regression" on the strength of no
+  evidence; failing would report a regression against a baseline that does not exist. Neither is
+  true. The scenario id is the join key, so a baseline carrying a different one is refused too.
+
+Negation does not rescue an un-evaluable assertion: `!baseline:outcome` with no baseline is still
+refused, because there is still nothing to compare.
+
+#### `ExaminedTurns` is load-bearing
+
+Every evaluator records the turns that actually determined its verdict, using each turn's recorded
+`Turn.Index`. This is what lets a report cross-reference `Turn.Provenance` and surface an
+assertion that rested on a `Synthesized` turn — the same misdiagnosis the script-overrun guard
+defends against at load time, caught at grading time for the runs the guard could not bound in
+advance. An evaluator that examines turns and reports none defeats that silently.
+
+- An **outcome-derived** assertion examines the turn the run *ended on*, because that is the turn
+  that produced the outcome.
+- A **scan** examines the matching turns, or — when nothing matched — every turn, because
+  establishing absence required reading all of them.
 
 ### The script-overrun guard
 
@@ -188,14 +268,17 @@ honest rather than pretending.
 
 ## Current state
 
-**`partial` — contracts only.** Types, seams, the suite loader with validation, and canonical
-serialization are complete and tested. Deliberately **not** here yet:
+**`partial` — contracts, plus assertion evaluation.** Types, seams, the suite loader with
+validation, canonical serialization, and the five assertion evaluators behind
+`AssertionEvaluatorRegistry` are complete and tested. Deliberately **not** here yet:
 
-- No `IScenarioRunner` implementations (REST, MCP, LLM) — T4 and later.
-- No `IAssertionEvaluator` implementations — T4.
+- No `IScenarioRunner` implementations (REST, MCP, LLM) — T5 and later.
 - No statistics implementations — `ISignificanceTest` and `IMultipleComparisonCorrection` have no
   implementations, and `StatisticalSummary.Interval` / `.Comparison` are never populated — T9.
-- No baseline provider, no reporter, no CLI wiring.
+- No baseline **comparator** — T10. `baseline:*` assertions grade against the transcript handed to
+  them through `EvaluationContext.Baseline`; resolving a baseline reference remains
+  `IBaselineProvider`'s job and has no implementation.
+- No reporter, no CLI wiring.
 
 ### Known sharp edge
 
@@ -227,6 +310,26 @@ var loaded = await loader.LoadAsync("regression.json", cancellationToken);
 
 This is a library; there is nothing to run directly. Its consumer is `tools/EvalCli`
 (`eval-cli` in the registry), which does not yet reference it.
+
+Grading a transcript goes through the registry, which dispatches by category:
+
+```csharp
+var registry = AssertionEvaluatorRegistry.CreateDefault();
+var context = new EvaluationContext
+{
+    ScenarioId = scenario.Identity.Id,
+    Grading = scenario.Grading,
+    Transcript = transcript,
+    Baseline = baselineTranscript, // null when there is none
+};
+
+foreach (var assertion in scenario.Grading.Assertions)
+{
+    // Throws AssertionEvaluationException when the assertion cannot be evaluated at all —
+    // record the run as RunStatus.Error rather than letting it read as a pass or a regression.
+    var result = await registry.EvaluateAsync(assertion, context, cancellationToken);
+}
+```
 
 ## Build and test
 

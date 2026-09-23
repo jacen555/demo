@@ -23,6 +23,8 @@
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
 | `sizzlecraft` | tool (`node`) | 2 | `partial` | 13 passing | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. |
+| `eval-engine` | lib | 1 | `partial` | 309 passing | Generic eval harness contracts/seams/serialization (T3). Contracts, assertions, results, transcripts and serialization reviewed clean. **`SuiteLoader` path confinement has 3 open findings — see below.** Runners, evaluators, aggregation, comparison and reporting are T4–T15, not yet built. |
+| `eval-cli` | tool | 2 | `partial` | 1 passing | Scaffold only. Does not yet reference `eval-engine`. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -103,28 +105,38 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 
 ## Known gaps
 
-1. **The agent loop itself is unproven.** `scaffold-domain` is verified, but no domain has
-   been taken through `forge-team` → planner → builder → reviewer → PASS. Until that runs,
-   the orchestration is configuration, not a demonstrated workflow.
-2. **The SizzleCraft extraction is not yet banked.** The two original projects under
+1. **`SuiteLoader` path confinement — open task, accepted deliberately.** The independent
+   reviewer's three remaining findings are all in this one file:
+   - `Directory.Exists` follows symbolic links on Unix, so an out-of-root or network-mounted
+     target can be inspected before the boundary predicate runs.
+   - The validate-then-open sequence is racy: a writer can swap an in-root entry for an
+     escaping link between the two operations.
+   - A volume root already ends in a separator, so appending another makes valid child paths
+     fail containment.
+
+   These were accepted rather than fixed because TOCTOU-safe, cross-platform, confined file
+   access is a deep problem and not what a contracts task is for. **Nothing T4–T15 builds on
+   is affected** — review findings converged onto this file alone from round 3 onward, and the
+   contracts, seams, serialization, assertions, results and transcripts are clean. Fix before
+   the harness loads any suite file an untrusted party can write.
+2. **The agent loop is now proven** — T3 ran plan → build → review → iterate five times with a
+   cross-family reviewer and materially improved the code each round. See "What works end to
+   end". This closes the previous gap #1.
+3. **The SizzleCraft extraction is not yet banked.** The two original projects under
    `~/SizzleCraft/` still hold their own copies of the scripts. Until they point at
    `tools/SizzleCraft`, the duplication is *recorded*, not *removed*.
-3. **`write-script.mjs` (S1) is still unextracted.** It diverged ~120% between projects —
+4. **`write-script.mjs` (S1) is still unextracted.** It diverged ~120% between projects —
    genuinely rewritten rather than drifted — and needs a review to separate shared logic
    from per-video content. The other four "diverged" scripts turned out to be hardcoded
    config and are now parameterized.
-4. **No formatting enforcement.** CSharpier is the declared authority (§IV) but is not
-   installed and no hook runs it. Prettier likewise for Node domains.
-5. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
+5. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
+6. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
    has never actually been executed.
-6. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
+7. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
    cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
    complete story.
-7. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
+8. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
    base SDK. Worth a spike and an ADR before the first real desktop app.
-8. **`Directory.Packages.props` versions were not verified against the feed.** The lib
-   smoke test restored successfully, so the test stack is good; the hosting and CLI entries
-   are unproven until something references them.
 
 ## Next
 
