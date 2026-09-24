@@ -1,6 +1,27 @@
+using Forge.EvalCli.Changes;
+using Forge.EvalCli.Exchanges;
 using Forge.EvalEngine.Coordination;
 
 namespace Forge.EvalCli.Cli;
+
+/// <summary>
+/// Which adapter, if any, describes the system under test to a runner that needs one.
+/// </summary>
+/// <remarks>
+/// <see cref="None"/> is first, and therefore the default, deliberately. An exchange encodes an
+/// assumption about the shape of somebody else's system; a wrong one turns every reply into a
+/// malformed-response finding that reads as a finding <i>about that system</i>. So no exchange is
+/// wired unless one is named, and a suite whose kind has no runner records the gap as a harness
+/// failure rather than as a pass.
+/// </remarks>
+internal enum ExchangeAdapter
+{
+    /// <summary>No adapter. The kind's runner is not registered, and the engine records the gap.</summary>
+    None,
+
+    /// <summary>The built-in JSON contract described on <see cref="JsonExchangeContract"/>.</summary>
+    Json,
+}
 
 /// <summary>
 /// The raw option values as parsed, before any of them have been validated.
@@ -39,6 +60,15 @@ internal sealed record RunRequest
 
     /// <summary>Gets the endpoint as supplied, or <see langword="null"/>.</summary>
     public string? Endpoint { get; init; }
+
+    /// <summary>Gets the revision to diff against as supplied, or <see langword="null"/>.</summary>
+    public string? ChangedSince { get; init; }
+
+    /// <summary>Gets the REST adapter name as supplied.</summary>
+    public string? RestExchange { get; init; }
+
+    /// <summary>Gets the conversational adapter name as supplied.</summary>
+    public string? LlmExchange { get; init; }
 
     /// <summary>Gets whether the caller asked for a preview instead of a run.</summary>
     public bool DryRun { get; init; }
@@ -109,6 +139,26 @@ internal sealed record RunPlan
     /// <summary>Gets the redacted address, or <see langword="null"/>. The only printable form.</summary>
     public string? EndpointDisplay { get; init; }
 
+    /// <summary>
+    /// Gets the revision the changed-file set is read against, or <see langword="null"/> when no
+    /// selection was asked for.
+    /// </summary>
+    /// <remarks>
+    /// Null is not "select nothing" — it is "select everything, and say that is why". Impact
+    /// selection is opt-in because choosing the wrong revision <i>shrinks</i> a run, and a
+    /// scenario that should have run and did not leaves no trace in the report.
+    /// </remarks>
+    public string? ChangedSince { get; init; }
+
+    /// <summary>Gets the adapter wired for REST scenarios.</summary>
+    public ExchangeAdapter RestExchange { get; init; }
+
+    /// <summary>Gets the adapter wired for conversational scenarios.</summary>
+    public ExchangeAdapter LlmExchange { get; init; }
+
+    /// <summary>Gets a value indicating whether any runner needing an address is wired.</summary>
+    public bool RequiresEndpoint => RestExchange is not ExchangeAdapter.None || LlmExchange is not ExchangeAdapter.None;
+
     /// <summary>Gets whether this invocation is a preview that executes nothing.</summary>
     public bool DryRun { get; init; }
 
@@ -144,16 +194,14 @@ internal sealed record RunPlan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var root = PathGuard.ResolveRoot(request.Root, "--root");
-        var suite = PathGuard.ResolveExistingFile(request.Suite, root, "--suite");
+        var guard = PathGuard.ForRoot(request.Root, "--root");
+        var suite = guard.ResolveExistingFile(request.Suite, "--suite");
 
-        var baseline = request.Baseline is null
-            ? null
-            : PathGuard.ResolveExistingFile(request.Baseline, root, "--baseline");
+        var baseline = request.Baseline is null ? null : guard.ResolveExistingFile(request.Baseline, "--baseline");
 
         var artifact = request.Out is null
             ? null
-            : PathGuard.ResolveOutputFile(request.Out, root, request.Overwrite, "--out", "--overwrite");
+            : guard.ResolveOutputFile(request.Out, request.Overwrite, "--out", "--overwrite");
 
         if (request.MaxConcurrency < 1)
         {
@@ -181,10 +229,24 @@ internal sealed record RunPlan
             (endpoint, endpointDisplay) = EndpointGuard.Validate(request.Endpoint, "--endpoint");
         }
 
+        var changedSince = ValidateRevision(request.ChangedSince);
+        var restExchange = ParseExchange(request.RestExchange, "--rest-exchange");
+        var llmExchange = ParseExchange(request.LlmExchange, "--llm-exchange");
+
+        if ((restExchange is not ExchangeAdapter.None || llmExchange is not ExchangeAdapter.None) && endpoint is null)
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                "An exchange was selected but --endpoint was not given, so there is nowhere to send a stimulus.",
+                "Pass --endpoint <url> as well, or drop the exchange and let the run record the missing runner as "
+                    + "a harness failure rather than dialling somewhere nobody named."
+            );
+        }
+
         return new RunPlan
         {
             SuitePath = suite,
-            RootDirectory = root,
+            RootDirectory = guard.Root,
             BaselinePath = baseline,
             ArtifactPath = artifact,
             OverwriteArtifact = request.Overwrite,
@@ -193,10 +255,66 @@ internal sealed record RunPlan
             MaxTotalRuns = request.MaxTotalRuns,
             Endpoint = endpoint,
             EndpointDisplay = endpointDisplay,
+            ChangedSince = changedSince,
+            RestExchange = restExchange,
+            LlmExchange = llmExchange,
             DryRun = request.DryRun,
             Json = request.Json,
             FailOnRegression = request.FailOnRegression,
             Verbose = request.Verbose,
+        };
+    }
+
+    /// <summary>Validates the revision a changed-file set would be read against.</summary>
+    /// <remarks>
+    /// Whether the revision <i>exists</i> is git's question and git answers it. This refuses only
+    /// the shapes that would stop it being read as a revision at all — chiefly a leading
+    /// <c>-</c>, which git's own parser would take for an option.
+    /// </remarks>
+    private static string? ValidateRevision(string? changedSince)
+    {
+        if (changedSince is null)
+        {
+            return null;
+        }
+
+        if (!GitChangedFileSource.TryValidateRevision(changedSince, out var rejection))
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"--changed-since {rejection}.",
+                "Give it a revision, a branch, or a commit id — for example --changed-since origin/main. Omit it "
+                    + "and the whole suite runs, which is the safe default."
+            );
+        }
+
+        return changedSince.Trim();
+    }
+
+    /// <summary>Reads an adapter name, refusing one this build does not have.</summary>
+    /// <remarks>
+    /// Validated here rather than by an option validator, so that the rules a test pins are the
+    /// same rules the tool applies — the same reason every other value is checked in this method.
+    /// </remarks>
+    private static ExchangeAdapter ParseExchange(string? value, string optionName)
+    {
+        if (value is null || value.Trim().Length == 0)
+        {
+            return ExchangeAdapter.None;
+        }
+
+        return value.Trim() switch
+        {
+            var name when string.Equals(name, "none", StringComparison.OrdinalIgnoreCase) => ExchangeAdapter.None,
+            var name when string.Equals(name, JsonExchangeContract.Name, StringComparison.OrdinalIgnoreCase) =>
+                ExchangeAdapter.Json,
+            _ => throw new EvalCliException(
+                ExitCode.UsageError,
+                $"{optionName} does not name an adapter this build has: {value}",
+                $"This build knows 'none' and '{JsonExchangeContract.Name}'. A system with another shape needs its "
+                    + "own adapter; until there is one, leave the option off and the missing runner is recorded as "
+                    + "a harness failure rather than guessed at."
+            ),
         };
     }
 

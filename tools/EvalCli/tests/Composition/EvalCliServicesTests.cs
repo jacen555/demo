@@ -1,12 +1,17 @@
 using FluentAssertions;
+using Forge.EvalCli.Changes;
 using Forge.EvalCli.Cli;
 using Forge.EvalCli.Composition;
 using Forge.EvalCli.Tests.Support;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Assertions;
+using Forge.EvalEngine.Baselines;
 using Forge.EvalEngine.Comparison;
 using Forge.EvalEngine.Coordination;
+using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
+using Forge.EvalEngine.Runners;
+using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Statistics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -238,5 +243,115 @@ public class EvalCliServicesTests
         var act = () => EvalCliServices.Build(Plan(workspace), null!);
 
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Build_WhenNoExchangeWasNamed_LeavesTheKindsThatNeedOneWithoutARunner()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+        using var provider = EvalCliServices.Build(Plan(workspace), diagnostics);
+
+        var kinds = provider.GetServices<IScenarioRunner>().Select(runner => runner.Kind).ToArray();
+
+        // Nothing speculative. A kind with no runner is recorded by the engine as a harness
+        // failure, which is honest; a guessed adapter would produce findings about the wrong party.
+        kinds.Should().NotContain(ScenarioKind.Rest).And.NotContain(ScenarioKind.Llm);
+        kinds.Should().Contain(ScenarioKind.Mcp).And.Contain(ScenarioKind.Ui);
+        provider.GetService<IRestExchange>().Should().BeNull();
+        provider.GetService<HttpClient>().Should().BeNull();
+    }
+
+    [Fact]
+    public void Build_WhenAnExchangeWasNamed_WiresItsRunnerAgainstTheUnredactedEndpoint()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+
+        var plan = RunPlan.Create(
+            new RunRequest
+            {
+                Suite = "eval-suites/regression.json",
+                Root = workspace.Root,
+                Endpoint = "https://example.com/api?token=abcdef",
+                RestExchange = "json",
+                LlmExchange = "json",
+            }
+        );
+
+        using var provider = EvalCliServices.Build(plan, diagnostics);
+
+        var kinds = provider.GetServices<IScenarioRunner>().Select(runner => runner.Kind).ToArray();
+
+        kinds.Should().Contain(ScenarioKind.Rest).And.Contain(ScenarioKind.Llm);
+
+        // The client is the one place the dialling form lives; everything recorded is redacted.
+        provider.GetRequiredService<HttpClient>().BaseAddress!.Query.Should().Contain("abcdef");
+        provider.GetRequiredService<IConversationExchange>().Endpoint.Should().NotContain("abcdef");
+    }
+
+    [Fact]
+    public void Build_WhenAnExchangeWasNamed_SharesOneClientAcrossTheWholeInvocation()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+
+        var plan = RunPlan.Create(
+            new RunRequest
+            {
+                Suite = "eval-suites/regression.json",
+                Root = workspace.Root,
+                Endpoint = "https://example.com/api",
+                RestExchange = "json",
+            }
+        );
+
+        using var provider = EvalCliServices.Build(plan, diagnostics);
+
+        provider.GetRequiredService<HttpClient>().Should().BeSameAs(provider.GetRequiredService<HttpClient>());
+    }
+
+    [Fact]
+    public void Build_WhenNoRevisionWasNamed_RegistersTheSourceThatSelectsEverything()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+        using var provider = EvalCliServices.Build(Plan(workspace), diagnostics);
+
+        provider.GetRequiredService<IChangedFileSource>().Should().BeOfType<FullSuiteChangedFileSource>();
+    }
+
+    [Fact]
+    public void Build_WhenARevisionWasNamed_RegistersTheGitSource()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+
+        var plan = RunPlan.Create(
+            new RunRequest
+            {
+                Suite = "eval-suites/regression.json",
+                Root = workspace.Root,
+                ChangedSince = "HEAD",
+            }
+        );
+
+        using var provider = EvalCliServices.Build(plan, diagnostics);
+
+        provider.GetRequiredService<IChangedFileSource>().Should().BeOfType<GitChangedFileSource>();
+    }
+
+    [Fact]
+    public void Build_ForTheReadersOfCommittedFiles_ConfinesThemToTheSameRootTheArgumentsWereCheckedAgainst()
+    {
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+
+        var plan = Plan(workspace);
+
+        using var provider = EvalCliServices.Build(plan, diagnostics);
+
+        provider.GetRequiredService<SuiteLoader>().RootDirectory.Should().Be(plan.RootDirectory);
+        provider.GetRequiredService<ArtifactBaseline>().RootDirectory.Should().Be(plan.RootDirectory);
     }
 }

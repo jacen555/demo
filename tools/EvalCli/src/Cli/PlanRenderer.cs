@@ -62,6 +62,18 @@ internal sealed record DryRunReport
     [JsonPropertyName("endpoint")]
     public string? Endpoint { get; init; }
 
+    /// <summary>Gets the revision the changed-file set would be read against, or null.</summary>
+    [JsonPropertyName("changedSince")]
+    public string? ChangedSince { get; init; }
+
+    /// <summary>Gets the adapter that would describe the REST system under test.</summary>
+    [JsonPropertyName("restExchange")]
+    public required string RestExchange { get; init; }
+
+    /// <summary>Gets the adapter that would describe the conversational system under test.</summary>
+    [JsonPropertyName("llmExchange")]
+    public required string LlmExchange { get; init; }
+
     /// <summary>Gets the gate mode in force.</summary>
     [JsonPropertyName("gateMode")]
     public required string GateMode { get; init; }
@@ -120,6 +132,9 @@ internal static class PlanRenderer
             MaxConcurrency = plan.MaxConcurrency,
             MaxTotalRuns = plan.MaxTotalRuns,
             Endpoint = plan.EndpointDisplay,
+            ChangedSince = plan.ChangedSince,
+            RestExchange = plan.RestExchange.ToString().ToLowerInvariant(),
+            LlmExchange = plan.LlmExchange.ToString().ToLowerInvariant(),
             GateMode = plan.GateMode,
             FailOnRegressionRequested = plan.FailOnRegression,
             FailOnRegressionImplemented = false,
@@ -167,6 +182,7 @@ internal static class PlanRenderer
         // Only ever the redacted form. The plan's Uri keeps the query string for a dialling stage
         // and must not reach any output.
         Row(text, "endpoint", plan.EndpointDisplay ?? NoneMarker);
+        Row(text, "selection", SelectionLine(plan));
         Row(text, "gate", GateLine(plan));
 
         text.AppendLine();
@@ -194,6 +210,28 @@ internal static class PlanRenderer
         plan.FailOnRegression
             ? $"{plan.GateMode} - --fail-on-regression is reserved and does not change this build's behaviour"
             : $"{plan.GateMode} - regressions are reported, not enforced";
+
+    /// <summary>States which scenarios would run, and on what evidence.</summary>
+    /// <remarks>
+    /// <para>
+    /// Named in the preview because it is the decision with the quietest failure mode. A run
+    /// narrowed against the wrong revision reports a plausible number and omits the scenario that
+    /// would have caught the regression, so a reader has to be able to see the revision before
+    /// anything is executed.
+    /// </para>
+    /// <para>
+    /// <b>What it does not say is that the run will be narrowed.</b> A dry run reads nothing —
+    /// not the suite, not the diff — so it has no evidence for that, and the real run may widen
+    /// instead: git may be absent, the revision unknown, the output undecodable, or a changed
+    /// file outside the root. Stating an outcome the preview cannot know is the same error in
+    /// miniature as a selective run that quietly selected too little.
+    /// </para>
+    /// </remarks>
+    private static string SelectionLine(RunPlan plan) =>
+        plan.ChangedSince is { } revision
+            ? $"not resolved yet - a run would read the changed-file set from `git diff {revision}` plus the "
+                + "untracked files, and fall back to the whole suite if it cannot be established"
+            : "full suite - no --changed-since, so nothing is skipped";
 
     private static void Row(StringBuilder text, string label, string value, int indent = 2) =>
         text.AppendLine(string.Create(CultureInfo.InvariantCulture, $"{new string(' ', indent)}{label, -18}{value}"));

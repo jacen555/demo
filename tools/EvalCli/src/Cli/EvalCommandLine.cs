@@ -111,6 +111,31 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "url",
     };
 
+    private readonly Option<string?> _changedSince = new(
+        "--changed-since",
+        "Revision to read the changed-file set from, narrowing the run to the scenarios a change touched. "
+            + "Omit it and the whole suite runs."
+    )
+    {
+        ArgumentHelpName = "rev",
+    };
+
+    private readonly Option<string?> _restExchange = new(
+        "--rest-exchange",
+        "Adapter describing the REST system under test: none (default) or json. Needs --endpoint."
+    )
+    {
+        ArgumentHelpName = "name",
+    };
+
+    private readonly Option<string?> _llmExchange = new(
+        "--llm-exchange",
+        "Adapter describing the conversational system under test: none (default) or json. Needs --endpoint."
+    )
+    {
+        ArgumentHelpName = "name",
+    };
+
     private readonly Option<bool> _dryRun = new("--dry-run", "Print the planned run and execute nothing. Start here.");
 
     private readonly Option<bool> _json = new("--json", "Emit the result as JSON on stdout.");
@@ -145,6 +170,9 @@ internal sealed class EvalCommandLine
             MaxConcurrency = parseResult.GetValueForOption(_maxConcurrency),
             MaxTotalRuns = parseResult.GetValueForOption(_maxTotalRuns),
             Endpoint = parseResult.GetValueForOption(_endpoint),
+            ChangedSince = parseResult.GetValueForOption(_changedSince),
+            RestExchange = parseResult.GetValueForOption(_restExchange),
+            LlmExchange = parseResult.GetValueForOption(_llmExchange),
             DryRun = parseResult.GetValueForOption(_dryRun),
             Json = parseResult.GetValueForOption(_json),
             FailOnRegression = parseResult.GetValueForOption(_failOnRegression),
@@ -246,6 +274,9 @@ internal sealed class EvalCommandLine
             _maxConcurrency,
             _maxTotalRuns,
             _endpoint,
+            _changedSince,
+            _restExchange,
+            _llmExchange,
             _dryRun,
             _json,
             _failOnRegression,

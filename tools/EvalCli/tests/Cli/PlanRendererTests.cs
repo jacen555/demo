@@ -147,6 +147,33 @@ public class PlanRendererTests
     }
 
     [Fact]
+    public void RenderText_WhenARevisionWasNamed_DoesNotClaimTheChangedFileSetWasAlreadyRead()
+    {
+        using var workspace = new TempWorkspace();
+
+        var plan = RunPlan.Create(
+            new RunRequest
+            {
+                Suite = "eval-suites/regression.json",
+                Root = workspace.Root,
+                DryRun = true,
+                ChangedSince = "origin/main",
+            }
+        );
+
+        var rendered = PlanRenderer.RenderText(plan, Harness(plan));
+
+        // A dry run reads nothing — not the suite, not the diff. Saying the run will be
+        // "impacted only" states an outcome the preview has no evidence for: git may be absent,
+        // the revision unknown, or a path outside the root, and every one of those runs the whole
+        // suite instead. The revision is still named, because that is the value worth checking
+        // before anything is executed.
+        rendered.Should().Contain("origin/main");
+        rendered.Should().Contain("not resolved yet");
+        rendered.Should().Contain("whole suite");
+    }
+
+    [Fact]
     public void Report_ForEveryPlan_SaysNothingWasExecuted()
     {
         using var workspace = new TempWorkspace();
