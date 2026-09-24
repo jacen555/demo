@@ -52,3 +52,40 @@ internal sealed class EvalCliException : Exception
     /// <summary>Gets what the user should do about it, or <see langword="null"/>.</summary>
     public string? Remedy { get; }
 }
+
+/// <summary>
+/// An interruption that arrived after something durable had already happened.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>"Interrupted, and nothing was written" is two claims, and only the first is always true.</b>
+/// A command that replaces a committed file and is then cancelled while reporting has already
+/// changed the thing the user cares about; telling them otherwise sends them looking for a file
+/// they still have and straight past the one they no longer do.
+/// </para>
+/// <para>
+/// Derives from <see cref="OperationCanceledException"/> so the exit code is unchanged — this is
+/// still an interruption, and <see cref="ExitCodeReporter.Classify"/> reads it as one. What it
+/// adds is the sentence that has to replace the blanket one.
+/// </para>
+/// </remarks>
+internal sealed class InterruptedAfterWritingException : OperationCanceledException
+{
+    /// <summary>Initializes a new instance of the <see cref="InterruptedAfterWritingException"/> class.</summary>
+    public InterruptedAfterWritingException()
+        : this("Something was written before the interruption.", null) { }
+
+    /// <summary>Initializes a new instance of the <see cref="InterruptedAfterWritingException"/> class.</summary>
+    /// <param name="whatWasWritten">What had already landed on disk, in one sentence.</param>
+    public InterruptedAfterWritingException(string whatWasWritten)
+        : this(whatWasWritten, null) { }
+
+    /// <summary>Initializes a new instance of the <see cref="InterruptedAfterWritingException"/> class.</summary>
+    /// <param name="whatWasWritten">What had already landed on disk, in one sentence.</param>
+    /// <param name="innerException">The cancellation this replaces.</param>
+    public InterruptedAfterWritingException(string whatWasWritten, Exception? innerException)
+        : base(whatWasWritten, innerException) => WhatWasWritten = whatWasWritten;
+
+    /// <summary>Gets what had already landed on disk when the interruption arrived.</summary>
+    public string WhatWasWritten { get; }
+}

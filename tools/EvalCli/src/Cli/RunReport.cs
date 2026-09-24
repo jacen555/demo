@@ -141,6 +141,15 @@ internal sealed record RunReportDocument
     /// <summary>Gets a value indicating whether any run failed as a harness failure.</summary>
     [JsonPropertyName("harnessFailed")]
     public required bool HarnessFailed { get; init; }
+
+    /// <summary>Gets the comparison against a baseline, or null when no baseline was named.</summary>
+    /// <remarks>
+    /// Null is "no comparison was asked for". It is never "the comparison found nothing" and
+    /// never "the comparison was refused" — a refusal ends the invocation with a non-zero code
+    /// and no report at all, precisely so a consumer cannot read one as the other.
+    /// </remarks>
+    [JsonPropertyName("comparison")]
+    public ComparisonReportDocument? Comparison { get; init; }
 }
 
 /// <summary>
@@ -174,13 +183,15 @@ internal static class RunReport
     /// <param name="summary">What was selected and why.</param>
     /// <param name="result">The artifact the run produced.</param>
     /// <param name="artifactPath">Where the artifact was written, or null.</param>
+    /// <param name="comparison">The comparison against a baseline, or null when none was named.</param>
     /// <returns>The report.</returns>
     /// <exception cref="ArgumentNullException">Any required argument is null.</exception>
     public static RunReportDocument Document(
         RunPlan plan,
         SelectionSummary summary,
         SuiteResult result,
-        string? artifactPath
+        string? artifactPath,
+        ComparisonOutcome? comparison = null
     )
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -220,6 +231,7 @@ internal static class RunReport
             ],
             RunCounts = CountByStatus(result),
             HarnessFailed = HarnessFailed(result),
+            Comparison = comparison is null ? null : ComparisonReport.Document(comparison),
         };
     }
 
@@ -228,18 +240,31 @@ internal static class RunReport
     /// <param name="summary">What was selected and why.</param>
     /// <param name="result">The artifact the run produced.</param>
     /// <param name="artifactPath">Where the artifact was written, or null.</param>
+    /// <param name="comparison">The comparison against a baseline, or null when none was named.</param>
     /// <returns>The JSON document.</returns>
-    public static string RenderJson(RunPlan plan, SelectionSummary summary, SuiteResult result, string? artifactPath) =>
-        JsonSerializer.Serialize(Document(plan, summary, result, artifactPath), JsonOptions);
+    public static string RenderJson(
+        RunPlan plan,
+        SelectionSummary summary,
+        SuiteResult result,
+        string? artifactPath,
+        ComparisonOutcome? comparison = null
+    ) => JsonSerializer.Serialize(Document(plan, summary, result, artifactPath, comparison), JsonOptions);
 
     /// <summary>Renders the run for a human reader.</summary>
     /// <param name="plan">The validated plan.</param>
     /// <param name="summary">What was selected and why.</param>
     /// <param name="result">The artifact the run produced.</param>
     /// <param name="artifactPath">Where the artifact was written, or null.</param>
+    /// <param name="comparison">The comparison against a baseline, or null when none was named.</param>
     /// <returns>The rendered run.</returns>
     /// <exception cref="ArgumentNullException">Any required argument is null.</exception>
-    public static string RenderText(RunPlan plan, SelectionSummary summary, SuiteResult result, string? artifactPath)
+    public static string RenderText(
+        RunPlan plan,
+        SelectionSummary summary,
+        SuiteResult result,
+        string? artifactPath,
+        ComparisonOutcome? comparison = null
+    )
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(summary);
@@ -310,6 +335,11 @@ internal static class RunReport
         foreach (var (status, count) in CountByStatus(result))
         {
             Row(text, status, count.ToString(CultureInfo.InvariantCulture), indent: 4, width: 20);
+        }
+
+        if (comparison is not null)
+        {
+            ComparisonReport.AppendTo(text, comparison, plan.Verbose);
         }
 
         text.AppendLine();

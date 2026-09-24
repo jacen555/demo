@@ -44,11 +44,19 @@ internal sealed class JsonRestExchange : IRestExchange
 
     /// <inheritdoc/>
     /// <remarks>
+    /// <para>
     /// A non-2xx reply is read through the same contract rather than short-circuited. A refusal
     /// or a rate limit is frequently the <i>point</i> of a scenario, and the runner already
     /// records the status code as transport metadata an expected-behaviour assertion can assert
     /// against. A body that is not in this contract — an HTML error page, most often — surfaces
     /// as a malformed response, which stays gradeable.
+    /// </para>
+    /// <para>
+    /// A 3xx never arrives here. It is raised as a failed request by
+    /// <see cref="Composition.RedirectRefusingHandler"/>, one layer below, because a redirect is
+    /// not an answer this adapter could interpret — it is the system under test not having been
+    /// asked.
+    /// </para>
     /// </remarks>
     public RestResponse Read(RestReply reply)
     {

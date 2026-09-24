@@ -63,7 +63,12 @@ internal static class EvalCliServices
         // Not thread-safe by contract, and the engine wants one per suite run. A singleton here
         // would make the seed a scenario was driven with depend on scheduling, which silently
         // breaks both reproducibility and the pairing a comparison rests on.
-        services.AddTransient<ISeedSource>(_ => new DeterministicSeedSource(plan.RootSeed));
+        //
+        // Drawn through SeedSchedule rather than straight from the root seed, because a narrowed
+        // run must replay the draws the full suite would have made — see that type for what goes
+        // wrong when it does not.
+        services.AddSingleton(_ => new SeedSchedule(plan.RootSeed));
+        services.AddTransient<ISeedSource>(provider => provider.GetRequiredService<SeedSchedule>().Create());
 
         services.AddSingleton(AssertionEvaluatorRegistry.CreateDefault());
 
@@ -82,6 +87,7 @@ internal static class EvalCliServices
 
         RegisterChangedFiles(services, plan);
         RegisterExchanges(services, plan);
+        RegisterBaselineEndpoint(services, plan);
 
         // The two kinds no runner in this build conducts. They report the gap cleanly rather than
         // letting a mixed suite fail to route, so registering them is not a placeholder.
@@ -148,6 +154,29 @@ internal static class EvalCliServices
         ));
     }
 
+    /// <summary>Registers the second harness a live baseline needs, when one was asked for.</summary>
+    /// <remarks>
+    /// <para>
+    /// Registered only when <c>--baseline-endpoint</c> named one, for the same reason a runner is
+    /// registered only when its adapter was named: a second harness that existed unasked-for
+    /// would hold a client pointed somewhere nobody chose.
+    /// </para>
+    /// <para>
+    /// A singleton so the container disposes it, which is what closes the handler it owns. It is
+    /// the only thing in this file that holds a second address, and
+    /// <see cref="BaselineEndpointCoordinators"/> explains why that address is the unredacted one.
+    /// </para>
+    /// </remarks>
+    private static void RegisterBaselineEndpoint(IServiceCollection services, RunPlan plan)
+    {
+        if (plan.BaselineEndpoint is null)
+        {
+            return;
+        }
+
+        services.AddSingleton(provider => new BaselineEndpointCoordinators(provider, plan));
+    }
+
     /// <summary>Registers the runners whose transport the caller described.</summary>
     /// <remarks>
     /// <para>
@@ -162,6 +191,9 @@ internal static class EvalCliServices
     /// The <see cref="HttpClient"/> is a singleton owned by the container, so one handler serves
     /// the whole invocation and is disposed with the provider. Its base address is the only place
     /// the unredacted endpoint is held — everything printed or recorded takes the redacted form.
+    /// It does not follow redirects, and does not grade one either: see
+    /// <see cref="RedirectRefusingHandler"/> for why that default would let a run be conducted
+    /// against a system nobody named.
     /// </para>
     /// </remarks>
     private static void RegisterExchanges(IServiceCollection services, RunPlan plan)
@@ -171,7 +203,10 @@ internal static class EvalCliServices
             return;
         }
 
-        services.AddSingleton(_ => new HttpClient { BaseAddress = plan.Endpoint });
+        services.AddSingleton(_ => new HttpClient(RedirectRefusingHandler.Create(), disposeHandler: true)
+        {
+            BaseAddress = plan.Endpoint,
+        });
 
         if (plan.RestExchange is ExchangeAdapter.Json)
         {

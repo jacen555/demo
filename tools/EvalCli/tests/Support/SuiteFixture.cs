@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Forge.EvalCli.Tests.Support;
@@ -31,19 +32,53 @@ internal static class SuiteFixture
     /// <param name="id">The scenario id, which is the join key against a baseline.</param>
     /// <param name="impactGlobs">The impact globs it declares, or none.</param>
     /// <param name="opening">The opening stimulus.</param>
+    /// <param name="expectedOutcome">
+    /// The outcome the scenario is graded against with <c>exactMatch:outcome</c>, or null for a
+    /// scenario that declares no assertions.
+    /// </param>
+    /// <param name="repetitions">
+    /// How many times the scenario is repeated. More than one is what lets a test produce a
+    /// scenario that was only partly conducted — one repetition graded, another errored.
+    /// </param>
     /// <returns>The fragment.</returns>
-    public static string Scenario(string id, string[]? impactGlobs = null, string opening = "hello")
+    /// <remarks>
+    /// <paramref name="expectedOutcome"/> is what lets a test produce a real pass and a real
+    /// failure from the same suite by changing only what the system under test answers — which
+    /// is the only honest way to exercise a comparison. <paramref name="opening"/> feeds the
+    /// definition fingerprint, so changing it is also how a test produces a genuine redefinition.
+    /// </remarks>
+    public static string Scenario(
+        string id,
+        string[]? impactGlobs = null,
+        string opening = "hello",
+        string? expectedOutcome = null,
+        int repetitions = 1
+    )
     {
         var globs = impactGlobs is null
             ? string.Empty
             : ", \"selection\": { \"impactGlobs\": [" + string.Join(",", impactGlobs.Select(Quote)) + "] }";
 
+        var grading = expectedOutcome is null
+            ? string.Empty
+            : ", \"grading\": { \"expectedOutcome\": "
+                + Quote(expectedOutcome)
+                + ", \"assertions\": [\"exactMatch:outcome\"] }";
+
+        var policy =
+            repetitions == 1
+                ? string.Empty
+                : ", \"repetitionPolicy\": " + repetitions.ToString(CultureInfo.InvariantCulture);
+
         return "{ \"identity\": { \"id\": \""
             + id
-            + "\", \"kind\": \"rest\" }, \"execution\": { \"mode\": \"deterministic\" }, "
+            + "\", \"kind\": \"rest\" }, \"execution\": { \"mode\": \"deterministic\""
+            + policy
+            + " }, "
             + "\"simulation\": { \"opening\": \""
             + opening
             + "\" }"
+            + grading
             + globs
             + " }";
     }

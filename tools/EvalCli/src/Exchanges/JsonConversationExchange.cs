@@ -58,12 +58,19 @@ internal sealed class JsonConversationExchange : IConversationExchange
 
     /// <inheritdoc/>
     /// <remarks>
+    /// <para>
     /// Only <see cref="MalformedResponseException"/> is raised deliberately, and only for a body
     /// this contract cannot read. Everything else is allowed to propagate: the runner records a
     /// failed request as a request failure and anything else as an adapter failure, and both are
     /// harness failures rather than verdicts about the system. An adapter that swallowed its own
     /// fault and returned an empty reply would let a broken harness manufacture a passing
     /// assertion.
+    /// </para>
+    /// <para>
+    /// A 3xx never arrives here either: it is raised as a failed request by
+    /// <see cref="Composition.RedirectRefusingHandler"/>, which is the same rule applied in the
+    /// same place for both transports rather than twice.
+    /// </para>
     /// </remarks>
     public async Task<ConversationResponse> SendAsync(
         ConversationStimulus stimulus,

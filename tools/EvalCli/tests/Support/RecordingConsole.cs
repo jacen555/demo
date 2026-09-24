@@ -11,14 +11,38 @@ internal sealed class RecordingConsole : IConsole, IDisposable
 {
     private readonly StringWriter _out = new();
     private readonly StringWriter _error = new();
+    private readonly IStandardStreamWriter _outWriter;
+    private readonly Action? _whenOutIsFirstRead;
+    private int _outReads;
 
     public RecordingConsole()
+        : this(whenOutIsFirstRead: null) { }
+
+    /// <summary>Records output, and runs <paramref name="whenOutIsFirstRead"/> before the first write.</summary>
+    /// <param name="whenOutIsFirstRead">
+    /// Run once, the first time a command reaches for standard output. That is the instant after
+    /// every side effect a command has and before any of it is reported, which is the only place a
+    /// test can interrupt a command between the two.
+    /// </param>
+    public RecordingConsole(Action? whenOutIsFirstRead)
     {
-        Out = StandardStreamWriter.Create(_out);
+        _whenOutIsFirstRead = whenOutIsFirstRead;
+        _outWriter = StandardStreamWriter.Create(_out);
         Error = StandardStreamWriter.Create(_error);
     }
 
-    public IStandardStreamWriter Out { get; }
+    public IStandardStreamWriter Out
+    {
+        get
+        {
+            if (Interlocked.Exchange(ref _outReads, 1) == 0)
+            {
+                _whenOutIsFirstRead?.Invoke();
+            }
+
+            return _outWriter;
+        }
+    }
 
     public IStandardStreamWriter Error { get; }
 

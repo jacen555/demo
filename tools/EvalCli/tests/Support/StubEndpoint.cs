@@ -5,6 +5,36 @@ using System.Text;
 namespace Forge.EvalCli.Tests.Support;
 
 /// <summary>
+/// What a <see cref="StubEndpoint"/> answers one request with.
+/// </summary>
+/// <remarks>
+/// Richer than a status and a body because two of the failures these tests pin are not expressible
+/// as either: a redirect is a status plus a <c>Location</c>, and a run the harness could not
+/// conduct is a connection that went away rather than any response at all.
+/// </remarks>
+internal sealed record StubReply
+{
+    /// <summary>Gets the HTTP status code to answer with.</summary>
+    public required int Status { get; init; }
+
+    /// <summary>Gets the body to answer with.</summary>
+    public string Body { get; init; } = string.Empty;
+
+    /// <summary>Gets the <c>Location</c> header to send, or null to send none.</summary>
+    public string? Location { get; init; }
+
+    /// <summary>
+    /// Gets whether to drop the connection instead of answering.
+    /// </summary>
+    /// <remarks>
+    /// The only way to make one repetition of a scenario error while another passes: the client
+    /// sees a transport failure, which the engine records as a run it could not conduct rather
+    /// than as a verdict about the system.
+    /// </remarks>
+    public bool Abort { get; init; }
+}
+
+/// <summary>
 /// A minimal HTTP endpoint that speaks the tool's built-in JSON contract.
 /// </summary>
 /// <remarks>
@@ -29,16 +59,31 @@ internal sealed class StubEndpoint : IAsyncDisposable
 {
     private readonly HttpListener _listener = new();
     private readonly Task _loop;
-    private readonly Func<string, (int Status, string Body)> _respond;
+    private readonly Func<string, StubReply> _respond;
     private int _requests;
 
     /// <summary>Starts an endpoint that answers every request through <paramref name="respond"/>.</summary>
     /// <param name="respond">Given the request body, returns the status and body to answer with.</param>
     public StubEndpoint(Func<string, (int Status, string Body)> respond)
+        : this(body =>
+        {
+            var (status, text) = respond(body);
+
+            return new StubReply { Status = status, Body = text };
+        }) { }
+
+    /// <summary>Starts an endpoint that answers every request through <paramref name="respond"/>.</summary>
+    /// <param name="respond">Given the request body, returns what to answer with.</param>
+    /// <param name="path">
+    /// The path to listen on, without a leading slash. A path is a parameter because it is where a
+    /// credential hides as readily as a query string does, and the tests that pin redaction need
+    /// an address carrying one.
+    /// </param>
+    public StubEndpoint(Func<string, StubReply> respond, string path = "evaluate")
     {
         _respond = respond;
 
-        Address = new Uri($"http://localhost:{FreePort()}/evaluate");
+        Address = new Uri($"http://localhost:{FreePort()}/{path}");
 
         _listener.Prefixes.Add(Address.GetLeftPart(UriPartial.Path) + "/");
         _listener.Start();
@@ -84,14 +129,27 @@ internal sealed class StubEndpoint : IAsyncDisposable
             using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
 
             var request = await reader.ReadToEndAsync().ConfigureAwait(false);
-            var (status, body) = _respond(request);
-            var bytes = Encoding.UTF8.GetBytes(body);
+            var reply = _respond(request);
 
             Interlocked.Increment(ref _requests);
 
-            context.Response.StatusCode = status;
+            if (reply.Abort)
+            {
+                context.Response.Abort();
+
+                continue;
+            }
+
+            var bytes = Encoding.UTF8.GetBytes(reply.Body);
+
+            context.Response.StatusCode = reply.Status;
             context.Response.ContentType = "application/json";
             context.Response.ContentLength64 = bytes.Length;
+
+            if (reply.Location is { } location)
+            {
+                context.Response.Headers["Location"] = location;
+            }
 
             await context.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
 

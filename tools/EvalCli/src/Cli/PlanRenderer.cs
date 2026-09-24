@@ -62,6 +62,14 @@ internal sealed record DryRunReport
     [JsonPropertyName("endpoint")]
     public string? Endpoint { get; init; }
 
+    /// <summary>Gets the redacted baseline address a baseline run would be conducted against, or null.</summary>
+    [JsonPropertyName("baselineEndpoint")]
+    public string? BaselineEndpoint { get; init; }
+
+    /// <summary>Gets which mechanism would supply the baseline: <c>none</c>, <c>artifact</c>, or <c>live-endpoint</c>.</summary>
+    [JsonPropertyName("baselineMechanism")]
+    public required string BaselineMechanism { get; init; }
+
     /// <summary>Gets the revision the changed-file set would be read against, or null.</summary>
     [JsonPropertyName("changedSince")]
     public string? ChangedSince { get; init; }
@@ -132,6 +140,8 @@ internal static class PlanRenderer
             MaxConcurrency = plan.MaxConcurrency,
             MaxTotalRuns = plan.MaxTotalRuns,
             Endpoint = plan.EndpointDisplay,
+            BaselineEndpoint = plan.BaselineEndpointDisplay,
+            BaselineMechanism = ComparisonReport.Name(Mechanism(plan)),
             ChangedSince = plan.ChangedSince,
             RestExchange = plan.RestExchange.ToString().ToLowerInvariant(),
             LlmExchange = plan.LlmExchange.ToString().ToLowerInvariant(),
@@ -182,6 +192,7 @@ internal static class PlanRenderer
         // Only ever the redacted form. The plan's Uri keeps the query string for a dialling stage
         // and must not reach any output.
         Row(text, "endpoint", plan.EndpointDisplay ?? NoneMarker);
+        Row(text, "comparison", ComparisonLine(plan));
         Row(text, "selection", SelectionLine(plan));
         Row(text, "gate", GateLine(plan));
 
@@ -210,6 +221,32 @@ internal static class PlanRenderer
         plan.FailOnRegression
             ? $"{plan.GateMode} - --fail-on-regression is reserved and does not change this build's behaviour"
             : $"{plan.GateMode} - regressions are reported, not enforced";
+
+    /// <summary>Which mechanism would supply the baseline this run compares against.</summary>
+    private static BaselineMechanism Mechanism(RunPlan plan) =>
+        plan switch
+        {
+            { BaselineEndpoint: not null } => Cli.BaselineMechanism.LiveEndpoint,
+            { BaselinePath: not null } => Cli.BaselineMechanism.Artifact,
+            _ => Cli.BaselineMechanism.None,
+        };
+
+    /// <summary>States what the run would be compared against, and what it would cost.</summary>
+    /// <remarks>
+    /// <b>The live mechanism conducts the suite twice</b>, once against each address, and that is
+    /// said here rather than discovered from the request count on somebody else's system. A
+    /// preview whose only surprise arrives at runtime is not a preview.
+    /// </remarks>
+    private static string ComparisonLine(RunPlan plan) =>
+        Mechanism(plan) switch
+        {
+            Cli.BaselineMechanism.LiveEndpoint =>
+                $"against a baseline run at {plan.BaselineEndpointDisplay} - the suite would be conducted twice, "
+                    + "once against each address",
+            Cli.BaselineMechanism.Artifact => $"against the committed artifact at {plan.BaselinePath}",
+            _ => "none - no --baseline and no --baseline-endpoint, so nothing would be compared. That is not the "
+                + "same as nothing having regressed",
+        };
 
     /// <summary>States which scenarios would run, and on what evidence.</summary>
     /// <remarks>
