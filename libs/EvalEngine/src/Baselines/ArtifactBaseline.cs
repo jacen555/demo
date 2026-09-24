@@ -1,5 +1,6 @@
 using System.Globalization;
 using Forge.EvalEngine.Abstractions;
+using Forge.EvalEngine.Paths;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Serialization;
 
@@ -38,7 +39,7 @@ public sealed class ArtifactBaseline : IBaselineProvider
     /// <summary>The largest artifact read without asking — sixteen mebibytes.</summary>
     public const int DefaultMaxBytes = 16 * 1024 * 1024;
 
-    private readonly string _rootDirectory;
+    private readonly PathBoundary _root;
 
     /// <summary>Initializes a new instance confined to <paramref name="rootDirectory"/>.</summary>
     /// <param name="rootDirectory">
@@ -73,12 +74,12 @@ public sealed class ArtifactBaseline : IBaselineProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1);
 
-        _rootDirectory = Loading.RealPath.Resolve(Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory)));
+        _root = new PathBoundary(rootDirectory);
         MaxBytes = maxBytes;
     }
 
     /// <summary>Gets the canonical root directory baselines are confined to.</summary>
-    public string RootDirectory => _rootDirectory;
+    public string RootDirectory => _root.Root;
 
     /// <summary>Gets the largest artifact this provider will read.</summary>
     public int MaxBytes { get; }
@@ -182,33 +183,24 @@ public sealed class ArtifactBaseline : IBaselineProvider
     /// Resolves a reference to a real path inside the root, refusing anything that leaves it.
     /// </summary>
     /// <remarks>
-    /// Two checks, in this order, because neither catches the other's case: the first refuses a
-    /// path that reads outside the root before the file system is touched at all, and the second
-    /// refuses one that resolves outside it through a link or junction. Following a link is an
-    /// action taken on a path the link's author chose, so the boundary is handed to
-    /// <see cref="Loading.RealPath"/> and applied at every segment rather than only at the end.
+    /// The containment rules themselves belong to <see cref="PathBoundary"/> and are documented
+    /// there — the ordering, the boundary applied to each link target while it is still text, and
+    /// failing closed on a segment that cannot be inspected. What is left here is the baseline
+    /// vocabulary: every way out of the root is the same answer to the caller, so all of them
+    /// become one <see cref="ArgumentException"/> naming the reference, carrying no cause because
+    /// nothing failed.
     /// </remarks>
     private string ResolveWithinRoot(string reference)
     {
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentException.ThrowIfNullOrWhiteSpace(reference);
 
-        var lexical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(_rootDirectory, reference)));
-
-        if (!IsContained(lexical))
-        {
-            throw OutsideRoot(reference);
-        }
-
-        string resolved;
         try
         {
-            resolved = Loading.RealPath.Resolve(lexical, isTargetPermitted: IsContained);
+            return _root.Resolve(reference);
         }
-        catch (Loading.LinkLeavesBoundaryException)
+        catch (PathEscapesBoundaryException)
         {
-            // The same answer as a reference that reads outside the root, reached the same way:
-            // from the text, before the target was touched.
             throw OutsideRoot(reference);
         }
         catch (IOException exception)
@@ -219,20 +211,10 @@ public sealed class ArtifactBaseline : IBaselineProvider
                 exception
             );
         }
-
-        return IsContained(resolved) ? resolved : throw OutsideRoot(reference);
     }
 
     private static ArgumentException OutsideRoot(string reference) =>
         new($"Baseline reference '{reference}' resolves outside the baseline root and was refused.", nameof(reference));
-
-    private bool IsContained(string candidate)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-        return candidate.Equals(_rootDirectory, comparison)
-            || candidate.StartsWith(_rootDirectory + Path.DirectorySeparatorChar, comparison);
-    }
 
     private static string Render(long value) => value.ToString(CultureInfo.InvariantCulture);
 }
