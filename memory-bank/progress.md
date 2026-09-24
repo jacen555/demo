@@ -135,6 +135,13 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    complete story.
 8. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
    base SDK. Worth a spike and an ADR before the first real desktop app.
+9. **`ComparisonResult.NewlyCovered` overclaims, in the engine.** A scenario with both a
+   passing and an errored repetition is reported as newly covered: the comparator counts its
+   graded passes, but the scenario was not fully conducted. `eval-cli` withholds these at the
+   report boundary (T14 finding 8), which fixes the CLI's output and nothing else — the
+   origin is `libs/EvalEngine`, and **every other `SuiteComparator` consumer inherits the
+   overclaim**. Escalated by the T14 builder rather than fixed, correctly: the engine is a
+   different domain and Tier 1. Fix there, then drop the CLI-side workaround.
 
 ## Next
 

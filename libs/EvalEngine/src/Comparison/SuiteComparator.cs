@@ -292,26 +292,146 @@ public sealed partial class SuiteComparator
 
         Correct(comparisons);
 
+        var covered = new List<string>();
+        var withheld = new List<string>();
+        var reasons = new List<string>();
+
+        foreach (var comparison in comparisons)
+        {
+            if (!ClaimsCoverage(comparison))
+            {
+                continue;
+            }
+
+            // Both branches rest on the candidate having passed, and that outcome is conditional
+            // on the repetitions which produced a verdict. A scenario the harness did not
+            // conduct in full passed everything that happened to be gradeable, which is not the
+            // coverage a change earned. Fixed is present in the candidate by definition and New
+            // is candidate-only, so the lookup always resolves.
+            if (CoverageShortfall(current[comparison.ScenarioId]) is not { } shortfall)
+            {
+                covered.Add(comparison.ScenarioId);
+                continue;
+            }
+
+            withheld.Add(comparison.ScenarioId);
+
+            if (!reasons.Contains(shortfall, StringComparer.Ordinal))
+            {
+                reasons.Add(shortfall);
+            }
+
+            // Named and signalled rather than dropped, and signalled with the cause that applies
+            // to this scenario rather than a general one. A shorter list and a withheld scenario
+            // read identically, so a refusal that renders as an absence is indistinguishable
+            // from nothing having happened. Terminal here: this comparator is what decides the
+            // claim is unsupported, so this is the one place it is signalled (§IV).
+            LogCoverageWithheld(comparison.ScenarioId, shortfall);
+        }
+
         return new ComparisonResult
         {
             SuiteName = candidate.SuiteName,
             ScenarioComparisons = comparisons,
-            NewlyCovered =
-            [
-                .. comparisons
-                    .Where(comparison =>
-                        comparison.Classification == ScenarioClassification.Fixed
-                        || (
-                            comparison.Classification == ScenarioClassification.New
-                            && comparison.CandidateOutcome == ScenarioOutcome.Passed
-                        )
-                    )
-                    .Select(comparison => comparison.ScenarioId),
-            ],
+            NewlyCovered = covered,
+            NewlyCoveredWithheld = withheld,
+
+            // Only the causes that actually occurred, so the reason never asserts a shortfall
+            // this comparison did not find.
+            NewlyCoveredWithheldReason = reasons.Count == 0 ? null : string.Join(" ", reasons),
             Suite = CompareSuite(previous, current, comparisons, cancellationToken),
             Correction = _correction?.Name,
         };
     }
+
+    /// <summary>
+    /// Whether a comparison is claiming the change covered something the baseline did not.
+    /// </summary>
+    /// <remarks>
+    /// Classification is untouched by this: a scenario keeps the classification its runs earned
+    /// whether or not the coverage claim survives. This decides only what gets claimed. The
+    /// <see cref="ScenarioOutcome.Passed"/> guard on the new branch still carries its own weight
+    /// — it is what excludes a new scenario that failed, or whose every repetition errored.
+    /// </remarks>
+    private static bool ClaimsCoverage(ScenarioComparison comparison) =>
+        comparison.Classification == ScenarioClassification.Fixed
+        || (
+            comparison.Classification == ScenarioClassification.New
+            && comparison.CandidateOutcome == ScenarioOutcome.Passed
+        );
+
+    /// <summary>
+    /// States why a scenario's own record falls short of the work it declared, or null when it
+    /// does not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The question is whether the scenario was <b>conducted in full</b>, which is not the same
+    /// as whether a repetition errored. A run that never happened leaves no
+    /// <see cref="RunStatus.Error"/> behind to find, so counting errored runs answers a narrower
+    /// question than the coverage claim depends on.
+    /// </para>
+    /// <para>
+    /// Read from <see cref="ScenarioResult.RepetitionPolicyUsed"/> against the runs actually
+    /// recorded, and reported in the direction the mismatch went: too few runs means evidence
+    /// was never gathered, too many means the artifact carries runs its own policy never asked
+    /// for. Both withhold the claim, but they are different faults and a reader sent after the
+    /// wrong one is worse served than one told nothing. That figure is safe to count against:
+    /// <see cref="Scenarios.RepetitionPolicy"/> has no public constructor, every factory and
+    /// every deserialization path goes through <see cref="Scenarios.RepetitionPolicy.Repeat"/>
+    /// which refuses anything below one, and the property is <c>required</c> — so it can be
+    /// neither absent nor zero, and a count against it is not a false guard.
+    /// </para>
+    /// <para>
+    /// A scenario present in both artifacts is already refused by
+    /// <see cref="Divergence"/> when its runs and its policy disagree, per side and against its
+    /// own declared count rather than against the other side's — so two equally short artifacts
+    /// do not agree their way past it. This check is what covers the candidate-only case, which
+    /// has no counterpart to be paired against and so never reaches that one.
+    /// </para>
+    /// </remarks>
+    private static string? CoverageShortfall(ScenarioResult scenario)
+    {
+        // Structural first, and in the direction it actually went. An artifact that did not
+        // record what it declared is untrustworthy about the runs it did record, so this is
+        // reported ahead of their verdicts — but a reader chasing a missing run when runs were
+        // added instead is being sent the wrong way.
+        if (scenario.Runs.Count < scenario.RepetitionPolicyUsed.Repetitions)
+        {
+            return IncompleteWithheldReason;
+        }
+
+        if (scenario.Runs.Count > scenario.RepetitionPolicyUsed.Repetitions)
+        {
+            return OverRecordedWithheldReason;
+        }
+
+        return scenario.Runs.Any(run => run.Status == RunStatus.Error) ? ErroredWithheldReason : null;
+    }
+
+    /// <summary>Why a scenario that recorded fewer repetitions than it declared is not claimed.</summary>
+    private const string IncompleteWithheldReason =
+        "the scenario recorded fewer repetitions than the count its own policy declared, so at least one run the "
+        + "suite asked for never happened. A run that never happened is not a run that failed, and coverage cannot "
+        + "be claimed from evidence that was never gathered.";
+
+    /// <summary>Why a scenario that recorded more repetitions than it declared is not claimed.</summary>
+    /// <remarks>
+    /// Stated separately from <see cref="IncompleteWithheldReason"/> rather than folded into one
+    /// mismatch sentence. Nothing is missing here — there are runs the policy never asked for —
+    /// and a reader told to look for an absent repetition would be looking for something that was
+    /// never absent.
+    /// </remarks>
+    private const string OverRecordedWithheldReason =
+        "the scenario recorded more repetitions than the count its own policy declared, so its runs include at "
+        + "least one the suite never asked for. Nothing here is missing; what is unknown is which runs the claim "
+        + "rests on, and an artifact whose run set contradicts its own policy cannot settle that.";
+
+    /// <summary>Why a scenario whose repetitions did not all produce a verdict is not claimed.</summary>
+    private const string ErroredWithheldReason =
+        "at least one repetition errored, so the scenario passed every run that produced a verdict rather than "
+        + "every run the suite asked for. An outcome conditional on the gradeable runs cannot establish coverage "
+        + "the change earned, because the evidence for the repetitions that errored was never gathered.";
 
     /// <summary>
     /// Refuses two artifacts that were not produced under conditions that can be compared.
@@ -989,4 +1109,11 @@ public sealed partial class SuiteComparator
 
     [LoggerMessage(EventId = 1101, Level = LogLevel.Warning, Message = "No suite-wide delta was computed: {Detail}")]
     private partial void LogSuiteDeltaNotComputed(string detail);
+
+    [LoggerMessage(
+        EventId = 1102,
+        Level = LogLevel.Warning,
+        Message = "Scenario {ScenarioId} was not claimed as newly covered: {Reason}"
+    )]
+    private partial void LogCoverageWithheld(string scenarioId, string reason);
 }

@@ -720,7 +720,26 @@ Each scenario is classified `fixed` · `regressed` · `stablePass` · `stableFai
 `removed` · `notComparable`, and `ComparisonResult.NewlyCovered` is `fixed` plus `new`-and-passing.
 A harness that only reports what broke is a worse version of a test suite; the reason to run a
 suite against two variants is to show what a change **fixed**. A new scenario that fails, and a
-new scenario that produced no gradeable evidence, are both excluded — neither is coverage gained.
+new scenario whose every repetition errored, are both excluded — neither is coverage gained.
+
+A scenario the candidate did not conduct **in full** is excluded too, whether it arrived as
+`fixed` or as `new`. That is a wider property than "did a repetition error": a run that never
+happened leaves no errored status behind to find, so a candidate-only scenario recording one run
+against two declared repetitions passes an error check while the suite asked twice and got one
+answer. Three causes withhold — the recorded run count falling **short** of the declared
+repetition policy, **exceeding** it, and any repetition that **errored** — and the reason given
+says which. A run that failed, a run that never happened, and a run nobody asked for are three
+different facts, and the reason names the one that applies rather than the nearest approximation.
+
+Those scenarios are named in `ComparisonResult.NewlyCoveredWithheld` with a reason in
+`NewlyCoveredWithheldReason`, and logged once at warning with the cause specific to that scenario
+— withheld out loud rather than quietly missing from a list, because a refusal that renders as an
+absence cannot be told apart from nothing having happened. They keep the classification their runs
+earned: this governs what is **claimed**, not how a scenario is classified.
+
+A scenario present in *both* artifacts is already refused as `notComparable` when its runs and its
+declared policy disagree, checked per side against its own declared count rather than against the
+other side's — so two equally short artifacts do not agree their way past it.
 
 Classification never depends on the statistics. It is a factual statement about what the two
 artifacts recorded, and it is produced whether or not a significance test was supplied.

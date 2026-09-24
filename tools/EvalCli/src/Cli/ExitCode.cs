@@ -75,6 +75,11 @@ internal enum ExitCode
     /// The run was interrupted — Ctrl+C, or cancellation from elsewhere. Follows the 128 + SIGINT
     /// convention so a shell reports it the same way it reports every other interrupted process.
     /// </summary>
+    /// <remarks>
+    /// This code says the invocation stopped; it does not say nothing happened. A command
+    /// interrupted after it replaced a committed file reports that file — see
+    /// <see cref="InterruptedAfterWritingException"/>.
+    /// </remarks>
     Interrupted = 130,
 }
 
@@ -107,7 +112,7 @@ internal static class ExitCodes
         new(ExitCode.RegressionsFound, "reserved for the gate (10-19); nothing produces it yet"),
         new(ExitCode.NotImplemented, "the requested operation is not wired up in this build"),
         new(ExitCode.UnexpectedError, "an unhandled internal failure - a defect in this tool"),
-        new(ExitCode.Interrupted, "interrupted (Ctrl+C); partial state, nothing was written"),
+        new(ExitCode.Interrupted, "interrupted (Ctrl+C); partial state, see the message for what was written"),
     ];
 
     /// <summary>Reports whether a code falls in the block reserved for gate outcomes.</summary>

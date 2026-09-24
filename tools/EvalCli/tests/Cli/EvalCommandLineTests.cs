@@ -41,7 +41,7 @@ public class EvalCommandLineTests
     }
 
     [Fact]
-    public async Task Invoke_WithoutDryRun_ExitsNonZeroBecauseNothingRan()
+    public async Task Invoke_WithoutDryRunAgainstASuiteThatDoesNotValidate_ExitsWithTheSuiteErrorCode()
     {
         using var workspace = new TempWorkspace();
 
@@ -54,11 +54,12 @@ public class EvalCommandLineTests
         );
 
         // The defect this guards against: reporting a failure and exiting zero anyway, which
-        // turns a red result into a green CI check.
-        exitCode.Should().Be((int)ExitCode.NotImplemented);
+        // turns a red result into a green CI check. The loader refuses this suite — it declares
+        // no scenarios — and the refusal has to reach the caller as a distinct non-zero code.
+        exitCode.Should().Be((int)ExitCode.SuiteError);
         exitCode.Should().NotBe((int)ExitCode.Success);
         standardOut.Should().BeEmpty();
-        standardError.Should().Contain("not wired up");
+        standardError.Should().Contain("did not validate");
     }
 
     [Fact]

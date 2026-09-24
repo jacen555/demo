@@ -15,17 +15,19 @@ namespace Forge.EvalCli.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The shape here is chosen for what comes next.</b> Everything lives under a <c>run</c>
-/// subcommand, so the one genuinely destructive thing this tool will ever do — replacing a
-/// committed baseline — arrives as a separate command with its own explicit opt-in, and no
-/// invocation that is safe today can become destructive by a later change. The only write this
-/// build's arguments can cause is <c>--out</c>, and an existing file there is refused unless
-/// <c>--overwrite</c> is passed as well.
+/// <b>The shape here is chosen so the destructive operation stays in its own command.</b>
+/// Everything a run does lives under <c>run</c>, and replacing a committed baseline — the one
+/// genuinely destructive thing this tool does — lives under <c>baseline update</c> with its own
+/// explicit opt-in. No invocation that is safe today can become destructive by a later change,
+/// because no option added to <c>run</c> reaches the code that replaces a baseline. The only
+/// write <c>run</c>'s arguments can cause is <c>--out</c>, and an existing file there is refused
+/// unless <c>--overwrite</c> is passed as well.
 /// </para>
 /// <para>
 /// Parsing is delegated to <c>System.CommandLine</c> rather than hand-rolled. Validation is not
-/// spread across option validators: it lives in <see cref="RunPlan.Create(RunRequest)"/>, in one
-/// place, so the rules a test pins are the same rules the tool applies.
+/// spread across option validators: it lives in <see cref="RunPlan.Create(RunRequest)"/> and
+/// <see cref="RunPlan.CreateForBaselineUpdate(RunRequest)"/>, so the rules a test pins are the
+/// same rules the tool applies.
 /// </para>
 /// </remarks>
 internal sealed class EvalCommandLine
@@ -111,6 +113,45 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "url",
     };
 
+    private readonly Option<string?> _baselineEndpoint = new(
+        "--baseline-endpoint",
+        "Address to conduct a baseline run against and compare the candidate to. Must differ from --endpoint, "
+            + "and may not carry a query string or a fragment."
+    )
+    {
+        ArgumentHelpName = "url",
+    };
+
+    private readonly Option<bool> _apply = new(
+        "--apply",
+        "Replace the committed baseline. Without this, `baseline update` previews the change and writes nothing."
+    );
+
+    private readonly Option<string?> _changedSince = new(
+        "--changed-since",
+        "Revision to read the changed-file set from, narrowing the run to the scenarios a change touched. "
+            + "Omit it and the whole suite runs."
+    )
+    {
+        ArgumentHelpName = "rev",
+    };
+
+    private readonly Option<string?> _restExchange = new(
+        "--rest-exchange",
+        "Adapter describing the REST system under test: none (default) or json. Needs --endpoint."
+    )
+    {
+        ArgumentHelpName = "name",
+    };
+
+    private readonly Option<string?> _llmExchange = new(
+        "--llm-exchange",
+        "Adapter describing the conversational system under test: none (default) or json. Needs --endpoint."
+    )
+    {
+        ArgumentHelpName = "name",
+    };
+
     private readonly Option<bool> _dryRun = new("--dry-run", "Print the planned run and execute nothing. Start here.");
 
     private readonly Option<bool> _json = new("--json", "Emit the result as JSON on stdout.");
@@ -145,6 +186,11 @@ internal sealed class EvalCommandLine
             MaxConcurrency = parseResult.GetValueForOption(_maxConcurrency),
             MaxTotalRuns = parseResult.GetValueForOption(_maxTotalRuns),
             Endpoint = parseResult.GetValueForOption(_endpoint),
+            BaselineEndpoint = parseResult.GetValueForOption(_baselineEndpoint),
+            Apply = parseResult.GetValueForOption(_apply),
+            ChangedSince = parseResult.GetValueForOption(_changedSince),
+            RestExchange = parseResult.GetValueForOption(_restExchange),
+            LlmExchange = parseResult.GetValueForOption(_llmExchange),
             DryRun = parseResult.GetValueForOption(_dryRun),
             Json = parseResult.GetValueForOption(_json),
             FailOnRegression = parseResult.GetValueForOption(_failOnRegression),
@@ -160,6 +206,7 @@ internal sealed class EvalCommandLine
         };
 
         root.AddCommand(BuildRunCommand());
+        root.AddCommand(BuildBaselineCommand());
 
         // No subcommand was given. Show the safe path — on stderr, so a piped stdout stays clean —
         // and report a usage error, because nothing was asked for and nothing ran.
@@ -246,6 +293,10 @@ internal sealed class EvalCommandLine
             _maxConcurrency,
             _maxTotalRuns,
             _endpoint,
+            _baselineEndpoint,
+            _changedSince,
+            _restExchange,
+            _llmExchange,
             _dryRun,
             _json,
             _failOnRegression,
@@ -257,6 +308,66 @@ internal sealed class EvalCommandLine
         return run;
     }
 
+    /// <summary>
+    /// Builds the <c>baseline</c> command group, which owns the one destructive operation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Separate from <c>run</c> on purpose, and that separation is the safety property.</b>
+    /// Nothing a <c>run</c> invocation can be given replaces a committed baseline, so no
+    /// invocation that is safe today becomes destructive because an option was added later. The
+    /// shape was chosen in the previous build for exactly this arrival.
+    /// </para>
+    /// <para>
+    /// <c>--apply</c> is the opt-in and it is the only thing that writes. A bare
+    /// <c>baseline update</c> conducts the suite, compares, prints the diff shape, and leaves the
+    /// file alone — the preview is the default rather than a flag, so forgetting a flag can only
+    /// make this command do less.
+    /// </para>
+    /// <para>
+    /// <c>--out</c>, <c>--overwrite</c>, <c>--changed-since</c>, <c>--baseline-endpoint</c>, and
+    /// <c>--dry-run</c> are deliberately absent: the first two because this command writes one
+    /// file and it is <c>--baseline</c>, the third because a baseline is a statement about a whole
+    /// suite, the fourth because a live system is not something that can be written over, and the
+    /// fifth because the safe default already is the preview.
+    /// </para>
+    /// </remarks>
+    private Command BuildBaselineCommand()
+    {
+        var update = new Command(
+            "update",
+            "Replace a committed baseline with a fresh run. Previews by default; --apply writes."
+        )
+        {
+            _suite,
+            _root,
+            _baseline,
+            _seed,
+            _maxConcurrency,
+            _maxTotalRuns,
+            _endpoint,
+            _restExchange,
+            _llmExchange,
+            _apply,
+            _json,
+            _verbose,
+        };
+
+        update.SetHandler(HandleBaselineUpdateAsync);
+
+        var baseline = new Command("baseline", "Manage committed baselines.") { update };
+
+        // No subcommand under `baseline` is the same refusal a bare invocation earns: help on
+        // stderr so a piped stdout stays clean, and a usage code because nothing was asked for.
+        baseline.SetHandler(context =>
+        {
+            context.Console.Error.Write(RenderHelp(context.HelpBuilder, baseline, context.ParseResult));
+            context.ExitCode = (int)ExitCode.UsageError;
+        });
+
+        return baseline;
+    }
+
     private async Task HandleRunAsync(InvocationContext context)
     {
         // Nothing is caught here. A refusal from this tool or from the engine travels to the
@@ -265,6 +376,17 @@ internal sealed class EvalCommandLine
         var plan = RunPlan.Create(BindRequest(context.ParseResult));
 
         var code = await RunCommand
+            .ExecuteAsync(plan, context.Console, context.GetCancellationToken())
+            .ConfigureAwait(false);
+
+        context.ExitCode = (int)code;
+    }
+
+    private async Task HandleBaselineUpdateAsync(InvocationContext context)
+    {
+        var plan = RunPlan.CreateForBaselineUpdate(BindRequest(context.ParseResult));
+
+        var code = await BaselineCommand
             .ExecuteAsync(plan, context.Console, context.GetCancellationToken())
             .ConfigureAwait(false);
 
@@ -309,6 +431,15 @@ internal sealed class EvalCommandLine
         output.WriteLine("The default invocation writes nothing and mutates nothing. --out names a");
         output.WriteLine("destination for the run artifact, and a file that already exists there is");
         output.WriteLine("refused unless --overwrite is passed as well.");
+        output.WriteLine();
+        output.WriteLine("Replacing a committed baseline is the one destructive thing this tool does,");
+        output.WriteLine("and it lives in its own command. It previews by default:");
+        output.WriteLine();
+        output.WriteLine("  eval-cli baseline update --suite eval-suites/regression.json \\");
+        output.WriteLine("      --baseline artifacts/baseline.json --endpoint <url> --rest-exchange json");
+        output.WriteLine();
+        output.WriteLine("That conducts the suite, reports how many scenarios would change, and writes");
+        output.WriteLine("nothing. Add --apply to replace the baseline.");
         output.WriteLine();
     }
 

@@ -57,7 +57,13 @@ internal static class ExitCodeReporter
 
         if (code == ExitCode.Interrupted)
         {
-            console.Error.WriteLine("eval-cli: interrupted. Nothing further was run and nothing was written.");
+            // The blanket sentence is two claims, and a command that got as far as replacing
+            // something can only honestly make the first of them.
+            console.Error.WriteLine(
+                exception is InterruptedAfterWritingException written
+                    ? $"eval-cli: interrupted. Nothing further was run, but {written.WhatWasWritten}"
+                    : "eval-cli: interrupted. Nothing further was run and nothing was written."
+            );
 
             return code;
         }

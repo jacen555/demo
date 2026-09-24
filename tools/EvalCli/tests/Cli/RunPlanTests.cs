@@ -170,4 +170,95 @@ public class RunPlanTests
 
         act.Should().Throw<ArgumentNullException>();
     }
+
+    [Fact]
+    public void Create_WithTheMinimumArguments_SelectsNothingOutOfTheSuite()
+    {
+        using var workspace = new TempWorkspace();
+
+        var plan = RunPlan.Create(Minimal(workspace));
+
+        // Impact selection is opted into. Guessing a revision to diff against is what shrinks a
+        // run invisibly, so the default is to run everything.
+        plan.ChangedSince.Should().BeNull();
+        plan.RestExchange.Should().Be(ExchangeAdapter.None);
+        plan.LlmExchange.Should().Be(ExchangeAdapter.None);
+        plan.RequiresEndpoint.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("HEAD")]
+    [InlineData("origin/main")]
+    public void Create_WhenARevisionIsNamed_CarriesItIntoThePlan(string revision)
+    {
+        using var workspace = new TempWorkspace();
+
+        RunPlan.Create(Minimal(workspace) with { ChangedSince = revision }).ChangedSince.Should().Be(revision);
+    }
+
+    [Theory]
+    [InlineData("--upload-pack=whatever")]
+    [InlineData("   ")]
+    [InlineData("main\nsomething")]
+    public void Create_WhenTheRevisionIsNotOne_Refuses(string revision)
+    {
+        using var workspace = new TempWorkspace();
+
+        var act = () => RunPlan.Create(Minimal(workspace) with { ChangedSince = revision });
+
+        act.Should().Throw<EvalCliException>().Which.ExitCode.Should().Be(ExitCode.UsageError);
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("JSON")]
+    public void Create_WhenAnExchangeIsNamed_ReadsItCaseInsensitively(string value)
+    {
+        using var workspace = new TempWorkspace();
+
+        var plan = RunPlan.Create(
+            Minimal(workspace) with
+            {
+                RestExchange = value,
+                Endpoint = "https://example.com/api",
+            }
+        );
+
+        plan.RestExchange.Should().Be(ExchangeAdapter.Json);
+    }
+
+    [Fact]
+    public void Create_WhenTheExchangeIsNamedNone_WiresNothing()
+    {
+        using var workspace = new TempWorkspace();
+
+        var plan = RunPlan.Create(Minimal(workspace) with { RestExchange = "none" });
+
+        plan.RestExchange.Should().Be(ExchangeAdapter.None);
+        plan.RequiresEndpoint.Should().BeFalse("'none' is the absence of an adapter, so it needs no address");
+    }
+
+    [Fact]
+    public void Create_WhenTheExchangeIsNotOneThisBuildHas_RefusesRatherThanFallingBack()
+    {
+        using var workspace = new TempWorkspace();
+
+        var act = () =>
+            RunPlan.Create(Minimal(workspace) with { RestExchange = "openapi", Endpoint = "https://example.com/api" });
+
+        // Falling back to 'none' would leave the caller believing a transport was wired.
+        act.Should().Throw<EvalCliException>().Which.ExitCode.Should().Be(ExitCode.UsageError);
+    }
+
+    [Theory]
+    [InlineData("json", null)]
+    [InlineData(null, "json")]
+    public void Create_WhenAnExchangeIsNamedWithoutAnEndpoint_Refuses(string? rest, string? llm)
+    {
+        using var workspace = new TempWorkspace();
+
+        var act = () => RunPlan.Create(Minimal(workspace) with { RestExchange = rest, LlmExchange = llm });
+
+        act.Should().Throw<EvalCliException>().Which.ExitCode.Should().Be(ExitCode.UsageError);
+    }
 }

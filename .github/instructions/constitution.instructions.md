@@ -50,8 +50,14 @@ missing from the registry, that is a blocking error — run the `scaffold-domain
 do not improvise.
 
 **Hard rules:**
-- A builder edits exactly **one** domain per task: its source folder and its matching
-  test folder. Nothing else.
+- A builder edits exactly **one** domain per task: its source folder, its matching
+  test folder, and that domain's own `README.md`. Nothing else.
+- **A domain's `README.md` belongs to the domain.** §IX requires it to state the
+  domain's honest current state, so a builder whose change makes that README wrong
+  MUST correct it in the same task. It may edit only its *own* domain's README, and
+  only where its change made it inaccurate — a README rewrite is not licence to
+  restructure docs. Every other `README.md` in the repo, including folder-level and
+  root ones, stays orchestrator-owned.
 - Cross-domain work is **split** into one task per domain, with explicit ordering.
 - Shared types go into a `libs/` domain first; dependent domains depend on that task.
 - No domain may take a dependency on another domain's *internal* types. Cross-domain
