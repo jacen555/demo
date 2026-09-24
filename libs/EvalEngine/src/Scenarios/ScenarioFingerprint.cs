@@ -44,12 +44,28 @@ public static class ScenarioFingerprint
     /// them produces a different one.
     /// </returns>
     /// <remarks>
+    /// <para>
     /// <see cref="ScenarioIdentity"/> is deliberately excluded: the id is the join key the
     /// fingerprint qualifies, and the labelling beside it — probe class, description, note — is
     /// read only by the reporter and changing it does not change what was asked.
     /// <see cref="Selection"/> and <see cref="Slicing"/> are excluded for the same reason: they
     /// decide whether a scenario runs and how its results are grouped, never how it is driven or
     /// graded.
+    /// </para>
+    /// <para>
+    /// <b><see cref="ScenarioIdentity.Kind"/> is the exclusion with teeth, and every consumer
+    /// owes it a second comparison.</b> The kind selects the runner, so two scenarios that
+    /// differ only in it are driven against different systems while carrying an identical
+    /// fingerprint. It is kept out of the digest rather than folded into it because the kind
+    /// already travels in the artifact as <see cref="Results.ScenarioResult.Kind"/>, which is
+    /// <b>required</b> where <see cref="Results.ScenarioResult.DefinitionFingerprint"/> is
+    /// optional — checking it directly is both stronger and readable on artifacts written before
+    /// fingerprinting existed, and folding it in would sever every comparison against every
+    /// artifact already written for a check those artifacts can already answer.
+    /// <see cref="Comparison.SuiteComparator"/> and <see cref="Impact.ImpactSelector"/> both
+    /// compare it beside this value; anything else that pairs two scenarios on a fingerprint
+    /// must do the same.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="scenario"/> is null.</exception>
     public static string Of(Scenario scenario)

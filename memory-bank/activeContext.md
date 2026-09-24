@@ -66,9 +66,23 @@ to find it.
   sound — `SuiteValidator` documents an undeclared turn as "the last turn the run could
   reach", which only coheres under a ceiling reading — but T8+ build on it. Worth
   confirming.
-- **`Ui` as a fourth scenario kind.** Being added as a not-implemented stub in T8, mirroring
-  the MCP stub. Driven by Cortex adding UI interaction to its own eval loop. ADR 0003 proved
-  deterministic scripted capture is achievable; the real runner is a later task.
+- **`Ui` as a fourth scenario kind.** Stubbed in T8 (`NotImplementedUiRunner`), mirroring the MCP
+  stub. Driven by Cortex adding UI interaction to its own eval loop. ADR 0003 proved deterministic
+  scripted capture is achievable; the real runner is a later task.
+
+  **Two findings from the parallel SupportSphere UI harness (`contextlayer-eval`), worth carrying
+  into that task:**
+  1. **The value proposition is post-classification failure.** That harness exists because the API
+     eval is "structurally blind to a failure that happens *after* classification succeeds" — the
+     interview lands a correct path, an agent is selected, and resolution then fails, so the
+     customer sees a canned refusal. A UI kind earns its place by covering what a REST kind
+     structurally cannot, not by re-testing the same surface through a browser.
+  2. **A UI scenario may be structurally uncomparable for PR purposes.** That harness documents
+     "what this harness cannot do: evaluate a pull request" — the Playground has no per-PR slot, PR
+     builds deploy elsewhere, and nothing in the UI targets them. Our T10 comparator would refuse
+     such a pairing as `NotComparable`, which is correct, but the *reason* should be documented on
+     the UI runner rather than surfacing as a confusing refusal. A UI suite may be a
+     point-in-time environment check rather than a before/after gate.
 
 ## Known open work
 

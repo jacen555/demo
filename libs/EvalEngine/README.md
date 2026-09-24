@@ -37,7 +37,7 @@ To find out whether a single harness can serve one-shot API checks and stochasti
 conversations without either one distorting the model — and whether the statistics needed to say
 "this got worse" honestly can be designed in from the start rather than bolted on.
 
-## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator + T9 statistics + T10 comparator)
+## What is here today (T3 contracts + T4 assertion evaluators + T5 deterministic caller + T6 runners + T7 conversation runner + T8 run coordinator + T9 statistics + T10 comparator + T11 impacted selection)
 
 | Area | Types |
 |---|---|
@@ -55,6 +55,7 @@ conversations without either one distorting the model — and whether the statis
 | Statistics inputs | `PairedObservation`, `PairedObservations` |
 | Statistics | `ScenarioAggregator`, `ProportionInterval` (Wilson, Agresti-Coull), `McNemarTest`, `PairedBootstrapTest`, `BenjaminiHochbergCorrection` |
 | Comparison | `SuiteComparator`, `ComparisonResult`, `ScenarioComparison`, `ScenarioClassification`, `ScenarioOutcome`, `ComparisonRefusedException` |
+| Selection | `ImpactSelector`, `SelectionResult`, `ScenarioSelection`, `SelectionReason` — which scenarios a change needs to run, and why |
 | Baselines | `ArtifactBaseline` (committed file), `LiveEndpointBaseline` (deployed system) |
 | Determinism | `IClock` / `SystemClock`, `ISeedSource` / `DeterministicSeedSource` |
 | Loading | `SuiteLoader`, `SuiteLoadResult`, `ValidationMessage` |
@@ -764,6 +765,17 @@ The field is optional and does not bump `SchemaVersions.SuiteResult` — an addi
 serializes as absent does not, per the version policy — because an artifact written before it
 existed is still readable and is refused for comparison rather than mis-compared.
 
+**`Identity.Kind` is deliberately *not* in the fingerprint, and every consumer owes it a second
+comparison.** The kind selects the runner, so a scenario switched from `rest` to `llm` is driven
+against a different system by different code — while carrying a byte-identical fingerprint, since
+the digest covers `Execution`, `Simulation`, and `Grading` and the kind lives in `Identity`. It is
+checked directly instead, because `ScenarioResult.Kind` is a **required** field on every artifact
+where `DefinitionFingerprint` is optional: comparing it is both stronger than a digest and
+readable on artifacts written before fingerprinting existed, and folding it in would sever every
+comparison against every artifact already written for a check those artifacts can already answer.
+`SuiteComparator` and `ImpactSelector` both make that comparison beside the fingerprint; anything
+else that pairs two scenarios on one must do the same.
+
 #### Outcomes come from every graded run, and a transition has to be paired
 
 What an artifact says about a scenario is a statement about **that artifact's own runs**, so it
@@ -898,15 +910,148 @@ returns `null` at all. Returning `null` for any of those would tell the caller t
 baseline, the caller would report "no regression", and the reason would be that nothing was ever
 compared.
 
+## Impacted selection (T11)
+
+`ImpactSelector.Select(suite, changedFiles, baseline)` answers one question: **which scenarios
+does this change actually need to run?** It is a **pure function** — no git, no file system, no
+clock. The CLI acquires the changed-file set and hands it in, which keeps diff parsing out of a
+Tier 1 library and makes every rule below testable against a literal list of strings.
+
+### The asymmetry that drives every judgement here
+
+**Over-selecting costs time. Under-selecting costs correctness — invisibly.** A scenario that
+should have run and did not produces no output at all: no wrong number in the report, no missing
+assertion, just a smaller run and a green result. Research found that classical test-impact
+analysis does not transfer cleanly to multi-service eval topologies, so this falls back to the
+whole suite far more readily than such tooling normally does. **Selection must never be the
+reason a regression goes unobserved.**
+
+### Glob syntax — and what is deliberately refused
+
+| Supported | Meaning |
+|---|---|
+| `*` | zero or more characters **within one segment** — never across `/` |
+| `?` | exactly one character within one segment (not the DOS "zero or one") |
+| `**` | zero or more whole segments; must stand alone as a complete segment |
+| `/` or `\` | separator; a leading `./` and interior `.` segments are dropped |
+
+Everything else is **refused rather than reinterpreted**: character classes (`[a-z]`), brace
+alternation (`{a,b}`), gitignore negation (a leading `!`), `..` segments, absolute or
+drive-qualified patterns, and `**` embedded in a larger segment (`**.cs`, `a**b`). Every one of
+those is a construct a suite author might reasonably expect to work, and every matcher in the BCL
+would treat them as *literal text* — matching nothing, selecting nothing, saying nothing. A
+refused pattern selects its scenario under `noGlobsDeclared` and names itself in the report, which
+turns a silent mismatch into a loud over-selection. A lone `]` or `}` is an ordinary filename
+character; only the openers introduce an unsupported construct.
+
+**A pattern naming a directory covers what is under it.** `libs/EvalEngine` matches
+`libs/EvalEngine/src/Foo.cs`, as though it ended in `/**` — matching it literally would silently
+drop every file in the tree the author named. The prefix is a **segment** prefix, never a string
+prefix: `libs/EvalEngine` does not match `libs/EvalEngineOther/src/Foo.cs`.
+
+### Normalization and case
+
+Changed-file sets arrive however their producer emits them, so both sides are reduced to one
+canonical form first: **repo-relative, `/`-separated, no empty segment, no `.` segment, every
+`..` resolved lexically**. `src\deep\..\a.cs`, `./src/a.cs`, and `src//a.cs` all become
+`src/a.cs`.
+
+**Matching is case-insensitive on every platform, deliberately.** Following the host file system
+instead would make one suite and one changed-file set select *different scenarios* depending on
+where the run happened — and the case-sensitive platform is the one that silently drops them. The
+cost is that two files differing only in case are treated as one on Linux, which over-selects.
+That is the cheap direction.
+
+A path that cannot be made repo-relative — blank, absolute, drive-qualified, or traversing above
+the root (§V: this is untrusted input) — is **refused**, and the refusal selects the whole suite.
+Dropping it quietly would be cheaper and is exactly the bug this layer exists to prevent: whatever
+that path mapped to would simply not run. Interior traversal that stays inside the repo is
+*resolved* rather than refused, because it names a real file and falling back on every run some
+tool produced would train a reader to ignore the fallback.
+
+**A path still carrying its producer's quoting is refused too.** `git diff --name-only` — the
+command this README hands you below — C-quotes any path containing a non-ASCII byte, a quote, or
+a control character, so `src/café.cs` arrives as `"src/caf\303\251.cs"`. Matched as written, the
+wrapping quotes and the octal escapes put it in a directory that does not exist: `src/**` misses
+the file that actually changed and the scenario mapped to it retires on a prior pass. Any entry
+containing a `"` is therefore refused into the full-suite fallback — decoding it here was
+declined for the reason unsupported glob constructs are refused rather than approximated, since a
+decoder's own failure modes (a truncated escape, an octal run that is not valid UTF-8) would each
+have to end in this same refusal anyway. Decode before handing the set in, or read the diff with
+`git diff -z --name-only`.
+
+### Why a scenario ran — an output, not a detail
+
+"47 of 150 scenarios" is untrustworthy on its own. Each selected scenario carries the **first
+rule that selected it**, plus a `Detail` naming the glob and file that matched, the pattern that
+was rejected, or what the baseline failed to establish:
+
+| Reason | Meaning |
+|---|---|
+| `fallback` | selection could not be trusted at all; `SelectionResult.FallbackReason` says why |
+| `globMatch` | a changed file matched a declared glob |
+| `noGlobsDeclared` | no glob declared, or none that could be interpreted — an unknown mapping runs |
+| `previouslyFailing` | the baseline records it as not passing; a fix that is never re-run is never observed |
+| `new` | the baseline carries no trustworthy verdict for it |
+
+The rules are applied in that order, and that ordering is what makes the counts mean something: a
+scenario reported `previouslyFailing` is one the safety net **rescued**, not one the mapping would
+have selected anyway. `fallback` is the default enum value, for the same reason `ScenarioOutcome`
+defaults to `Absent` — a value nobody set must never read as "it matched".
+
+### What "the baseline says it passed" has to survive
+
+A scenario is skipped from **one** state only: every declared glob interpreted, none matched, and
+a baseline recording a trustworthy pass. A scenario id is a join key, not evidence that two runs
+meant the same thing by it — nor that the verdict filed under it was ever completely gathered. So
+a recorded pass is believed only when:
+
+- the baseline ran the scenario against the **same kind** the suite now declares. The kind selects
+  the runner and is not covered by the fingerprint, so a `rest`-to-`llm` change is the one
+  redefinition the fingerprint cannot see — and the pass being skipped on came from another runner
+  against another system entirely;
+- the baseline's `ScenarioFingerprint` is the fingerprint of the definition the suite **now**
+  declares — a scenario redefined since the baseline is `new`, not `passed`;
+- it recorded **as many runs as the repetition policy it applied**. Two repetitions applied and one
+  run written down reads, to anything counting runs alone, as "one graded, one passed" — and the
+  missing repetition is precisely the one whose verdict is unknown;
+- its runs are filed under the scenario they claim;
+- no run is recorded as a pass beside an assertion verdict that did not hold, **or without a
+  verdict for an assertion the suite declares**. "Nothing failed" is satisfied vacuously by a run
+  that checked nothing, so a `pass` carrying no verdict for a declared assertion is a claim with no
+  evidence under it. Coverage is checked per declared spec rather than by counting: a run carrying
+  exactly as many passing verdicts as the suite declares assertions, for a *different* assertion,
+  is no more evidence than a run carrying none;
+- at least one run produced a verdict at all. An all-errored scenario is `new`: **an absence of
+  recorded failure is not a record of passing.**
+
+Every one of those is an **under-selection** guard, which is the class that matters here: each
+describes a way a baseline can look like a pass without being one, and being wrong about any of
+them retires a scenario in silence.
+
+`RunStatus.ExpectedFailure` counts as not-passing, so a known gap clearing is re-run and shows up
+in `newlyCovered` — the headline the harness exists to produce.
+
+The seed-reuse check `SuiteComparator` also makes is deliberately **not** repeated here.
+Repetitions sharing a seed corrupt a paired significance test, but they do not change whether a
+scenario passed, and over-selecting on a harmless condition spends the fallback's credibility for
+nothing.
+
+> The namespace is `Forge.EvalEngine.Impact` rather than `…Selection`, because a `Selection`
+> namespace would shadow the `Scenarios.Selection` record and break every `typeof(Selection)` in
+> the suite.
+
 ## Current state
 
 **`partial` — contracts, assertion evaluation, both simulated callers, the REST and conversation
-runners, the run coordinator, the statistics, and the comparator.** Types, seams, the suite loader
-with validation, canonical serialization, the five assertion evaluators behind
+runners, the run coordinator, the statistics, the comparator, and impacted selection.** Types,
+seams, the suite loader with validation, canonical serialization, the five assertion evaluators
+behind
 `AssertionEvaluatorRegistry`, `DeterministicCaller`, `LlmCaller`, `RecordedLlmClient`,
 `RestRunner`, `LlmConversationRunner`, `RunCoordinator`, `ScenarioAggregator`,
 `ProportionInterval`, `McNemarTest`, `PairedBootstrapTest`, `BenjaminiHochbergCorrection`,
-`SuiteComparator`, `ArtifactBaseline` and `LiveEndpointBaseline` are complete and tested. A mixed
+`SuiteComparator`, `ImpactSelector`, `ArtifactBaseline` and `LiveEndpointBaseline` are complete
+and tested. A mixed
 suite of all four kinds runs end to end and produces a `SuiteResult` carrying a populated
 `StatisticalSummary`, and two artifacts diff into a `ComparisonResult` carrying classifications,
 `newlyCovered`, per-scenario corrected p-values, and a suite-wide delta. Deliberately **not** here
@@ -987,6 +1132,36 @@ foreach (var assertion in scenario.Grading.Assertions)
     // record the run as RunStatus.Error rather than letting it read as a pass or a regression.
     var result = await registry.EvaluateAsync(assertion, context, cancellationToken);
 }
+```
+
+Narrow the suite to what a change actually needs to run. Pure — the caller supplies the
+changed-file set, and an empty or untrustworthy one selects everything rather than nothing:
+
+```csharp
+// Paths as your tooling emits them: `git diff --name-only`, mixed separators, leading `./`.
+var selection = ImpactSelector.Select(suite, changedFiles, baselineArtifact);
+
+if (selection.FellBackToFullSuite)
+{
+    // Not a failure — the answer. Print it, because a selective run nobody can explain is
+    // indistinguishable from a broken one.
+    Console.WriteLine($"Running the full suite: {selection.FallbackReason}");
+}
+
+foreach (var scenario in selection.Selected)
+{
+    Console.WriteLine($"{scenario.ScenarioId}: {scenario.Reason} — {scenario.Detail}");
+}
+
+var toRun = suite with
+{
+    Scenarios =
+    [
+        .. suite.Scenarios.Where(s =>
+            selection.Selected.Any(x => x.ScenarioId == s.Identity.Id)
+        ),
+    ],
+};
 ```
 
 Or hand the whole suite to the coordinator, which routes, repeats, throttles, and grades:
