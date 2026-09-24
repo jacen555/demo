@@ -319,7 +319,7 @@ unable to fix the thing the refusal complained about.
 A committed baseline driven from a different root seed, or under different harness settings, is a
 legitimate reason to re-baseline — and it means nothing measured how much of the file changes. The
 headline says so, `diffAvailable` is `false`, and `scenariosChanged`, `classificationCounts`,
-`newlyCovered`, and `regressed` are all `null`:
+`newlyCovered`, `newlyCoveredWithheld`, and `regressed` are all `null`:
 
 ```
 Baseline update preview - how many scenarios would change classification is unknown: nothing could compare the two.

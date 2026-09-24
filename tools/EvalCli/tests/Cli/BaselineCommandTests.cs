@@ -126,6 +126,47 @@ public class BaselineCommandTests
         root.GetProperty("scenariosChanged").GetInt32().Should().Be(1);
         root.GetProperty("regressed").EnumerateArray().Select(e => e.GetString()).Should().Equal("checkout");
         root.GetProperty("classificationCounts").GetProperty("stable-pass").GetInt32().Should().Be(1);
+
+        // Present at empty rather than absent. This command refuses an errored candidate before
+        // it diffs anything, so today the list is always empty here — but a field that appeared
+        // only once something was withheld is a refusal a consumer cannot distinguish from a
+        // preview that never looked, which is the shape of the defect these fields exist for.
+        root.GetProperty("newlyCoveredWithheld").EnumerateArray().Should().BeEmpty();
+        root.GetProperty("newlyCoveredWithheldReason").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutTheOptIn_ReportsWhatTheReplacementWouldRecordAsNewlyCovered()
+    {
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var broken = ComparisonWorkspace.Endpoint(ComparisonWorkspace.Checkout);
+
+        await SeedBaselineAsync(workspace, broken);
+
+        await using var fixedUp = ComparisonWorkspace.Endpoint();
+        using var console = new RecordingConsole();
+
+        var code = await BaselineCommand.ExecuteAsync(
+            Plan(workspace, fixedUp, apply: false) with
+            {
+                Json = true,
+            },
+            console,
+            CancellationToken.None
+        );
+
+        code.Should().Be(ExitCode.Success, console.StandardError);
+
+        using var report = JsonDocument.Parse(console.StandardOut);
+        var root = report.RootElement;
+
+        // What the replacement would gain is the headline of a preview too, and it is the
+        // comparator's list — this command does not re-derive it.
+        root.GetProperty("newlyCovered").EnumerateArray().Select(e => e.GetString()).Should().Equal("checkout");
+        root.GetProperty("newlyCoveredWithheld").EnumerateArray().Should().BeEmpty();
     }
 
     [Fact]
@@ -540,6 +581,7 @@ public class BaselineCommandTests
         root.GetProperty("scenariosChanged").ValueKind.Should().Be(JsonValueKind.Null);
         root.GetProperty("classificationCounts").ValueKind.Should().Be(JsonValueKind.Null);
         root.GetProperty("newlyCovered").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("newlyCoveredWithheld").ValueKind.Should().Be(JsonValueKind.Null);
         root.GetProperty("regressed").ValueKind.Should().Be(JsonValueKind.Null);
         root.GetProperty("noDiffReason").GetString().Should().Contain("not conducted alike");
     }

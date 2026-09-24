@@ -51,20 +51,6 @@ internal sealed record ComparisonOutcome
     /// reader believe the whole suite had been re-examined.
     /// </remarks>
     public IReadOnlyList<string> WithheldScenarios { get; init; } = [];
-
-    /// <summary>
-    /// Gets the scenarios this run conducted only partly — at least one repetition errored.
-    /// </summary>
-    /// <remarks>
-    /// <b>Carried because the comparison cannot see it.</b> A scenario's outcome is drawn from
-    /// the repetitions that produced a verdict, so one that passed once and errored once measures
-    /// as passing — correctly, as far as the graded evidence goes. What that evidence does not
-    /// support is the stronger claim the headline makes: that the change <i>covers</i> the
-    /// scenario. The suite asked for a number of repetitions and got fewer, so what this change
-    /// covers there is unknown rather than gained. Read from the candidate artifact, which is the
-    /// only place the errored repetitions survive.
-    /// </remarks>
-    public IReadOnlyList<string> PartiallyConductedScenarios { get; init; } = [];
 }
 
 /// <summary>
@@ -169,29 +155,7 @@ internal static class BaselineComparison
             Reference = reference,
             Result = comparison,
             WithheldScenarios = withheld,
-            PartiallyConductedScenarios = PartlyConducted(candidate),
         };
-    }
-
-    /// <summary>The scenarios whose repetitions were not all conducted.</summary>
-    /// <param name="result">The artifact to read.</param>
-    /// <returns>The scenario ids, in artifact order.</returns>
-    /// <remarks>
-    /// <see cref="RunStatus.Error"/> means the harness could not ask the question for that
-    /// repetition — the same line <see cref="RunReport.HarnessFailed"/> draws for the exit code,
-    /// read per scenario rather than over the suite.
-    /// </remarks>
-    /// <exception cref="ArgumentNullException"><paramref name="result"/> is null.</exception>
-    internal static IReadOnlyList<string> PartlyConducted(SuiteResult result)
-    {
-        ArgumentNullException.ThrowIfNull(result);
-
-        return
-        [
-            .. result
-                .ScenarioResults.Where(scenario => scenario.Runs.Any(run => run.Status is RunStatus.Error))
-                .Select(scenario => scenario.ScenarioId),
-        ];
     }
 
     /// <summary>Runs the comparator, turning its refusals into this tool's vocabulary.</summary>

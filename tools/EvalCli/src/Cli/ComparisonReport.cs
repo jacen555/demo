@@ -45,7 +45,8 @@ internal sealed record ComparisonReportDocument
     /// <summary>Gets the scenarios that passed but were not fully conducted, so are not claimed.</summary>
     /// <remarks>
     /// Named rather than dropped, for the same reason a withheld scenario is: silence in a
-    /// coverage report reads as a scenario that was examined and offered nothing.
+    /// coverage report reads as a scenario that was examined and offered nothing. The comparator
+    /// decides membership; this report states it.
     /// </remarks>
     [JsonPropertyName("newlyCoveredWithheld")]
     public IReadOnlyList<string> NewlyCoveredWithheld { get; init; } = [];
@@ -126,15 +127,14 @@ internal static class ComparisonReport
         ArgumentNullException.ThrowIfNull(outcome);
 
         var comparisons = outcome.Result.ScenarioComparisons;
-        var withheld = WithheldFromCoverage(outcome);
 
         return new ComparisonReportDocument
         {
             Mechanism = Name(outcome.Mechanism),
             Baseline = outcome.Reference,
-            NewlyCovered = NewlyCovered(outcome),
-            NewlyCoveredWithheld = withheld,
-            NewlyCoveredWithheldReason = withheld.Count == 0 ? null : PartlyConductedReason,
+            NewlyCovered = outcome.Result.NewlyCovered,
+            NewlyCoveredWithheld = outcome.Result.NewlyCoveredWithheld,
+            NewlyCoveredWithheldReason = outcome.Result.NewlyCoveredWithheldReason,
             Regressed = [.. Ids(comparisons, ScenarioClassification.Regressed)],
             NotComparable = [.. Ids(comparisons, ScenarioClassification.NotComparable)],
             ClassificationCounts = Counts(comparisons),
@@ -155,44 +155,6 @@ internal static class ComparisonReport
         };
     }
 
-    /// <summary>
-    /// The scenarios this change genuinely covered that the baseline did not.
-    /// </summary>
-    /// <param name="outcome">The comparison that happened.</param>
-    /// <returns>The identifiers, in comparison order.</returns>
-    /// <remarks>
-    /// <para>
-    /// <b>Narrower than the comparator's own list, deliberately.</b> The engine draws a
-    /// scenario's outcome from the repetitions that produced a verdict, so one that passed once
-    /// and errored once measures as passing — which is honest about the graded evidence and is
-    /// the right rule for a <i>classification</i>. Coverage is a stronger claim: the suite asked
-    /// for a number of repetitions and got fewer, so what the change covers there is unknown
-    /// rather than gained, and the headline is exactly the line a reader stops at.
-    /// </para>
-    /// <para>
-    /// Withheld rather than qualified in place, because the list is consumed as a list. A
-    /// consumer counting it, or a reader skimming it, gets no opportunity to notice an asterisk —
-    /// so the qualified entries move to a field of their own with the reason beside them.
-    /// </para>
-    /// </remarks>
-    /// <exception cref="ArgumentNullException"><paramref name="outcome"/> is null.</exception>
-    public static IReadOnlyList<string> NewlyCovered(ComparisonOutcome outcome)
-    {
-        ArgumentNullException.ThrowIfNull(outcome);
-
-        var partly = outcome.PartiallyConductedScenarios.ToHashSet(StringComparer.Ordinal);
-
-        return [.. outcome.Result.NewlyCovered.Where(scenario => !partly.Contains(scenario))];
-    }
-
-    /// <summary>The scenarios the comparator called newly covered that this run only partly conducted.</summary>
-    private static IReadOnlyList<string> WithheldFromCoverage(ComparisonOutcome outcome)
-    {
-        var partly = outcome.PartiallyConductedScenarios.ToHashSet(StringComparer.Ordinal);
-
-        return [.. outcome.Result.NewlyCovered.Where(partly.Contains)];
-    }
-
     /// <summary>Appends the comparison section to a run's rendered text.</summary>
     /// <param name="text">The report being built.</param>
     /// <param name="outcome">The comparison that happened.</param>
@@ -204,14 +166,14 @@ internal static class ComparisonReport
         ArgumentNullException.ThrowIfNull(outcome);
 
         var comparisons = outcome.Result.ScenarioComparisons;
-        var withheld = WithheldFromCoverage(outcome);
+        var withheld = outcome.Result.NewlyCoveredWithheld;
 
         text.AppendLine();
         text.AppendLine("  comparison");
         Row(text, "baseline", $"{Name(outcome.Mechanism)} {outcome.Reference}");
 
         // First, and named even at zero. This is what the harness is for.
-        Row(text, "newly covered", Listed(NewlyCovered(outcome)));
+        Row(text, "newly covered", Listed(outcome.Result.NewlyCovered));
         Row(text, "regressed", Listed([.. Ids(comparisons, ScenarioClassification.Regressed)]));
 
         if (withheld.Count > 0)
@@ -219,7 +181,14 @@ internal static class ComparisonReport
             // Beside the headline rather than below the fold: a scenario the harness could not
             // fully conduct is the one whose absence from a coverage list reads as a scenario
             // nobody gained.
-            Row(text, "not fully conducted", $"{Listed(withheld)} - {PartlyConductedReason}");
+            //
+            // Selected on the list, not on the reason. ComparisonResult documents the reason as
+            // non-null whenever it withheld something, but it is a nullable member of a record
+            // this tool does not own — and a row keyed on the annotation would drop the names if
+            // that ever stopped holding, which is this section's own defect turned inward.
+            var reason = outcome.Result.NewlyCoveredWithheldReason;
+
+            Row(text, "not fully conducted", reason is null ? Listed(withheld) : $"{Listed(withheld)} - {reason}");
         }
 
         text.AppendLine();
@@ -377,10 +346,6 @@ internal static class ComparisonReport
     private const string WithheldReason =
         "skipped by selection, so this run produced no candidate evidence about them. They are not unchanged and "
         + "they were not removed";
-
-    private const string PartlyConductedReason =
-        "at least one repetition errored, so the suite asked more of these than it got an answer to. Their graded "
-        + "runs passed; what this change covers there is unknown rather than gained";
 
     /// <summary>The wire name for an outcome, stable across the text and JSON renderings.</summary>
     /// <param name="outcome">The outcome.</param>

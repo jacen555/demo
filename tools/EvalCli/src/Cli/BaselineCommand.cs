@@ -84,6 +84,20 @@ internal sealed record BaselineUpdateDocument
     [JsonPropertyName("newlyCovered")]
     public IReadOnlyList<string>? NewlyCovered { get; init; }
 
+    /// <summary>Gets the scenarios the comparator withheld from that claim, or null when nothing compared them.</summary>
+    /// <remarks>
+    /// Null and empty are different answers here, as everywhere else in this document: null is
+    /// "nothing compared the two", empty is "the comparison withheld nothing". A field that
+    /// appeared only when something was withheld would make a refusal indistinguishable from a
+    /// preview that never looked.
+    /// </remarks>
+    [JsonPropertyName("newlyCoveredWithheld")]
+    public IReadOnlyList<string>? NewlyCoveredWithheld { get; init; }
+
+    /// <summary>Gets why the comparator withheld them, or null when it withheld nothing.</summary>
+    [JsonPropertyName("newlyCoveredWithheldReason")]
+    public string? NewlyCoveredWithheldReason { get; init; }
+
     /// <summary>Gets the scenarios the replacement records as no longer passing.</summary>
     [JsonPropertyName("regressed")]
     public IReadOnlyList<string>? Regressed { get; init; }
@@ -462,7 +476,9 @@ internal static class BaselineCommand
             ScenariosInCandidate = candidate.ScenarioResults.Count,
             ScenariosChanged = comparisons.Count(scenario => Changed(scenario.Classification)),
             ClassificationCounts = ComparisonReport.Counts(comparisons),
-            NewlyCovered = ComparisonReport.NewlyCovered(comparison),
+            NewlyCovered = result.NewlyCovered,
+            NewlyCoveredWithheld = result.NewlyCoveredWithheld,
+            NewlyCoveredWithheldReason = result.NewlyCoveredWithheldReason,
             Regressed =
             [
                 .. comparisons

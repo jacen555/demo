@@ -197,7 +197,11 @@ public sealed class SuiteComparatorIntegrityTests
     public void Compare_FixEstablishedByAPairedRepetition_IsStillReportedFixed()
     {
         // Baseline [Fail, Fail] against candidate [Pass, Error]: repetition one is graded on
-        // both sides and shows the transition, so the fix is earned and reported.
+        // both sides and shows the transition, so the fix is earned and reported as such.
+        //
+        // The coverage claim is a separate question from the classification, and it is not
+        // earned: the candidate passed the one repetition that produced a verdict, not the two
+        // the suite asked for. Withheld by name rather than dropped.
         var baseline = ComparisonFixtures.Artifact([
             ComparisonFixtures.Scenario("a", [RunStatus.Fail, RunStatus.Fail]),
         ]);
@@ -208,7 +212,8 @@ public sealed class SuiteComparatorIntegrityTests
         var result = new SuiteComparator().Compare(baseline, candidate);
 
         ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.Fixed);
-        result.NewlyCovered.Should().Equal("a");
+        result.NewlyCovered.Should().BeEmpty();
+        result.NewlyCoveredWithheld.Should().Equal("a");
     }
 
     // -----------------------------------------------------------------------------------------

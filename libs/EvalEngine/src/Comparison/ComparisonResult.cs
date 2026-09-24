@@ -148,10 +148,41 @@ public sealed record ComparisonResult
     /// <see cref="ScenarioClassification.New"/> scenarios that pass.
     /// </summary>
     /// <remarks>
-    /// A new scenario that fails, and a new scenario that produced no gradeable evidence, are
-    /// both excluded — neither is coverage the change actually gained.
+    /// <para>
+    /// A new scenario that fails is excluded, as is one whose every repetition errored and which
+    /// therefore produced no gradeable evidence at all. Neither is coverage the change gained.
+    /// </para>
+    /// <para>
+    /// So is a scenario whose candidate errored on <i>some</i> of its repetitions, whether it
+    /// arrived here as <see cref="ScenarioClassification.Fixed"/> or as
+    /// <see cref="ScenarioClassification.New"/>. An outcome is conditional on the runs that
+    /// produced a verdict, so <see cref="ScenarioOutcome.Passed"/> beside an errored repetition
+    /// says the scenario passed everything gradeable rather than everything the suite asked for
+    /// — and the difference between those two is exactly the evidence that was never gathered.
+    /// Those scenarios are named in <see cref="NewlyCoveredWithheld"/> rather than dropped, and
+    /// they keep the classification their runs earned.
+    /// </para>
     /// </remarks>
     public IReadOnlyList<string> NewlyCovered { get; init; } = [];
+
+    /// <summary>
+    /// Gets the identifiers of the scenarios that classified as newly covered but whose coverage
+    /// is not claimed, because the candidate did not conduct every repetition it asked for.
+    /// </summary>
+    /// <remarks>
+    /// Named rather than silently omitted: a shorter <see cref="NewlyCovered"/> and a withheld
+    /// scenario read identically to a consumer, and a refusal that renders as an absence cannot
+    /// be told apart from nothing having happened. <see cref="NewlyCoveredWithheldReason"/> says
+    /// why, and the comparator logs each one at warning.
+    /// </remarks>
+    public IReadOnlyList<string> NewlyCoveredWithheld { get; init; } = [];
+
+    /// <summary>
+    /// Gets why those scenarios were withheld from <see cref="NewlyCovered"/>, or
+    /// <see langword="null"/> when none were.
+    /// </summary>
+    /// <remarks>Always text this library composed; it names no scenario (§V).</remarks>
+    public string? NewlyCoveredWithheldReason { get; init; }
 
     /// <summary>
     /// Gets the suite-wide delta from the injected <see cref="Abstractions.ISignificanceTest"/>,

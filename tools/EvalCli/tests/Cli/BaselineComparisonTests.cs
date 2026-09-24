@@ -579,11 +579,22 @@ public class BaselineComparisonTests
         comparison.GetProperty("notCompared").EnumerateArray().Select(e => e.GetString()).Should().Equal("checkout");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_WhenAScenarioWasOnlyPartlyConducted_DoesNotCountItAsNewlyCovered()
+    /// <summary>
+    /// Conducts a run whose second scenario the harness could only partly conduct.
+    /// </summary>
+    /// <param name="workspace">The workspace to seed the baseline in and conduct against.</param>
+    /// <param name="json">Whether to ask for the machine-readable report or the rendered text.</param>
+    /// <returns>The exit code and whatever went to standard out.</returns>
+    /// <remarks>
+    /// The errored repetition is produced by a real aborted exchange rather than by editing an
+    /// artifact, for the reason every baseline in this file is conducted: the withholding has to
+    /// follow from what the harness could and could not do.
+    /// </remarks>
+    private static async Task<(ExitCode Code, string StandardOut)> PartlyConductedRunAsync(
+        TempWorkspace workspace,
+        bool json
+    )
     {
-        using var workspace = new TempWorkspace();
-
         workspace.WriteFile(
             Path.Combine("eval-suites", "regression.json"),
             SuiteFixture.Suite(
@@ -632,15 +643,29 @@ public class BaselineComparisonTests
 
         using var console = new RecordingConsole();
 
-        var code = await RunCommand.ExecuteAsync(Plan(workspace, endpoint), console, CancellationToken.None);
+        var code = await RunCommand.ExecuteAsync(
+            Plan(workspace, endpoint, json: json),
+            console,
+            CancellationToken.None
+        );
+
+        return (code, console.StandardOut);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAScenarioWasOnlyPartlyConducted_DoesNotCountItAsNewlyCovered()
+    {
+        using var workspace = new TempWorkspace();
+
+        var (code, standardOut) = await PartlyConductedRunAsync(workspace, json: true);
 
         code.Should().Be(ExitCode.RunFailed, "a run the harness could not conduct is never a success");
 
-        var comparison = JsonDocument.Parse(console.StandardOut).RootElement.GetProperty("comparison");
+        var comparison = JsonDocument.Parse(standardOut).RootElement.GetProperty("comparison");
 
-        // The engine counted the graded pass and reported the scenario covered. It is not: the
-        // suite asked for two repetitions and got one, so what this change covers is unknown
-        // rather than gained. The headline may not claim it.
+        // The suite asked for two repetitions and got one, so what this change covers is unknown
+        // rather than gained. The headline may not claim it — and the scenario may not vanish
+        // from the report either, which is what the two fields below are for.
         comparison.GetProperty("newlyCovered").EnumerateArray().Should().BeEmpty();
         comparison
             .GetProperty("newlyCoveredWithheld")
@@ -650,4 +675,98 @@ public class BaselineComparisonTests
             .Equal("flaky");
         comparison.GetProperty("newlyCoveredWithheldReason").GetString().Should().NotBeNullOrWhiteSpace();
     }
+
+    [Fact]
+    public async Task RenderText_WhenAScenarioWasOnlyPartlyConducted_NamesItAndWhyBesideTheHeadline()
+    {
+        using var workspace = new TempWorkspace();
+
+        var (code, text) = await PartlyConductedRunAsync(workspace, json: false);
+
+        code.Should().Be(ExitCode.RunFailed, "a run the harness could not conduct is never a success");
+
+        // An empty "newly covered" row and a scenario nobody could fully conduct read identically
+        // to somebody skimming the text, which is the whole defect. The name has to be on the
+        // page, beside the headline, with the reason next to it.
+        text.Should().Contain("newly covered").And.Contain("not fully conducted").And.Contain("flaky");
+
+        // The comparator's words, not this tool's. Asserting the engine's phrasing is what pins
+        // the reason as passed through rather than re-derived at the report boundary.
+        text.Should().Contain("passed every run that produced a verdict rather than every run the suite asked for");
+    }
+
+    [Fact]
+    public void Document_WhenTheComparatorWithheldCoverage_PassesItsScenariosAndReasonThrough()
+    {
+        var document = ComparisonReport.Document(Withholding("the comparator's own words"));
+
+        // Straight from ComparisonResult. The report boundary does not re-derive which scenarios
+        // were withheld: the comparator is what measured the repetitions, so anything computed
+        // here is a second opinion that can silently disagree with the one that has the evidence.
+        document.NewlyCovered.Should().Equal(ComparisonWorkspace.Checkout);
+        document.NewlyCoveredWithheld.Should().Equal("flaky");
+        document.NewlyCoveredWithheldReason.Should().Be("the comparator's own words");
+    }
+
+    [Fact]
+    public void AppendTo_WhenTheComparatorWithheldCoverage_NamesTheScenariosWithItsReason()
+    {
+        var text = new StringBuilder();
+
+        ComparisonReport.AppendTo(text, Withholding("the comparator's own words"), verbose: false);
+
+        text.ToString().Should().Contain("not fully conducted").And.Contain("flaky");
+        text.ToString().Should().Contain("the comparator's own words");
+    }
+
+    [Fact]
+    public void AppendTo_WhenWithheldCoverageRecordsNoReason_StillNamesTheScenarios()
+    {
+        var text = new StringBuilder();
+
+        // ComparisonResult.NewlyCoveredWithheldReason is nullable on a record this tool does not
+        // own. Keying the row on the reason would drop the names when it is absent — a refusal
+        // rendering as an absence, which is the defect this row exists to prevent.
+        ComparisonReport.AppendTo(text, Withholding(reason: null), verbose: false);
+
+        text.ToString().Should().Contain("not fully conducted").And.Contain("flaky");
+    }
+
+    /// <summary>A comparison the comparator withheld one scenario's coverage from.</summary>
+    /// <param name="reason">What the comparator recorded, or null when it recorded nothing.</param>
+    /// <returns>The outcome.</returns>
+    /// <remarks>
+    /// Constructed rather than conducted: these three pin the rendering against the contract
+    /// <see cref="ComparisonResult"/> states, not against what today's comparator happens to emit.
+    /// </remarks>
+    private static ComparisonOutcome Withholding(string? reason) =>
+        new()
+        {
+            Mechanism = BaselineMechanism.Artifact,
+            Reference = "artifacts/baseline.json",
+            Result = new ComparisonResult
+            {
+                SuiteName = "regression",
+                ScenarioComparisons =
+                [
+                    new ScenarioComparison
+                    {
+                        ScenarioId = ComparisonWorkspace.Checkout,
+                        Classification = ScenarioClassification.Fixed,
+                        BaselineOutcome = ScenarioOutcome.Failed,
+                        CandidateOutcome = ScenarioOutcome.Passed,
+                    },
+                    new ScenarioComparison
+                    {
+                        ScenarioId = "flaky",
+                        Classification = ScenarioClassification.New,
+                        BaselineOutcome = ScenarioOutcome.Absent,
+                        CandidateOutcome = ScenarioOutcome.Passed,
+                    },
+                ],
+                NewlyCovered = [ComparisonWorkspace.Checkout],
+                NewlyCoveredWithheld = ["flaky"],
+                NewlyCoveredWithheldReason = reason,
+            },
+        };
 }
