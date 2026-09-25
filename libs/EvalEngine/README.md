@@ -611,7 +611,7 @@ transcript would look exactly like a real run — so it fails loud, the runner r
 `participantFailed`, and the run is not gradeable.
 
 ### Canonical artifacts`SuiteResult` is the durable, committable output. `CanonicalJson` writes it with **object keys
-ordered ordinally at every level**, unset optional values **absent rather than null**, enums as
+ordered ordinally at every level**, unset optional **properties** absent rather than null, enums as
 camel-case strings, and `\n` line endings — so a diff shows real change and not key-order churn.
 
 `schemaVersion` is **stamped, not supplied**: `SuiteResult.SchemaVersion` has no setter, so a
@@ -626,6 +626,40 @@ at or below* — which follows from the bump policy that an additive change does
 Integer enum input is refused, so an ordinal in a suite file is not a back door into a closed set,
 and a null assigned to a non-nullable member is refused rather than bound, so a required
 sub-record cannot arrive null.
+
+That last enforcement is **member-only**, and the gap mattered. `RespectNullableAnnotations`
+covers properties and constructor parameters; the serializer does not apply it to the *element*
+type of a collection or the *value* type of a dictionary. So `"scenarioResults": [null]` bound a
+null into a list whose element type says it cannot hold one, and the failure surfaced as a
+`NullReferenceException` from the identifier check — which a consumer classifies as a crash in
+the tool rather than as an unreadable file, and reports with a stack trace naming the machine it
+ran on. `DeserializeSuiteResult` now checks those positions itself and refuses with
+`MalformedArtifactException`, which **derives from `JsonException`** so every existing reader
+keeps classifying it as an unreadable artifact without being taught a new type. The refusal names
+the field and the position — `scenario #2, run #1` — and never the entry, the key, or the value,
+because it is written to the build log (§V, ADR 0005).
+
+**`WhenWritingNull` has exactly the same boundary, and the sentence above about "unset optional
+properties" is qualified for exactly that reason.** It omits an unset *property*; it does not
+reach dictionary values or array elements, both of which are written as they stand. So this
+artifact can and does contain nulls — `Outcome.Fields` carries them deliberately. One misreading
+of where these two options apply produced both a silent binding defect and a README claim that
+this format never emits a null. If you are about to write down what the serializer guarantees,
+run it first.
+
+The positions checked are every one the artifact declares as non-nullable: `scenarioResults`,
+`slicingDimensions`, a scenario's `runs` and `tags`, a run's `assertionResults`, a transcript's
+`turns` and `transport.attributes`, and `environment.harnessConfig`. **`Outcome.Fields` is
+deliberately not among them** — it is the one dictionary in the graph declared
+`IReadOnlyDictionary<string, string?>`, where a null is the artifact's own way of recording that
+the system returned no value for a field. Refusing it would turn a valid artifact into a refusal,
+which is the worse failure of the two: the crash is loud, and the refusal would be believed.
+
+The producer side is closed at the same time. `SuiteLoader` refuses a slicing tag whose value is
+the literal null (`scenario.tag.null`), because `RunCoordinator` copies a scenario's tags verbatim
+into the artifact — so admitting one at load would have this engine commit an artifact it then
+refuses to read. Refused at authoring time for the reason ADR 0005 gives: the value is in a
+committed file with a human attached to it, and the fix costs one edit.
 
 ### Comparing artifacts
 
