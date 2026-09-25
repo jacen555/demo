@@ -224,6 +224,18 @@ internal static class ReportFixture
     public static SuiteResult Artifact(params ScenarioResult[] scenarios) =>
         Artifact(recordsConfidence: true, scenarios);
 
+    /// <summary>Builds one withheld coverage claim, with the cause that withheld it.</summary>
+    /// <param name="id">The scenario id.</param>
+    /// <param name="cause">The cause the comparator attributed to that scenario.</param>
+    /// <returns>The withheld claim.</returns>
+    /// <remarks>
+    /// The cause is required at every call site rather than defaulted. Which cause a fixture
+    /// means is the whole subject of the withheld rendering — a default here would let a test
+    /// assert a per-scenario attribution it never actually chose.
+    /// </remarks>
+    public static WithheldCoverage Withheld(string id, CoverageWithholdingCause cause) =>
+        new() { ScenarioId = id, Cause = cause };
+
     /// <summary>Builds an artifact, optionally one that never recorded its confidence level.</summary>
     /// <param name="recordsConfidence">Whether the harness settings carry the interval confidence.</param>
     /// <param name="scenarios">The scenario records.</param>

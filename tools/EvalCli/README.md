@@ -213,7 +213,11 @@ is decided before anything runs:
 - **A scenario the harness could not fully conduct is not counted as newly covered.** A scenario
   whose repetitions were part graded and part errored measures as passing — correctly, for what
   the graded evidence shows — but the suite asked more of it than it got an answer to. Those
-  scenarios move to `newlyCoveredWithheld` with a reason rather than inflating the headline.
+  scenarios move to `newlyCoveredWithheld` rather than inflating the headline, **each carrying the
+  cause the comparator attributed to it** — `incomplete`, `over-recorded`, or `errored` — and the
+  sentence explaining it. The causes lead to different actions: a repetition that errored is a
+  flake to re-run, a repetition that never happened is a harness that lost work, and an artifact
+  recording more runs than its policy declared is neither.
 - **A redirect is a request that never arrived.** Neither client follows one, and a `3xx` is
   recorded as a harness failure rather than graded. See [Safety](#safety).
 
@@ -1158,10 +1162,13 @@ and `baseline update` are complete and tested. Deliberately not here yet:
   `10`–`19` are reserved so the gate can be added without renumbering. A *refused* comparison or a
   refused trend is a different thing and is already non-zero (`4`) — that is not the gate, it is
   the refusal to pretend an analysis happened.
-- **No selection record in the artifact.** A `SuiteResult` carries the scenarios that ran and
-  nothing about the ones that did not, which is why the trend can tell "selected but ungradeable"
-  from a hole and cannot tell the three causes of a hole apart. Closing that is a change to the
-  engine's schema, not to this tool, and the report states the limit rather than guessing past it.
+- **No selection record in the artifact.** The engine's `SuiteResult` can now carry one —
+  `selectionDecisions`, optional and absent when unset — but **this tool does not write it yet**,
+  so every artifact it produces still carries the scenarios that ran and nothing about the ones
+  that did not. That is why the trend can tell "selected but ungradeable" from a hole and cannot
+  tell the three causes of a hole apart. The limit is unchanged; what changed is that closing it
+  is now a change to this tool rather than to the engine's schema. The report states the limit
+  rather than guessing past it.
 - **No posting.** The tool writes a file and CI attaches it. That is settled, not pending: a
   GitHub API client here would need a token, a network, and a host, and would stop the harness
   working anywhere else.

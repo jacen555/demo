@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using Forge.EvalCli.Cli;
 using Forge.EvalCli.Tests.Support;
@@ -124,10 +125,7 @@ public class MarkdownReportTests
                 ),
             ],
             NewlyCovered = ["refunds"],
-            NewlyCoveredWithheld = ["flaky"],
-            NewlyCoveredWithheldReason =
-                "at least one repetition errored, so the scenario passed every run that "
-                + "produced a verdict rather than every run the suite asked for.",
+            NewlyCoveredWithheld = [ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored)],
             Correction = "benjamini-hochberg",
         };
 
@@ -331,7 +329,7 @@ public class MarkdownReportTests
     }
 
     [Fact]
-    public void Render_WhenCoverageWasWithheldWithNoReason_StillNamesTheScenario()
+    public void Render_WhenAWithheldCauseIsNotDeclared_StillNamesTheScenario()
     {
         var baseline = ReportFixture.Artifact();
         var candidate = ReportFixture.Artifact(ReportFixture.Scenario("flaky", passed: 2, graded: 2));
@@ -349,8 +347,7 @@ public class MarkdownReportTests
                         ScenarioOutcome.Passed
                     ),
                 ],
-                NewlyCoveredWithheld = ["flaky"],
-                NewlyCoveredWithheldReason = null,
+                NewlyCoveredWithheld = [ReportFixture.Withheld("flaky", (CoverageWithholdingCause)(-1))],
             },
             baseline,
             candidate
@@ -358,9 +355,15 @@ public class MarkdownReportTests
 
         var text = MarkdownReport.Render(Request(outcome)).Text;
 
-        // Keyed on the list, never on the nullable annotation beside it: a row that disappeared
-        // when the reason was absent is this report's own defect turned inward.
+        // WithheldCoverage.Reason throws on a cause outside the enum, and the record belongs to
+        // the engine rather than to this tool. Asking it for the sentence unguarded would lose
+        // the whole report — every other section with it — because one row carried a value this
+        // build does not know. The row is keyed on the scenario, which is always there.
         text.Should().Contain("### Withheld from coverage").And.Contain("`flaky`");
+
+        // And it says so rather than printing a cause it made up. Manufactured prose is
+        // indistinguishable, on the page, from a cause the comparator actually found.
+        text.Should().Contain("does not recognise");
     }
 
     [Fact]
@@ -690,8 +693,13 @@ public class MarkdownReportTests
         text.Should().Contain(@"\[link\]").And.Contain(@"\*\*bold\*\*");
     }
 
-    [Fact]
-    public void Render_WhenAWithholdingReasonCarriesMarkup_RendersItAsTextRatherThanAsStructure()
+    [Theory]
+    [InlineData(CoverageWithholdingCause.Incomplete)]
+    [InlineData(CoverageWithholdingCause.OverRecorded)]
+    [InlineData(CoverageWithholdingCause.Errored)]
+    public void Render_WhenACoverageClaimWasWithheld_PrintsTheComparatorsOwnSentenceForThatCause(
+        CoverageWithholdingCause cause
+    )
     {
         var outcome = ReportFixture.Outcome(
             new ComparisonResult
@@ -706,14 +714,131 @@ public class MarkdownReportTests
                         ScenarioOutcome.Passed
                     ),
                 ],
-                NewlyCoveredWithheld = ["flaky"],
-                NewlyCoveredWithheldReason = "<script>alert(1)</script>",
+                NewlyCoveredWithheld = [ReportFixture.Withheld("flaky", cause)],
             },
             ReportFixture.Artifact(),
             ReportFixture.Artifact(ReportFixture.Scenario("flaky", passed: 1, graded: 1))
         );
 
-        MarkdownReport.Render(Request(outcome)).Text.Should().NotContain("<script").And.Contain("&lt;script");
+        var text = MarkdownReport.Render(Request(outcome)).Text;
+        var section = text[IndexOfSection(text, "### Withheld from coverage")..];
+
+        // Asserted against the engine's own text rather than a literal pasted in here. A copy of
+        // the sentence in this tool is a second wording that drifts from the one the comparator
+        // logs, and the drift is invisible: both read as an explanation of the same withholding.
+        section.Should().Contain(WithheldCoverage.Describe(cause));
+    }
+
+    [Fact]
+    public void Render_WhenTwoScenariosWereWithheldForDifferentCauses_StatesWhichScenarioHadWhich()
+    {
+        var outcome = ReportFixture.Outcome(
+            new ComparisonResult
+            {
+                SuiteName = "regression",
+                ScenarioComparisons =
+                [
+                    ReportFixture.Compared(
+                        "lost",
+                        ScenarioClassification.New,
+                        ScenarioOutcome.Absent,
+                        ScenarioOutcome.Passed
+                    ),
+                    ReportFixture.Compared(
+                        "flaky",
+                        ScenarioClassification.New,
+                        ScenarioOutcome.Absent,
+                        ScenarioOutcome.Passed
+                    ),
+                ],
+                NewlyCoveredWithheld =
+                [
+                    ReportFixture.Withheld("lost", CoverageWithholdingCause.Incomplete),
+                    ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored),
+                ],
+            },
+            ReportFixture.Artifact(),
+            ReportFixture.Artifact(
+                ReportFixture.Scenario("lost", passed: 1, graded: 1),
+                ReportFixture.Scenario("flaky", passed: 1, graded: 1)
+            )
+        );
+
+        var section = MarkdownReport.Render(Request(outcome)).Text switch
+        {
+            var rendered => rendered[IndexOfSection(rendered, "### Withheld from coverage")..],
+        };
+
+        var lost = section.IndexOf("`lost`", StringComparison.Ordinal);
+        var flaky = section.IndexOf("`flaky`", StringComparison.Ordinal);
+
+        lost.Should().BeGreaterThanOrEqualTo(0);
+        flaky.Should().BeGreaterThan(lost, "the rows render in the order the comparator produced them");
+
+        // The whole point of the per-scenario attribution: "a run errored" is a flake to re-run
+        // and "a run never happened" is a harness that lost work, and they lead to different
+        // actions. A reader who cannot tell which scenario had which is back to guessing.
+        var lostRow = section[lost..flaky];
+        var flakyRow = section[flaky..];
+
+        lostRow.Should().Contain(WithheldCoverage.Describe(CoverageWithholdingCause.Incomplete));
+        lostRow.Should().NotContain(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
+
+        flakyRow.Should().Contain(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
+        flakyRow.Should().NotContain(WithheldCoverage.Describe(CoverageWithholdingCause.Incomplete));
+    }
+
+    [Fact]
+    public void Render_WhenCoverageClaimsWereWithheld_CountsThemInTheHeadingAndTheBody()
+    {
+        var outcome = ReportFixture.Outcome(
+            new ComparisonResult
+            {
+                SuiteName = "regression",
+                ScenarioComparisons =
+                [
+                    ReportFixture.Compared(
+                        "lost",
+                        ScenarioClassification.New,
+                        ScenarioOutcome.Absent,
+                        ScenarioOutcome.Passed
+                    ),
+                    ReportFixture.Compared(
+                        "flaky",
+                        ScenarioClassification.New,
+                        ScenarioOutcome.Absent,
+                        ScenarioOutcome.Passed
+                    ),
+                ],
+                NewlyCoveredWithheld =
+                [
+                    ReportFixture.Withheld("lost", CoverageWithholdingCause.Incomplete),
+                    ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored),
+                ],
+            },
+            ReportFixture.Artifact(),
+            ReportFixture.Artifact(
+                ReportFixture.Scenario("lost", passed: 1, graded: 1),
+                ReportFixture.Scenario("flaky", passed: 1, graded: 1)
+            )
+        );
+
+        var text = MarkdownReport.Render(Request(outcome)).Text;
+        var start = IndexOfSection(text, "### Withheld from coverage");
+        var next = text.IndexOf("\n### ", start + 1, StringComparison.Ordinal);
+        var section = text[start..next];
+
+        // Adding a cause line per row puts a second thing in the section that could be counted.
+        // The heading counts scenarios, and it comes from the same snapshot the rows are built
+        // from — so a heading of 2 over 2 rows, never a heading over a count of cause lines.
+        //
+        // Bounded to this section rather than sliced to the end of the document: a row count
+        // that ran on into the next section would be counting the wrong thing and passing.
+        next.Should().BeGreaterThan(start, "the withheld section must be followed by another");
+        text.Should().Contain("### Withheld from coverage (2)");
+        Regex.Matches(section, @"^- `", RegexOptions.Multiline).Should().HaveCount(2);
+        Regex.Matches(section, @"^  - Cause: ", RegexOptions.Multiline).Should().HaveCount(2);
+        text.Should().Contain("2 withheld");
     }
 
     [Fact]
@@ -727,6 +852,25 @@ public class MarkdownReportTests
         // looking for something that was never absent.
         section.Should().NotContain("did not conduct every repetition it asked for");
         section.Should().Contain("do not agree, or not every repetition produced a verdict");
+    }
+
+    [Fact]
+    public void Render_WhenTheWithheldLeadExplainsItself_NoLongerDisclaimsAnAttributionItNowCarries()
+    {
+        var text = MarkdownReport.Render(Request(Everything())).Text;
+        var section = text[IndexOfSection(text, "### Withheld from coverage")..];
+
+        // The lead used to admit that the comparator recorded one reason per run and that the
+        // report therefore could not say which scenario had which. The comparator attributes the
+        // cause per scenario now and the rows print it, so that admission is not a hedge that
+        // became unnecessary — it is a sentence that became false.
+        section.Should().NotContain("does not say which scenario had which");
+        section.Should().NotContain("one reason per run");
+        section.Should().NotContain("for the withheld set as a whole");
+
+        // And the lead says what replaced it, rather than going quiet about where the cause now
+        // lives. A reader who learned to find the reason in the lead has to be sent to the rows.
+        section.Should().Contain("Each scenario below carries the cause");
     }
 
     [Fact]

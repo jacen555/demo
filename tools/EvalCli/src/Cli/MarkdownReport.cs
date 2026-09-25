@@ -311,6 +311,15 @@ internal static partial class MarkdownReport
     /// Duplicates are expected — a covered id is normally also a comparison id — and are harmless:
     /// the check refuses an alias shared by two <i>different</i> values, not one named twice.
     /// </para>
+    /// <para>
+    /// <b>The withheld reasons are here as whole sentences, one per withheld scenario.</b> They
+    /// are composed by the engine from a closed set of causes and carry no author-supplied text,
+    /// so today none of them can produce an alias at all. They are listed anyway because the rule
+    /// this set answers to is "everything the document prints", not "everything the document
+    /// prints that looks risky today" — the previous single suite-level reason was listed on the
+    /// same basis, and a set curated by what currently seems safe is a set that stops matching
+    /// the page without anyone noticing.
+    /// </para>
     /// </remarks>
     internal static IReadOnlyList<string?> AliasedValues(ComparisonOutcome comparison)
     {
@@ -319,11 +328,11 @@ internal static partial class MarkdownReport
         return
         [
             comparison.Result.SuiteName,
-            comparison.Result.NewlyCoveredWithheldReason,
             .. comparison.Result.ScenarioComparisons.Select(entry => entry.ScenarioId),
             .. comparison.Result.ScenarioComparisons.Select(entry => entry.NotComparableReason),
             .. comparison.Result.NewlyCovered,
-            .. comparison.Result.NewlyCoveredWithheld,
+            .. comparison.Result.NewlyCoveredWithheld.Select(entry => entry.ScenarioId),
+            .. comparison.Result.NewlyCoveredWithheld.Select(entry => ComparisonReport.Withholding(entry.Cause)),
             .. comparison.WithheldScenarios,
         ];
     }

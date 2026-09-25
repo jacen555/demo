@@ -670,13 +670,22 @@ public class BaselineComparisonTests
         // rather than gained. The headline may not claim it — and the scenario may not vanish
         // from the report either, which is what the two fields below are for.
         comparison.GetProperty("newlyCovered").EnumerateArray().Should().BeEmpty();
-        comparison
-            .GetProperty("newlyCoveredWithheld")
-            .EnumerateArray()
-            .Select(e => e.GetString())
+
+        var withheld = comparison.GetProperty("newlyCoveredWithheld").EnumerateArray().ToArray();
+
+        withheld.Should().ContainSingle();
+        withheld[0].GetProperty("scenarioId").GetString().Should().Be("flaky");
+
+        // End-to-end, against what the comparator actually attributed rather than a constructed
+        // fixture: the harness recorded both repetitions and one of them errored, so the cause is
+        // `errored` and not `incomplete`. A run that errored is a flake to re-run; a run that
+        // never happened is a harness that lost work. The document has to tell them apart.
+        withheld[0].GetProperty("cause").GetString().Should().Be("errored");
+        withheld[0]
+            .GetProperty("reason")
+            .GetString()
             .Should()
-            .Equal("flaky");
-        comparison.GetProperty("newlyCoveredWithheldReason").GetString().Should().NotBeNullOrWhiteSpace();
+            .Be(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
     }
 
     [Fact]
@@ -699,16 +708,57 @@ public class BaselineComparisonTests
     }
 
     [Fact]
-    public void Document_WhenTheComparatorWithheldCoverage_PassesItsScenariosAndReasonThrough()
+    public void Document_WhenTheComparatorWithheldCoverage_PassesItsScenariosAndCausesThrough()
     {
-        var document = ComparisonReport.Document(Withholding("the comparator's own words"));
+        var document = ComparisonReport.Document(
+            Withholding(ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored))
+        );
 
         // Straight from ComparisonResult. The report boundary does not re-derive which scenarios
         // were withheld: the comparator is what measured the repetitions, so anything computed
         // here is a second opinion that can silently disagree with the one that has the evidence.
         document.NewlyCovered.Should().Equal(ComparisonWorkspace.Checkout);
-        document.NewlyCoveredWithheld.Should().Equal("flaky");
-        document.NewlyCoveredWithheldReason.Should().Be("the comparator's own words");
+        document.NewlyCoveredWithheld.Should().ContainSingle();
+
+        var withheld = document.NewlyCoveredWithheld[0];
+
+        withheld.ScenarioId.Should().Be("flaky");
+        withheld.Cause.Should().Be("errored");
+        withheld.Reason.Should().Be(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
+    }
+
+    [Fact]
+    public void Document_WhenTwoScenariosWereWithheldForDifferentCauses_KeepsTheirReasonsApart()
+    {
+        var document = ComparisonReport.Document(
+            Withholding(
+                ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored),
+                ReportFixture.Withheld("lost", CoverageWithholdingCause.Incomplete)
+            )
+        );
+
+        // The defect this migration exists to close. A single suite-level reason carried both
+        // sentences and said nothing about which scenario had which, so a consumer reading the
+        // machine-readable document had to guess an attribution the comparator already computed.
+        document
+            .NewlyCoveredWithheld.Select(entry => (entry.ScenarioId, entry.Cause))
+            .Should()
+            .Equal(("flaky", "errored"), ("lost", "incomplete"));
+
+        document
+            .NewlyCoveredWithheld.Should()
+            .AllSatisfy(entry =>
+                entry
+                    .Reason.Should()
+                    .NotContain(
+                        WithheldCoverage.Describe(
+                            entry.Cause == "errored"
+                                ? CoverageWithholdingCause.Incomplete
+                                : CoverageWithholdingCause.Errored
+                        ),
+                        "no entry may carry the other entry's cause"
+                    )
+            );
     }
 
     [Fact]
@@ -716,33 +766,71 @@ public class BaselineComparisonTests
     {
         var text = new StringBuilder();
 
-        ComparisonReport.AppendTo(text, Withholding("the comparator's own words"), verbose: false);
+        ComparisonReport.AppendTo(
+            text,
+            Withholding(ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored)),
+            verbose: false
+        );
 
         text.ToString().Should().Contain("not fully conducted").And.Contain("flaky");
-        text.ToString().Should().Contain("the comparator's own words");
+        text.ToString().Should().Contain(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
     }
 
     [Fact]
-    public void AppendTo_WhenWithheldCoverageRecordsNoReason_StillNamesTheScenarios()
+    public void AppendTo_WhenTwoScenariosWereWithheldForDifferentCauses_StatesWhichScenarioHadWhich()
     {
         var text = new StringBuilder();
 
-        // ComparisonResult.NewlyCoveredWithheldReason is nullable on a record this tool does not
-        // own. Keying the row on the reason would drop the names when it is absent — a refusal
-        // rendering as an absence, which is the defect this row exists to prevent.
-        ComparisonReport.AppendTo(text, Withholding(reason: null), verbose: false);
+        ComparisonReport.AppendTo(
+            text,
+            Withholding(
+                ReportFixture.Withheld("flaky", CoverageWithholdingCause.Errored),
+                ReportFixture.Withheld("lost", CoverageWithholdingCause.Incomplete)
+            ),
+            verbose: false
+        );
 
-        text.ToString().Should().Contain("not fully conducted").And.Contain("flaky");
+        var rendered = text.ToString();
+        var flaky = rendered.IndexOf("flaky ", StringComparison.Ordinal);
+        var lost = rendered.IndexOf("lost ", StringComparison.Ordinal);
+
+        // Both named beside the headline, then one row each. "A run errored" is a flake to
+        // re-run and "a run never happened" is a harness that lost work; a reader who cannot see
+        // which scenario had which takes the wrong action on one of them.
+        rendered.Should().Contain("not fully conducted");
+        flaky.Should().BeGreaterThanOrEqualTo(0);
+        lost.Should().BeGreaterThan(flaky);
+
+        rendered[flaky..lost].Should().Contain(WithheldCoverage.Describe(CoverageWithholdingCause.Errored));
+        rendered[lost..].Should().Contain(WithheldCoverage.Describe(CoverageWithholdingCause.Incomplete));
     }
 
-    /// <summary>A comparison the comparator withheld one scenario's coverage from.</summary>
-    /// <param name="reason">What the comparator recorded, or null when it recorded nothing.</param>
+    [Fact]
+    public void AppendTo_WhenAWithheldCauseIsNotDeclared_StillNamesTheScenarios()
+    {
+        var text = new StringBuilder();
+
+        // WithheldCoverage.Reason throws on a cause outside the enum, on a record this tool does
+        // not own. Asking it unguarded would take down the whole rendering — the regressions and
+        // the counts with it — because one row carried a value this build does not know.
+        ComparisonReport.AppendTo(
+            text,
+            Withholding(ReportFixture.Withheld("flaky", (CoverageWithholdingCause)(-1))),
+            verbose: false
+        );
+
+        text.ToString().Should().Contain("not fully conducted").And.Contain("flaky");
+        text.ToString().Should().Contain("does not recognise");
+    }
+
+    /// <summary>A comparison the comparator withheld some scenarios' coverage from.</summary>
+    /// <param name="withheld">The withheld claims, with the cause attributed to each.</param>
     /// <returns>The outcome.</returns>
     /// <remarks>
-    /// Constructed rather than conducted: these three pin the rendering against the contract
+    /// Constructed rather than conducted: these pin the rendering against the contract
     /// <see cref="ComparisonResult"/> states, not against what today's comparator happens to emit.
     /// </remarks>
-    private static ComparisonOutcome Withholding(string? reason) =>
+    private static ComparisonOutcome Withholding(params WithheldCoverage[] withheld) =>
         new()
         {
             Mechanism = BaselineMechanism.Artifact,
@@ -765,17 +853,16 @@ public class BaselineComparisonTests
                         BaselineOutcome = ScenarioOutcome.Failed,
                         CandidateOutcome = ScenarioOutcome.Passed,
                     },
-                    new ScenarioComparison
+                    .. withheld.Select(entry => new ScenarioComparison
                     {
-                        ScenarioId = "flaky",
+                        ScenarioId = entry.ScenarioId,
                         Classification = ScenarioClassification.New,
                         BaselineOutcome = ScenarioOutcome.Absent,
                         CandidateOutcome = ScenarioOutcome.Passed,
-                    },
+                    }),
                 ],
                 NewlyCovered = [ComparisonWorkspace.Checkout],
-                NewlyCoveredWithheld = ["flaky"],
-                NewlyCoveredWithheldReason = reason,
+                NewlyCoveredWithheld = withheld,
             },
         };
 }

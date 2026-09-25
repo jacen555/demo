@@ -4,6 +4,17 @@ using Forge.EvalEngine.Results;
 
 namespace Forge.EvalCli.Cli;
 
+/// <summary>One withheld coverage claim, paired with the comparison entry that names it.</summary>
+/// <param name="Comparison">The scenario's comparison, which carries its rates and its change.</param>
+/// <param name="Cause">What the comparator attributed the withholding to.</param>
+/// <remarks>
+/// Paired here rather than looked up again at render time. The section renders both, and a
+/// renderer that re-resolved the cause from the scenario id would be a second lookup that can
+/// disagree with the one the partition was built from — the row saying one cause and the
+/// accounting having used another.
+/// </remarks>
+internal sealed record WithheldComparison(ScenarioComparison Comparison, CoverageWithholdingCause Cause);
+
 /// <summary>
 /// The partition of a comparison into the sections the report renders.
 /// </summary>
@@ -22,8 +33,8 @@ internal sealed record ComparisonAnalysis
     /// <summary>Gets the scenarios whose coverage this change is claiming.</summary>
     public required IReadOnlyList<ScenarioComparison> NewlyCovered { get; init; }
 
-    /// <summary>Gets the scenarios whose coverage claim the comparator withheld.</summary>
-    public required IReadOnlyList<ScenarioComparison> Withheld { get; init; }
+    /// <summary>Gets the scenarios whose coverage claim the comparator withheld, with each one's cause.</summary>
+    public required IReadOnlyList<WithheldComparison> Withheld { get; init; }
 
     /// <summary>Gets the pairs that could not honestly be diffed.</summary>
     public required IReadOnlyList<ScenarioComparison> NotComparable { get; init; }
@@ -136,11 +147,24 @@ internal static partial class MarkdownReport
     {
         var result = outcome.Result;
         var covered = result.NewlyCovered.ToHashSet(StringComparer.Ordinal);
-        var withheld = result.NewlyCoveredWithheld.ToHashSet(StringComparer.Ordinal);
+
+        // Keyed on the identifier, which is what every branch below asks about. The list is a
+        // list of records now, and a set of records would answer "is this scenario withheld?"
+        // with "no" for every scenario — silently moving each one into the newly-covered
+        // section, which is the coverage claim the comparator explicitly refused to make.
+        var withheld = new Dictionary<string, CoverageWithholdingCause>(StringComparer.Ordinal);
+
+        foreach (var entry in result.NewlyCoveredWithheld)
+        {
+            // First wins, matching Index below: a duplicated id is the comparator's to refuse,
+            // and picking a side here would be this report inventing a rule the comparison did
+            // not apply.
+            _ = withheld.TryAdd(entry.ScenarioId, entry.Cause);
+        }
 
         List<ScenarioComparison> regressed = [];
         List<ScenarioComparison> newlyCovered = [];
-        List<ScenarioComparison> withheldEntries = [];
+        List<WithheldComparison> withheldEntries = [];
         List<ScenarioComparison> notComparable = [];
         List<ScenarioComparison> newNotPassing = [];
         List<ScenarioComparison> removed = [];
@@ -176,8 +200,8 @@ internal static partial class MarkdownReport
                     notComparable.Add(comparison);
                     break;
 
-                case var entry when withheld.Contains(entry.ScenarioId):
-                    withheldEntries.Add(comparison);
+                case var entry when withheld.TryGetValue(entry.ScenarioId, out var cause):
+                    withheldEntries.Add(new WithheldComparison(comparison, cause));
                     break;
 
                 case var entry when covered.Contains(entry.ScenarioId):
@@ -220,7 +244,7 @@ internal static partial class MarkdownReport
             Orphans =
             [
                 .. covered
-                    .Concat(withheld)
+                    .Concat(withheld.Keys)
                     .Where(id => !named.Contains(id))
                     .Distinct(StringComparer.Ordinal)
                     .Order(StringComparer.Ordinal),

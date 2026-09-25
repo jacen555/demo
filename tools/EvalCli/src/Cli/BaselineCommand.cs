@@ -92,11 +92,7 @@ internal sealed record BaselineUpdateDocument
     /// preview that never looked.
     /// </remarks>
     [JsonPropertyName("newlyCoveredWithheld")]
-    public IReadOnlyList<string>? NewlyCoveredWithheld { get; init; }
-
-    /// <summary>Gets why the comparator withheld them, or null when it withheld nothing.</summary>
-    [JsonPropertyName("newlyCoveredWithheldReason")]
-    public string? NewlyCoveredWithheldReason { get; init; }
+    public IReadOnlyList<ComparisonWithheldReport>? NewlyCoveredWithheld { get; init; }
 
     /// <summary>Gets the scenarios the replacement records as no longer passing.</summary>
     [JsonPropertyName("regressed")]
@@ -481,8 +477,7 @@ internal static class BaselineCommand
             ScenariosChanged = comparisons.Count(scenario => Changed(scenario.Classification)),
             ClassificationCounts = ComparisonReport.Counts(comparisons),
             NewlyCovered = result.NewlyCovered,
-            NewlyCoveredWithheld = result.NewlyCoveredWithheld,
-            NewlyCoveredWithheldReason = result.NewlyCoveredWithheldReason,
+            NewlyCoveredWithheld = ComparisonReport.Withheld(result.NewlyCoveredWithheld),
             Regressed =
             [
                 .. comparisons

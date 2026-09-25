@@ -72,6 +72,20 @@ emits `CHANGED FILES` / `TIER` / `BUILD` / `TESTS` / `TEST-FIRST-EVIDENCE` /
 This makes the loop **gateable**: the orchestrator can mechanically refuse to advance on
 `BUILD: fail` or a missing `TEST-FIRST-EVIDENCE`, without interpreting narrative.
 
+### Forward the blocks verbatim — never paraphrase them
+
+The orchestrator assembles what the reviewer sees, which makes it the one role nobody
+reviews. **`PRE-EDIT-APPROVAL`, `BUILDER-MODEL`, `TEST-FIRST-EVIDENCE` and `MUTATION` go
+across verbatim**, inside a fenced block, not summarised into a briefing.
+
+This failed twice in one session, both times the same way: a narrative review brief that
+quoted the interesting sentence and dropped the record. The reviewer correctly returned
+`VERDICT: FAIL` on §VI and §VIII both times, because the artifact it was handed genuinely
+lacked them — and it could not verify a claim asserted in place of evidence.
+
+The rule the whole repo runs on is that **a claim is not evidence until something can fail
+on it.** An orchestrator's summary of a gate is a claim. The block is the evidence.
+
 ## Pattern: no finding without a citation
 
 Every review finding cites a `file:line` **and** a constitution section. A finding that
