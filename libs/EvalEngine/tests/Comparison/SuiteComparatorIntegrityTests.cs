@@ -213,7 +213,7 @@ public sealed class SuiteComparatorIntegrityTests
 
         ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.Fixed);
         result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
+        ComparisonFixtures.Withheld(result, "a").Cause.Should().Be(CoverageWithholdingCause.Errored);
     }
 
     // -----------------------------------------------------------------------------------------

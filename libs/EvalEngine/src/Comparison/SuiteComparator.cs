@@ -293,8 +293,7 @@ public sealed partial class SuiteComparator
         Correct(comparisons);
 
         var covered = new List<string>();
-        var withheld = new List<string>();
-        var reasons = new List<string>();
+        var withheld = new List<WithheldCoverage>();
 
         foreach (var comparison in comparisons)
         {
@@ -308,25 +307,24 @@ public sealed partial class SuiteComparator
             // conduct in full passed everything that happened to be gradeable, which is not the
             // coverage a change earned. Fixed is present in the candidate by definition and New
             // is candidate-only, so the lookup always resolves.
-            if (CoverageShortfall(current[comparison.ScenarioId]) is not { } shortfall)
+            if (CoverageShortfall(current[comparison.ScenarioId]) is not { } cause)
             {
                 covered.Add(comparison.ScenarioId);
                 continue;
             }
 
-            withheld.Add(comparison.ScenarioId);
+            var entry = new WithheldCoverage { ScenarioId = comparison.ScenarioId, Cause = cause };
 
-            if (!reasons.Contains(shortfall, StringComparer.Ordinal))
-            {
-                reasons.Add(shortfall);
-            }
+            withheld.Add(entry);
 
             // Named and signalled rather than dropped, and signalled with the cause that applies
             // to this scenario rather than a general one. A shorter list and a withheld scenario
             // read identically, so a refusal that renders as an absence is indistinguishable
             // from nothing having happened. Terminal here: this comparator is what decides the
-            // claim is unsupported, so this is the one place it is signalled (§IV).
-            LogCoverageWithheld(comparison.ScenarioId, shortfall);
+            // claim is unsupported, so this is the one place it is signalled (§IV). The log and
+            // the report now carry the same value rather than the log carrying an attribution
+            // the report could not reach.
+            LogCoverageWithheld(entry.ScenarioId, entry.Reason);
         }
 
         return new ComparisonResult
@@ -335,10 +333,6 @@ public sealed partial class SuiteComparator
             ScenarioComparisons = comparisons,
             NewlyCovered = covered,
             NewlyCoveredWithheld = withheld,
-
-            // Only the causes that actually occurred, so the reason never asserts a shortfall
-            // this comparison did not find.
-            NewlyCoveredWithheldReason = reasons.Count == 0 ? null : string.Join(" ", reasons),
             Suite = CompareSuite(previous, current, comparisons, cancellationToken),
             Correction = _correction?.Name,
         };
@@ -383,6 +377,11 @@ public sealed partial class SuiteComparator
     /// neither absent nor zero, and a count against it is not a false guard.
     /// </para>
     /// <para>
+    /// The structural causes are tested first, and in the direction the mismatch actually went.
+    /// An artifact that did not record what it declared is untrustworthy about the runs it did
+    /// record, so that is reported ahead of their verdicts.
+    /// </para>
+    /// <para>
     /// A scenario present in both artifacts is already refused by
     /// <see cref="Divergence"/> when its runs and its policy disagree, per side and against its
     /// own declared count rather than against the other side's — so two equally short artifacts
@@ -390,48 +389,20 @@ public sealed partial class SuiteComparator
     /// has no counterpart to be paired against and so never reaches that one.
     /// </para>
     /// </remarks>
-    private static string? CoverageShortfall(ScenarioResult scenario)
+    private static CoverageWithholdingCause? CoverageShortfall(ScenarioResult scenario)
     {
-        // Structural first, and in the direction it actually went. An artifact that did not
-        // record what it declared is untrustworthy about the runs it did record, so this is
-        // reported ahead of their verdicts — but a reader chasing a missing run when runs were
-        // added instead is being sent the wrong way.
         if (scenario.Runs.Count < scenario.RepetitionPolicyUsed.Repetitions)
         {
-            return IncompleteWithheldReason;
+            return CoverageWithholdingCause.Incomplete;
         }
 
         if (scenario.Runs.Count > scenario.RepetitionPolicyUsed.Repetitions)
         {
-            return OverRecordedWithheldReason;
+            return CoverageWithholdingCause.OverRecorded;
         }
 
-        return scenario.Runs.Any(run => run.Status == RunStatus.Error) ? ErroredWithheldReason : null;
+        return scenario.Runs.Any(run => run.Status == RunStatus.Error) ? CoverageWithholdingCause.Errored : null;
     }
-
-    /// <summary>Why a scenario that recorded fewer repetitions than it declared is not claimed.</summary>
-    private const string IncompleteWithheldReason =
-        "the scenario recorded fewer repetitions than the count its own policy declared, so at least one run the "
-        + "suite asked for never happened. A run that never happened is not a run that failed, and coverage cannot "
-        + "be claimed from evidence that was never gathered.";
-
-    /// <summary>Why a scenario that recorded more repetitions than it declared is not claimed.</summary>
-    /// <remarks>
-    /// Stated separately from <see cref="IncompleteWithheldReason"/> rather than folded into one
-    /// mismatch sentence. Nothing is missing here — there are runs the policy never asked for —
-    /// and a reader told to look for an absent repetition would be looking for something that was
-    /// never absent.
-    /// </remarks>
-    private const string OverRecordedWithheldReason =
-        "the scenario recorded more repetitions than the count its own policy declared, so its runs include at "
-        + "least one the suite never asked for. Nothing here is missing; what is unknown is which runs the claim "
-        + "rests on, and an artifact whose run set contradicts its own policy cannot settle that.";
-
-    /// <summary>Why a scenario whose repetitions did not all produce a verdict is not claimed.</summary>
-    private const string ErroredWithheldReason =
-        "at least one repetition errored, so the scenario passed every run that produced a verdict rather than "
-        + "every run the suite asked for. An outcome conditional on the gradeable runs cannot establish coverage "
-        + "the change earned, because the evidence for the repetitions that errored was never gathered.";
 
     /// <summary>
     /// Refuses two artifacts that were not produced under conditions that can be compared.

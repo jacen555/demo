@@ -765,11 +765,16 @@ repetition policy, **exceeding** it, and any repetition that **errored** — and
 says which. A run that failed, a run that never happened, and a run nobody asked for are three
 different facts, and the reason names the one that applies rather than the nearest approximation.
 
-Those scenarios are named in `ComparisonResult.NewlyCoveredWithheld` with a reason in
-`NewlyCoveredWithheldReason`, and logged once at warning with the cause specific to that scenario
-— withheld out loud rather than quietly missing from a list, because a refusal that renders as an
-absence cannot be told apart from nothing having happened. They keep the classification their runs
-earned: this governs what is **claimed**, not how a scenario is classified.
+Those scenarios are named in `ComparisonResult.NewlyCoveredWithheld`, which pairs each scenario
+id with the `CoverageWithholdingCause` that withheld it, and each is logged once at warning with
+that same cause — withheld out loud rather than quietly missing from a list, because a refusal
+that renders as an absence cannot be told apart from nothing having happened. The cause is
+attributed **per scenario**: when two causes occur in one comparison, a single suite-level reason
+carries both sentences and cannot say which scenario had which, so a consumer is left guessing an
+attribution the comparator already computed. `WithheldCoverage.Reason` derives its prose from the
+cause rather than carrying it separately, so the sentence and the value cannot drift apart. They
+keep the classification their runs earned: this governs what is **claimed**, not how a scenario is
+classified.
 
 A scenario present in *both* artifacts is already refused as `notComparable` when its runs and its
 declared policy disagree, checked per side against its own declared count rather than against the

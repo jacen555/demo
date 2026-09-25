@@ -65,6 +65,119 @@ public enum ScenarioClassification
 }
 
 /// <summary>
+/// Why a scenario that classified as newly covered had its coverage claim withheld.
+/// </summary>
+/// <remarks>
+/// <para>
+/// These are <b>different faults with different remedies</b>, which is why they are a declared
+/// value rather than three sentences a consumer has to tell apart by substring. A repetition that
+/// errored is a flake to re-run; a repetition that never happened is a harness that lost work; an
+/// artifact recording more runs than it declared is neither, and a reader sent after a missing
+/// run would be looking for something that was never absent.
+/// </para>
+/// <para>
+/// <see cref="Incomplete"/> is first, and therefore the default, on the same reasoning as
+/// <see cref="ScenarioOutcome.Absent"/> and <see cref="ScenarioClassification.NotComparable"/>: a
+/// value nobody set must not read as the cause that licenses the cheapest response. A default of
+/// <see cref="Errored"/> would tell a reader to re-run a flake on the strength of a value no
+/// comparison produced, whereas this one sends them to look at the harness and find nothing
+/// wrong — noisy in the safe direction rather than quiet in the unsafe one.
+/// </para>
+/// </remarks>
+public enum CoverageWithholdingCause
+{
+    /// <summary>
+    /// The scenario recorded fewer repetitions than its own policy declared, so at least one run
+    /// the suite asked for never happened.
+    /// </summary>
+    Incomplete,
+
+    /// <summary>
+    /// The scenario recorded more repetitions than its own policy declared, so its runs include
+    /// at least one the suite never asked for.
+    /// </summary>
+    OverRecorded,
+
+    /// <summary>
+    /// Every repetition the policy declared was recorded, and at least one of them produced no
+    /// verdict.
+    /// </summary>
+    Errored,
+}
+
+/// <summary>
+/// One scenario's withheld coverage claim, and the cause that withheld it.
+/// </summary>
+/// <remarks>
+/// The cause is attributed to the scenario it belongs to. A suite-level reason cannot do that:
+/// when two causes occur in one comparison it carries both, and a reader cannot tell which
+/// scenario had which — an attribution the comparator computed, logged, and then discarded on the
+/// way out.
+/// </remarks>
+public sealed record WithheldCoverage
+{
+    /// <summary>Gets the scenario whose coverage claim was withheld.</summary>
+    public required string ScenarioId { get; init; }
+
+    /// <summary>Gets the cause, as a value a consumer can branch on.</summary>
+    public required CoverageWithholdingCause Cause { get; init; }
+
+    /// <summary>Gets the caller-facing explanation of <see cref="Cause"/>.</summary>
+    /// <remarks>
+    /// Derived rather than settable, so the prose and the value cannot disagree about one fact.
+    /// Two independently settable fields describing the same thing drift silently — a reader
+    /// believes the sentence and a program believes the value. Always text this library composed;
+    /// it names no scenario (§V).
+    /// </remarks>
+    public string Reason => Describe(Cause);
+
+    /// <summary>States why a cause withholds a coverage claim.</summary>
+    /// <param name="cause">The cause to describe.</param>
+    /// <returns>The caller-facing explanation, composed by this library.</returns>
+    /// <remarks>
+    /// This wording is rendered verbatim downstream rather than re-derived, so it is part of the
+    /// contract and not an implementation detail.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="cause"/> is not a declared <see cref="CoverageWithholdingCause"/>. A value
+    /// outside the enum is not a cause, and a fallback sentence would be prose manufactured from
+    /// a value this domain never defined — indistinguishable, in a rendered report, from a real
+    /// one.
+    /// </exception>
+    public static string Describe(CoverageWithholdingCause cause) =>
+        cause switch
+        {
+            CoverageWithholdingCause.Incomplete =>
+                "the scenario recorded fewer repetitions than the count its own policy declared, so at least one "
+                    + "run the suite asked for never happened. A run that never happened is not a run that failed, "
+                    + "and coverage cannot be claimed from evidence that was never gathered.",
+
+            // Stated separately from Incomplete rather than folded into one mismatch sentence.
+            // Nothing is missing here — there are runs the policy never asked for — and a reader
+            // told to look for an absent repetition would be looking for something that was
+            // never absent.
+            CoverageWithholdingCause.OverRecorded =>
+                "the scenario recorded more repetitions than the count its own policy declared, so its runs include "
+                    + "at least one the suite never asked for. Nothing here is missing; what is unknown is which "
+                    + "runs the claim rests on, and an artifact whose run set contradicts its own policy cannot "
+                    + "settle that.",
+
+            CoverageWithholdingCause.Errored =>
+                "at least one repetition errored, so the scenario passed every run that produced a verdict rather "
+                    + "than every run the suite asked for. An outcome conditional on the gradeable runs cannot "
+                    + "establish coverage the change earned, because the evidence for the repetitions that errored "
+                    + "was never gathered.",
+
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(cause),
+                cause,
+                $"'{cause}' is not a declared {nameof(CoverageWithholdingCause)}, so there is no reason to state "
+                    + "for it."
+            ),
+        };
+}
+
+/// <summary>
 /// How one scenario compares between two artifacts.
 /// </summary>
 public sealed record ScenarioComparison
@@ -166,23 +279,24 @@ public sealed record ComparisonResult
     public IReadOnlyList<string> NewlyCovered { get; init; } = [];
 
     /// <summary>
-    /// Gets the identifiers of the scenarios that classified as newly covered but whose coverage
-    /// is not claimed, because the candidate did not conduct every repetition it asked for.
+    /// Gets the scenarios that classified as newly covered but whose coverage is not claimed,
+    /// because the candidate did not conduct every repetition it asked for — each paired with the
+    /// cause that withheld it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Named rather than silently omitted: a shorter <see cref="NewlyCovered"/> and a withheld
     /// scenario read identically to a consumer, and a refusal that renders as an absence cannot
-    /// be told apart from nothing having happened. <see cref="NewlyCoveredWithheldReason"/> says
-    /// why, and the comparator logs each one at warning.
+    /// be told apart from nothing having happened. The comparator logs each one at warning.
+    /// </para>
+    /// <para>
+    /// <b>The cause is attributed per scenario</b>, in the order the comparisons were made. The
+    /// causes lead to different actions, so a comparison in which two of them occurred has to say
+    /// which scenario had which — a single suite-level reason carrying both sentences cannot, and
+    /// leaves a consumer to guess an attribution the comparator already computed.
+    /// </para>
     /// </remarks>
-    public IReadOnlyList<string> NewlyCoveredWithheld { get; init; } = [];
-
-    /// <summary>
-    /// Gets why those scenarios were withheld from <see cref="NewlyCovered"/>, or
-    /// <see langword="null"/> when none were.
-    /// </summary>
-    /// <remarks>Always text this library composed; it names no scenario (§V).</remarks>
-    public string? NewlyCoveredWithheldReason { get; init; }
+    public IReadOnlyList<WithheldCoverage> NewlyCoveredWithheld { get; init; } = [];
 
     /// <summary>
     /// Gets the suite-wide delta from the injected <see cref="Abstractions.ISignificanceTest"/>,

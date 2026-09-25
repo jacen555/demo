@@ -107,6 +107,53 @@ public sealed record ScenarioResult
 }
 
 /// <summary>
+/// What the selector decided about one scenario it was offered.
+/// </summary>
+/// <remarks>
+/// <see cref="Selected"/> is first, and therefore the default, because of the asymmetry the
+/// selector itself is built around: over-selecting costs time and under-selecting costs
+/// correctness. A scenario that should have run and did not produces no output at all — there is
+/// no wrong number in a report to catch it, just silence and a green result. A value nobody set
+/// therefore reads as the claim that creates an obligation: the artifact is expected to carry
+/// this scenario, and a reader who cannot find it is told so. The opposite default would excuse
+/// the absence as deliberate and manufacture exactly the silence this type exists to prevent.
+/// </remarks>
+public enum SelectionDecision
+{
+    /// <summary>The selector chose to run the scenario.</summary>
+    Selected,
+
+    /// <summary>
+    /// The selector chose not to run the scenario, so this run produced no evidence about it.
+    /// </summary>
+    /// <remarks>
+    /// A scenario reaches this from one state only: its declared globs were all interpreted, none
+    /// of them matched a changed file, and the baseline records a trustworthy pass for it. That
+    /// is why no reason travels with the decision — unlike
+    /// <see cref="Impact.SelectionReason"/>, which distinguishes five ways a scenario can earn a
+    /// place in a run, there is exactly one way to lose one.
+    /// </remarks>
+    Skipped,
+}
+
+/// <summary>
+/// The selector's decision about one scenario, as recorded in the artifact.
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="Impact.ScenarioSelection"/>, which is the work list handed to a
+/// coordinator. This is the durable record of the decision, and it deliberately carries less:
+/// see <see cref="SuiteResult.SelectionDecisions"/> for what is left out and why.
+/// </remarks>
+public sealed record RecordedSelection
+{
+    /// <summary>Gets the scenario's identifier — the join key the artifact files everything under.</summary>
+    public required string ScenarioId { get; init; }
+
+    /// <summary>Gets what the selector decided.</summary>
+    public required SelectionDecision Decision { get; init; }
+}
+
+/// <summary>
 /// Everything needed to reproduce a suite run.
 /// </summary>
 public sealed record EvaluationEnvironment
@@ -168,6 +215,53 @@ public sealed record SuiteResult
 
     /// <summary>Gets the result for each scenario, in suite order.</summary>
     public IReadOnlyList<ScenarioResult> ScenarioResults { get; init; } = [];
+
+    /// <summary>
+    /// Gets what the selector decided for each scenario it was offered, ordered by identifier, or
+    /// <see langword="null"/> when the writer recorded no selection.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Without this an absence has four possible meanings and the artifact can express one.</b>
+    /// A scenario missing from <see cref="ScenarioResults"/> may have been skipped by the
+    /// selector, may never have been in the suite, or may have been selected and lost by a run
+    /// that failed before recording it. Those lead to different actions and the first two are not
+    /// even the same kind of fact — one is an economy, the other is a suite change. With the
+    /// decisions recorded, a reader separates them: skipped is stated, selected-and-absent is
+    /// visible as a decision with no result beside it, and never-offered is absent from this list
+    /// too.
+    /// </para>
+    /// <para>
+    /// <b><see langword="null"/> is not an empty list.</b> Null says no selection was recorded —
+    /// an artifact written before this field existed, or by a run that made no selection — and
+    /// establishes nothing about any absence. An empty list says the selector ran and skipped
+    /// nothing. Collapsing them would let a reader draw the second conclusion from the first
+    /// artifact.
+    /// </para>
+    /// <para>
+    /// <b>The decision is recorded; the reason for it is not.</b> The selector knows why it chose
+    /// each scenario, and <see cref="Impact.ScenarioSelection.Detail"/> composes that from the
+    /// glob and the <i>changed file</i> that matched. Changed files arrive from a caller's
+    /// revision range, they are paths rather than authored identifiers, and this artifact is
+    /// committed and published — so carrying the detail here would open a path-shaped disclosure
+    /// on a surface that did not exist when the machine-path trade-offs were reasoned about
+    /// (ADR 0005, which is explicit that a documented trade-off is scoped to the surfaces that
+    /// existed when it was made). Nothing downstream of the artifact asks for the reason either:
+    /// a run report renders it live from <see cref="Impact.SelectionResult"/>, where the values
+    /// never reach a committed file.
+    /// </para>
+    /// <para>
+    /// Ordered by identifier rather than by suite position, matching
+    /// <see cref="SlicingDimensions"/>. The order carries no information, and one that tracked
+    /// suite position would turn an unrelated reordering of the suite file into a diff across the
+    /// whole list — the noise canonical serialization exists to stop.
+    /// </para>
+    /// <para>
+    /// Optional, and absent from the JSON when unset, so an artifact written before this field
+    /// existed still reads and <see cref="SchemaVersions.SuiteResult"/> does not move.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RecordedSelection>? SelectionDecisions { get; init; }
 
     /// <summary>
     /// Gets the slicing dimension names present across the suite, so a reporter can offer them

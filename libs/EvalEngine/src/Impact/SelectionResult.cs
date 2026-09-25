@@ -1,3 +1,5 @@
+using Forge.EvalEngine.Results;
+
 namespace Forge.EvalEngine.Impact;
 
 /// <summary>
@@ -180,4 +182,42 @@ public sealed record SelectionResult
     /// be trusted.
     /// </summary>
     public bool FellBackToFullSuite => FallbackReason is not null;
+
+    /// <summary>
+    /// Projects the decisions into the form a durable artifact records them in.
+    /// </summary>
+    /// <returns>
+    /// One <see cref="RecordedSelection"/> for every scenario the selector was offered, ordered
+    /// by identifier.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Here rather than in the caller so that the journey from a decision to the artifact is made
+    /// once. A consumer zipping <see cref="Selected"/> and <see cref="Skipped"/> back together
+    /// itself would be re-deriving a fact this type already holds, which is the defect this
+    /// record exists to close rather than to relocate.
+    /// </para>
+    /// <para>
+    /// Only the decision travels. See <see cref="SuiteResult.SelectionDecisions"/> for why
+    /// <see cref="ScenarioSelection.Reason"/> and <see cref="ScenarioSelection.Detail"/> stay
+    /// behind.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RecordedSelection> ToDecisions() =>
+        [
+            .. Selected
+                .Select(entry => new RecordedSelection
+                {
+                    ScenarioId = entry.ScenarioId,
+                    Decision = SelectionDecision.Selected,
+                })
+                .Concat(
+                    Skipped.Select(id => new RecordedSelection
+                    {
+                        ScenarioId = id,
+                        Decision = SelectionDecision.Skipped,
+                    })
+                )
+                .OrderBy(entry => entry.ScenarioId, StringComparer.Ordinal),
+        ];
 }

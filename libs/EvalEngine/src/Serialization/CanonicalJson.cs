@@ -188,6 +188,11 @@ public static class CanonicalJson
         RequireNoNullEntry(artifact.SlicingDimensions, "slicingDimensions", null);
         RequireNoNullValue(artifact.Environment.HarnessConfig, "environment.harnessConfig", null);
 
+        if (artifact.SelectionDecisions is { } decisions)
+        {
+            RequireNoNullEntry(decisions, "selectionDecisions", null);
+        }
+
         for (var index = 0; index < artifact.ScenarioResults.Count; index++)
         {
             var at = "scenario " + Ordinal(index);
@@ -324,6 +329,23 @@ public static class CanonicalJson
             if (MachinePath.IsPresentInAny(scenario.Tags.Keys) || MachinePath.IsPresentInAny(scenario.Tags.Values))
             {
                 throw Unsafe("tags", position);
+            }
+        }
+
+        // A separate surface, not a restatement of the loop above. A scenario the selector
+        // skipped has no ScenarioResult, so its identifier appears nowhere else in the artifact
+        // and has never been through this check — and it is still written into a committed file
+        // and rendered into a published comment. ADR 0005 is explicit that a documented
+        // trade-off is scoped to the surfaces that existed when it was made; this is a new one,
+        // so it is guarded rather than left to inherit the reasoning.
+        if (artifact.SelectionDecisions is { } decisions)
+        {
+            for (var index = 0; index < decisions.Count; index++)
+            {
+                if (MachinePath.IsPresentIn(decisions[index].ScenarioId))
+                {
+                    throw Unsafe("selectionDecisions", "#" + (index + 1).ToString(CultureInfo.InvariantCulture));
+                }
             }
         }
 
