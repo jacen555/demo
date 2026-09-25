@@ -12,7 +12,7 @@ namespace Forge.EvalCli.Cli;
 /// display were previously two <see cref="string"/> members, so assigning the redacted display
 /// address to the identity compiled and restored the collision the split was made to prevent.
 /// Nothing here can be built from a display string: the factories take a root and a path, or a
-/// <see cref="Uri"/>, and <see cref="MarkdownReport.MarkerFor"/> accepts nothing else.
+/// <see cref="Uri"/>, and <see cref="MarkdownReport.MarkerFor(ReportIdentity, ReportIdentity)"/> accepts nothing else.
 /// </para>
 /// <para>
 /// <b>The encoding is injective, which is the property the marker actually needs.</b> "Not
@@ -171,13 +171,29 @@ internal static partial class MarkdownReport
     /// here for an adversary to gain by forcing one.
     /// </para>
     /// </remarks>
-    public static string MarkerFor(ReportIdentity suite, ReportIdentity baseline)
-    {
-        var canonical = new StringBuilder(MarkerSchema);
+    public static string MarkerFor(ReportIdentity suite, ReportIdentity baseline) =>
+        MarkerFor(MarkerSchema, [suite, baseline]);
 
-        foreach (var part in (string[])[suite.Value, baseline.Value])
+    /// <summary>
+    /// The identity a report of <paramref name="schema"/> finds its own comment by.
+    /// </summary>
+    /// <param name="schema">The schema the identity is computed under.</param>
+    /// <param name="parts">What distinguishes this report from another of the same schema.</param>
+    /// <returns>Sixteen hex characters.</returns>
+    /// <remarks>
+    /// <b>The schema is an input, which is what keeps two <i>kinds</i> of report apart.</b> The
+    /// trend and the comparison are deliberately different artifacts answering different
+    /// questions; were they to hash to one value over the same suite, CI would find one comment
+    /// for both and each push would replace the other's report with its own. A reader would then
+    /// see a single comment that silently alternated between two documents.
+    /// </remarks>
+    internal static string MarkerFor(string schema, IReadOnlyList<ReportIdentity> parts)
+    {
+        var canonical = new StringBuilder(schema);
+
+        foreach (var part in parts)
         {
-            canonical.Append('\u0000').Append(part.Length).Append('\u0000').Append(part);
+            canonical.Append('\u0000').Append(part.Value.Length).Append('\u0000').Append(part.Value);
         }
 
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString()));

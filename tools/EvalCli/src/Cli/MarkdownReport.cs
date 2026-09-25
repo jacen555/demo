@@ -248,8 +248,9 @@ internal static partial class MarkdownReport
         var sections = Sections(request.Comparison, analysis, artifact);
         var header = Header(marker, request.Comparison.Result.SuiteName, analysis);
         var footer = Footer(request, analysis, suite, baseline, artifact);
+        var recovery = Recovery(artifact);
         var total = sections.Sum(section => section.Entries.Count);
-        var skeleton = Skeleton(header, sections, footer, total, request.CharacterBudget, artifact);
+        var skeleton = Skeleton(header, sections, footer, total, request.CharacterBudget, recovery);
 
         // Refused rather than fitted. Below this the headings, the standing explanations and the
         // footer do not themselves fit, so what came back would be a fragment presented as a
@@ -267,7 +268,7 @@ internal static partial class MarkdownReport
         }
 
         var everything = (int[])[.. sections.Select(section => section.Entries.Count)];
-        var untruncated = Assemble(header, banner: null, sections, everything, footer, artifact);
+        var untruncated = Assemble(header, banner: null, sections, everything, footer, recovery);
 
         if (untruncated.Length <= request.CharacterBudget)
         {
@@ -276,10 +277,10 @@ internal static partial class MarkdownReport
 
         var shown = Allocate(request.CharacterBudget - skeleton, sections);
         var omitted = total - shown.Sum();
-        var banner = Banner(omitted, total, request.CharacterBudget, artifact);
+        var banner = Banner(omitted, total, request.CharacterBudget, recovery);
 
         return Complete(
-            Assemble(header, banner, sections, shown, footer, artifact),
+            Assemble(header, banner, sections, shown, footer, recovery),
             marker,
             sections,
             truncated: true,
@@ -335,8 +336,13 @@ internal static partial class MarkdownReport
     /// notice is measured at its widest, so this cannot fire — and were it ever to, the
     /// alternatives are emitting a document the comment API rejects, or cutting away the headings
     /// and the footer this report promises are always present. Both are worse than stopping.
+    /// <para>
+    /// Internal rather than private so <see cref="TrendReport"/> is held to the same
+    /// postcondition. A second report allowed to overrun its own budget is a second report whose
+    /// tail disappears without saying so.
+    /// </para>
     /// </remarks>
-    private static MarkdownRendering Complete(
+    internal static MarkdownRendering Complete(
         string text,
         string marker,
         IReadOnlyList<MarkdownSection> sections,

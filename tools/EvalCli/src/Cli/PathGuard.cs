@@ -4,6 +4,77 @@ using Forge.EvalEngine.Paths;
 namespace Forge.EvalCli.Cli;
 
 /// <summary>
+/// A path, together with where its text came from.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Provenance is a property of the value, not of the method holding it.</b> A refusal may echo
+/// text the caller typed — that returns their own words, and it is what keeps a mistyped argument
+/// diagnosable. It may not echo a path this tool derived and canonicalised, because that names
+/// the machine the job runs on and the account it runs as (§V), and it reaches stderr and from
+/// there the build log.
+/// </para>
+/// <para>
+/// <b>Carried in the type because the convention did not hold.</b> The rule was first written as
+/// "redact everywhere", then as "reserve the raw form for <see cref="PathGuard.ForRoot"/>" — and
+/// each time a later call site passed the wrong kind of value and compiled. Naming a method
+/// cannot express a fact about a string; a reader has to ask <i>where did this text come from</i>,
+/// and now the answer is at the construction site and nowhere else.
+/// </para>
+/// </remarks>
+internal readonly record struct PathValue
+{
+    private PathValue(string text, bool typedByCaller)
+    {
+        Text = text;
+        TypedByCaller = typedByCaller;
+    }
+
+    /// <summary>Gets the path text.</summary>
+    internal string Text { get; }
+
+    /// <summary>Gets whether a refusal may repeat this text, netted.</summary>
+    internal bool TypedByCaller { get; }
+
+    /// <summary>Text taken straight from a command-line argument.</summary>
+    /// <param name="text">The argument's value.</param>
+    /// <returns>The value.</returns>
+    public static PathValue FromArgument(string text) => new(text, typedByCaller: true);
+
+    /// <summary>A path this tool resolved, canonicalised, or stored — never one a caller typed.</summary>
+    /// <param name="text">The derived path.</param>
+    /// <returns>The value.</returns>
+    /// <remarks>
+    /// Used where an already-contained root is re-resolved because the file system may have moved
+    /// under the invocation. The check is worth making; repeating its subject is not.
+    /// </remarks>
+    public static PathValue Derived(string text) => new(text, typedByCaller: false);
+
+    /// <summary>
+    /// The containment root, from what the caller gave for it — or from this process when they
+    /// gave nothing.
+    /// </summary>
+    /// <param name="supplied">The value of <c>--root</c>, or null when it was omitted.</param>
+    /// <returns>The root, marked with where its text came from.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The one place an absent <c>--root</c> becomes a working directory, and therefore the one
+    /// place that can honestly mark it derived.</b> The option previously carried a default
+    /// factory, so an omitted <c>--root</c> arrived at binding already materialised into
+    /// <c>Directory.GetCurrentDirectory()</c> — and at that point nothing downstream could tell it
+    /// from a path the caller typed. Every call site was made to declare provenance and the
+    /// declaration was simply false.
+    /// </para>
+    /// <para>
+    /// <b>Absence is carried as absence.</b> A type can force the question to be asked; only
+    /// keeping the distinction intact until this point can make the answer true.
+    /// </para>
+    /// </remarks>
+    public static PathValue RootFrom(string? supplied) =>
+        supplied is null ? Derived(Directory.GetCurrentDirectory()) : FromArgument(supplied);
+}
+
+/// <summary>
 /// Resolves a path taken from an argument against the one root every path must stay inside, and
 /// turns the engine's refusals into this tool's vocabulary.
 /// </summary>
@@ -45,13 +116,20 @@ internal sealed class PathGuard
     public string Root => _boundary.Root;
 
     /// <summary>Builds a guard confined to the containment root itself.</summary>
-    /// <param name="value">The root as supplied, absolute or relative to the working directory.</param>
+    /// <param name="value">The root, and where its text came from.</param>
     /// <param name="optionName">The option this value came from, for the error message.</param>
     /// <returns>The guard.</returns>
+    /// <remarks>
+    /// <b>Takes a <see cref="PathValue"/> rather than a string so every call site declares
+    /// provenance.</b> Two of the four call sites re-resolve a root this tool had already
+    /// canonicalised, because the file system may have moved since the arguments were validated —
+    /// and a refusal from one of those must not echo its subject. That distinction is about the
+    /// value, so it travels with the value.
+    /// </remarks>
     /// <exception cref="EvalCliException">The value is blank, malformed, or not an existing directory.</exception>
-    public static PathGuard ForRoot(string value, string optionName)
+    public static PathGuard ForRoot(PathValue value, string optionName)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (string.IsNullOrWhiteSpace(value.Text))
         {
             throw Blank(optionName);
         }
@@ -60,33 +138,32 @@ internal sealed class PathGuard
 
         try
         {
-            boundary = new PathBoundary(value.Trim());
+            boundary = new PathBoundary(value.Text.Trim());
         }
-        catch (IOException exception)
+        catch (IOException)
         {
             // The root is resolved through its own links on construction. One that cannot be
             // established is refused rather than assumed, because every later containment
-            // judgement is made against it.
+            // judgement is made against it. The cause is not forwarded: it carries the reference
+            // it was handed, and this message reaches the build log (§V, ADR 0005).
             throw new EvalCliException(
                 ExitCode.UsageError,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{optionName} could not be resolved to a real directory: {exception.Message}"
-                ),
-                $"Point {optionName} at a directory that can be read. It is the boundary every other path must "
-                    + "stay inside, so it is refused rather than assumed safe."
+                $"{optionName} could not be resolved to a real directory. {Supplied(value)}",
+                $"A segment of it could not be inspected, or its links form a cycle. Point {optionName} at a "
+                    + "directory that can be read. It is the boundary every other path must stay inside, so it is "
+                    + "refused rather than assumed safe."
             );
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {
-            throw Unusable(optionName, exception);
+            throw Unusable(optionName);
         }
 
         if (!Directory.Exists(boundary.Root))
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} is not an existing directory: {boundary.Root}",
+                $"{optionName} is not an existing directory. {Supplied(value)}",
                 $"Point {optionName} at a directory that exists. It is the boundary every other path must stay inside."
             );
         }
@@ -110,7 +187,7 @@ internal sealed class PathGuard
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} names a directory, not a file: {resolved}",
+                $"{optionName} names a directory, not a file: {Label(resolved)}",
                 $"Point {optionName} at the file itself."
             );
         }
@@ -119,7 +196,48 @@ internal sealed class PathGuard
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} does not name an existing file: {resolved}",
+                $"{optionName} does not name an existing file: {Label(resolved)}",
+                $"Check the path. {optionName} is resolved relative to the root, not to the working directory."
+            );
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// Resolves an input directory that must already exist inside the root.
+    /// </summary>
+    /// <param name="value">The path as supplied, absolute or relative to <see cref="Root"/>.</param>
+    /// <param name="optionName">The option this value came from, for the error message.</param>
+    /// <returns>The real path the file system would read from.</returns>
+    /// <remarks>
+    /// The sibling of <see cref="ResolveExistingFile"/>, and it makes the same distinction for the
+    /// same reason: a value naming the wrong <i>kind</i> of entry gets its own message, because
+    /// "that is a file" and "that is not there" send the caller to two different places. A
+    /// directory is only ever enumerated and read through this — nothing is written into one.
+    /// </remarks>
+    /// <exception cref="EvalCliException">
+    /// The value is blank or malformed, resolves outside <see cref="Root"/>, or does not name an
+    /// existing directory.
+    /// </exception>
+    public string ResolveExistingDirectory(string value, string optionName)
+    {
+        var resolved = Contain(value, optionName);
+
+        if (File.Exists(resolved))
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"{optionName} names a file, not a directory: {Label(resolved)}",
+                $"Point {optionName} at the directory the files are in."
+            );
+        }
+
+        if (!Directory.Exists(resolved))
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"{optionName} does not name an existing directory: {Label(resolved)}",
                 $"Check the path. {optionName} is resolved relative to the root, not to the working directory."
             );
         }
@@ -155,7 +273,7 @@ internal sealed class PathGuard
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} names an existing directory, not a file: {resolved}",
+                $"{optionName} names an existing directory, not a file: {Label(resolved)}",
                 $"Give {optionName} a file name inside that directory."
             );
         }
@@ -166,7 +284,7 @@ internal sealed class PathGuard
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} points into a directory that does not exist: {parent}",
+                $"{optionName} points into a directory that does not exist: {Label(parent)}",
                 "Create the directory first, or choose a path inside one that already exists."
             );
         }
@@ -175,7 +293,7 @@ internal sealed class PathGuard
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} already exists and would be replaced: {resolved}",
+                $"{optionName} already exists and would be replaced: {Label(resolved)}",
                 $"Nothing was written. Choose another path, or pass {overwriteOptionName} to replace it deliberately."
             );
         }
@@ -253,27 +371,26 @@ internal sealed class PathGuard
             // carries no cause.
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} resolves outside the root: {value}",
-                $"Every path must stay inside {Root}. Staying inside it as text is not enough: a link inside the "
-                    + "root can point anywhere on the machine. Move the file inside it, or widen the root with "
-                    + "--root."
+                $"{optionName} resolves outside the root: {Label(value)}",
+                "Every path must stay inside the --root directory. Staying inside it as text is not enough: a link "
+                    + "inside the root can point anywhere on the machine. Move the file inside it, or widen the "
+                    + "root with --root."
             );
         }
-        catch (IOException exception)
+        catch (IOException)
         {
+            // Not forwarded. The engine's message carries the reference it was handed, and this
+            // one reaches the build log (§V, ADR 0005). The category is what a caller acts on.
             throw new EvalCliException(
                 ExitCode.UsageError,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{optionName} could not be resolved safely and was refused: {exception.Message}"
-                ),
-                "It was refused rather than assumed to stay inside the root. Check the permissions along that "
-                    + "path, or choose another one."
+                $"{optionName} could not be resolved safely and was refused: {Label(value)}",
+                "A segment of it could not be inspected, or its links form a cycle. It was refused rather than "
+                    + "assumed to stay inside the root. Check the permissions along that path, or choose another."
             );
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {
-            throw Unusable(optionName, exception);
+            throw Unusable(optionName);
         }
     }
 
@@ -284,10 +401,81 @@ internal sealed class PathGuard
             $"Supply a path, or omit {optionName} entirely."
         );
 
-    private static EvalCliException Unusable(string optionName, Exception exception) =>
+    /// <summary>
+    /// States a path the way a refusal may carry it: relative to the root, and redacted.
+    /// </summary>
+    /// <param name="path">The resolved, canonical path.</param>
+    /// <returns>The label.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Every message this type produces goes to stderr and from there to the build log</b>,
+    /// which is read by anyone who can read the repository. A checkout directory names the
+    /// account the job runs as and the layout of the machine it runs on, and none of that is
+    /// evidence about the invocation that was refused (§V). These previously printed the
+    /// resolved, canonical, absolute path.
+    /// </para>
+    /// <para>
+    /// <b>Fixed as a group rather than one message at a time.</b> ADR 0005's finding is that a
+    /// rule corrected only where it was caught stays correct about one case and silent about the
+    /// next; five rounds of that produced a net that leaked and mangled at the same time. A new
+    /// command reaching an old message is the same shape, so the whole type goes through one
+    /// rule.
+    /// </para>
+    /// </remarks>
+    private string Label(string? path) => MarkdownReport.Display(Root, path ?? string.Empty);
+
+    /// <summary>
+    /// States a root when — and only when — there is no boundary to state it relative to.
+    /// </summary>
+    /// <param name="value">The root, and where its text came from.</param>
+    /// <returns>The sentence naming it, or the one declining to.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Reached only from <see cref="ForRoot"/>, and it branches on the value rather than on
+    /// that fact.</b> <see cref="ForRoot"/> refuses before a boundary exists, so there is nothing
+    /// to relativise against and the published net is all that is left — but "this is
+    /// <c>ForRoot</c>" is not the same claim as "this text is the caller's". Two of the four call
+    /// sites re-resolve a root this tool canonicalised, and for those the net's published holes
+    /// are the only thing between a machine path and the build log: an absolute path under an
+    /// unlisted root such as <c>/data/ci-user/runs</c> passes straight through it.
+    /// </para>
+    /// <para>
+    /// <b>That is the third depth at which this rule needed stating.</b> First it was applied
+    /// everywhere and mangled identifiers; then it was scoped to this method and a caller handed
+    /// this method a derived value; now it is a property of the value and the compiler asks every
+    /// call site which kind it has. ADR 0005's amendment records the general form — a documented
+    /// trade-off is scoped to the surfaces that existed when it was made — and a convention is
+    /// not a surface, it is a hope about one.
+    /// </para>
+    /// <para>
+    /// For caller text the net's holes still apply and are published on
+    /// <c>MarkdownReport.MachinePath</c>: an unlisted root, a tilde or relative path,
+    /// forward-slash UNC, and a drive letter with no separator all pass through. This is a net,
+    /// not a control; the control is the author not putting a machine path in a committed file.
+    /// </para>
+    /// </remarks>
+    private static string Supplied(PathValue value) =>
+        value.TypedByCaller
+            ? $"It was given: {MarkdownReport.Sanitize(value.Text.Trim(), MarkdownReport.MaxPathCharacters)}"
+            : "The value is not repeated here: this check re-resolved a path this tool had already canonicalised, "
+                + "which names the machine rather than anything you typed.";
+
+    /// <summary>
+    /// Refuses a value that is not a usable path, without repeating it.
+    /// </summary>
+    /// <param name="optionName">The option this value came from.</param>
+    /// <returns>The refusal.</returns>
+    /// <remarks>
+    /// <b>The value is omitted rather than labelled.</b> It failed to parse as a path at all, so
+    /// neither <see cref="Label"/> nor <see cref="Supplied"/> can be trusted to render it — both
+    /// hand it back to <c>Path</c>, which is what just refused it. The option name and the
+    /// categories to check are what a caller acts on.
+    /// </remarks>
+    private static EvalCliException Unusable(string optionName) =>
         new(
             ExitCode.UsageError,
-            string.Create(CultureInfo.InvariantCulture, $"{optionName} is not a usable path: {exception.Message}"),
+            $"{optionName} is not a usable path, so it was refused before anything was read. The value is not "
+                + "repeated here, because this message is written to the build log.",
             "Check for invalid characters, a reserved device name, or a path that is too long."
         );
 
@@ -323,10 +511,11 @@ internal sealed class PathGuard
             throw new EvalCliException(
                 ExitCode.UsageError,
                 $"{optionName} is reached through a link, so where it would be written cannot be established from "
-                    + $"the path: {segment}",
-                $"Nothing was written. A link inside {Root} can point anywhere on the machine, so staying "
-                    + $"inside the root as text is not the same as staying inside it on disk. Give {optionName} a "
-                    + "path with no link along it, or point --root at the directory the link leads to."
+                    + $"the path: {Label(segment)}",
+                "Nothing was written. A link inside the --root directory can point anywhere on the machine, so "
+                    + $"staying inside the root as text is not the same as staying inside it on disk. Give "
+                    + $"{optionName} a path with no link along it, or point --root at the directory the link leads "
+                    + "to."
             );
         }
     }
@@ -386,7 +575,7 @@ internal sealed class PathGuard
     /// distinction this is built on.
     /// </remarks>
     /// <exception cref="EvalCliException">The segment exists but could not be inspected.</exception>
-    private static string? LinkTargetOf(string segment, string optionName)
+    private string? LinkTargetOf(string segment, string optionName)
     {
         try
         {
@@ -402,13 +591,12 @@ internal sealed class PathGuard
         catch (Exception exception)
             when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            // The cause is not forwarded: it carries the absolute path it was handed, and this
+            // message reaches the build log (§V, ADR 0005). The segment is named relatively.
             throw new EvalCliException(
                 ExitCode.UsageError,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{optionName} passes through '{segment}', which exists but could not be inspected, so whether "
-                        + $"it is a link out of the root could not be established: {exception.Message}"
-                ),
+                $"{optionName} passes through '{Label(segment)}', which exists but could not be inspected, so "
+                    + "whether it is a link out of the root could not be established.",
                 "Nothing was written. It was refused rather than assumed safe. Check the permissions on that "
                     + $"directory, or give {optionName} a destination elsewhere."
             );

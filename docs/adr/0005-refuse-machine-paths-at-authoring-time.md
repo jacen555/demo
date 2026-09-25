@@ -121,6 +121,24 @@ legal filename character.
 - Two mutants survive and are named in the code: a both-separator revert
   observable only on Unix, and a fail-closed fallback reported unreachable on its
   third measurement after being reachable on the first two.
-- Three CLI-owned messages still print an absolute path deliberately, under the
-  tool's own policy rather than forced by the engine. Whether they should is
-  tracked separately.
+- ~~Three CLI-owned messages still print an absolute path deliberately.~~
+  **Superseded 2026-09-25.** Adding the trend command showed the reasoning was
+  wrong. `PathGuard` had **nine** messages printing a canonical absolute path, not
+  three, and the new command reached all of them — so "the tool printing it once,
+  deliberately, under its own policy" was a description of three sites somebody had
+  looked at rather than a policy. All nine now state their path relative to
+  `--root`, and no engine exception prose is forwarded.
+
+  One case genuinely cannot: a refusal that precedes any root, where `--root`
+  itself is what failed to resolve. There is no boundary yet, so there is nothing
+  to be relative to. Those messages apply the published net to the value **as
+  supplied** — strictly less than the caller typed, never more — and inherit the
+  net's published holes rather than pretending to cover them.
+
+  **The general lesson is worth more than the fix.** A documented trade-off is
+  scoped to the surfaces that existed when it was made. The `GET` exemption above
+  was reasoned about for the Markdown document, where the net is a second layer; a
+  later command printed scenario identifiers to **stderr**, where it is not. The
+  concession did not change — the surface it applied to did. When a new output
+  channel is added, every §V trade-off in this ADR needs re-reading rather than
+  inheriting.

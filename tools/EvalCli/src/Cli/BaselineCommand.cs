@@ -174,7 +174,17 @@ internal static class BaselineCommand
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="EvalCliException">The invocation was refused at one of its stages.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
-    public static async Task<ExitCode> ExecuteAsync(RunPlan plan, IConsole console, CancellationToken cancellationToken)
+    public static Task<ExitCode> ExecuteAsync(RunPlan plan, IConsole console, CancellationToken cancellationToken) =>
+        // An expression body on purpose: there is no statement position after the guard for a
+        // later step to be added in. See DurableWrites for the property and its residual hole.
+        DurableWrites.GuardAsync(written => RunAsync(plan, console, written, cancellationToken));
+
+    private static async Task<ExitCode> RunAsync(
+        RunPlan plan,
+        IConsole console,
+        DurableWrites written,
+        CancellationToken cancellationToken
+    )
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(console);
@@ -221,37 +231,23 @@ internal static class BaselineCommand
         var (comparison, noDiffReason) = Diff(provider, plan, committed, candidate);
 
         var applied = plan.ApplyBaselineUpdate;
-        var replaced = false;
 
         if (applied)
         {
-            await ApplyAsync(plan, candidate, target, cancellationToken).ConfigureAwait(false);
-
-            replaced = true;
+            await ApplyAsync(plan, candidate, target, written, cancellationToken).ConfigureAwait(false);
         }
 
         var document = Document(plan, committed, candidate, comparison, noDiffReason, applied);
 
-        try
-        {
-            await WriteAsync(
-                    console,
-                    plan.Json ? JsonSerializer.Serialize(document, JsonOptions) : RenderText(document, comparison),
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException cancelled) when (replaced)
-        {
-            // The report never made it out, but the committed baseline is not what it was. The
-            // interruption is still an interruption — same exit code — and the one sentence a
-            // caller reads about it must not be the blanket "nothing was written".
-            throw new InterruptedAfterWritingException(
-                $"the baseline at {plan.BaselinePath} was replaced with this run before the report could be "
-                    + "written, so the committed file has already changed.",
-                cancelled
-            );
-        }
+        // No bespoke catch here any more. The replacement records itself in the ledger, and the
+        // guard around this whole body reports it for every later step — this one and the ones
+        // somebody adds next.
+        await WriteAsync(
+                console,
+                plan.Json ? JsonSerializer.Serialize(document, JsonOptions) : RenderText(document, comparison),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
 
         return ExitCode.Success;
     }
@@ -417,6 +413,7 @@ internal static class BaselineCommand
         RunPlan plan,
         SuiteResult candidate,
         ArtifactTarget target,
+        DurableWrites written,
         CancellationToken cancellationToken
     ) =>
         await ArtifactWriter
@@ -432,7 +429,9 @@ internal static class BaselineCommand
                     Contents = CanonicalJson.Serialize(ArtifactRedaction.Redact(candidate)),
                     FailureContext = "The suite was conducted but the baseline could not be replaced",
                     LossNote = "The baseline was not updated",
+                    DurableNote = "the committed baseline",
                 },
+                written,
                 cancellationToken
             )
             .ConfigureAwait(false);

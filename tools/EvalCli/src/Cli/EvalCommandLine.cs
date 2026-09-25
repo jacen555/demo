@@ -48,9 +48,8 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "path",
     };
 
-    private readonly Option<string> _root = new(
+    private readonly Option<string?> _root = new(
         "--root",
-        Directory.GetCurrentDirectory,
         "Directory every path must resolve inside. Defaults to the working directory."
     )
     {
@@ -172,6 +171,24 @@ internal sealed class EvalCommandLine
 
     private readonly Option<bool> _verbose = new(new[] { "--verbose", "-v" }, "Write debug diagnostics to stderr.");
 
+    private readonly Option<string> _artifacts = new(
+        "--artifacts",
+        "Directory of run artifacts to trend, relative to --root. Read only; nothing in it is written or replaced."
+    )
+    {
+        IsRequired = true,
+        ArgumentHelpName = "dir",
+    };
+
+    private readonly Option<string?> _trendReport = new(
+        "--report-markdown",
+        "Where to write the Markdown trend report. Omit it and the report is printed and nothing is written. This "
+            + "tool writes the file and never posts it: CI attaches it."
+    )
+    {
+        ArgumentHelpName = "path",
+    };
+
     /// <summary>Builds the parser for this tool.</summary>
     /// <returns>The configured parser.</returns>
     public static Parser Build() => new EvalCommandLine().BuildParser();
@@ -187,7 +204,7 @@ internal sealed class EvalCommandLine
         return new RunRequest
         {
             Suite = parseResult.GetValueForOption(_suite) ?? string.Empty,
-            Root = parseResult.GetValueForOption(_root) ?? string.Empty,
+            Root = parseResult.GetValueForOption(_root),
             Baseline = parseResult.GetValueForOption(_baseline),
             Out = parseResult.GetValueForOption(_out),
             ReportMarkdown = parseResult.GetValueForOption(_reportMarkdown),
@@ -208,7 +225,33 @@ internal sealed class EvalCommandLine
         };
     }
 
-    private Parser BuildParser()
+    /// <summary>Reads the raw option values out of a <c>trend</c> parse result.</summary>
+    /// <param name="parseResult">The parse result for a <c>trend</c> invocation.</param>
+    /// <returns>The unvalidated request.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="parseResult"/> is null.</exception>
+    internal TrendRequest BindTrendRequest(ParseResult parseResult)
+    {
+        ArgumentNullException.ThrowIfNull(parseResult);
+
+        return new TrendRequest
+        {
+            Artifacts = parseResult.GetValueForOption(_artifacts) ?? string.Empty,
+            Root = parseResult.GetValueForOption(_root),
+            ReportMarkdown = parseResult.GetValueForOption(_trendReport),
+            Overwrite = parseResult.GetValueForOption(_overwrite),
+        };
+    }
+
+    /// <summary>
+    /// Builds the parser from <i>this</i> instance's options.
+    /// </summary>
+    /// <returns>The parser.</returns>
+    /// <remarks>
+    /// Internal so a test can parse and bind through one instance. The options are instance
+    /// fields, so a parse result produced by a different instance looks up nothing and every
+    /// bound value comes back as its default — which reads exactly like a correct answer.
+    /// </remarks>
+    internal Parser BuildParser()
     {
         var root = new RootCommand("Run an evaluation suite against a system under test and report what happened.")
         {
@@ -217,6 +260,7 @@ internal sealed class EvalCommandLine
 
         root.AddCommand(BuildRunCommand());
         root.AddCommand(BuildBaselineCommand());
+        root.AddCommand(BuildTrendCommand());
 
         // No subcommand was given. Show the safe path — on stderr, so a piped stdout stays clean —
         // and report a usage error, because nothing was asked for and nothing ran.
@@ -379,6 +423,55 @@ internal sealed class EvalCommandLine
         return baseline;
     }
 
+    /// <summary>
+    /// Builds the <c>trend</c> command, which reads a directory of artifacts and writes nothing
+    /// into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A separate command because it answers a separate question.</b> <c>run --report-markdown</c>
+    /// asks whether this change is better or worse than the baseline. This asks where the suite has
+    /// been going. Merging them would produce one report that answers neither well, and one
+    /// pull-request comment that alternated between two documents.
+    /// </para>
+    /// <para>
+    /// <c>--suite</c>, <c>--endpoint</c> and every option that conducts anything are absent: this
+    /// command runs no scenario and dials nothing. <c>--fail-on-regression</c> is absent too —
+    /// the gate is reserved, and an option accepted here would read as one that might act.
+    /// <c>--verbose</c> is absent for the same reason: this command builds no service provider,
+    /// so there is nothing for it to turn on, and a flag that is accepted and does nothing is a
+    /// smaller version of the same lie.
+    /// </para>
+    /// </remarks>
+    private Command BuildTrendCommand()
+    {
+        var trend = new Command(
+            "trend",
+            "Report how a suite has moved across a directory of run artifacts. Reads only; prints by default."
+        )
+        {
+            _artifacts,
+            _root,
+            _trendReport,
+            _overwrite,
+        };
+
+        trend.SetHandler(HandleTrendAsync);
+
+        return trend;
+    }
+
+    private async Task HandleTrendAsync(InvocationContext context)
+    {
+        var plan = TrendPlan.Create(BindTrendRequest(context.ParseResult));
+
+        var code = await TrendCommand
+            .ExecuteAsync(plan, context.Console, context.GetCancellationToken())
+            .ConfigureAwait(false);
+
+        context.ExitCode = (int)code;
+    }
+
     private async Task HandleRunAsync(InvocationContext context)
     {
         // Nothing is caught here. A refusal from this tool or from the engine travels to the
@@ -451,6 +544,14 @@ internal sealed class EvalCommandLine
         output.WriteLine();
         output.WriteLine("That conducts the suite, reports how many scenarios would change, and writes");
         output.WriteLine("nothing. Add --apply to replace the baseline.");
+        output.WriteLine();
+        output.WriteLine("How a suite has moved across a series of runs is a separate report, from a");
+        output.WriteLine("separate command. It reads the directory and writes nothing into it:");
+        output.WriteLine();
+        output.WriteLine("  eval-cli trend --artifacts artifacts/nightly");
+        output.WriteLine();
+        output.WriteLine("Add --report-markdown <path> to write the report for CI to post instead of");
+        output.WriteLine("printing it. An existing file there is refused unless --overwrite is passed.");
         output.WriteLine();
     }
 

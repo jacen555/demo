@@ -182,8 +182,18 @@ internal static partial class MarkdownReport
     /// The durable record keeps every value as it was: this is the rendering, and the JSON
     /// artifact is the evidence.
     /// </para>
+    /// <para>
+    /// <b>Internal rather than private, because stderr is a published surface the net did not
+    /// previously cover.</b> ADR 0005 puts the control at authoring time and keeps this as a
+    /// narrow net at the rendering boundary — but the authoring-time control exempts a leading
+    /// request method, so <c>GET /home/ci-user/repo</c> loads and survives artifact read-back.
+    /// That concession was documented against one output channel. A refusal written to the build
+    /// log is a second channel, and it must go through the same net rather than inherit the
+    /// concession by omission. <see cref="Prose"/> and <see cref="Code"/> layer markup on top of
+    /// this; a diagnostic wants the plain form.
+    /// </para>
     /// </remarks>
-    private static string Sanitize(string? value, int maximum)
+    internal static string Sanitize(string? value, int maximum)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -238,8 +248,13 @@ internal static partial class MarkdownReport
     /// Applied only to values this tool did not write. Its own standing explanations are markup on
     /// purpose, and passing them through here would print their emphasis as literal asterisks.
     /// </para>
+    /// <para>
+    /// <b>Internal rather than private, so <see cref="TrendReport"/> escapes through this one
+    /// implementation.</b> ADR 0005's finding applies exactly: a redaction net written twice is
+    /// two nets that drift, and the one that drifts is the one that leaks.
+    /// </para>
     /// </remarks>
-    private static string Prose(string? value, int maximum)
+    internal static string Prose(string? value, int maximum)
     {
         var text = Sanitize(value, maximum)
             .Replace("&", "&amp;", StringComparison.Ordinal)
@@ -273,7 +288,7 @@ internal static partial class MarkdownReport
     /// identifier wrongly is a small thing; a broken span that swallows the sentence after it is
     /// not.
     /// </remarks>
-    private static string Code(string? value)
+    internal static string Code(string? value)
     {
         var text = Sanitize(value, MaxIdentifierCharacters);
 
@@ -414,7 +429,7 @@ internal static partial class MarkdownReport
     /// disclosure. <see cref="ReportIdentity.ForPath(string, string)"/> deliberately does not do this: it is hashed, never shown.
     /// </para>
     /// </remarks>
-    private static string Display(string root, string path)
+    internal static string Display(string root, string path)
     {
         if (string.IsNullOrEmpty(path))
         {

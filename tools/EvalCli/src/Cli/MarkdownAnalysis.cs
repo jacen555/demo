@@ -106,13 +106,13 @@ internal static partial class MarkdownReport
     private const string MarkerSchema = "eval-cli/report/1";
 
     /// <summary>The longest scenario identifier that reaches the document.</summary>
-    private const int MaxIdentifierCharacters = 160;
+    internal const int MaxIdentifierCharacters = 160;
 
     /// <summary>The longest explanatory text — a refusal reason, a withholding reason — that reaches it.</summary>
-    private const int MaxReasonCharacters = 1_200;
+    internal const int MaxReasonCharacters = 1_200;
 
     /// <summary>The longest path or address that reaches it.</summary>
-    private const int MaxPathCharacters = 400;
+    internal const int MaxPathCharacters = 400;
 
     /// <summary>What marks a value this renderer shortened, so a clip is never silent.</summary>
     private const string ClipMarker = " [clipped]";
@@ -238,5 +238,5 @@ internal static partial class MarkdownReport
     private static bool Significant(ScenarioComparison comparison) =>
         comparison.Comparison?.Significant == SignificanceVerdict.Significant;
 
-    private static string Count(int value) => value.ToString(CultureInfo.InvariantCulture);
+    internal static string Count(int value) => value.ToString(CultureInfo.InvariantCulture);
 }

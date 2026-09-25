@@ -148,6 +148,42 @@ internal static class ReportFixture
             },
         };
 
+    /// <summary>
+    /// Builds a scenario where nothing was graded and a summary was recorded anyway.
+    /// </summary>
+    /// <param name="id">The scenario id.</param>
+    /// <param name="interval">Whether to carry bounds, which a zero-trial computation cannot produce.</param>
+    /// <returns>The scenario result.</returns>
+    /// <remarks>
+    /// <b>The aggregator never produces this and a hand-edited artifact does.</b> Every repetition
+    /// errored, so nothing was learned — and the file claims an aggregate over runs it does not
+    /// have. A reader that trusts the summary before checking the runs beneath it reports a pass
+    /// rate of zero from a scenario nobody graded, which is the distinction "no gradeable run is
+    /// not a pass rate of zero" exists to keep.
+    /// </remarks>
+    public static ScenarioResult SummarisedWithoutVerdicts(string id, bool interval = false) =>
+        new()
+        {
+            ScenarioId = id,
+            Kind = ScenarioKind.Rest,
+            RepetitionPolicyUsed = RepetitionPolicy.Repeat(3),
+            Runs = Runs(id, passed: 0, graded: 0, errored: 3),
+            Summary = new StatisticalSummary
+            {
+                N = 0,
+                PointEstimate = 0,
+                Dispersion = 0,
+                Interval = interval
+                    ? new ConfidenceInterval
+                    {
+                        Lower = 0,
+                        Upper = 0,
+                        Method = IntervalMethod.Wilson,
+                    }
+                    : null,
+            },
+        };
+
     /// <summary>Builds a scenario whose summary carries no interval at all.</summary>
     /// <param name="id">The scenario id.</param>
     /// <returns>The scenario result.</returns>

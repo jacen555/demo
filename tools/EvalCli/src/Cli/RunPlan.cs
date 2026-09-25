@@ -62,8 +62,18 @@ internal sealed record RunRequest
     /// <summary>Gets the suite path as supplied.</summary>
     public required string Suite { get; init; }
 
-    /// <summary>Gets the containment root as supplied.</summary>
-    public required string Root { get; init; }
+    /// <summary>
+    /// Gets the containment root as supplied, or null when <c>--root</c> was omitted.
+    /// </summary>
+    /// <remarks>
+    /// <b>Null rather than a pre-filled working directory.</b> The option carries no default
+    /// factory, so an absent <c>--root</c> stays absent all the way to
+    /// <see cref="PathValue.RootFrom"/> — the one place that turns it into a path, and therefore
+    /// the only place that can honestly mark that path as this process's rather than the
+    /// caller's. A default materialised at binding reaches every later call site looking exactly
+    /// like something a caller typed.
+    /// </remarks>
+    public required string? Root { get; init; }
 
     /// <summary>Gets the baseline artifact path as supplied, or <see langword="null"/>.</summary>
     public string? Baseline { get; init; }
@@ -308,7 +318,7 @@ internal sealed record RunPlan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var guard = PathGuard.ForRoot(request.Root, "--root");
+        var guard = PathGuard.ForRoot(PathValue.RootFrom(request.Root), "--root");
         var suite = guard.ResolveExistingFile(request.Suite, "--suite");
         var updating = operation is CliOperation.BaselineUpdate;
 
