@@ -344,7 +344,11 @@ public class ScriptOverrunGuardTests
 
         result.Succeeded.Should().BeFalse();
         result.Messages.Should().Contain(m => m.Code == "scenario.malformed" && m.ScenarioId == "overrun-probe");
-        result.Suite!.Scenarios.Should().BeEmpty();
+
+        // A refused suite yields no suite at all, so the unscoped expectation is not reachable
+        // through the result either. The subject of this assertion is unchanged: the malformed
+        // scenario was not loaded.
+        result.Suite.Should().BeNull();
     }
 
     [Theory]
@@ -364,7 +368,7 @@ public class ScriptOverrunGuardTests
 
         result.Succeeded.Should().BeFalse();
         result.Messages.Should().Contain(m => m.Code == "scenario.malformed" && m.ScenarioId == "overrun-probe");
-        result.Suite!.Scenarios.Should().BeEmpty();
+        result.Suite.Should().BeNull();
     }
 
     [Theory]

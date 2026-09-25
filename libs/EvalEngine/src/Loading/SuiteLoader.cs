@@ -122,9 +122,14 @@ public sealed class SuiteLoader
         {
             return Failed("suite.malformed", $"Suite '{sourceName}' is not valid JSON.");
         }
-        catch (ArgumentException exception)
+        catch (ArgumentException)
         {
-            return Failed("suite.malformed", $"Suite '{sourceName}' is not valid JSON: {exception.Message}");
+            // The cause's message names the duplicated property, and a property name is
+            // author-supplied. Described from the type instead — see Unreadable.
+            return Failed(
+                "suite.malformed",
+                $"Suite '{sourceName}' is not valid JSON: it declares the same property more than once."
+            );
         }
 
         var messages = new List<ValidationMessage>();
@@ -141,19 +146,42 @@ public sealed class SuiteLoader
             );
             name = sourceName;
         }
+        else if (MachinePath.IsPresentIn(name))
+        {
+            messages.Add(
+                SuiteValidator.Error(
+                    "suite.name.machinePath",
+                    null,
+                    "This suite declares a name containing a machine path. A suite name is author-supplied text "
+                        + "that is copied into the committed artifact and rendered into published reports, so a "
+                        + "machine path in it discloses the account a job runs as and the layout of the machine it "
+                        + "runs on. Please rename the suite to describe what it evaluates. Neither the offending "
+                        + "value nor the suite's own path is repeated here, because this finding is written to the "
+                        + "build log."
+                )
+            );
+        }
 
         var schemaVersion = ValidateSchemaVersion(document, sourceName, messages);
         var scenarios = ReadScenarios(document["scenarios"], sourceName, messages);
         messages.AddRange(SuiteValidator.Validate(scenarios));
 
+        // A refused suite yields no suite. SuiteLoadResult documents Suite as null on failure,
+        // and a consumer that trusts that documentation would otherwise be handed the very
+        // identifier the loader just refused — which turns the guard into a suggestion for
+        // anyone who checks `Suite is not null` rather than `Succeeded`.
+        var refused = messages.Any(message => message.Severity == ValidationSeverity.Error);
+
         return new SuiteLoadResult
         {
-            Suite = new Suite
-            {
-                SchemaVersion = schemaVersion,
-                Name = name,
-                Scenarios = scenarios,
-            },
+            Suite = refused
+                ? null
+                : new Suite
+                {
+                    SchemaVersion = schemaVersion,
+                    Name = name,
+                    Scenarios = scenarios,
+                },
             Messages = messages,
         };
     }
@@ -185,8 +213,9 @@ public sealed class SuiteLoader
                 SuiteValidator.Error(
                     "suite.schemaVersion.unsupported",
                     null,
-                    $"Suite '{sourceName}' declares schemaVersion '{declared ?? "(null)"}', which this engine "
-                        + $"cannot read. It reads version '{SchemaVersions.Suite}'."
+                    $"Suite '{sourceName}' declares a schemaVersion this engine cannot read. It reads version "
+                        + $"'{SchemaVersions.Suite}'. The declared value is not repeated here because this finding "
+                        + "is written to the build log."
                 )
             );
         }
@@ -230,7 +259,16 @@ public sealed class SuiteLoader
             // every other finding in the suite.
             if (entries[index] is not JsonObject entry)
             {
-                messages.Add(Unreadable(position, null, "a scenario must be a JSON object."));
+                // Composed here in full, rather than through an overload that takes a reason:
+                // a string parameter on Unreadable is exactly the door that let untrusted prose
+                // in. This literal is visibly the engine's own.
+                messages.Add(
+                    SuiteValidator.Error(
+                        "scenario.malformed",
+                        null,
+                        $"scenario {position} could not be read: a scenario must be a JSON object."
+                    )
+                );
                 continue;
             }
 
@@ -244,31 +282,229 @@ public sealed class SuiteLoader
                 _ = entry.Count;
 
                 declaredId = entry["identity"] is JsonObject identity ? ReadString(identity["id"]) : null;
+
+                // SECURITY-CRITICAL, and not the same category as the tag read below. Refused
+                // before anything else looks at it, and before it is ever used as a label. Every
+                // scenario-level finding carries the scenario id, so a scenario whose id is a
+                // machine path and which also trips another rule would disclose the path through
+                // that other finding instead. An entry that fails to bind never reaches
+                // BoundUnsafeIdentifier, so this is the only thing standing between a
+                // path-shaped id and the build log. Dropping it here means no later rule sees it.
+                if (MachinePath.IsPresentIn(declaredId))
+                {
+                    messages.Add(UnsafeIdentifier(position, "identity.id", "scenario"));
+                    continue;
+                }
+
                 label = string.IsNullOrWhiteSpace(declaredId) ? position : declaredId;
+
+                // Diagnostic specificity, not security — see UnsafeTag. Without this the entry
+                // below would fail to bind and report a bare scenario.malformed instead.
+                if (UnsafeTag(entry) is string offending)
+                {
+                    messages.Add(UnsafeIdentifier(position, "slicing.tags", offending));
+                    continue;
+                }
 
                 var scenario =
                     entry.Deserialize<Scenario>(CanonicalJson.Options) ?? throw new JsonException("the entry is null.");
+
+                // And again on what the binder actually produced. The raw checks above read
+                // ordinal keys; CanonicalJson's options come from JsonSerializerDefaults.Web,
+                // which is case-insensitive, so "ID" and "Tags" miss the raw read and bind
+                // anyway. The two checks have different jobs and neither subsumes the other:
+                // the raw one keeps a refused value out of a *diagnostic*, and this one keeps it
+                // out of the *artifact*. Checking the bound values rather than teaching the raw
+                // read the binder's key rules is deliberate — those rules are the binder's to
+                // change, and re-deriving them here is how this seam opened.
+                if (BoundUnsafeIdentifier(scenario) is { } bound)
+                {
+                    messages.Add(UnsafeIdentifier(position, bound.Field, bound.What));
+                    continue;
+                }
+
                 scenarios.Add(scenario);
             }
             catch (JsonException exception)
             {
-                messages.Add(Unreadable(label, declaredId, exception.Message));
+                messages.Add(Unreadable(label, declaredId, exception));
             }
             catch (ArgumentException exception)
             {
-                messages.Add(Unreadable(label, declaredId, exception.Message));
+                messages.Add(Unreadable(label, declaredId, exception));
             }
             catch (NotSupportedException exception)
             {
-                messages.Add(Unreadable(label, declaredId, exception.Message));
+                messages.Add(Unreadable(label, declaredId, exception));
             }
         }
 
         return scenarios;
     }
 
-    private static ValidationMessage Unreadable(string label, string? scenarioId, string reason) =>
-        SuiteValidator.Error("scenario.malformed", scenarioId, $"scenario {label} could not be read: {reason}");
+    /// <summary>
+    /// Reports an identifier that is a path on somebody's machine, without repeating it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The value is named by its <paramref name="field"/> and the scenario's
+    /// <paramref name="position"/> in the suite file rather than quoted back. This finding is
+    /// written to standard error by the command-line tool and from there into CI logs, which on
+    /// many setups are readable by anyone who can read the repository — so quoting the path here
+    /// would move the disclosure rather than remove it (§V).
+    /// </para>
+    /// <para>
+    /// <b>That applies to every value interpolated into a finding, not just the refused one.</b>
+    /// An earlier draft of the sibling suite-name finding named the offending value safely and
+    /// then interpolated <c>sourceName</c> beside it — which through the command-line tool is an
+    /// absolute path, so the message printed <c>C:\Users\&lt;account&gt;\...</c> into the very log
+    /// the guard exists to keep it out of. It sanitised the value it was warned about and printed
+    /// an unsanitised one immediately next to it. <b>Reasoning did not catch that; running it and
+    /// reading the real output did.</b> If you add a finding here, read what it actually prints.
+    /// </para>
+    /// <para>
+    /// A position is still enough to act on, which is the point: a refusal a reader cannot act on
+    /// just moves the problem somewhere else.
+    /// </para>
+    /// </remarks>
+    private static ValidationMessage UnsafeIdentifier(string position, string field, string what) =>
+        SuiteValidator.Error(
+            what == "scenario" ? "scenario.id.machinePath" : "scenario.tag.machinePath",
+            null,
+            $"scenario {position} declares a {what} containing a machine path, in '{field}'. That value is copied "
+                + "into the committed artifact, so it discloses the account a job runs as and the layout of the "
+                + "machine it runs on. Please rename it to describe what it evaluates. The offending value is not "
+                + "repeated here because this finding is written to the build log."
+        );
+
+    /// <summary>
+    /// The identifier a bound scenario carries that is a machine path, if any.
+    /// </summary>
+    /// <param name="scenario">The scenario as the binder produced it.</param>
+    /// <returns>The offending field and what it is, or null when the scenario is safe.</returns>
+    /// <remarks>
+    /// The companion to <see cref="UnsafeTag"/> and the raw id read, not a replacement for them.
+    /// Those run before binding so a refused value cannot reach a deserializer diagnostic; this
+    /// runs after, so a value that reached the model through key matching this loader does not
+    /// perform — <c>PropertyNameCaseInsensitive</c> is set by
+    /// <see cref="System.Text.Json.JsonSerializerDefaults.Web"/> — cannot reach the committed
+    /// artifact. Two surfaces, two checks; neither covers the other's case.
+    /// </remarks>
+    private static (string Field, string What)? BoundUnsafeIdentifier(Scenario scenario)
+    {
+        if (MachinePath.IsPresentIn(scenario.Identity.Id))
+        {
+            return ("identity.id", "scenario");
+        }
+
+        foreach (var tag in scenario.Slicing.Tags)
+        {
+            if (MachinePath.IsPresentIn(tag.Key))
+            {
+                return ("slicing.tags", "tag key");
+            }
+
+            if (MachinePath.IsPresentIn(tag.Value))
+            {
+                return ("slicing.tags", "tag value");
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The kind of slicing tag that is a machine path, read from the raw entry.
+    /// </summary>
+    /// <param name="entry">The unbound scenario entry.</param>
+    /// <returns><c>"tag key"</c>, <c>"tag value"</c>, or null when the tags are safe.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This check is diagnostic specificity, not security.</b> It once stopped the
+    /// deserializer from naming a path-shaped tag key in its own message, but that channel closed
+    /// when <see cref="Unreadable"/> stopped forwarding exception prose and began composing the
+    /// reason from the cause's type. Nothing leaks through that route now with or without this.
+    /// </para>
+    /// <para>
+    /// What it still does is worth keeping on its own terms: an entry whose tag value will not
+    /// bind would otherwise be reported as a bare <c>scenario.malformed</c>, telling the author
+    /// that something in the scenario is wrong but not that the problem is a machine path in a
+    /// tag key — the one thing they can act on. Reading the tags first turns that into
+    /// <c>scenario.tag.machinePath</c> naming the field.
+    /// </para>
+    /// <para>
+    /// <b>Do not read this as the same category as the raw id read above.</b> That one is
+    /// security-critical and must stay: an entry that fails to bind never reaches
+    /// <see cref="BoundUnsafeIdentifier"/>, so without it a path-shaped id is still in
+    /// <c>label</c> and <c>ScenarioId</c> when the binding failure is reported, and it reaches
+    /// the build log. This one carries no such consequence. A reader who cannot tell the two
+    /// apart will trust the wrong one or delete the wrong one.
+    /// </para>
+    /// <para>
+    /// The <i>artifact</i> surface is covered by <see cref="BoundUnsafeIdentifier"/>, which reads
+    /// what the binder produced rather than what the raw keys say.
+    /// </para>
+    /// </remarks>
+    private static string? UnsafeTag(JsonObject entry)
+    {
+        if (entry["slicing"] is not JsonObject slicing || slicing["tags"] is not JsonObject tags)
+        {
+            return null;
+        }
+
+        foreach (var tag in tags)
+        {
+            if (MachinePath.IsPresentIn(tag.Key))
+            {
+                return "tag key";
+            }
+
+            if (MachinePath.IsPresentIn(ReadString(tag.Value)))
+            {
+                return "tag value";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reports a scenario that could not be read, describing <b>why</b> from the cause's type
+    /// alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This takes the exception, not its message, deliberately.</b> A finding is written to
+    /// standard error and lands in the build log. An exception message is prose composed by
+    /// somebody else — the JSON reader, a converter, the framework — and it routinely quotes the
+    /// author's own material back: a JSON path naming a property, or a literal wrapped in quotes
+    /// by <c>Converters</c>. Forwarding it and filtering afterwards is the same under-constrained
+    /// problem this whole guard exists to escape, and it holed twice before being removed: prose
+    /// does not tokenize like an identifier, so <c>'/home/ci-user/repo'</c> behind a quote slipped
+    /// straight through.
+    /// </para>
+    /// <para>
+    /// So the signature takes an <see cref="Exception"/> and there is no overload that takes a
+    /// string. The reason is chosen from the cause's <i>type</i>, which is not author-controlled,
+    /// and the position is what makes the finding actionable. If you need more detail here,
+    /// surface it through structured data or a debug log — do not splice it into this message.
+    /// </para>
+    /// </remarks>
+    private static ValidationMessage Unreadable(string label, string? scenarioId, Exception cause) =>
+        SuiteValidator.Error(
+            "scenario.malformed",
+            scenarioId,
+            $"scenario {label} could not be read: {Describe(cause)}"
+        );
+
+    /// <summary>The reason, composed here, keyed off a type the author cannot influence.</summary>
+    private static string Describe(Exception cause) =>
+        cause switch
+        {
+            ArgumentException => "it declares the same property more than once.",
+            NotSupportedException => "it declares a value of a type this engine cannot convert.",
+            _ => "its JSON does not match the shape this engine reads.",
+        };
 
     private static SuiteLoadResult Failed(string code, string message) =>
         new() { Messages = [SuiteValidator.Error(code, null, message)] };

@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Forge.EvalEngine.Paths;
 using Forge.EvalEngine.Results;
 
 namespace Forge.EvalEngine.Serialization;
@@ -105,8 +107,10 @@ public static class CanonicalJson
         if (!SchemaVersions.IsSuiteResultSupported(declared))
         {
             throw new SchemaVersionException(
-                $"This artifact declares schema version '{declared ?? "(none)"}', which this engine cannot read. "
-                    + $"It reads version '{SchemaVersions.SuiteResult}'."
+                "This artifact declares a schema version this engine cannot read. It reads version "
+                    + $"'{SchemaVersions.SuiteResult}'. The declared value is carried on "
+                    + $"{nameof(SchemaVersionException.DeclaredVersion)} rather than repeated here, because this "
+                    + "message reaches the build log and the value came out of an untrusted artifact."
             )
             {
                 DeclaredVersion = declared,
@@ -114,8 +118,79 @@ public static class CanonicalJson
             };
         }
 
-        return Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.");
+        return RequireSafeIdentifiers(
+            Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.")
+        );
     }
+
+    /// <summary>
+    /// Refuses an artifact whose identifiers name somebody's machine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Validating a suite on load does not cover this. An artifact was written by an earlier run,
+    /// possibly by an earlier build, and its identifiers never pass through
+    /// <see cref="Loading.SuiteLoader"/> again. A scenario since <b>removed</b> from the suite
+    /// exists only in the baseline, so current-suite validation cannot see it — and it is still
+    /// rendered into the published report as a removed scenario.
+    /// </para>
+    /// <para>
+    /// Here rather than in <see cref="Baselines.ArtifactBaseline"/> because this is the one door
+    /// every reader of a durable artifact passes through, and a guard one call away from being
+    /// bypassed is not a guard.
+    /// </para>
+    /// </remarks>
+    private static SuiteResult RequireSafeIdentifiers(SuiteResult artifact)
+    {
+        if (MachinePath.IsPresentIn(artifact.SuiteName))
+        {
+            throw Unsafe("suiteName", null);
+        }
+
+        if (MachinePath.IsPresentInAny(artifact.SlicingDimensions))
+        {
+            throw Unsafe("slicingDimensions", null);
+        }
+
+        for (var index = 0; index < artifact.ScenarioResults.Count; index++)
+        {
+            var scenario = artifact.ScenarioResults[index];
+            var position = "#" + (index + 1).ToString(CultureInfo.InvariantCulture);
+
+            if (MachinePath.IsPresentIn(scenario.ScenarioId))
+            {
+                throw Unsafe("scenarioId", position);
+            }
+
+            if (MachinePath.IsPresentInAny(scenario.Tags.Keys) || MachinePath.IsPresentInAny(scenario.Tags.Values))
+            {
+                throw Unsafe("tags", position);
+            }
+        }
+
+        return artifact;
+    }
+
+    /// <summary>
+    /// The refusal, naming the field and the position but never the value.
+    /// </summary>
+    /// <remarks>
+    /// This message reaches standard error and from there the build log, so repeating the path
+    /// would move the disclosure rather than remove it (§V).
+    /// </remarks>
+    private static UnsafeIdentifierException Unsafe(string field, string? position) =>
+        new(
+            $"This artifact carries a machine path in '{field}'"
+                + (position is null ? string.Empty : $", at scenario {position}")
+                + ". That value names the account a job runs as and the layout of the machine it runs on, and this "
+                + "artifact is committed and published, so it is refused rather than read. Rename the identifier in "
+                + "the suite and regenerate the artifact. The offending value is not repeated here because this "
+                + "message is written to the build log."
+        )
+        {
+            Field = field,
+            Position = position,
+        };
 
     private static T? Bind<T>(string json) => JsonSerializer.Deserialize<T>(json, Options);
 
