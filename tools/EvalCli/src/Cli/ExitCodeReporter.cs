@@ -77,7 +77,7 @@ internal static class ExitCodeReporter
             return code;
         }
 
-        console.Error.WriteLine($"eval-cli: {exception.Message}");
+        console.Error.WriteLine($"eval-cli: {Words(exception)}");
 
         if (exception is EvalCliException { Remedy: { } remedy })
         {
@@ -101,6 +101,32 @@ internal static class ExitCodeReporter
 
         return code;
     }
+
+    /// <summary>
+    /// The words to print for a failure, depending on who composed them.
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns>The message.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>An <see cref="EvalCliException"/> is this tool's own sentence and is printed as
+    /// written.</b> It was composed against the rules in ADR 0005 at the point it was thrown —
+    /// paths already stated relative to the root, artifact text already netted — and putting it
+    /// through the net a second time would alias values that are deliberately there.
+    /// </para>
+    /// <para>
+    /// <b>Anything else reaching here is engine-composed and is netted.</b>
+    /// <see cref="Classify"/> has arms for <c>ComparisonRefusedException</c> and
+    /// <c>UnsafeIdentifierException</c> precisely because they arrive unwrapped, and the first of
+    /// those quotes the suite names that disagreed. A suite name is author-supplied and the
+    /// authoring-time control admits one behind a leading request method, so it reaches this line
+    /// intact — the same concession, on one more surface (§V, ADR 0005).
+    /// </para>
+    /// </remarks>
+    private static string Words(Exception exception) =>
+        exception is EvalCliException
+            ? exception.Message
+            : MarkdownReport.Sanitize(exception.Message, MarkdownReport.MaxReasonCharacters);
 
     /// <summary>
     /// Says where a refused identifier sits and what to do about it, without repeating it.

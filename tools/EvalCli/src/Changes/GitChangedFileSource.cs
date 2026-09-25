@@ -126,28 +126,26 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
         {
             return Refuse(
                 "git could not be started, so no changed-file set could be acquired. It is either not installed "
-                    + "or not on PATH",
-                topLevel.Command
+                    + "or not on PATH"
             );
         }
 
         if (topLevel.ExitCode != 0)
         {
             return Refuse(
-                $"'{_root}' is not inside a git repository, so there is no diff to read a changed-file set from"
-                    + Because(topLevel.StandardError),
-                topLevel.Command
+                "the --root directory is not inside a git repository, so there is no diff to read a changed-file "
+                    + "set from"
             );
         }
 
         if (!TryCanonicalize(topLevel, out var repositoryRoot, out var canonicalizeRejection))
         {
-            return Refuse(canonicalizeRejection!, topLevel.Command);
+            return Refuse(canonicalizeRejection!);
         }
 
         if (!GitDiffReading.TryComputePrefix(repositoryRoot!, _root, out var prefix, out var prefixRejection))
         {
-            return Refuse(prefixRejection!, topLevel.Command);
+            return Refuse(prefixRejection!);
         }
 
         var diff = await RunAsync(
@@ -169,14 +167,15 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
 
         if (!diff.Started)
         {
-            return Refuse("git could not be started to read the diff", diff.Command);
+            return Refuse("git could not be started to read the diff");
         }
 
         if (diff.ExitCode != 0)
         {
             return Refuse(
-                $"git could not diff against revision '{_revision}'" + Because(diff.StandardError),
-                diff.Command
+                "git could not diff against the revision --changed-since names, so no changed-file set could be "
+                    + "read. The revision is not repeated here, and neither is git's own wording, because both "
+                    + "reach the build log"
             );
         }
 
@@ -185,14 +184,13 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
             return Refuse(
                 "git's diff output exceeded "
                     + MaxDiffBytes.ToString(CultureInfo.InvariantCulture)
-                    + " bytes and was not read to the end, so the changed-file set it describes is incomplete",
-                diff.Command
+                    + " bytes and was not read to the end, so the changed-file set it describes is incomplete"
             );
         }
 
         if (!GitDiffReading.TryDecodeNulSeparated(diff.StandardOutput, out var repoRelative, out var framingRejection))
         {
-            return Refuse(framingRejection!, diff.Command);
+            return Refuse(framingRejection!);
         }
 
         // `git diff` reports tracked files only, so a brand new file is invisible to it. That is
@@ -208,7 +206,7 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
 
         if (!untracked.Started)
         {
-            return Refuse("git could not be started to list untracked files", untracked.Command);
+            return Refuse("git could not be started to list untracked files");
         }
 
         if (untracked.ExitCode != 0)
@@ -216,8 +214,6 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
             return Refuse(
                 "git could not list the untracked files, so a new file that nothing has staged could be missing "
                     + "from the changed-file set"
-                    + Because(untracked.StandardError),
-                untracked.Command
             );
         }
 
@@ -226,8 +222,7 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
             return Refuse(
                 "git's untracked-file list exceeded "
                     + MaxDiffBytes.ToString(CultureInfo.InvariantCulture)
-                    + " bytes and was not read to the end, so the changed-file set it describes is incomplete",
-                untracked.Command
+                    + " bytes and was not read to the end, so the changed-file set it describes is incomplete"
             );
         }
 
@@ -239,7 +234,7 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
             )
         )
         {
-            return Refuse(untrackedRejection!, untracked.Command);
+            return Refuse(untrackedRejection!);
         }
 
         var source = $"{diff.Command} + {untracked.Command}";
@@ -257,8 +252,7 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
                 // quietly retired on a prior pass.
                 return Refuse(
                     $"changed file {GitDiffReading.Quote(path)} is inside the repository but outside the --root "
-                        + $"directory '{_root}', so it cannot be matched against impact globs anchored there",
-                    source
+                        + "directory, so it cannot be matched against impact globs anchored there"
                 );
             }
 
@@ -307,46 +301,36 @@ internal sealed partial class GitChangedFileSource : IChangedFileSource
 
     /// <summary>Records the refusal once, at the point it is decided, and returns it.</summary>
     /// <remarks>
+    /// <para>
     /// One signal per root cause (§IV). The reason travels in the return value and is printed in
     /// the selection report; the log line exists because a full-suite fallback is quiet by nature
     /// — the run still succeeds — and a fallback nobody notices is the same as no safety net.
+    /// </para>
+    /// <para>
+    /// <b>The attempted command is deliberately not kept as the set's source.</b>
+    /// <c>ChangedFileSet.Source</c> is provenance for a set that <i>was</i> established, and it is
+    /// serialised into the JSON on stdout. Nothing was established here, so there is no provenance
+    /// to record — and keeping it would hand the caller's <c>--changed-since</c> value, and the
+    /// canonical root the command was run against, to that document by a second route after the
+    /// reason above took care not to (§V).
+    /// </para>
     /// </remarks>
-    private ChangedFileSet Refuse(string reason, string command)
+    private ChangedFileSet Refuse(string reason)
     {
         LogSetNotEstablished(reason);
 
-        return ChangedFileSet.Unavailable(reason, command);
+        return ChangedFileSet.Unavailable(reason);
     }
 
     // A source-generated delegate rather than a formatted call (CA1848). Its one argument is
-    // composed by this type, from this tool's own argument list and — where git explained itself
-    // — a sanitized first line, never a raw subprocess message (§V).
+    // composed wholly by this type, from a closed set of sentences. Neither git's own wording nor
+    // any value the caller supplied reaches it (§V).
     [LoggerMessage(
         EventId = 2000,
         Level = LogLevel.Warning,
         Message = "The changed-file set could not be established, so the whole suite was selected: {Reason}"
     )]
     private partial void LogSetNotEstablished(string reason);
-
-    /// <summary>Appends git's own explanation, sanitized, when it gave one.</summary>
-    /// <remarks>
-    /// Subprocess output is untrusted (§V). Only the first line survives, control characters are
-    /// dropped so nothing can rewrite the terminal, and the length is capped so a flood cannot
-    /// bury the message it is attached to.
-    /// </remarks>
-    private static string Because(string standardError)
-    {
-        var firstLine = standardError.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
-
-        if (string.IsNullOrWhiteSpace(firstLine))
-        {
-            return ".";
-        }
-
-        var sanitized = new string([.. firstLine.Where(character => !char.IsControl(character)).Take(200)]);
-
-        return string.IsNullOrWhiteSpace(sanitized) ? "." : $": {sanitized}";
-    }
 
     /// <summary>One completed git invocation.</summary>
     private sealed record GitResult

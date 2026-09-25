@@ -107,6 +107,32 @@ separators and never handed to `Path`, whose `GetFileName` ignores backslashes o
 Unix. A resolved path uses native separators, because on Unix a backslash is a
 legal filename character.
 
+### What is a label, and what is evidence
+
+The guard applies to **labels** and not to **evidence**, and the line is drawn
+deliberately.
+
+A label is a name someone chose — a suite name, a scenario id, a slicing tag. A
+machine path in one is always an authoring error, because nothing about naming a
+scenario requires a filesystem path. Evidence is the record of what was actually
+sent and received: a stimulus, a transcript, a payload. A path there may be
+exactly what the system under test requires, and scrubbing it would destroy the
+artifact's reason to exist.
+
+`simulation.scriptedStimuli[].field` sits on that line. It names a payload field,
+which is label-like, but it lives under `simulation`, which is evidence.
+**Decided 2026-09-25: it stays evidence and is not guarded.** The reasoning is
+that the cost of being wrong is asymmetric — an unguarded label leaks one path
+into one report, while a guarded piece of evidence silently corrupts the record
+this harness exists to produce. A scenario that legitimately drives a
+path-valued field would become unrunnable, and the failure would look like a
+harness bug rather than a policy.
+
+The consequence is accepted rather than hidden: a machine path written into
+`field` reaches the committed artifact. It is an authoring choice inside a
+committed file, visible in review, and it is the same class of thing as a path
+written into a request body — which this guard has never covered and should not.
+
 ## Consequences
 
 - A suite carrying a machine path in an identifier **no longer loads**. There

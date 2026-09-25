@@ -103,9 +103,8 @@ internal static class RunCommand
             .GetRequiredService<SeedSchedule>()
             .PinTo(suite, [.. conducted.Scenarios.Select(scenario => scenario.Identity.Id)]);
 
-        var result = await provider
-            .GetRequiredService<RunCoordinator>()
-            .RunAsync(conducted, cancellationToken)
+        var result = await SuiteDiscovery
+            .ConductAsync(provider.GetRequiredService<RunCoordinator>(), conducted, cancellationToken)
             .ConfigureAwait(false);
 
         var artifactPath = await WriteArtifactAsync(plan, result, written, cancellationToken).ConfigureAwait(false);

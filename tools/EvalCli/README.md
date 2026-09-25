@@ -941,8 +941,9 @@ its own adapter.
   `.partial` is left, and the refusal **says it was left and where** — including on interruption,
   where the blanket "nothing was written" sentence would otherwise send a reader past a file they
   now have.
-- **No refusal names a path on your machine.** Every message `PathGuard` and `ArtifactWriter`
-  produce states its path **relative to `--root`**, through the same display and redaction rules
+- **No refusal names a path on your machine.** Every message `PathGuard`, `ArtifactWriter`,
+  `RunPlan`, `SuiteDiscovery`, `BaselineCommand` and `BaselineComparison` produce states its path
+  **relative to `--root`**, through the same display and redaction rules
   the Markdown report uses, and no exception prose is forwarded — an engine refusal carries the
   reference it was handed, and the operating system's own wording carries the absolute path it was
   handed, on every platform and in every locale. A refusal reaches stderr and from there the build
@@ -950,6 +951,19 @@ its own adapter.
   account the job runs as. `ArtifactWriter`'s messages matter particularly: they fire when a
   destination stops being writable *after* the arguments were validated, which is the window an
   opt-in cannot cover because nothing was there when the opt-in would have been asked for.
+
+  **The relative form is not a loss.** What an argument can get wrong is the part below the root;
+  a wrong `--root` fails earlier and differently, in `PathGuard.ForRoot`. The engine makes the
+  same judgement for the same reason — `suite.notFound` names its `sourceLabel`, which carries no
+  machine path — so a refusal from either layer names the same path in the same form.
+
+  **The `run` and `baseline update` *result* documents are a known exception and still print
+  absolute paths.** The `root`, `suite`, `baseline` and `artifact` values in `--dry-run` output,
+  in the `baseline update` preview, and in a completed run's summary are the command's result on
+  **stdout**, not a refusal on stderr: they are a declared schema (`eval-cli/dry-run/1`) and the
+  documented way to confirm what an invocation resolved to before it is spent. `root` in
+  particular has no relative form. Closing them is a contract change and is tracked separately
+  from the refusal surface above.
 
   The one case that cannot be covered is `--root` itself failing to resolve: there is no boundary
   yet to state anything relative to, so the published net is applied to the value **as supplied**,
@@ -968,13 +982,78 @@ its own adapter.
   trusted to render something `Path` has just rejected. The net's holes are listed under
   [What it will not print](#what-it-will-not-print).
 - **Artifact-derived text is netted before it reaches stderr.** A suite name or scenario id in a
-  `trend` refusal goes through the report's own redaction net rather than being printed as
+  `trend`, `run` or `baseline update` refusal goes through the report's own redaction net rather
+  than being printed as
   recorded. The engine's authoring-time control exempts a leading request method — ADR 0005 records
   that `GET /home/dashboard` must load and that the exemption *necessarily* admits
   `GET /home/ci-user/repo` — so an identifier carrying a machine path behind a method token reaches
   artifact read-back intact. That concession was documented against the Markdown document, where
   the report's stricter net catches it; a refusal in the build log is a second published surface and
-  does not inherit the concession by omission.
+  does not inherit the concession by omission. This covers the comparator's own account of a
+  divergence — which quotes the suite names and setting keys that disagreed — and the per-scenario
+  reasons in a partial-comparison refusal.
+
+  **Four channels, not one.** The same admitted identifier reaches stderr through a loader
+  **warning**, a loader **error**, the engine's **log stream**, and an engine refusal printed by
+  the **exit-code reporter**. All four are netted. The exemption never changed; the number of
+  surfaces it reaches did, which is the failure mode ADR 0005's amendment predicts.
+
+  **A finding carries author text in two places.** The scenario id is exposed structurally and is
+  netted as a value, which is where the net works. The *explanation* can also quote the author
+  back — an assertion finding embeds `category:parameter`, so `exactMatch:/home/ci-user/repo`
+  arrives mid-sentence. Both are netted, fail-closed, rather than against a list of codes known to
+  embed author text: a list would be right about today's branches and silent about the next one
+  added upstream.
+
+  **Where the net shortens a message, the message says so — and says why.** `MachinePath` matches
+  to the end of the value by design, so in a sentence it takes the explanation with it. Rather
+  than let that read as a finding with no finding in it, the line states that the rest was
+  withheld and where to look. An ordinary finding matches nothing and is carried through whole;
+  only one that embeds a machine path pays. A better pattern is not the answer, because prose does
+  not tokenise like an identifier.
+
+  **The cause is asked, not inferred.** `Sanitize` has four effects — it flattens control
+  characters, replaces comment delimiters, aliases machine paths, and clips over-long text — so
+  "the string changed" is evidence for any of them, and only one is a reason to tell an author to
+  rename something. Redaction is therefore asked about directly, through
+  `MarkdownReport.ContainsMachinePath`, which shares its pre-steps with `Sanitize` so it sees the
+  same text the net runs over. Any other transformation gets a cause-neutral note instead. A
+  message that accuses an author of a machine path that is not there sends them looking for
+  nothing and teaches them the tool is unreliable.
+
+  **The alias-collision guard checks what is rendered, not what was recorded.** It nets the same
+  flattened text the renderer does — asking about the raw value invents aliases for shapes that
+  flatten away and misses collisions that only appear once flattened — and it additionally refuses
+  two *different* values that render to the same string for any reason, because that, not the hash
+  collision, is the defect it exists to prevent.
+
+  **No log record prints a stack trace.** Frames carry the checkout directory and the source
+  layout of the build machine. `ExitCodeReporter` already refused that for everything except a
+  defect; the log provider now refuses it too, printing the exception's type and netted message
+  instead. A run the harness could not conduct is a deliberate refusal, not a defect.
+
+  **A deliberate refusal never reaches the defect branch.** The coordinator refuses a suite whose
+  plan would exceed the run budget, and signals it with an exception type that would otherwise be
+  classified as an unexpected defect — which prints the scenario id unredacted *and* the frames.
+  It is translated where the suite is conducted, in one place for both commands, into a usage
+  error that names `--max-total-runs` and not the scenario. The defect branch still prints frames
+  for genuine defects, which is the other half of the rule and is tested as such.
+- **A rejected option value is not echoed.** `--rest-exchange`/`--llm-exchange` name a closed set,
+  and a value outside it is refused **without being repeated** — the option name and the valid
+  values are what a caller acts on, and they already have what they typed. Netting it would not
+  do: the net catches machine paths, and a credential is not path-shaped. This is the same choice
+  `PathGuard` makes for a value that will not parse as a path at all, and the same reason
+  `ArgumentRedactor` strips supplied values out of parser diagnostics.
+- **The changed-file set names neither the revision nor git's own wording.** `--changed-since`
+  takes a caller-supplied value that can be neither a path nor safe, and git echoes whatever it
+  was handed straight back on its standard error. The refusal that reaches the log therefore names
+  the *option* and the category of failure, and nothing else — git's explanation is not forwarded,
+  for the same reason no operating-system message is.
+
+  **Known gap, tracked with the stdout class:** on the *success* path the report's
+  `changed files` line still prints the full git command it ran, which carries the absolute root
+  and the revision. It reaches stdout and the run-report JSON — the same result-document surface
+  as `--dry-run`'s `root` and `suite` rows — and is deferred with them rather than half-fixed here.
 - **No harness setting's recorded text is ever printed.** `HarnessConfig` is an open map of strings
   in a file anyone can write, so a setting could carry a credential. Only values this build
   re-derives into a typed form reach the page — a method name matched against a closed set prints

@@ -211,7 +211,7 @@ internal static class BaselineCommand
                 .ConfigureAwait(false)
             ?? throw new EvalCliException(
                 ExitCode.BaselineMissing,
-                $"--baseline names an artifact that is not there: {plan.BaselinePath}",
+                $"--baseline names an artifact that is not there: {Label(plan)}",
                 "Nothing was written. This command replaces a baseline and never creates one."
             );
 
@@ -221,9 +221,8 @@ internal static class BaselineCommand
         // in one place for both commands rather than defaulted in one of them.
         provider.GetRequiredService<SeedSchedule>().PinTo(suite, [.. suite.Scenarios.Select(s => s.Identity.Id)]);
 
-        var candidate = await provider
-            .GetRequiredService<RunCoordinator>()
-            .RunAsync(suite, cancellationToken)
+        var candidate = await SuiteDiscovery
+            .ConductAsync(provider.GetRequiredService<RunCoordinator>(), suite, cancellationToken)
             .ConfigureAwait(false);
 
         RequireEveryRunWasConducted(candidate, plan);
@@ -292,15 +291,18 @@ internal static class BaselineCommand
         {
             throw new EvalCliException(
                 ExitCode.BaselineMissing,
-                $"--baseline names an artifact that is not there: {plan.BaselinePath}",
+                $"--baseline names an artifact that is not there: {Label(plan)}",
                 "Nothing was written. This command replaces a baseline and never creates one."
             );
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            // The cause is not forwarded. The operating system's own wording carries the absolute
+            // path it was handed, on every platform and in every locale, and this message reaches
+            // the build log (§V, ADR 0005). The category is what a caller acts on.
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--baseline could not be read, so nothing was conducted: {exception.Message}",
+                $"--baseline could not be read, so nothing was conducted: {Category(exception)}: {Label(plan)}",
                 "Nothing was written. The baseline is read and fingerprinted before the suite runs precisely so "
                     + "this costs nothing. Check the permissions on that path and re-run."
             );
@@ -333,7 +335,7 @@ internal static class BaselineCommand
             ExitCode.RunFailed,
             "At least one run was recorded as an error, so this result is not a baseline: the harness could not "
                 + "ask the question for those scenarios.",
-            $"Nothing was written and {plan.BaselinePath} is unchanged. A committed baseline carrying an errored "
+            $"Nothing was written and {Label(plan)} is unchanged. A committed baseline carrying an errored "
                 + "run makes every later comparison of that scenario report that neither side has a verdict, which "
                 + "reads as a scenario nobody can say anything about. Fix the transport or the wiring — check "
                 + "--rest-exchange, --llm-exchange, and --endpoint — and re-run."
@@ -376,7 +378,7 @@ internal static class BaselineCommand
         {
             throw new EvalCliException(
                 ExitCode.ComparisonRefused,
-                $"The baseline at {plan.BaselinePath} is a run of a different suite: {refusal.Message}",
+                $"The baseline at {Label(plan)} is a run of a different suite: {Recorded(refusal)}",
                 "Nothing was written. That is what naming the wrong baseline looks like, and replacing it would "
                     + "destroy the evidence for a suite this run never evaluated. Check the path."
             );
@@ -388,7 +390,7 @@ internal static class BaselineCommand
             // refused is any claim about what would change.
             return (
                 null,
-                $"The committed baseline was not conducted alike, so there is no diff to show: {refusal.Message}"
+                $"The committed baseline was not conducted alike, so there is no diff to show: {Recorded(refusal)}"
             );
         }
     }
@@ -512,6 +514,64 @@ internal static class BaselineCommand
     /// </remarks>
     private static bool Changed(ScenarioClassification classification) =>
         classification is not ScenarioClassification.StablePass and not ScenarioClassification.StableFail;
+
+    /// <summary>States the committed baseline the way a refusal may carry it: relative to the root.</summary>
+    /// <param name="plan">The validated plan, which holds both the path and the root.</param>
+    /// <returns>The label.</returns>
+    /// <remarks>
+    /// <b>Every refusal this command makes reaches stderr and from there the build log</b>, which
+    /// is read by anyone who can read the repository, and a CI checkout directory names the
+    /// account the job runs as (§V). The relative form is what <c>--baseline</c> can get wrong; a
+    /// wrong <c>--root</c> fails earlier and differently, in <see cref="PathGuard.ForRoot"/>.
+    /// </remarks>
+    private static string Label(RunPlan plan) =>
+        MarkdownReport.Display(plan.RootDirectory, plan.BaselinePath ?? string.Empty);
+
+    /// <summary>
+    /// Forwards the engine's account of a divergence, netted, because it quotes the artifact.
+    /// </summary>
+    /// <param name="refusal">The comparator's refusal.</param>
+    /// <returns>The reason, with any machine path aliased.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The engine names the values that disagreed, correctly</b> — a caller has to know which
+    /// suite the baseline turned out to be a run of — but those values came out of an artifact,
+    /// and an artifact is a file anyone can write. ADR 0005 puts the control at authoring time
+    /// and records that the control exempts a leading request method, so <c>GET /home/ci/repo</c>
+    /// loads and survives artifact read-back intact.
+    /// </para>
+    /// <para>
+    /// That concession was reasoned about for the Markdown document, where the report's net is a
+    /// second layer. <b>This is stderr, where it is not</b>, so the net is applied here rather
+    /// than inherited by omission — which is exactly the general lesson ADR 0005's amendment
+    /// records about a trade-off outliving the surface it was made for.
+    /// </para>
+    /// <para>
+    /// <b>This is prose, so the net takes the rest of the sentence with it when it fires.</b>
+    /// <c>MachinePath</c> matches to the end of the value deliberately, and a comparator refusal
+    /// embeds the suite names mid-sentence, so what survives is the text before the first
+    /// offending value. Unlike a loader finding this cannot be composed from parts — the engine
+    /// hands over one formatted string — and ADR 0005 records why a better filter is not the
+    /// answer: prose does not tokenise like an identifier. The cost is bounded to artifacts that
+    /// carry a machine-path-shaped identifier, and "diagnostics are terser" is the ADR's own
+    /// stated consequence.
+    /// </para>
+    /// </remarks>
+    private static string Recorded(Exception refusal) =>
+        MarkdownReport.Sanitize(refusal.Message, MarkdownReport.MaxReasonCharacters);
+
+    /// <summary>Says what kind of file-system refusal happened, without the platform's wording.</summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns>The category.</returns>
+    /// <remarks>
+    /// The operating system's own message carries the absolute path it was handed, on every
+    /// platform and in every locale, so it is never forwarded (§V, ADR 0005). The category is
+    /// what a caller acts on, and the path is named separately and relative to the root.
+    /// </remarks>
+    private static string Category(Exception exception) =>
+        exception is UnauthorizedAccessException
+            ? "access to that path was denied"
+            : "the file system refused the read";
 
     private static string RenderText(BaselineUpdateDocument document, ComparisonOutcome? comparison)
     {

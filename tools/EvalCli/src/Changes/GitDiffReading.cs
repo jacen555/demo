@@ -210,10 +210,15 @@ internal static class GitDiffReading
             // GetRelativePath falls back to the absolute path when the two share no root, and
             // emits '..' when the root is above the repository. Either way --root is not inside
             // the repository, so a repo-relative path cannot be rebased onto it at all.
+            //
+            // Neither root is named. Both are canonical absolute paths this type holds, and the
+            // rejection reaches the changed-file log and the selection report — where an absolute
+            // path names the account the job runs as (§V, ADR 0005). This is the fourth message in
+            // this file family to have been composed from a path its owner happened to have; the
+            // rule is about the value, not about which helper is holding it.
             rejection =
-                $"the --root directory '{containmentRoot}' is not inside the git repository at "
-                + $"'{repositoryRoot}', so paths from its diff cannot be made relative to the root that impact "
-                + "globs are anchored at";
+                "the --root directory is not inside the git repository git reported for it, so paths from its "
+                + "diff cannot be made relative to the root that impact globs are anchored at";
             return false;
         }
 

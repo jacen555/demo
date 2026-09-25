@@ -57,7 +57,19 @@ internal sealed record StubReply
 /// </remarks>
 internal sealed class StubEndpoint : IAsyncDisposable
 {
-    private readonly HttpListener _listener = new();
+    /// <summary>
+    /// How many ports to try before giving up. Generous because a collision is cheap to retry and
+    /// an exhausted bind is a failed test run.
+    /// </summary>
+    internal const int BindAttempts = 10;
+
+    /// <summary>ERROR_SHARING_VIOLATION — a socket took the port between the probe and the bind.</summary>
+    private const int PortTaken = 32;
+
+    /// <summary>ERROR_ALREADY_EXISTS — HTTP.SYS already has this exact prefix registered.</summary>
+    private const int PrefixTaken = 183;
+
+    private readonly HttpListener _listener;
     private readonly Task _loop;
     private readonly Func<string, StubReply> _respond;
     private int _requests;
@@ -96,16 +108,7 @@ internal sealed class StubEndpoint : IAsyncDisposable
 
         _respond = respond;
 
-        Address = new Uri($"http://localhost:{FreePort()}/{path}");
-
-        _listener.Prefixes.Add(Address.GetLeftPart(UriPartial.Path) + "/");
-
-        foreach (var extra in alsoServe)
-        {
-            _listener.Prefixes.Add($"http://localhost:{Address.Port}/{extra}/");
-        }
-
-        _listener.Start();
+        (_listener, Address) = Listen(path, alsoServe, FreePort, BindAttempts);
 
         _loop = Task.Run(ServeAsync);
     }
@@ -178,6 +181,73 @@ internal sealed class StubEndpoint : IAsyncDisposable
             await context.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
 
             context.Response.Close();
+        }
+    }
+
+    /// <summary>Binds a listener to a loopback port, retrying when the port is taken under it.</summary>
+    /// <param name="path">The path <see cref="Address"/> points at, without a leading slash.</param>
+    /// <param name="alsoServe">Further paths to serve on the same host and port.</param>
+    /// <param name="candidatePort">Supplies a port to try. Called once per attempt.</param>
+    /// <param name="attempts">How many ports to try before giving up. Must be positive.</param>
+    /// <returns>The started listener and the address it answers on.</returns>
+    /// <exception cref="InvalidOperationException">Every attempt collided.</exception>
+    /// <remarks>
+    /// <para>
+    /// Choosing a free port and binding it cannot be made one step. The probe must release the port
+    /// before HTTP.SYS can take it — a socket still holding it fails <see cref="HttpListener.Start"/>
+    /// with error 32, which is the very collision being avoided — so holding the probe across the
+    /// bind is not an option. The window is closed from the other side instead: a collision is
+    /// detected and retried on a fresh candidate rather than surfacing as a failed test run.
+    /// </para>
+    /// <para>
+    /// Bounded, because a test helper that loops or hangs is worse than one that races: a hang
+    /// yields no stack trace and no failing test name. Exhaustion is reported as itself.
+    /// </para>
+    /// <para>
+    /// A fresh <see cref="HttpListener"/> per attempt because a failed
+    /// <see cref="HttpListener.Start"/> disposes the instance it failed on.
+    /// </para>
+    /// </remarks>
+    internal static (HttpListener Listener, Uri Address) Listen(
+        string path,
+        IReadOnlyList<string> alsoServe,
+        Func<int> candidatePort,
+        int attempts
+    )
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attempts);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            var port = candidatePort();
+            var address = new Uri($"http://localhost:{port}/{path}");
+            var listener = new HttpListener();
+
+            listener.Prefixes.Add(address.GetLeftPart(UriPartial.Path) + "/");
+
+            foreach (var extra in alsoServe)
+            {
+                listener.Prefixes.Add($"http://localhost:{port}/{extra}/");
+            }
+
+            try
+            {
+                listener.Start();
+
+                return (listener, address);
+            }
+            catch (HttpListenerException exception) when (exception.ErrorCode is PortTaken or PrefixTaken)
+            {
+                // Something else took the port while it belonged to nobody. Try another one.
+                if (attempt >= attempts)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not bind a stub endpoint to a free loopback port in {attempts} attempts. "
+                            + "Every port offered was taken between the probe and the bind.",
+                        exception
+                    );
+                }
+            }
         }
     }
 

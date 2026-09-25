@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Forge.EvalEngine.Baselines;
+using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Scenarios;
@@ -54,21 +55,26 @@ internal static class SuiteDiscovery
         {
             result = await loader.LoadAsync(plan.SuitePath, cancellationToken).ConfigureAwait(false);
         }
-        catch (ArgumentException exception)
+        catch (ArgumentException)
         {
             // The path was already contained against this same root by the same boundary, so
             // reaching here means the file system changed underneath the invocation. Refused
             // rather than retried: whatever is there now is not what was checked.
+            //
+            // The cause is not forwarded. It carries the reference it was handed, and this
+            // message reaches the build log (§V, ADR 0005). The category is what a caller acts
+            // on, and the path is named relative to the root in the remedy below.
             throw new EvalCliException(
                 ExitCode.SuiteError,
-                $"--suite could not be read from the suite root: {exception.Message}",
-                "Nothing was executed. Re-run once the path is stable."
+                "--suite could not be read from the suite root: the path stopped resolving to a readable file "
+                    + "while the run was being set up.",
+                $"Nothing was executed. Re-run once {Label(plan)} is stable."
             );
         }
 
         foreach (var warning in result.Messages.Where(message => message.Severity is ValidationSeverity.Warning))
         {
-            console.Error.WriteLine($"eval-cli: {warning}");
+            console.Error.WriteLine($"eval-cli: {Finding(warning)}");
         }
 
         if (result.Succeeded)
@@ -81,7 +87,7 @@ internal static class SuiteDiscovery
 
         foreach (var error in errors)
         {
-            detail.AppendLine().Append("          ").Append(error.ToString());
+            detail.AppendLine().Append("          ").Append(Finding(error));
         }
 
         throw new EvalCliException(
@@ -89,7 +95,7 @@ internal static class SuiteDiscovery
             detail.ToString(),
             "Fix the "
                 + errors.Length.ToString(CultureInfo.InvariantCulture)
-                + $" finding(s) above in {plan.SuitePath}. A suite that does not validate cannot produce "
+                + $" finding(s) above in {Label(plan)}. A suite that does not validate cannot produce "
                 + "evidence, so it is refused rather than partly run."
         );
     }
@@ -128,7 +134,7 @@ internal static class SuiteDiscovery
 
         throw new EvalCliException(
             ExitCode.SuiteError,
-            $"The suite declares no scenarios, so there is nothing to conduct: {plan.SuitePath}",
+            $"The suite declares no scenarios, so there is nothing to conduct: {Label(plan)}",
             "Nothing was executed. A run against an empty suite produces no evidence, and reporting it as a "
                 + "success would tell every caller that checks the exit code that the evaluation passed. Declare "
                 + "at least one scenario, or point --suite at the suite you meant."
@@ -193,7 +199,8 @@ internal static class SuiteDiscovery
             // re-prints it there has moved the disclosure rather than removed it (§V).
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--baseline names an artifact whose {Located(refusal)} is a path on somebody's machine: {reference}",
+                $"--baseline names an artifact whose {Located(refusal)} is a path on somebody's machine: "
+                    + $"{Reference(plan)}",
                 "Nothing was executed. Rename the identifier in the suite, regenerate the baseline from a run, and "
                     + "commit the replacement. The value itself is not repeated here because this message is written "
                     + "to the build log. An artifact that cannot be read back safely is not the same as no baseline, "
@@ -211,7 +218,7 @@ internal static class SuiteDiscovery
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--baseline names a file that is not a readable run artifact: {reference}",
+                $"--baseline names a file that is not a readable run artifact: {Reference(plan)}",
                 "Nothing was executed. Regenerate the baseline from a run rather than editing it by hand; a "
                     + "baseline that cannot be read is not the same as no baseline, and must not be treated as one."
             );
@@ -221,7 +228,7 @@ internal static class SuiteDiscovery
         {
             throw new EvalCliException(
                 ExitCode.BaselineMissing,
-                $"--baseline named an artifact that is not there: {reference}",
+                $"--baseline named an artifact that is not there: {Reference(plan)}",
                 "Nothing was executed. No baseline is not the same as no regression, so a baseline that was asked "
                     + "for and not found stops the run rather than silently widening it."
             );
@@ -244,4 +251,157 @@ internal static class SuiteDiscovery
     private static string Located(UnsafeIdentifierException refusal) =>
         (refusal.Field ?? "identifier")
         + (refusal.Position is { } position ? $" at scenario {position}" : string.Empty);
+
+    /// <summary>States the suite the way a refusal may carry it: relative to the root.</summary>
+    /// <param name="plan">The validated plan, which holds both the path and the root.</param>
+    /// <returns>The label.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Every message this type produces reaches stderr and from there the build log</b>, which
+    /// is read by anyone who can read the repository. A CI checkout directory names the account
+    /// the job runs as, and none of that is evidence about the suite that failed to load (§V).
+    /// </para>
+    /// <para>
+    /// <b>The relative form is not a loss here.</b> What <c>--suite</c> can get wrong is the part
+    /// below the root; a wrong <c>--root</c> fails earlier and differently, in
+    /// <see cref="PathGuard.ForRoot"/>. The engine makes the same judgement for the same reason —
+    /// <c>suite.notFound</c> names its <c>sourceLabel</c>, which carries no machine path — so a
+    /// reader who sees a refusal from either layer sees the same path in the same form.
+    /// </para>
+    /// </remarks>
+    private static string Label(RunPlan plan) => MarkdownReport.Display(plan.RootDirectory, plan.SuitePath);
+
+    /// <summary>States the baseline the way a refusal may carry it: relative to the root.</summary>
+    /// <param name="plan">The validated plan, which holds both the path and the root.</param>
+    /// <returns>The label.</returns>
+    /// <remarks>
+    /// The sibling of <see cref="Label"/>, kept separate only because it names a different
+    /// argument. Reached only where <c>plan.BaselinePath</c> is known to be non-null, which is
+    /// after the <c>--baseline</c> guard at the top of <see cref="LoadBaselineAsync"/>.
+    /// </remarks>
+    private static string Reference(RunPlan plan) =>
+        MarkdownReport.Display(plan.RootDirectory, plan.BaselinePath ?? string.Empty);
+
+    /// <summary>
+    /// Conducts the suite, turning the coordinator's planning refusal into this tool's vocabulary.
+    /// </summary>
+    /// <param name="coordinator">The coordinator.</param>
+    /// <param name="suite">The suite to conduct.</param>
+    /// <param name="cancellationToken">Cancels the run.</param>
+    /// <returns>The result.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>A refusal the engine means to make must not reach the branch built for things that
+    /// should never happen.</b> The coordinator allocates its whole plan before dispatching
+    /// anything and refuses a suite that would exceed its run budget — a deliberate guard against
+    /// exhausting the host. It signals that with <see cref="ArgumentException"/>, which
+    /// <see cref="ExitCodeReporter.Classify"/> reads as <see cref="ExitCode.UnexpectedError"/>,
+    /// and that branch prints the exception's full <c>ToString()</c>: the scenario id unredacted,
+    /// and stack frames naming the checkout directory and source layout of the machine that built
+    /// the tool (§V).
+    /// </para>
+    /// <para>
+    /// This is the same shape already fixed for <c>UnsafeIdentifierException</c>: an intentional
+    /// refusal arriving at the defect handler. Translated here, at the one place both commands
+    /// conduct a suite, rather than twice — a rule written twice is one that drifts.
+    /// </para>
+    /// <para>
+    /// <b>The engine's prose is not forwarded.</b> It names the offending scenario, and this
+    /// message reaches the build log. The budget and the option that sets it are what a caller
+    /// acts on.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="EvalCliException">The plan exceeds the coordinator's run budget.</exception>
+    /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
+    public static async Task<SuiteResult> ConductAsync(
+        RunCoordinator coordinator,
+        Suite suite,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(coordinator);
+        ArgumentNullException.ThrowIfNull(suite);
+
+        try
+        {
+            return await coordinator.RunAsync(suite, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException)
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                "The suite plans more runs than the run budget allows, so nothing was conducted. The scenario that "
+                    + "overran it is not named here, because this message is written to the build log.",
+                "A plan is allocated in full before anything is dispatched, so an oversized suite is refused rather "
+                    + "than allowed to exhaust the host. Raise --max-total-runs if the suite is genuinely this "
+                    + "large, or lower the repetition counts it declares."
+            );
+        }
+    }
+
+    /// <summary>
+    /// States one loader finding the way stderr may carry it.
+    /// </summary>
+    /// <param name="message">The engine's finding.</param>
+    /// <returns>The finding, netted, and told when something was withheld.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>A finding carries author text in two places, not one.</b> The obvious one is
+    /// <see cref="ValidationMessage.ScenarioId"/>, which is exposed structurally and netted as a
+    /// value — which is where the net works. The other is inside
+    /// <see cref="ValidationMessage.Message"/>: an assertion finding embeds
+    /// <c>AssertionSpec.ToExpression()</c>, which is <c>category:parameter</c> with an
+    /// author-supplied parameter, so <c>exactMatch:/home/ci-runner/work</c> arrives mid-sentence.
+    /// An earlier version of this method composed the line on the premise that everything except
+    /// the id was engine-owned. That premise held for the findings it was written against and
+    /// failed for the one branch that quotes the author back.
+    /// </para>
+    /// <para>
+    /// <b>So the explanation is netted too — fail-closed, rather than against a list of codes
+    /// known to embed author text.</b> A list would be correct about today's branches and silent
+    /// about the next one added in the engine, which is the exact failure ADR 0005 records five
+    /// rounds of. Netting everything needs no list and cannot go stale.
+    /// </para>
+    /// <para>
+    /// <b>The cost is paid only where there is something to hide.</b> <c>MachinePath</c> matches
+    /// nothing in an ordinary finding, so its explanation is carried through whole; it matches to
+    /// the end of the value in one that embeds a machine path, taking the rest of the sentence.
+    /// Rather than let that read as a finding with no finding in it, the truncation is
+    /// <b>detected and stated</b> — the line says what happened and where to look. ADR 0005
+    /// records why a better pattern is not the answer: prose does not tokenise like an identifier.
+    /// </para>
+    /// <para>
+    /// <b>The notice states the cause it verified, not the one it guessed.</b>
+    /// <see cref="MarkdownReport.Sanitize"/> has four effects — flattening control characters,
+    /// replacing comment delimiters, aliasing machine paths, and clipping — so a changed string is
+    /// evidence for any of them. Telling an author to rename a machine path on that evidence
+    /// accuses them of something they may not have done, and an author who goes looking for a path
+    /// that is not there learns the tool is unreliable. So redaction is asked about directly, via
+    /// <see cref="MarkdownReport.ContainsMachinePath"/>, and any other transformation gets a
+    /// cause-neutral note instead.
+    /// </para>
+    /// </remarks>
+    private static string Finding(ValidationMessage message)
+    {
+        var located = message.ScenarioId is { } id
+            ? $" scenario '{MarkdownReport.Sanitize(id, MarkdownReport.MaxIdentifierCharacters)}':"
+            : string.Empty;
+
+        var explanation = MarkdownReport.Sanitize(message.Message, MarkdownReport.MaxReasonCharacters);
+
+        // Asked, not inferred. Sanitize flattens control characters, replaces comment delimiters,
+        // aliases machine paths and clips — so "the text changed" is evidence for any of four
+        // things, and only one of them is a reason to tell an author to rename something.
+        var note =
+            MarkdownReport.ContainsMachinePath(message.Message)
+                ? " (The rest of this finding was withheld: it quotes author-supplied text carrying a machine path, and "
+                    + "this message is written to the build log. Open the scenario in the suite to see the value, and "
+                    + "rename it.)"
+            : !string.Equals(explanation, message.Message, StringComparison.Ordinal)
+                ? " (This finding was reformatted or shortened for the log. The suite file carries it in full.)"
+            : string.Empty;
+
+        return $"{message.Severity}: [{message.Code}]{located} {explanation}{note}";
+    }
 }

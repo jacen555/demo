@@ -200,7 +200,7 @@ internal static class BaselineComparison
 
         var comparison = Compare(provider.GetRequiredService<SuiteComparator>(), baseline, candidate, reference, plan);
 
-        RequireEveryPairWasCompared(comparison, reference);
+        RequireEveryPairWasCompared(comparison, Label(mechanism, reference, plan));
 
         return new ComparisonOutcome
         {
@@ -229,6 +229,12 @@ internal static class BaselineComparison
         RunPlan plan
     )
     {
+        var label = Label(
+            plan.BaselineEndpoint is not null ? BaselineMechanism.LiveEndpoint : BaselineMechanism.Artifact,
+            reference,
+            plan
+        );
+
         try
         {
             return comparator.Compare(baseline, candidate, CancellationToken.None);
@@ -237,7 +243,7 @@ internal static class BaselineComparison
         {
             throw new EvalCliException(
                 ExitCode.ComparisonRefused,
-                $"The candidate could not be compared against the baseline at {reference}: {refusal.Message}",
+                $"The candidate could not be compared against the baseline at {label}: {Recorded(refusal)}",
                 Remedy(refusal, plan)
             );
         }
@@ -249,12 +255,64 @@ internal static class BaselineComparison
             // would decide the verdict.
             throw new EvalCliException(
                 ExitCode.ComparisonRefused,
-                $"The baseline at {reference} is not internally consistent, so nothing was compared against it: "
-                    + malformed.Message,
+                $"The baseline at {label} is not internally consistent, so nothing was compared against it: "
+                    + Recorded(malformed),
                 RegenerateRemedy
             );
         }
     }
+
+    /// <summary>
+    /// States the baseline reference the way a refusal may carry it.
+    /// </summary>
+    /// <param name="mechanism">Which mechanism supplied the baseline.</param>
+    /// <param name="reference">The reference — a resolved path, or an already-redacted address.</param>
+    /// <param name="plan">The validated plan, for the containment root.</param>
+    /// <returns>The label.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The reference is two different kinds of value and only one of them is a path.</b> An
+    /// artifact reference is a path this tool resolved and canonicalised, so it is named relative
+    /// to the root; a live reference is <c>BaselineEndpointDisplay</c>, which is already the
+    /// redacted form and the only address-shaped value anything is permitted to print. Handing an
+    /// address to <see cref="MarkdownReport.Display"/> would be a category error — it would ask
+    /// <c>Path</c> to relativise a URL — so the branch is made on the mechanism rather than
+    /// guessed from the text.
+    /// </para>
+    /// <para>
+    /// <see cref="MarkdownReport.Render"/> makes exactly this branch for exactly this reason.
+    /// Stating it twice is the shape ADR 0005 warns about, so the two are written to agree and
+    /// this remark names the other one.
+    /// </para>
+    /// </remarks>
+    private static string Label(BaselineMechanism mechanism, string reference, RunPlan plan) =>
+        mechanism is BaselineMechanism.Artifact
+            ? MarkdownReport.Display(plan.RootDirectory, reference)
+            : MarkdownReport.Sanitize(reference, MarkdownReport.MaxPathCharacters);
+
+    /// <summary>
+    /// Forwards the engine's account of a divergence, netted, because it quotes the artifact.
+    /// </summary>
+    /// <param name="refusal">The comparator's refusal.</param>
+    /// <returns>The reason, with any machine path aliased.</returns>
+    /// <remarks>
+    /// <para>
+    /// The engine names the values that disagreed, correctly — a caller has to know which suite
+    /// the baseline turned out to be a run of — but those values came out of an artifact, and an
+    /// artifact is a file anyone can write. ADR 0005's authoring-time control exempts a leading
+    /// request method, so <c>GET /home/ci/repo</c> survives read-back; that concession was
+    /// reasoned about for the Markdown document, where the net is a second layer, and this is
+    /// stderr, where it is not.
+    /// </para>
+    /// <para>
+    /// <b>This is prose, so the net takes the rest of the sentence with it when it fires</b> —
+    /// see <c>BaselineCommand.Recorded</c>, which carries the full note. The short form: the net
+    /// is a value filter, a comparator refusal embeds its values mid-sentence, and ADR 0005
+    /// records why filtering prose is not fixable by a better pattern.
+    /// </para>
+    /// </remarks>
+    private static string Recorded(Exception refusal) =>
+        MarkdownReport.Sanitize(refusal.Message, MarkdownReport.MaxReasonCharacters);
 
     /// <summary>What to do about a whole-artifact refusal, by the property that diverged.</summary>
     private static string Remedy(ComparisonRefusedException refusal, RunPlan plan) =>
@@ -304,7 +362,7 @@ internal static class BaselineComparison
     /// preview and never reaches this.
     /// </para>
     /// </remarks>
-    private static void RequireEveryPairWasCompared(ComparisonResult comparison, string reference)
+    private static void RequireEveryPairWasCompared(ComparisonResult comparison, string label)
     {
         var pairs = comparison
             .ScenarioComparisons.Where(scenario =>
@@ -322,15 +380,23 @@ internal static class BaselineComparison
         }
 
         var compared = pairs.Length - refused.Length;
+
+        // Both halves come out of an artifact: the id is an author's and the reason is the
+        // engine's account of one. Netted rather than printed as recorded, because this reaches
+        // stderr and the authoring-time control's method exemption was reasoned about for the
+        // Markdown document (§V, ADR 0005).
         var reasons = string.Join(
             System.Environment.NewLine + "          ",
-            refused.Select(scenario => $"{scenario.ScenarioId}: {ComparisonReport.Refusal(scenario)}.")
+            refused.Select(scenario =>
+                $"{MarkdownReport.Sanitize(scenario.ScenarioId, MarkdownReport.MaxIdentifierCharacters)}: "
+                + $"{MarkdownReport.Sanitize(ComparisonReport.Refusal(scenario), MarkdownReport.MaxReasonCharacters)}."
+            )
         );
 
         throw new EvalCliException(
             ExitCode.ComparisonRefused,
             $"{Render(refused.Length)} of {Render(pairs.Length)} scenario(s) could not be compared against the "
-                + $"baseline at {reference}, so this run says nothing about whether the change helped or hurt them "
+                + $"baseline at {label}, so this run says nothing about whether the change helped or hurt them "
                 + $"({Render(compared)} of {Render(pairs.Length)} did compare)."
                 + $"{System.Environment.NewLine}          {reasons}",
             "Reported as a refusal rather than as no regressions found, because those scenarios were not examined "
