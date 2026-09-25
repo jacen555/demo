@@ -144,11 +144,16 @@ internal static partial class MarkdownReport
     }
 
     /// <summary>The document-level truncation banner, stated before anything a reader might trust.</summary>
-    private static string Banner(int omitted, int total, int budget, string? artifact) =>
+    /// <remarks>
+    /// Takes the recovery sentence rather than a path, so the budget machinery below can serve a
+    /// second report whose fuller record is not a single JSON artifact. See
+    /// <see cref="Assemble"/>.
+    /// </remarks>
+    internal static string Banner(int omitted, int total, int budget, string recovery) =>
         $"> **This report was truncated.** {Count(omitted)} of {Count(total)} entries were omitted to fit the "
         + $"{Count(budget)}-character comment limit; every section below states how many it could not show. Nothing "
         + "was dropped silently. "
-        + Recovery(artifact);
+        + recovery;
 
     /// <summary>What one section says when it could not show everything it has.</summary>
     /// <remarks>
@@ -156,9 +161,9 @@ internal static partial class MarkdownReport
     /// page. Without both figures a shortened list is indistinguishable from a complete one, which
     /// is a refusal rendering as an absence in the place it does the most harm.
     /// </remarks>
-    private static string Notice(int shown, int total, string? artifact) =>
+    internal static string Notice(int shown, int total, string recovery) =>
         $"> **{Count(shown)} of {Count(total)} shown — {Count(total - shown)} omitted to fit the comment limit.** "
-        + Recovery(artifact);
+        + recovery;
 
     /// <summary>
     /// Where the omitted entries can be read, or the statement that they cannot.
@@ -181,14 +186,21 @@ internal static partial class MarkdownReport
     /// <param name="sections">The sections, in severity order.</param>
     /// <param name="shown">How many entries of each to render.</param>
     /// <param name="footer">The provenance and the accounting.</param>
-    /// <param name="artifact">The displayed artifact path, so a recovery pointer names something real.</param>
-    private static string Assemble(
+    /// <param name="recovery">Where the omitted entries can be read, or the statement that they cannot.</param>
+    /// <remarks>
+    /// <b>Internal rather than private, and taking a recovery sentence rather than an artifact
+    /// path, so <see cref="TrendReport"/> lays itself out through this same implementation.</b>
+    /// Two budget allocators would eventually disagree about what "truncated" means, and the one
+    /// that disagrees is the one that drops a section silently — the defect both reports are
+    /// designed against.
+    /// </remarks>
+    internal static string Assemble(
         string header,
         string? banner,
         IReadOnlyList<MarkdownSection> sections,
         int[] shown,
         string footer,
-        string? artifact
+        string recovery
     )
     {
         var text = new StringBuilder(header);
@@ -230,7 +242,7 @@ internal static partial class MarkdownReport
 
             if (shown[index] < total)
             {
-                text.Append('\n').Append(Notice(shown[index], total, artifact)).Append('\n');
+                text.Append('\n').Append(Notice(shown[index], total, recovery)).Append('\n');
             }
         }
 
@@ -247,21 +259,21 @@ internal static partial class MarkdownReport
     /// overrun — which is what lets <see cref="Render"/> refuse a budget that cannot hold the
     /// skeleton instead of discovering the shortfall by cutting the footer off the end.
     /// </remarks>
-    private static int Skeleton(
+    internal static int Skeleton(
         string header,
         IReadOnlyList<MarkdownSection> sections,
         string footer,
         int total,
         int budget,
-        string? artifact
+        string recovery
     ) =>
         Assemble(
             header,
-            Banner(total, total, budget, artifact),
+            Banner(total, total, budget, recovery),
             sections,
             new int[sections.Count],
             footer,
-            artifact
+            recovery
         ).Length + sections.Where(section => section.Entries.Count > 0).Sum(section => NoticeSlack(section));
 
     /// <summary>
@@ -306,7 +318,7 @@ internal static partial class MarkdownReport
     /// produce the same bytes.
     /// </para>
     /// </remarks>
-    private static int[] Allocate(int remaining, IReadOnlyList<MarkdownSection> sections)
+    internal static int[] Allocate(int remaining, IReadOnlyList<MarkdownSection> sections)
     {
         var shown = new int[sections.Count];
 
@@ -375,8 +387,14 @@ internal static partial class MarkdownReport
     /// <b>No gradeable run is not a pass rate of zero.</b> One says the system failed; the other
     /// says nothing was ever learned about it.
     /// </para>
+    /// <para>
+    /// <b>Internal rather than private, because <see cref="TrendReport"/> renders its cells
+    /// through this one.</b> A second implementation of "may this figure be shown" would
+    /// eventually show a figure this one withholds, and the trend is the report where an
+    /// unverified narrow interval is most persuasive.
+    /// </para>
     /// </remarks>
-    private static string Rate(ScenarioResult? scenario, IntervalSettings settings, string side)
+    internal static string Rate(ScenarioResult? scenario, IntervalSettings settings, string side)
     {
         if (scenario is null)
         {
@@ -386,12 +404,29 @@ internal static partial class MarkdownReport
         var graded = scenario.Runs.Count(run => run.Status != RunStatus.Error);
         var passed = scenario.Runs.Count(run => run.Status == RunStatus.Pass);
 
+        // **Before the summary is trusted at all.** A recorded aggregate over runs that produced
+        // no verdict is a claim about evidence that was never gathered, and reading it first
+        // prints a pass rate of zero from a scenario nobody graded — the exact distinction this
+        // method exists to keep. It is also what stops a zero-trial summary reaching the
+        // verification below, which recomputes through ProportionInterval and refuses fewer than
+        // one trial: that refusal would leave here as an unhandled failure and reach the branch
+        // that prints a stack trace.
+        if (graded == 0)
+        {
+            return "no pass rate — no repetition produced a verdict, so "
+                + $"{side} says nothing about the system"
+                + (
+                    scenario.Summary is null
+                        ? string.Empty
+                        : ". Its recorded summary is not reported: an artifact that aggregates runs it does not "
+                            + "have is not evidence of anything"
+                );
+        }
+
         if (scenario.Summary is not { } summary)
         {
-            return graded == 0
-                ? $"no pass rate — no repetition produced a verdict, so {side} says nothing about the system"
-                : $"withheld — {side} records {Count(graded)} graded run(s) and no summary of them, so its figures "
-                    + "cannot be shown to describe its own runs";
+            return $"withheld — {side} records {Count(graded)} graded run(s) and no summary of them, so its figures "
+                + "cannot be shown to describe its own runs";
         }
 
         if (Inconsistent(summary, graded, passed, settings) is { } discrepancy)
@@ -405,23 +440,75 @@ internal static partial class MarkdownReport
 
         var estimate = Percent(summary.PointEstimate);
 
-        if (summary.N == 1)
+        if (DisplayedInterval(scenario, settings) is not { } interval)
         {
-            return $"{estimate} (n=1 — a single observation, so no interval is reported: one run cannot bound a rate)";
+            // Two reasons, and they are different claims. At n = 1 the Wilson interval spans most
+            // of the unit interval and reads as a measurement when it is only an artefact of
+            // having measured once. Otherwise the run's settings do not carry both halves a bound
+            // is checked against, so whatever it recorded could not be verified and is not
+            // presented as though it had been. The rate and its denominator were checked, so
+            // those still stand.
+            return summary.N == 1
+                ? $"{estimate} (n=1 — a single observation, so no interval is reported: one run cannot bound a rate)"
+                : $"{estimate} (n={Count(summary.N)} — the run did not record both the interval method and the "
+                    + "confidence level a bound is checked against, so any interval it carries could not be "
+                    + "verified and is not shown)";
         }
 
-        if (settings.Confidence is null)
-        {
-            // The bounds cannot be checked against anything, so they are not presented as though
-            // they had been. The rate and its denominator were checked, so those still stand.
-            return $"{estimate} (n={Count(summary.N)} — the run recorded no interval settings, so any interval it "
-                + "carries could not be verified and is not shown)";
-        }
-
-        var interval = summary.Interval!;
-
-        return $"{estimate} (n={Count(summary.N)}, {Percent(settings.Confidence.Value)} {Method(interval.Method)} "
+        return $"{estimate} (n={Count(summary.N)}, {Percent(settings.Confidence!.Value)} {Method(interval.Method)} "
             + $"CI {Percent(interval.Lower)}-{Percent(interval.Upper)})";
+    }
+
+    /// <summary>
+    /// The interval this report would actually print for a scenario, or null when it would print
+    /// none.
+    /// </summary>
+    /// <param name="scenario">The recorded scenario, or null.</param>
+    /// <param name="settings">The interval settings the run recorded.</param>
+    /// <returns>The interval, or null when no interval reaches the page.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the one place that decides, and <see cref="Rate"/> is built on it</b>, so a
+    /// caller asking "may I reason from these bounds?" and the page asking "may I show these
+    /// bounds?" cannot answer differently. Two implementations of that judgement is the defect
+    /// this repository keeps producing, with the two contexts one method apart instead of one
+    /// file apart — and the consequence is specific: a value untrustworthy enough to withhold
+    /// from display, used to draw a conclusion printed beside the place it was withheld.
+    /// </para>
+    /// <para>
+    /// It answers null in five cases, and only the first two mean the figure was <i>wrong</i>:
+    /// the summary disagrees with its own runs; no repetition produced a verdict, so there is
+    /// nothing for a bound to be about; the estimate rests on a single observation; or the run's
+    /// settings do not carry <b>both</b> the method and the confidence level.
+    /// </para>
+    /// <para>
+    /// <b>Both settings, not either.</b> <see cref="Inconsistent"/> skips bound verification
+    /// entirely when either is missing — there is nothing to recompute against — so a run
+    /// recording a level and a method this build does not recognise has settings present enough
+    /// to pass a null check and not enough to check a bound with. Requiring only one let exactly
+    /// that case through: unverified bounds printed as though verified, and compared as though
+    /// verified. Making this the single shared decision removed the drift between the two
+    /// consumers and left the rule underneath it wrong, which is worth stating plainly —
+    /// consistency is a property of the mechanism and correctness is a property of the rule, and
+    /// the first can hide the absence of the second.
+    /// </para>
+    /// </remarks>
+    internal static ConfidenceInterval? DisplayedInterval(ScenarioResult? scenario, IntervalSettings settings)
+    {
+        if (scenario?.Summary is not { } summary)
+        {
+            return null;
+        }
+
+        var graded = scenario.Runs.Count(run => run.Status != RunStatus.Error);
+        var passed = scenario.Runs.Count(run => run.Status == RunStatus.Pass);
+
+        if (graded == 0 || Inconsistent(summary, graded, passed, settings) is not null)
+        {
+            return null;
+        }
+
+        return summary.N == 1 || settings.Confidence is null || settings.Method is null ? null : summary.Interval;
     }
 
     /// <summary>
@@ -442,7 +529,7 @@ internal static partial class MarkdownReport
     /// bounds shown are always the artifact's own; this only decides whether they may be shown.
     /// </para>
     /// </remarks>
-    private static string? Inconsistent(StatisticalSummary summary, int graded, int passed, IntervalSettings settings)
+    internal static string? Inconsistent(StatisticalSummary summary, int graded, int passed, IntervalSettings settings)
     {
         if (summary.N != graded)
         {
@@ -491,7 +578,7 @@ internal static partial class MarkdownReport
     /// <summary>The interval settings a run recorded, or the absence of them.</summary>
     /// <param name="Method">The method the run stamped, or null when it recorded none.</param>
     /// <param name="Confidence">The level the run stamped, or null when it recorded none.</param>
-    private readonly record struct IntervalSettings(IntervalMethod? Method, double? Confidence);
+    internal readonly record struct IntervalSettings(IntervalMethod? Method, double? Confidence);
 
     /// <summary>
     /// The interval settings the candidate recorded.
@@ -503,7 +590,7 @@ internal static partial class MarkdownReport
     /// state a level the run may not have used. The candidate is read because the comparator has
     /// already refused any pair whose harness settings disagree.
     /// </remarks>
-    private static IntervalSettings Settings(SuiteResult artifact)
+    internal static IntervalSettings Settings(SuiteResult artifact)
     {
         var config = artifact.Environment.HarnessConfig;
 
@@ -591,7 +678,7 @@ internal static partial class MarkdownReport
             ? Percent(level)
             : null;
 
-    private static string Percent(double value) => (value * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+    internal static string Percent(double value) => (value * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
 
     private static string PValue(double value) =>
         value < 0.001 ? "<0.001" : value.ToString("0.###", CultureInfo.InvariantCulture);

@@ -28,10 +28,11 @@ namespace Forge.EvalEngine.Baselines;
 /// <para>
 /// <b>Only a genuinely absent artifact yields null.</b> A reference that names a directory, one
 /// whose metadata cannot be inspected, and a file that exists but cannot be read, is too large,
-/// is not valid JSON, or declares a schema version this engine does not understand all throw.
-/// Returning null for any of those would tell the caller "there is no baseline", the caller would
-/// report "no regression", and the reason would be that nothing was ever compared — a false green
-/// produced by an unreadable reference rather than by working software.
+/// is not valid JSON, carries a null where its shape declares one cannot be, or declares a schema
+/// version this engine does not understand all throw. Returning null for any of those would tell
+/// the caller "there is no baseline", the caller would report "no regression", and the reason
+/// would be that nothing was ever compared — a false green produced by an unreadable reference
+/// rather than by working software.
 /// </para>
 /// </remarks>
 public sealed class ArtifactBaseline : IBaselineProvider
@@ -98,6 +99,9 @@ public sealed class ArtifactBaseline : IBaselineProvider
     /// The reference names a directory, or the artifact exists but could not be inspected or read.
     /// </exception>
     /// <exception cref="System.Text.Json.JsonException">The artifact is not valid JSON, or not the expected shape.</exception>
+    /// <exception cref="MalformedArtifactException">
+    /// The artifact carries a null in a position its shape declares as never holding one.
+    /// </exception>
     /// <exception cref="SchemaVersionException">
     /// The artifact declares a schema version this engine cannot read, or declares none.
     /// </exception>

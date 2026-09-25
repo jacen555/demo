@@ -234,7 +234,13 @@ public class GitChangedFileSourceTests
         var changes = await Source(repository.Root, "no-such-revision").GetChangedFilesAsync(CancellationToken.None);
 
         changes.Established.Should().BeFalse();
-        changes.UnavailableReason.Should().Contain("no-such-revision");
+        changes.UnavailableReason.Should().Contain("--changed-since").And.Contain("could not diff");
+
+        // The revision is deliberately not echoed: the reason reaches the logger and from there
+        // the build log, and a revision is a caller-supplied value that can be neither a path nor
+        // safe — so it is omitted rather than netted (§V, ADR 0005). See
+        // RunPathDisclosureTests.ResolveAsync_WhenTheRevisionIsUnknown_EchoesNeitherItNorGitsProse.
+        changes.UnavailableReason.Should().NotContain("no-such-revision");
         changes.Paths.Should().BeEmpty();
     }
 

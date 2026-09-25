@@ -133,7 +133,6 @@ public class BaselineCommandTests
         // only once something was withheld is a refusal a consumer cannot distinguish from a
         // preview that never looked, which is the shape of the defect these fields exist for.
         root.GetProperty("newlyCoveredWithheld").EnumerateArray().Should().BeEmpty();
-        root.GetProperty("newlyCoveredWithheldReason").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]

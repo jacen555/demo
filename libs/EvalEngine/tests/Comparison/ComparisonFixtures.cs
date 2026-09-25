@@ -163,6 +163,22 @@ internal static class ComparisonFixtures
     public static ScenarioComparison For(ComparisonResult result, string scenarioId) =>
         result.ScenarioComparisons.Single(comparison => comparison.ScenarioId == scenarioId);
 
+    /// <summary>The scenarios whose coverage claim was withheld, in the order reported.</summary>
+    public static IEnumerable<string> WithheldIds(ComparisonResult result) =>
+        result.NewlyCoveredWithheld.Select(entry => entry.ScenarioId);
+
+    /// <summary>The withheld entry for one scenario, or a failure naming what was withheld instead.</summary>
+    public static WithheldCoverage Withheld(ComparisonResult result, string scenarioId) =>
+        result.NewlyCoveredWithheld.SingleOrDefault(entry => entry.ScenarioId == scenarioId)
+        ?? throw new InvalidOperationException(
+            $"Scenario '{scenarioId}' was not withheld. Withheld: "
+                + $"[{string.Join(", ", result.NewlyCoveredWithheld.Select(e => $"{e.ScenarioId}={e.Cause}"))}]."
+        );
+
+    /// <summary>A withheld entry, for a test that builds a result rather than computing one.</summary>
+    public static WithheldCoverage Withholding(string scenarioId, CoverageWithholdingCause cause) =>
+        new() { ScenarioId = scenarioId, Cause = cause };
+
     /// <summary>A comparator with the statistics wired exactly as a caller would wire them.</summary>
     public static SuiteComparator WithStatistics(
         double significanceLevel = SuiteComparator.DefaultSignificanceLevel,

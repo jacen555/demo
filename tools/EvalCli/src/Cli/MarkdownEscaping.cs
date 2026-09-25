@@ -182,24 +182,25 @@ internal static partial class MarkdownReport
     /// The durable record keeps every value as it was: this is the rendering, and the JSON
     /// artifact is the evidence.
     /// </para>
+    /// <para>
+    /// <b>Internal rather than private, because stderr is a published surface the net did not
+    /// previously cover.</b> ADR 0005 puts the control at authoring time and keeps this as a
+    /// narrow net at the rendering boundary — but the authoring-time control exempts a leading
+    /// request method, so <c>GET /home/ci-user/repo</c> loads and survives artifact read-back.
+    /// That concession was documented against one output channel. A refusal written to the build
+    /// log is a second channel, and it must go through the same net rather than inherit the
+    /// concession by omission. <see cref="Prose"/> and <see cref="Code"/> layer markup on top of
+    /// this; a diagnostic wants the plain form.
+    /// </para>
     /// </remarks>
-    private static string Sanitize(string? value, int maximum)
+    internal static string Sanitize(string? value, int maximum)
     {
         if (string.IsNullOrEmpty(value))
         {
             return string.Empty;
         }
 
-        var flattened = new StringBuilder(value.Length);
-
-        foreach (var character in value)
-        {
-            flattened.Append(char.IsControl(character) ? ' ' : character);
-        }
-
-        var text = flattened.Replace("<!--", CommentMarkerRemoved).Replace("-->", CommentMarkerRemoved).ToString();
-
-        text = MachinePath().Replace(text, match => Alias(match, AliasHexLength));
+        var text = MachinePath().Replace(Flatten(value), match => Alias(match, AliasHexLength));
 
         if (text.Length <= maximum)
         {
@@ -215,6 +216,52 @@ internal static partial class MarkdownReport
 
         return string.Concat(text.AsSpan(0, keep), ClipMarker);
     }
+
+    /// <summary>
+    /// Applies the two structural rewrites that precede the net, so both callers see one
+    /// implementation of them.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <returns>The value with control characters and comment delimiters neutralised.</returns>
+    /// <remarks>
+    /// Extracted so <see cref="ContainsMachinePath"/> asks its question about exactly the text
+    /// <see cref="Sanitize"/> would have run the net over. Asking it about the raw value instead
+    /// would disagree wherever a control character sits inside a path — a rule implemented twice
+    /// is one that eventually disagrees with itself (ADR 0005).
+    /// </remarks>
+    private static string Flatten(string value)
+    {
+        var flattened = new StringBuilder(value.Length);
+
+        foreach (var character in value)
+        {
+            flattened.Append(char.IsControl(character) ? ' ' : character);
+        }
+
+        return flattened.Replace("<!--", CommentMarkerRemoved).Replace("-->", CommentMarkerRemoved).ToString();
+    }
+
+    /// <summary>
+    /// Whether the net would alias something in this value.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <returns><see langword="true"/> when it carries a machine path the net matches.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b><see cref="Sanitize"/> has four effects and only one of them is redaction.</b> It
+    /// flattens control characters, replaces comment delimiters, aliases machine paths, and clips
+    /// over-long text. A caller that infers "a path was found" from "the string changed" is
+    /// therefore wrong three ways out of four — and a diagnostic that acts on that inference tells
+    /// an author to rename a path that is not there, which sends them looking for nothing and
+    /// teaches them the tool is unreliable.
+    /// </para>
+    /// <para>
+    /// So the question is asked directly rather than inferred from the result. This is the only
+    /// honest way to distinguish the redaction from the other three.
+    /// </para>
+    /// </remarks>
+    internal static bool ContainsMachinePath(string? value) =>
+        !string.IsNullOrEmpty(value) && MachinePath().IsMatch(Flatten(value));
 
     /// <summary>
     /// Renders a value supplied by somebody else as prose, with no structure of its own.
@@ -238,8 +285,13 @@ internal static partial class MarkdownReport
     /// Applied only to values this tool did not write. Its own standing explanations are markup on
     /// purpose, and passing them through here would print their emphasis as literal asterisks.
     /// </para>
+    /// <para>
+    /// <b>Internal rather than private, so <see cref="TrendReport"/> escapes through this one
+    /// implementation.</b> ADR 0005's finding applies exactly: a redaction net written twice is
+    /// two nets that drift, and the one that drifts is the one that leaks.
+    /// </para>
     /// </remarks>
-    private static string Prose(string? value, int maximum)
+    internal static string Prose(string? value, int maximum)
     {
         var text = Sanitize(value, maximum)
             .Replace("&", "&amp;", StringComparison.Ordinal)
@@ -273,7 +325,7 @@ internal static partial class MarkdownReport
     /// identifier wrongly is a small thing; a broken span that swallows the sentence after it is
     /// not.
     /// </remarks>
-    private static string Code(string? value)
+    internal static string Code(string? value)
     {
         var text = Sanitize(value, MaxIdentifierCharacters);
 
@@ -347,7 +399,8 @@ internal static partial class MarkdownReport
     /// </remarks>
     internal static void RequireDistinctAliases(IEnumerable<string?> values, int hexLength = AliasHexLength)
     {
-        var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+        var byAlias = new Dictionary<string, string>(StringComparer.Ordinal);
+        var byRendering = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var value in values)
         {
@@ -356,12 +409,19 @@ internal static partial class MarkdownReport
                 continue;
             }
 
-            foreach (var match in MachinePath().Matches(value).Cast<Match>())
+            // The text the renderer nets, not the value as recorded. Sanitize flattens control
+            // characters and replaces comment delimiters before the net ever runs, so a guard
+            // asking about the raw value is asking about a different string from the one that
+            // reaches the page — it invents aliases for shapes that flatten away, and misses
+            // collisions between shapes that only appear once flattened.
+            var flattened = Flatten(value);
+
+            foreach (var match in MachinePath().Matches(flattened).Cast<Match>())
             {
                 var alias = Alias(match, hexLength);
 
                 if (
-                    seen.TryGetValue(alias, out var first)
+                    byAlias.TryGetValue(alias, out var first)
                     && !string.Equals(first, match.Value, StringComparison.Ordinal)
                 )
                 {
@@ -371,8 +431,27 @@ internal static partial class MarkdownReport
                     );
                 }
 
-                seen[alias] = match.Value;
+                byAlias[alias] = match.Value;
             }
+
+            // Sharing Flatten is necessary and not sufficient. Two distinct values can survive
+            // the per-path check and still arrive at the page identical — because they flatten to
+            // the same text, or because a comment delimiter was replaced in one of them. The only
+            // claim worth making is about what is actually rendered, so it is made about that.
+            var rendered = MachinePath().Replace(flattened, match => Alias(match, hexLength));
+
+            if (
+                byRendering.TryGetValue(rendered, out var earlier)
+                && !string.Equals(earlier, value, StringComparison.Ordinal)
+            )
+            {
+                throw new InvalidOperationException(
+                    "Two different values in this comparison render identically, so the report would show them as "
+                        + "one entry. Regenerate with the scenario renamed."
+                );
+            }
+
+            byRendering[rendered] = value;
         }
     }
 
@@ -414,7 +493,7 @@ internal static partial class MarkdownReport
     /// disclosure. <see cref="ReportIdentity.ForPath(string, string)"/> deliberately does not do this: it is hashed, never shown.
     /// </para>
     /// </remarks>
-    private static string Display(string root, string path)
+    internal static string Display(string root, string path)
     {
         if (string.IsNullOrEmpty(path))
         {

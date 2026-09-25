@@ -238,6 +238,65 @@ public class SuiteLoaderTests
         result.Messages.Should().Contain(m => m.Severity == ValidationSeverity.Error);
     }
 
+    /// <summary>
+    /// A slicing tag whose value is the literal null is refused at authoring time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the producer half of the artifact shape guard.</b> Element and value nullability
+    /// inside a collection is not enforced by the serializer, so <c>{ "area": null }</c> binds a
+    /// null into a dictionary whose value type says it cannot hold one.
+    /// <see cref="Coordination.RunCoordinator"/> copies a scenario's tags straight into the
+    /// artifact, and <see cref="CanonicalJson"/> writes the null out — so without this the engine
+    /// would commit an artifact that <see cref="CanonicalJson.DeserializeSuiteResult(string)"/>
+    /// then refuses to read.
+    /// </para>
+    /// <para>
+    /// Refused here rather than at the write, for the reason ADR 0005 gives: at authoring time the
+    /// value is in a committed file with a human attached to it, so refusing costs one edit. At
+    /// the write the run has already happened.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LoadFromJson_SlicingTagValueIsNull_RefusesItRatherThanCarryingItIntoAnArtifact()
+    {
+        var json = """
+            {
+              "name": "null-tag",
+              "scenarios": [
+                {
+                  "identity": { "id": "rest-once", "kind": "rest" },
+                  "execution": { "mode": "deterministic" },
+                  "simulation": { "opening": "GET /health" },
+                  "slicing": { "tags": { "area": null } }
+                }
+              ]
+            }
+            """;
+
+        var act = () => SuiteLoader.LoadFromJson(json, "null-tag.json");
+
+        var result = act.Should().NotThrow().Subject;
+        result.Succeeded.Should().BeFalse();
+        result.Messages.Should().Contain(m => m.Code == "scenario.tag.null");
+    }
+
+    /// <summary>
+    /// A tag the author actually wrote still loads, and so does an absent tag block.
+    /// </summary>
+    /// <remarks>
+    /// The guard against the guard: a suite that stops loading is a refusal an operator will
+    /// believe, which is worse than the malformed artifact it prevents.
+    /// </remarks>
+    [Fact]
+    public void LoadFromJson_SlicingTagValueIsDeclared_LoadsIt()
+    {
+        var result = SuiteLoader.LoadFromJson(MinimalSuite, "minimal.json");
+
+        result.Succeeded.Should().BeTrue(because: string.Join("; ", result.Messages));
+        result.Suite!.Scenarios[0].Slicing.Tags["area"].Should().Be("health");
+    }
+
     [Fact]
     public void LoadFromJson_DuplicateKeysAtTheSuiteLevel_ReportsAnErrorRatherThanThrowing()
     {

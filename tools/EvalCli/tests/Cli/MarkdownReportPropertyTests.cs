@@ -139,7 +139,10 @@ public class MarkdownReportPropertyTests
                 SuiteName = "regression",
                 ScenarioComparisons = [],
                 NewlyCovered = covered,
-                NewlyCoveredWithheld = withheld,
+                NewlyCoveredWithheld =
+                [
+                    .. withheld.Select(id => ReportFixture.Withheld(id, CoverageWithholdingCause.Incomplete)),
+                ],
             },
             ReportFixture.Artifact(),
             ReportFixture.Artifact()

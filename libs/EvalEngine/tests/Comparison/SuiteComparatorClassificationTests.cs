@@ -279,8 +279,7 @@ public sealed class SuiteComparatorNewlyCoveredTests
 
         ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.Fixed);
         result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
-        result.NewlyCoveredWithheldReason.Should().Contain("at least one repetition errored");
+        ComparisonFixtures.Withheld(result, "a").Cause.Should().Be(CoverageWithholdingCause.Errored);
     }
 
     [Fact]
@@ -297,8 +296,7 @@ public sealed class SuiteComparatorNewlyCoveredTests
 
         ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.New);
         result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
-        result.NewlyCoveredWithheldReason.Should().Contain("at least one repetition errored");
+        ComparisonFixtures.Withheld(result, "a").Cause.Should().Be(CoverageWithholdingCause.Errored);
     }
 
     [Fact]
@@ -318,7 +316,7 @@ public sealed class SuiteComparatorNewlyCoveredTests
         comparison.CandidateOutcome.Should().Be(ScenarioOutcome.Passed);
         comparison.BaselineOutcome.Should().Be(ScenarioOutcome.Failed);
         comparison.GradedPairs.Should().Be(1);
-        result.NewlyCoveredWithheld.Should().Equal("a");
+        ComparisonFixtures.WithheldIds(result).Should().Equal("a");
     }
 
     [Fact]
@@ -336,7 +334,6 @@ public sealed class SuiteComparatorNewlyCoveredTests
 
         result.NewlyCovered.Should().Equal("was-broken", "brand-new");
         result.NewlyCoveredWithheld.Should().BeEmpty();
-        result.NewlyCoveredWithheldReason.Should().BeNull();
     }
 
     [Fact]
@@ -372,7 +369,6 @@ public sealed class SuiteComparatorNewlyCoveredTests
         ComparisonFixtures.For(result, "never-ran").CandidateOutcome.Should().Be(ScenarioOutcome.Ungradeable);
         result.NewlyCovered.Should().BeEmpty();
         result.NewlyCoveredWithheld.Should().BeEmpty();
-        result.NewlyCoveredWithheldReason.Should().BeNull();
     }
 
     [Fact]
@@ -400,31 +396,13 @@ public sealed class SuiteComparatorNewlyCoveredTests
         // Every other property is held identical, so this can only pass if NewlyCoveredWithheld
         // itself participates in canonical equality. The earlier version of this test also
         // varied NewlyCovered, so it passed whether or not the withheld fields counted.
-        var without = new ComparisonResult
+        var without = new ComparisonResult { SuiteName = "s", NewlyCovered = ["a"] };
+        var with = without with
         {
-            SuiteName = "s",
-            NewlyCovered = ["a"],
-            NewlyCoveredWithheldReason = "same reason",
+            NewlyCoveredWithheld = [ComparisonFixtures.Withholding("b", CoverageWithholdingCause.Errored)],
         };
-        var with = without with { NewlyCoveredWithheld = ["b"] };
 
         without.Equals(with).Should().BeFalse();
-    }
-
-    [Fact]
-    public void Equals_ResultsDifferingOnlyInTheWithheldReason_AreNotEqual()
-    {
-        // Likewise for the reason: only the reason varies, so only the reason can carry it.
-        var one = new ComparisonResult
-        {
-            SuiteName = "s",
-            NewlyCovered = ["a"],
-            NewlyCoveredWithheld = ["b"],
-            NewlyCoveredWithheldReason = "a repetition errored",
-        };
-        var other = one with { NewlyCoveredWithheldReason = "a repetition never ran" };
-
-        one.Equals(other).Should().BeFalse();
     }
 
     // -----------------------------------------------------------------------------------------
@@ -446,8 +424,7 @@ public sealed class SuiteComparatorNewlyCoveredTests
         ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.New);
         ComparisonFixtures.For(result, "a").CandidateOutcome.Should().Be(ScenarioOutcome.Passed);
         result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
-        result.NewlyCoveredWithheldReason.Should().Contain("never happened");
+        ComparisonFixtures.Withheld(result, "a").Cause.Should().Be(CoverageWithholdingCause.Incomplete);
     }
 
     [Fact]
@@ -463,79 +440,15 @@ public sealed class SuiteComparatorNewlyCoveredTests
         );
 
         result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
-    }
-
-    [Fact]
-    public void Compare_WithheldScenarios_StateReasonsThatTellIncompleteApartFromErrored()
-    {
-        // A run that never happened and a run that failed to produce a verdict are different
-        // facts. Collapsing them into one reason is how the next reader has to re-derive which
-        // of the two they are looking at.
-        var incomplete = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", [RunStatus.Pass], declaredRepetitions: 2)])
-        );
-        var errored = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Error])])
-        );
-
-        incomplete.NewlyCoveredWithheld.Should().Equal("a");
-        errored.NewlyCoveredWithheld.Should().Equal("a");
-
-        incomplete.NewlyCoveredWithheldReason.Should().Contain("never happened");
-        errored.NewlyCoveredWithheldReason.Should().Contain("errored");
-        incomplete.NewlyCoveredWithheldReason.Should().NotBe(errored.NewlyCoveredWithheldReason);
-    }
-
-    [Fact]
-    public void Compare_NewScenarioBothIncompleteAndErrored_ReportsTheIncompleteRecordFirst()
-    {
-        // Two runs recorded against three declared, and one of the two errored. Both causes
-        // hold. The structural one is reported: an artifact that did not record what it
-        // declared is untrustworthy about the runs it did record, so its verdicts are the
-        // weaker statement. Pinned so the ordering is a decision rather than an accident.
-        var result = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([
-                ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Error], declaredRepetitions: 3),
-            ])
-        );
-
-        result.NewlyCovered.Should().BeEmpty();
-        result.NewlyCoveredWithheld.Should().Equal("a");
-        result.NewlyCoveredWithheldReason.Should().Contain("never happened").And.NotContain("passed every run");
-    }
-
-    [Fact]
-    public void Compare_NewScenarioRecordingMoreRepetitionsThanDeclared_SaysSoRatherThanClaimingARunNeverHappened()
-    {
-        // An over-recorded artifact is not a short one. Telling a reader that a run the suite
-        // asked for "never happened" when the scenario recorded more than it declared points
-        // them at something that was never absent — the opposite of what went wrong.
-        var tooMany = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([
-                ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Pass], declaredRepetitions: 1),
-            ])
-        );
-        var tooFew = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", [RunStatus.Pass], declaredRepetitions: 2)])
-        );
-
-        tooMany.NewlyCoveredWithheld.Should().Equal("a");
-        tooMany.NewlyCoveredWithheldReason.Should().Contain("more repetitions").And.NotContain("never happened");
-        tooFew.NewlyCoveredWithheldReason.Should().Contain("never happened").And.NotContain("more repetitions");
-        tooMany.NewlyCoveredWithheldReason.Should().NotBe(tooFew.NewlyCoveredWithheldReason);
+        ComparisonFixtures.Withheld(result, "a").Cause.Should().Be(CoverageWithholdingCause.OverRecorded);
     }
 
     [Fact]
     public void Compare_NewScenarioRecordingMoreRepetitionsThanDeclared_IsSignalledWithThatCause()
     {
         // The log carries the per-scenario cause, so it has to be wrong in the same place or
-        // right in the same place as the reported reason.
+        // right in the same place as the reported reason. They are now one value rather than
+        // two that happen to agree.
         var logger = new RecordingComparatorLogger();
 
         ComparisonFixtures
@@ -551,36 +464,6 @@ public sealed class SuiteComparatorNewlyCoveredTests
 
         entries.Should().ContainSingle();
         entries[0].Message.Should().Contain("more repetitions").And.NotContain("never happened");
-    }
-
-    [Fact]
-    public void Compare_WithheldReasons_KeepTheWordingConsumersRenderVerbatim()
-    {
-        // These strings are the entire signal a reader gets about why a coverage claim was
-        // refused, and they are rendered verbatim downstream rather than re-derived — eval-cli
-        // asserts this phrasing end-to-end precisely so a locally re-derived copy would fail.
-        // Pinned here so that rewording one is a deliberate cross-domain decision, not something
-        // the engine suite waves through for a downstream suite to discover.
-        var errored = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Error])])
-        );
-        var tooFew = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", [RunStatus.Pass], declaredRepetitions: 2)])
-        );
-        var tooMany = new SuiteComparator().Compare(
-            ComparisonFixtures.Artifact(),
-            ComparisonFixtures.Artifact([
-                ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Pass], declaredRepetitions: 1),
-            ])
-        );
-
-        errored
-            .NewlyCoveredWithheldReason.Should()
-            .Contain("passed every run that produced a verdict rather than every run the suite asked for");
-        tooFew.NewlyCoveredWithheldReason.Should().Contain("at least one run the suite asked for never happened");
-        tooMany.NewlyCoveredWithheldReason.Should().Contain("its runs include at least one the suite never asked for");
     }
 
     [Fact]

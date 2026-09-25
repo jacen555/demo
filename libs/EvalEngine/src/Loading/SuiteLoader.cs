@@ -584,6 +584,21 @@ public sealed class SuiteLoader
                     continue;
                 }
 
+                // The value arrived as the literal null and bound into a dictionary whose value
+                // type says it cannot hold one — the serializer enforces nullable annotations on
+                // members, not on the value type of a dictionary. This is not cosmetic:
+                // RunCoordinator copies a scenario's tags straight into the artifact and
+                // CanonicalJson writes the null out, so admitting it here produces a committed
+                // artifact that CanonicalJson.DeserializeSuiteResult then refuses to read.
+                // Refused at authoring time, where the value is in a committed file with a human
+                // attached to it and the fix costs one edit (ADR 0005). After the machine-path
+                // check above, which is security-critical and must see the scenario first.
+                if (HasNullTagValue(scenario))
+                {
+                    messages.Add(NullTag(position));
+                    continue;
+                }
+
                 scenarios.Add(scenario);
             }
             catch (JsonException exception)
@@ -680,6 +695,59 @@ public sealed class SuiteLoader
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Reports a slicing tag whose value arrived as the literal null.
+    /// </summary>
+    /// <param name="position">The scenario's position in the suite file.</param>
+    /// <returns>The finding.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>A finding of its own rather than a bare <c>scenario.malformed</c>.</b> Same reasoning as
+    /// <see cref="UnsafeTag"/>: an author told that "something in the scenario is wrong" cannot act
+    /// on it, and told that a named tag declares no value can. Nothing else in the suite is wrong.
+    /// </para>
+    /// <para>
+    /// <b>Named by position, not by key.</b> A tag key is author-supplied and this finding is
+    /// written to standard error and from there into CI logs, so quoting it would move a
+    /// disclosure rather than remove one — the key could itself be the machine path
+    /// <see cref="UnsafeIdentifier"/> exists to refuse (§V). The position is enough to act on,
+    /// which is the standard the sibling finding already sets.
+    /// </para>
+    /// </remarks>
+    private static ValidationMessage NullTag(string position) =>
+        SuiteValidator.Error(
+            "scenario.tag.null",
+            null,
+            $"scenario {position} declares a slicing tag whose value is the literal null. A tag value is declared as "
+                + "never being null, and these tags are copied verbatim into the committed artifact, which would "
+                + "then fail to read back. Give the tag a value, or omit the tag — an absent tag says 'not sliced on "
+                + "this dimension', which is what a null was reaching for. The key is not repeated here because this "
+                + "finding is written to the build log."
+        );
+
+    /// <summary>Whether a bound scenario carries a slicing tag whose value is null.</summary>
+    /// <param name="scenario">The scenario as the binder produced it.</param>
+    /// <returns><see langword="true"/> when at least one tag value is null.</returns>
+    /// <remarks>
+    /// Read off what the binder produced rather than off the raw entry, for the same reason
+    /// <see cref="BoundUnsafeIdentifier"/> is: this loader does not perform the binder's key
+    /// matching — <c>PropertyNameCaseInsensitive</c> is set by
+    /// <see cref="System.Text.Json.JsonSerializerDefaults.Web"/> — and re-deriving those rules here
+    /// is how the seam this closes was opened.
+    /// </remarks>
+    private static bool HasNullTagValue(Scenario scenario)
+    {
+        foreach (var tag in scenario.Slicing.Tags)
+        {
+            if (tag.Value is null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

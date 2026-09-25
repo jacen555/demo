@@ -23,11 +23,31 @@ namespace Forge.EvalEngine.Serialization;
 /// </para>
 /// <para>Also fixed here, for the same reason:</para>
 /// <list type="bullet">
-///   <item><description>Unset optional values are written as <b>absent</b>, never as nulls.</description></item>
+///   <item><description>Unset optional <b>properties</b> are written as <b>absent</b>, never as nulls.</description></item>
 ///   <item><description>Enums are written as camel-case strings, and <b>integer input is refused</b> — an ordinal from a suite file is not a way into a closed set.</description></item>
-///   <item><description>A null assigned to a non-nullable member is refused rather than bound, so a required sub-record cannot arrive null.</description></item>
+///   <item><description>A null assigned to a non-nullable member is refused rather than bound, so a required sub-record cannot arrive null. That enforcement is <b>member-only</b>: the serializer does not apply it to the element type of a collection or the value type of a dictionary, so <see cref="DeserializeSuiteResult(string)"/> checks those itself.</description></item>
 ///   <item><description>Line endings are <c>\n</c> regardless of platform.</description></item>
 /// </list>
+/// <para>
+/// <b>Both of those null rules govern properties and nothing else, and that boundary has now
+/// caught this library twice.</b> <c>WhenWritingNull</c> omits an unset <i>property</i>;
+/// <c>RespectNullableAnnotations</c> refuses a null bound to a non-nullable <i>property</i>.
+/// Neither reaches the element type of a collection or the value type of a dictionary. So this
+/// artifact <i>can</i> carry a null: a null dictionary value and a null array element are both
+/// written as they stand. <see cref="Transcripts.Outcome.Fields"/> is the one place that is
+/// deliberate and legitimate — its value type is declared nullable because a null is how a run
+/// records that the system returned no value for a field. Everywhere else a null in one of those
+/// positions is refused on read-back by <see cref="DeserializeSuiteResult(string)"/>, so writing
+/// one produces an artifact this engine will not read.
+/// </para>
+/// <para>
+/// One misreading of where those two options apply produced both defects: a null element that
+/// bound silently and was dereferenced into a <see cref="NullReferenceException"/>, and the
+/// remark above — which until it was qualified said "unset optional <i>values</i>" and was read,
+/// reasonably, as "this artifact never contains a null". <b>Before stating what the serializer
+/// guarantees, check where the option actually applies, by running it.</b> Every claim in this
+/// remark was verified that way rather than from the documentation.
+/// </para>
 /// <para>
 /// The default HTML-safe encoder is kept deliberately, which is why characters such as <c>+</c>
 /// appear escaped (<c>\u002B</c>) in timestamps. Relaxing it would read better, but this artifact
@@ -63,6 +83,10 @@ public static class CanonicalJson
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="json"/> is null.</exception>
     /// <exception cref="JsonException">The JSON was malformed or did not match the shape.</exception>
+    /// <exception cref="MalformedArtifactException">
+    /// <typeparamref name="T"/> is <see cref="SuiteResult"/> and the artifact carries a null in a
+    /// position its shape declares as never holding one.
+    /// </exception>
     /// <exception cref="SchemaVersionException">
     /// <typeparamref name="T"/> is <see cref="SuiteResult"/> and the artifact declares a schema
     /// version this engine cannot read, or declares none.
@@ -89,6 +113,10 @@ public static class CanonicalJson
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="json"/> is null.</exception>
     /// <exception cref="JsonException">The JSON was malformed or did not match the shape.</exception>
+    /// <exception cref="MalformedArtifactException">
+    /// The artifact carries a null in a position its shape declares as never holding one — a null
+    /// element in a list, or a null value in a dictionary whose value type forbids one.
+    /// </exception>
     /// <exception cref="SchemaVersionException">
     /// The artifact declares a schema version this engine cannot read, or declares none.
     /// </exception>
@@ -119,9 +147,145 @@ public static class CanonicalJson
         }
 
         return RequireSafeIdentifiers(
-            Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.")
+            RequireWellFormedShape(
+                Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.")
+            )
         );
     }
+
+    /// <summary>
+    /// Refuses an artifact carrying a null where its own shape says one cannot be.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The serializer does not cover this, and the class remarks above say where it stops.</b>
+    /// <c>RespectNullableAnnotations</c> is enforced for properties and constructor parameters. It
+    /// is not enforced for the <i>element</i> type of a collection or the <i>value</i> type of a
+    /// dictionary, so <c>"scenarioResults": [null]</c> binds cleanly into a list whose element type
+    /// says it cannot hold one. The suite-side converters state this for the material they read —
+    /// see <see cref="ScriptedStimulusJsonConverter.HandleNull"/> — and nothing stated it for the
+    /// artifact.
+    /// </para>
+    /// <para>
+    /// <b>This runs before <see cref="RequireSafeIdentifiers"/> because that is what a null
+    /// crashes.</b> The identifier check indexes the scenario list and reads an id off each entry,
+    /// so a null element reached it as a <see cref="NullReferenceException"/> — which a consumer
+    /// does not classify as an unreadable artifact, so it falls through to a defect handler and
+    /// reports a stack trace naming the machine it ran on. Going first discloses nothing: a shape
+    /// refusal names only field names this engine owns and an integer position.
+    /// </para>
+    /// <para>
+    /// <b>A null is refused only where the declared type forbids one.</b>
+    /// <see cref="Transcripts.Outcome.Fields"/> is declared with a <i>nullable</i> value type and
+    /// is deliberately left alone, as is every optional member. That asymmetry is the artifact's
+    /// own: one dictionary in the graph says <c>string?</c> and every other says <c>string</c>.
+    /// Turning a valid artifact into a refusal is the worse failure of the two — the crash is
+    /// loud, and the refusal would be believed.
+    /// </para>
+    /// </remarks>
+    private static SuiteResult RequireWellFormedShape(SuiteResult artifact)
+    {
+        RequireNoNullEntry(artifact.SlicingDimensions, "slicingDimensions", null);
+        RequireNoNullValue(artifact.Environment.HarnessConfig, "environment.harnessConfig", null);
+
+        if (artifact.SelectionDecisions is { } decisions)
+        {
+            RequireNoNullEntry(decisions, "selectionDecisions", null);
+        }
+
+        for (var index = 0; index < artifact.ScenarioResults.Count; index++)
+        {
+            var at = "scenario " + Ordinal(index);
+
+            if (artifact.ScenarioResults[index] is not { } scenario)
+            {
+                throw Malformed("scenarioResults", at);
+            }
+
+            RequireNoNullValue(scenario.Tags, "tags", at);
+
+            for (var position = 0; position < scenario.Runs.Count; position++)
+            {
+                var within = at + ", run " + Ordinal(position);
+
+                if (scenario.Runs[position] is not { } run)
+                {
+                    throw Malformed("runs", within);
+                }
+
+                RequireNoNullEntry(run.AssertionResults, "assertionResults", within);
+                RequireNoNullEntry(run.Transcript.Turns, "transcript.turns", within);
+                RequireNoNullValue(run.Transcript.Transport.Attributes, "transcript.transport.attributes", within);
+            }
+        }
+
+        return artifact;
+    }
+
+    /// <summary>Refuses a null element in a list whose element type forbids one.</summary>
+    /// <typeparam name="T">The element type, as the artifact declares it.</typeparam>
+    /// <param name="entries">The bound collection.</param>
+    /// <param name="field">The artifact field it came from.</param>
+    /// <param name="within">The position of the entry that owns it, or null at artifact level.</param>
+    private static void RequireNoNullEntry<T>(IReadOnlyList<T> entries, string field, string? within)
+        where T : class
+    {
+        for (var index = 0; index < entries.Count; index++)
+        {
+            if (entries[index] is null)
+            {
+                var at = "entry " + Ordinal(index);
+
+                throw Malformed(field, within is null ? at : within + ", " + at);
+            }
+        }
+    }
+
+    /// <summary>Refuses a null value in a dictionary whose value type forbids one.</summary>
+    /// <param name="entries">The bound dictionary.</param>
+    /// <param name="field">The artifact field it came from.</param>
+    /// <param name="within">The position of the entry that owns it, or null at artifact level.</param>
+    /// <remarks>
+    /// <b>The key is not named, and no ordinal is offered in its place.</b> A key is
+    /// author-supplied and reaches the same build log this refusal does, so it may itself be the
+    /// machine path <see cref="RequireSafeIdentifiers"/> exists to refuse — naming it would move a
+    /// disclosure rather than remove one. An ordinal would be worse than nothing: a dictionary has
+    /// no stable order, so it would send a reader to a different entry than the one that failed.
+    /// </remarks>
+    private static void RequireNoNullValue(IReadOnlyDictionary<string, string> entries, string field, string? within)
+    {
+        foreach (var entry in entries)
+        {
+            if (entry.Value is null)
+            {
+                throw Malformed(field, within);
+            }
+        }
+    }
+
+    /// <summary>A one-based position, spelled the way the identifier refusal spells it.</summary>
+    private static string Ordinal(int index) => "#" + (index + 1).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The refusal, naming the field and the position but never anything read out of the artifact.
+    /// </summary>
+    /// <remarks>
+    /// Same rule as <see cref="Unsafe"/>, for the same reason: this message reaches standard error
+    /// and from there the build log (§V).
+    /// </remarks>
+    private static MalformedArtifactException Malformed(string field, string? position) =>
+        new(
+            $"This artifact carries a null in '{field}'"
+                + (position is null ? string.Empty : $", at {position}")
+                + ". That position is declared as never holding one, so the artifact does not match the shape this "
+                + "engine reads and is refused rather than dereferenced into a failure somewhere further on. "
+                + "Regenerate it from a run rather than editing it by hand. No value read out of the artifact is "
+                + "repeated here, because this message is written to the build log."
+        )
+        {
+            Field = field,
+            Position = position,
+        };
 
     /// <summary>
     /// Refuses an artifact whose identifiers name somebody's machine.
@@ -165,6 +329,23 @@ public static class CanonicalJson
             if (MachinePath.IsPresentInAny(scenario.Tags.Keys) || MachinePath.IsPresentInAny(scenario.Tags.Values))
             {
                 throw Unsafe("tags", position);
+            }
+        }
+
+        // A separate surface, not a restatement of the loop above. A scenario the selector
+        // skipped has no ScenarioResult, so its identifier appears nowhere else in the artifact
+        // and has never been through this check — and it is still written into a committed file
+        // and rendered into a published comment. ADR 0005 is explicit that a documented
+        // trade-off is scoped to the surfaces that existed when it was made; this is a new one,
+        // so it is guarded rather than left to inherit the reasoning.
+        if (artifact.SelectionDecisions is { } decisions)
+        {
+            for (var index = 0; index < decisions.Count; index++)
+            {
+                if (MachinePath.IsPresentIn(decisions[index].ScenarioId))
+                {
+                    throw Unsafe("selectionDecisions", "#" + (index + 1).ToString(CultureInfo.InvariantCulture));
+                }
             }
         }
 

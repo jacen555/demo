@@ -19,6 +19,19 @@ internal sealed record ComparisonScenarioReport(
     string? NotComparableReason
 );
 
+/// <summary>One withheld coverage claim, in the machine-readable report.</summary>
+/// <param name="ScenarioId">The scenario whose coverage claim was withheld.</param>
+/// <param name="Cause">The wire name of what withheld it.</param>
+/// <param name="Reason">The comparator's explanation of that cause.</param>
+/// <remarks>
+/// <b>A record per scenario, not two parallel lists.</b> The causes lead to different actions — a
+/// repetition that errored is a flake to re-run, one that never happened is a harness that lost
+/// work — so a consumer has to be able to tell which scenario had which. Both the branchable
+/// value and the sentence travel: the value is what a program acts on, the sentence is what a
+/// person reads, and they cannot disagree because the engine derives the second from the first.
+/// </remarks>
+internal sealed record ComparisonWithheldReport(string ScenarioId, string Cause, string Reason);
+
 /// <summary>The machine-readable form of a comparison.</summary>
 internal sealed record ComparisonReportDocument
 {
@@ -46,14 +59,10 @@ internal sealed record ComparisonReportDocument
     /// <remarks>
     /// Named rather than dropped, for the same reason a withheld scenario is: silence in a
     /// coverage report reads as a scenario that was examined and offered nothing. The comparator
-    /// decides membership; this report states it.
+    /// decides membership and attributes the cause; this report states both.
     /// </remarks>
     [JsonPropertyName("newlyCoveredWithheld")]
-    public IReadOnlyList<string> NewlyCoveredWithheld { get; init; } = [];
-
-    /// <summary>Gets why those scenarios were withheld from the headline, or null when none were.</summary>
-    [JsonPropertyName("newlyCoveredWithheldReason")]
-    public string? NewlyCoveredWithheldReason { get; init; }
+    public IReadOnlyList<ComparisonWithheldReport> NewlyCoveredWithheld { get; init; } = [];
 
     /// <summary>Gets the scenarios that passed under the baseline and do not under this run.</summary>
     [JsonPropertyName("regressed")]
@@ -133,8 +142,7 @@ internal static class ComparisonReport
             Mechanism = Name(outcome.Mechanism),
             Baseline = outcome.Reference,
             NewlyCovered = outcome.Result.NewlyCovered,
-            NewlyCoveredWithheld = outcome.Result.NewlyCoveredWithheld,
-            NewlyCoveredWithheldReason = outcome.Result.NewlyCoveredWithheldReason,
+            NewlyCoveredWithheld = Withheld(outcome.Result.NewlyCoveredWithheld),
             Regressed = [.. Ids(comparisons, ScenarioClassification.Regressed)],
             NotComparable = [.. Ids(comparisons, ScenarioClassification.NotComparable)],
             ClassificationCounts = Counts(comparisons),
@@ -181,14 +189,20 @@ internal static class ComparisonReport
             // Beside the headline rather than below the fold: a scenario the harness could not
             // fully conduct is the one whose absence from a coverage list reads as a scenario
             // nobody gained.
-            //
-            // Selected on the list, not on the reason. ComparisonResult documents the reason as
-            // non-null whenever it withheld something, but it is a nullable member of a record
-            // this tool does not own — and a row keyed on the annotation would drop the names if
-            // that ever stopped holding, which is this section's own defect turned inward.
-            var reason = outcome.Result.NewlyCoveredWithheldReason;
+            Row(text, "not fully conducted", Listed([.. withheld.Select(entry => entry.ScenarioId)]));
 
-            Row(text, "not fully conducted", reason is null ? Listed(withheld) : $"{Listed(withheld)} - {reason}");
+            // Then one row per scenario, because the causes lead to different actions and a
+            // single reason for the set cannot say which scenario had which: a repetition that
+            // errored is a flake to re-run, one that never happened is a harness that lost work,
+            // and a reader given the wrong one takes the wrong action.
+            //
+            // Keyed on the list and rendered from the required Cause, never on an annotation
+            // that may be absent — a row that disappeared when the cause was unrecognised would
+            // be this section's own defect turned inward.
+            foreach (var entry in withheld)
+            {
+                Row(text, entry.ScenarioId, $"{Name(entry.Cause)} - {Withholding(entry.Cause)}", width: 28);
+            }
         }
 
         text.AppendLine();
@@ -325,6 +339,61 @@ internal static class ComparisonReport
             BaselineMechanism.LiveEndpoint => "live-endpoint",
             _ => "none",
         };
+
+    /// <summary>The wire name for a withholding cause, stable across the text and JSON renderings.</summary>
+    /// <param name="cause">The cause.</param>
+    /// <returns>The name.</returns>
+    /// <remarks>
+    /// Total over the enum, like every other <c>Name</c> here. An undeclared value is a number
+    /// rather than a word, which is honest about what this build knows and carries no
+    /// author-supplied text (§V).
+    /// </remarks>
+    public static string Name(CoverageWithholdingCause cause) =>
+        cause switch
+        {
+            CoverageWithholdingCause.Incomplete => "incomplete",
+            CoverageWithholdingCause.OverRecorded => "over-recorded",
+            CoverageWithholdingCause.Errored => "errored",
+            _ => cause.ToString(),
+        };
+
+    /// <summary>Why one coverage claim was withheld, stated even for a cause this build does not know.</summary>
+    /// <param name="cause">The cause the comparator attributed.</param>
+    /// <returns>The comparator's sentence, or this report's account of not recognising the cause.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b><see cref="WithheldCoverage.Describe"/> throws on a value outside the enum, and
+    /// <see cref="WithheldCoverage"/> is a record this tool does not own.</b> Reading
+    /// <see cref="WithheldCoverage.Reason"/> unguarded would let one row carrying an unrecognised
+    /// value take down the whole rendering — the regressions, the counts and the footer with it.
+    /// That is a strictly worse outcome than the one the throw exists to prevent, and it is the
+    /// same shape as keying a section on an optional annotation: a defect in the report, paid for
+    /// by every finding the report was carrying.
+    /// </para>
+    /// <para>
+    /// <b>The fallback names the gap rather than filling it.</b> It states that the cause was not
+    /// recognised and prints the value; it does not compose a sentence about repetitions, which
+    /// would be prose manufactured from a value no comparison produced and indistinguishable, on
+    /// the page, from a cause the comparator actually found.
+    /// </para>
+    /// </remarks>
+    public static string Withholding(CoverageWithholdingCause cause) =>
+        Enum.IsDefined(cause)
+            ? WithheldCoverage.Describe(cause)
+            : $"the comparator withheld this claim for a cause ({Name(cause)}) this report does not recognise, so "
+                + "why it was withheld is not stated here. The comparison's own record is in the JSON artifact.";
+
+    /// <summary>Projects the comparator's withheld claims into the machine-readable form.</summary>
+    /// <param name="withheld">What the comparator withheld.</param>
+    /// <returns>One record per withheld claim, in the order the comparator produced them.</returns>
+    internal static IReadOnlyList<ComparisonWithheldReport> Withheld(IReadOnlyList<WithheldCoverage> withheld) =>
+        [
+            .. withheld.Select(entry => new ComparisonWithheldReport(
+                entry.ScenarioId,
+                Name(entry.Cause),
+                Withholding(entry.Cause)
+            )),
+        ];
 
     /// <summary>The count per classification, in declaration order, including the empty ones.</summary>
     /// <param name="comparisons">The scenario comparisons.</param>

@@ -107,6 +107,32 @@ separators and never handed to `Path`, whose `GetFileName` ignores backslashes o
 Unix. A resolved path uses native separators, because on Unix a backslash is a
 legal filename character.
 
+### What is a label, and what is evidence
+
+The guard applies to **labels** and not to **evidence**, and the line is drawn
+deliberately.
+
+A label is a name someone chose — a suite name, a scenario id, a slicing tag. A
+machine path in one is always an authoring error, because nothing about naming a
+scenario requires a filesystem path. Evidence is the record of what was actually
+sent and received: a stimulus, a transcript, a payload. A path there may be
+exactly what the system under test requires, and scrubbing it would destroy the
+artifact's reason to exist.
+
+`simulation.scriptedStimuli[].field` sits on that line. It names a payload field,
+which is label-like, but it lives under `simulation`, which is evidence.
+**Decided 2026-09-25: it stays evidence and is not guarded.** The reasoning is
+that the cost of being wrong is asymmetric — an unguarded label leaks one path
+into one report, while a guarded piece of evidence silently corrupts the record
+this harness exists to produce. A scenario that legitimately drives a
+path-valued field would become unrunnable, and the failure would look like a
+harness bug rather than a policy.
+
+The consequence is accepted rather than hidden: a machine path written into
+`field` reaches the committed artifact. It is an authoring choice inside a
+committed file, visible in review, and it is the same class of thing as a path
+written into a request body — which this guard has never covered and should not.
+
 ## Consequences
 
 - A suite carrying a machine path in an identifier **no longer loads**. There
@@ -121,6 +147,24 @@ legal filename character.
 - Two mutants survive and are named in the code: a both-separator revert
   observable only on Unix, and a fail-closed fallback reported unreachable on its
   third measurement after being reachable on the first two.
-- Three CLI-owned messages still print an absolute path deliberately, under the
-  tool's own policy rather than forced by the engine. Whether they should is
-  tracked separately.
+- ~~Three CLI-owned messages still print an absolute path deliberately.~~
+  **Superseded 2026-09-25.** Adding the trend command showed the reasoning was
+  wrong. `PathGuard` had **nine** messages printing a canonical absolute path, not
+  three, and the new command reached all of them — so "the tool printing it once,
+  deliberately, under its own policy" was a description of three sites somebody had
+  looked at rather than a policy. All nine now state their path relative to
+  `--root`, and no engine exception prose is forwarded.
+
+  One case genuinely cannot: a refusal that precedes any root, where `--root`
+  itself is what failed to resolve. There is no boundary yet, so there is nothing
+  to be relative to. Those messages apply the published net to the value **as
+  supplied** — strictly less than the caller typed, never more — and inherit the
+  net's published holes rather than pretending to cover them.
+
+  **The general lesson is worth more than the fix.** A documented trade-off is
+  scoped to the surfaces that existed when it was made. The `GET` exemption above
+  was reasoned about for the Markdown document, where the net is a second layer; a
+  later command printed scenario identifiers to **stderr**, where it is not. The
+  concession did not change — the surface it applied to did. When a new output
+  channel is added, every §V trade-off in this ADR needs re-reading rather than
+  inheriting.

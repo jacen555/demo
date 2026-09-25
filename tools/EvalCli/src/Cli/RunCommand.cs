@@ -47,7 +47,17 @@ internal static class RunCommand
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="EvalCliException">The invocation was refused at one of its stages.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
-    public static async Task<ExitCode> ExecuteAsync(RunPlan plan, IConsole console, CancellationToken cancellationToken)
+    public static Task<ExitCode> ExecuteAsync(RunPlan plan, IConsole console, CancellationToken cancellationToken) =>
+        // An expression body on purpose: there is no statement position after the guard for a
+        // later step to be added in. See DurableWrites for the property and its residual hole.
+        DurableWrites.GuardAsync(written => RunAsync(plan, console, written, cancellationToken));
+
+    private static async Task<ExitCode> RunAsync(
+        RunPlan plan,
+        IConsole console,
+        DurableWrites written,
+        CancellationToken cancellationToken
+    )
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(console);
@@ -93,46 +103,33 @@ internal static class RunCommand
             .GetRequiredService<SeedSchedule>()
             .PinTo(suite, [.. conducted.Scenarios.Select(scenario => scenario.Identity.Id)]);
 
-        var result = await provider
-            .GetRequiredService<RunCoordinator>()
-            .RunAsync(conducted, cancellationToken)
+        var result = await SuiteDiscovery
+            .ConductAsync(provider.GetRequiredService<RunCoordinator>(), conducted, cancellationToken)
             .ConfigureAwait(false);
 
-        var artifactPath = await WriteArtifactAsync(plan, result, cancellationToken).ConfigureAwait(false);
+        var artifactPath = await WriteArtifactAsync(plan, result, written, cancellationToken).ConfigureAwait(false);
 
-        try
-        {
-            // After the artifact is on disk, deliberately. A refused comparison still leaves the
-            // evidence the run produced, which is what a user needs in order to act on the
-            // refusal — and the artifact is a statement about this run, which is true whether or
-            // not anything could be compared against it.
-            var comparison = await BaselineComparison
-                .CompareAsync(provider, plan, conducted, summary.Selection.Skipped, result, baseline, cancellationToken)
-                .ConfigureAwait(false);
+        // After the artifact is on disk, deliberately. A refused comparison still leaves the
+        // evidence the run produced, which is what a user needs in order to act on the refusal —
+        // and the artifact is a statement about this run, which is true whether or not anything
+        // could be compared against it.
+        //
+        // The interruption case that used to be handled here by hand is now the guard's: the
+        // comparison conducts a whole second suite against the baseline address when one was
+        // named, which is the longest cancellable stretch this command has, and every step of it
+        // is after a publication the ledger already knows about.
+        var comparison = await BaselineComparison
+            .CompareAsync(provider, plan, conducted, summary.Selection.Skipped, result, baseline, cancellationToken)
+            .ConfigureAwait(false);
 
-            await WriteMarkdownReportAsync(plan, comparison, artifactPath, cancellationToken).ConfigureAwait(false);
+        await WriteMarkdownReportAsync(plan, comparison, artifactPath, written, cancellationToken)
+            .ConfigureAwait(false);
 
-            var rendered = plan.Json
-                ? RunReport.RenderJson(plan, summary, result, artifactPath, comparison)
-                : RunReport.RenderText(plan, summary, result, artifactPath, comparison);
+        var rendered = plan.Json
+            ? RunReport.RenderJson(plan, summary, result, artifactPath, comparison)
+            : RunReport.RenderText(plan, summary, result, artifactPath, comparison);
 
-            await WriteAsync(console, rendered, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException cancelled) when (artifactPath is not null)
-        {
-            // Everything from the publication onwards, not only the write of the report. The
-            // comparison between them conducts a whole second suite against the baseline address
-            // when one was named, which is the longest cancellable stretch this command has and
-            // therefore the likeliest place for an interruption to land. The artifact is already
-            // on disk throughout all of it. The interruption is still an interruption — same exit
-            // code — but the one sentence a caller reads about it must not be the blanket
-            // "nothing was written", which would send them looking past the file they now have.
-            throw new InterruptedAfterWritingException(
-                $"the artifact at {artifactPath} was written before the report could be, so the evidence this run "
-                    + "produced is on disk.",
-                cancelled
-            );
-        }
+        await WriteAsync(console, rendered, cancellationToken).ConfigureAwait(false);
 
         return Outcome(result);
     }
@@ -180,6 +177,7 @@ internal static class RunCommand
     /// <summary>Writes the artifact, when a destination was asked for.</summary>
     /// <param name="plan">The validated plan.</param>
     /// <param name="result">The artifact the run produced.</param>
+    /// <param name="written">The ledger this write records itself in, so an interruption after it reports it.</param>
     /// <param name="cancellationToken">Cancels the write.</param>
     /// <returns>Where it was written, or null when no destination was named.</returns>
     /// <remarks>
@@ -201,6 +199,7 @@ internal static class RunCommand
     private static async Task<string?> WriteArtifactAsync(
         RunPlan plan,
         SuiteResult result,
+        DurableWrites written,
         CancellationToken cancellationToken
     )
     {
@@ -223,7 +222,9 @@ internal static class RunCommand
                     Contents = CanonicalJson.Serialize(ArtifactRedaction.Redact(result)),
                     FailureContext = "The run completed but its artifact could not be written",
                     LossNote = "The evidence the run produced was not recorded",
+                    DurableNote = "the run artifact",
                 },
+                written,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -235,6 +236,7 @@ internal static class RunCommand
     /// <param name="plan">The validated plan.</param>
     /// <param name="comparison">The comparison that happened, or null when no baseline was named.</param>
     /// <param name="artifactPath">Where the durable artifact was written, or null.</param>
+    /// <param name="written">The ledger this write records itself in, so an interruption after it reports it.</param>
     /// <param name="cancellationToken">Cancels the write.</param>
     /// <remarks>
     /// <para>
@@ -261,6 +263,7 @@ internal static class RunCommand
         RunPlan plan,
         ComparisonOutcome? comparison,
         string? artifactPath,
+        DurableWrites written,
         CancellationToken cancellationToken
     )
     {
@@ -296,7 +299,9 @@ internal static class RunCommand
                     LossNote =
                         "The comparison is on stdout and, where --out was given, in the artifact; only the "
                         + "rendering for a pull request was lost",
+                    DurableNote = "the pull-request report",
                 },
+                written,
                 cancellationToken
             )
             .ConfigureAwait(false);

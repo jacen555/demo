@@ -148,6 +148,42 @@ internal static class ReportFixture
             },
         };
 
+    /// <summary>
+    /// Builds a scenario where nothing was graded and a summary was recorded anyway.
+    /// </summary>
+    /// <param name="id">The scenario id.</param>
+    /// <param name="interval">Whether to carry bounds, which a zero-trial computation cannot produce.</param>
+    /// <returns>The scenario result.</returns>
+    /// <remarks>
+    /// <b>The aggregator never produces this and a hand-edited artifact does.</b> Every repetition
+    /// errored, so nothing was learned — and the file claims an aggregate over runs it does not
+    /// have. A reader that trusts the summary before checking the runs beneath it reports a pass
+    /// rate of zero from a scenario nobody graded, which is the distinction "no gradeable run is
+    /// not a pass rate of zero" exists to keep.
+    /// </remarks>
+    public static ScenarioResult SummarisedWithoutVerdicts(string id, bool interval = false) =>
+        new()
+        {
+            ScenarioId = id,
+            Kind = ScenarioKind.Rest,
+            RepetitionPolicyUsed = RepetitionPolicy.Repeat(3),
+            Runs = Runs(id, passed: 0, graded: 0, errored: 3),
+            Summary = new StatisticalSummary
+            {
+                N = 0,
+                PointEstimate = 0,
+                Dispersion = 0,
+                Interval = interval
+                    ? new ConfidenceInterval
+                    {
+                        Lower = 0,
+                        Upper = 0,
+                        Method = IntervalMethod.Wilson,
+                    }
+                    : null,
+            },
+        };
+
     /// <summary>Builds a scenario whose summary carries no interval at all.</summary>
     /// <param name="id">The scenario id.</param>
     /// <returns>The scenario result.</returns>
@@ -187,6 +223,18 @@ internal static class ReportFixture
     /// <returns>The artifact.</returns>
     public static SuiteResult Artifact(params ScenarioResult[] scenarios) =>
         Artifact(recordsConfidence: true, scenarios);
+
+    /// <summary>Builds one withheld coverage claim, with the cause that withheld it.</summary>
+    /// <param name="id">The scenario id.</param>
+    /// <param name="cause">The cause the comparator attributed to that scenario.</param>
+    /// <returns>The withheld claim.</returns>
+    /// <remarks>
+    /// The cause is required at every call site rather than defaulted. Which cause a fixture
+    /// means is the whole subject of the withheld rendering — a default here would let a test
+    /// assert a per-scenario attribution it never actually chose.
+    /// </remarks>
+    public static WithheldCoverage Withheld(string id, CoverageWithholdingCause cause) =>
+        new() { ScenarioId = id, Cause = cause };
 
     /// <summary>Builds an artifact, optionally one that never recorded its confidence level.</summary>
     /// <param name="recordsConfidence">Whether the harness settings carry the interval confidence.</param>

@@ -62,8 +62,18 @@ internal sealed record RunRequest
     /// <summary>Gets the suite path as supplied.</summary>
     public required string Suite { get; init; }
 
-    /// <summary>Gets the containment root as supplied.</summary>
-    public required string Root { get; init; }
+    /// <summary>
+    /// Gets the containment root as supplied, or null when <c>--root</c> was omitted.
+    /// </summary>
+    /// <remarks>
+    /// <b>Null rather than a pre-filled working directory.</b> The option carries no default
+    /// factory, so an absent <c>--root</c> stays absent all the way to
+    /// <see cref="PathValue.RootFrom"/> — the one place that turns it into a path, and therefore
+    /// the only place that can honestly mark that path as this process's rather than the
+    /// caller's. A default materialised at binding reaches every later call site looking exactly
+    /// like something a caller typed.
+    /// </remarks>
+    public required string? Root { get; init; }
 
     /// <summary>Gets the baseline artifact path as supplied, or <see langword="null"/>.</summary>
     public string? Baseline { get; init; }
@@ -308,7 +318,7 @@ internal sealed record RunPlan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var guard = PathGuard.ForRoot(request.Root, "--root");
+        var guard = PathGuard.ForRoot(PathValue.RootFrom(request.Root), "--root");
         var suite = guard.ResolveExistingFile(request.Suite, "--suite");
         var updating = operation is CliOperation.BaselineUpdate;
 
@@ -382,8 +392,8 @@ internal sealed record RunPlan
             );
         }
 
-        RefuseUnpairableBaselines(baseline, artifact, endpoint, baselineEndpoint, requiresEndpoint);
-        RefuseUnreportableComparisons(markdown, baseline, baselineEndpoint, artifact);
+        RefuseUnpairableBaselines(guard.Root, baseline, artifact, endpoint, baselineEndpoint, requiresEndpoint);
+        RefuseUnreportableComparisons(guard.Root, markdown, baseline, baselineEndpoint, artifact);
 
         return new RunPlan
         {
@@ -432,6 +442,7 @@ internal sealed record RunPlan
     /// </para>
     /// </remarks>
     private static void RefuseUnpairableBaselines(
+        string root,
         string? baseline,
         string? artifact,
         Uri? endpoint,
@@ -454,7 +465,7 @@ internal sealed record RunPlan
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--baseline and --out name the same file: {artifact}",
+                $"--baseline and --out name the same file: {MarkdownReport.Display(root, artifact)}",
                 "Nothing was executed. Writing this run over the baseline it was compared against is a baseline "
                     + "update, and that has its own command and its own opt-in: `eval-cli baseline update "
                     + "--apply`. Give --out a different destination."
@@ -520,6 +531,7 @@ internal sealed record RunPlan
     /// </para>
     /// </remarks>
     private static void RefuseUnreportableComparisons(
+        string root,
         string? markdown,
         string? baseline,
         Uri? baselineEndpoint,
@@ -547,7 +559,7 @@ internal sealed record RunPlan
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--report-markdown and --out name the same file: {artifact}",
+                $"--report-markdown and --out name the same file: {MarkdownReport.Display(root, artifact)}",
                 "Nothing was executed. The JSON artifact is the durable evidence a later comparison is made "
                     + "against; the Markdown is a rendering of it that nothing reads back. Give --report-markdown a "
                     + "different destination."
@@ -558,7 +570,7 @@ internal sealed record RunPlan
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--report-markdown and --baseline name the same file: {baseline}",
+                $"--report-markdown and --baseline name the same file: {MarkdownReport.Display(root, baseline)}",
                 "Nothing was executed. Writing the report over the baseline would destroy the artifact this run was "
                     + "compared against, and the next run would have nothing to compare to. Give --report-markdown "
                     + "a different destination."
@@ -646,7 +658,7 @@ internal sealed record RunPlan
         {
             throw new EvalCliException(
                 ExitCode.UsageError,
-                $"--baseline names a directory, not a file: {resolved}",
+                $"--baseline names a directory, not a file: {MarkdownReport.Display(guard.Root, resolved)}",
                 "Point --baseline at the baseline artifact itself."
             );
         }
@@ -655,7 +667,7 @@ internal sealed record RunPlan
         {
             throw new EvalCliException(
                 ExitCode.BaselineMissing,
-                $"--baseline names an artifact that is not there: {resolved}",
+                $"--baseline names an artifact that is not there: {MarkdownReport.Display(guard.Root, resolved)}",
                 "Nothing was written. This command replaces a baseline and never creates one, so a path that is "
                     + "not there is a mistyped path rather than a first run — writing one anyway would leave the "
                     + "real baseline stale with nothing to show for it. Create the first baseline with `eval-cli "
@@ -704,8 +716,23 @@ internal sealed record RunPlan
 
     /// <summary>Reads an adapter name, refusing one this build does not have.</summary>
     /// <remarks>
+    /// <para>
     /// Validated here rather than by an option validator, so that the rules a test pins are the
     /// same rules the tool applies — the same reason every other value is checked in this method.
+    /// </para>
+    /// <para>
+    /// <b>The rejected value is omitted rather than netted.</b> It is caller text, not authored
+    /// text, and the two need different treatment: the report's net catches machine paths, and a
+    /// credential is not path-shaped — <c>ghp_…</c> passes through it untouched. Judging whether
+    /// <i>this particular</i> value looks dangerous is the reasoning ADR 0005 records five failed
+    /// rounds of, so it is not attempted. The option name and the closed set of valid values are
+    /// what a caller acts on, and the caller already has what they typed.
+    /// </para>
+    /// <para>
+    /// The same choice <see cref="PathGuard"/> makes for a value that will not parse as a path at
+    /// all. <see cref="ArgumentRedactor"/> covers the parser's own diagnostics, which are produced
+    /// before this runs and therefore cannot reach it.
+    /// </para>
     /// </remarks>
     private static ExchangeAdapter ParseExchange(string? value, string optionName)
     {
@@ -721,7 +748,8 @@ internal sealed record RunPlan
                 ExchangeAdapter.Json,
             _ => throw new EvalCliException(
                 ExitCode.UsageError,
-                $"{optionName} does not name an adapter this build has: {value}",
+                $"{optionName} does not name an adapter this build has. The value is not repeated here, because "
+                    + "this message is written to the build log.",
                 $"This build knows 'none' and '{JsonExchangeContract.Name}'. A system with another shape needs its "
                     + "own adapter; until there is one, leave the option off and the missing runner is recorded as "
                     + "a harness failure rather than guessed at."

@@ -503,4 +503,47 @@ public class MarkdownReportCommandTests
         // one whose content reads as a clean comparison.
         File.Exists(Path.Combine(workspace.Root, "artifacts", "report.md")).Should().BeFalse();
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCancelledAfterBothOutputsWerePublished_NamesBothOfThem()
+    {
+        // **The branch `DurableWrites` added that did not exist before.** A single durable write
+        // is the shape every earlier fix handled; `run --out --report-markdown` publishes two, and
+        // the sentence describing two is the one thing the new mechanism owns outright. A
+        // mechanism built to stop under-reporting must not have a reachable path where it
+        // under-reports.
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var before = ComparisonWorkspace.Endpoint();
+
+        await SeedBaselineAsync(workspace, before);
+
+        await using var after = ComparisonWorkspace.Endpoint();
+
+        using var source = new CancellationTokenSource();
+
+        // The first reach for stdout is after both publications and before either is reported.
+        using var console = new RecordingConsole(() => source.Cancel());
+
+        var interrupted = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            RunCommand.ExecuteAsync(
+                RunPlan.Create(Request(workspace, after, output: "artifacts/eval.json")),
+                console,
+                source.Token
+            )
+        );
+
+        File.Exists(Path.Combine(workspace.Root, "artifacts", "eval.json")).Should().BeTrue();
+        File.Exists(Path.Combine(workspace.Root, "artifacts", "report.md")).Should().BeTrue();
+
+        using var reported = new RecordingConsole();
+
+        ExitCodeReporter.Report(interrupted, reported).Should().Be(ExitCode.Interrupted);
+
+        reported.StandardError.Should().NotContain("nothing was written");
+        reported.StandardError.Should().Contain("artifacts/eval.json").And.Contain("artifacts/report.md");
+        reported.StandardError.Should().NotContain(workspace.Root);
+    }
 }

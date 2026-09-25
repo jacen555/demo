@@ -158,6 +158,15 @@ Full help, which leads with the safe path and ends with the exit-code table:
 dotnet run --project tools/EvalCli/src -- --help
 ```
 
+How the suite has moved across a directory of past runs. It reads the directory, writes nothing
+into it, and prints the report unless `--report-markdown` names a file:
+
+```powershell
+dotnet run --project tools/EvalCli/src -- trend --artifacts artifacts/nightly --root .
+```
+
+See [the trend report](#the-trend-report) for what it refuses and why.
+
 ## Comparing against a baseline
 
 **`newlyCovered` is the headline, not a byproduct.** A harness that reported only what broke would
@@ -204,7 +213,11 @@ is decided before anything runs:
 - **A scenario the harness could not fully conduct is not counted as newly covered.** A scenario
   whose repetitions were part graded and part errored measures as passing — correctly, for what
   the graded evidence shows — but the suite asked more of it than it got an answer to. Those
-  scenarios move to `newlyCoveredWithheld` with a reason rather than inflating the headline.
+  scenarios move to `newlyCoveredWithheld` rather than inflating the headline, **each carrying the
+  cause the comparator attributed to it** — `incomplete`, `over-recorded`, or `errored` — and the
+  sentence explaining it. The causes lead to different actions: a repetition that errored is a
+  flake to re-run, a repetition that never happened is a harness that lost work, and an artifact
+  recording more runs than its policy declared is neither.
 - **A redirect is a request that never arrived.** Neither client follows one, and a `3xx` is
   recorded as a harness failure rather than graded. See [Safety](#safety).
 
@@ -459,6 +472,175 @@ there is no way to supply a different one, and no way for the caller to change t
 construction whose prose is derived from that same figure. Requiring a number only obliges a
 caller to supply one; deriving it from a copy nobody else holds is what makes a heading that
 contradicts its body unwritable.
+
+## The trend report
+
+`run --report-markdown` answers *is this change better or worse than the baseline*. The trend
+answers *where has this suite been going*. They are deliberately **two commands producing two
+artifacts with two comment markers** — merging them produces a document that answers neither well,
+and one pull-request comment that each push replaces with the other's report.
+
+**It reads a directory and writes nothing into it. The default invocation prints and writes
+nothing at all.**
+
+```powershell
+dotnet run --project tools/EvalCli/src -- trend --artifacts artifacts/nightly --root .
+```
+
+Add `--report-markdown <path>` to write the report for CI to attach instead of printing it. An
+existing file there is refused unless `--overwrite` is passed as well, exactly as `run --out` is.
+There is no GitHub call, no token and no network: the tool emits, CI posts.
+
+### The series is ordered by what the runs recorded, and by nothing else
+
+`SuiteResult.Environment.Timestamp` is stamped from the injected clock at run start, which makes it
+the only thing in the directory that records when the runs actually happened.
+
+- **Never by file name.** Whoever wrote the artifact chose it.
+- **Never by modification time.** A copy, a checkout, or an artifact-download step rewrites it.
+- **Compared as an instant, not as a wall-clock reading.** `08:30-02:00` is later than `09:00Z`
+  and looks earlier; a run conducted outside UTC produces exactly that, and sorting on the local
+  reading draws the series backwards while every timestamp on the page still looks plausible.
+
+**Two artifacts stamped with the same instant are refused** rather than ordered on either of the
+above. A trend is a claim about order; a tie makes that claim undecidable at one point, and every
+figure downstream of it — the movement between two positions, which artifact first recorded a
+scenario, whether a hole is interior or trailing — would then rest on an order the data does not
+support. A duplicated timestamp is almost always a copied artifact or a pinned clock, and both are
+conditions under which the trend would be describing one run twice.
+
+### A gap never renders as a flat line
+
+This is the failure this report is built against, and it is worse here than in the comparison: a
+reader looking at a trend is specifically looking for movement, so a line that appears steady is a
+**positive claim of stability**. Nothing is interpolated, carried forward, or carried back.
+
+An artifact records the scenarios that ran. It records neither the suite's membership nor the
+selector's decision, so of the four things a missing scenario could mean, **only one is decidable
+from the artifacts** — and the report says so rather than guessing:
+
+| Cause | Decidable? | How it reaches the page |
+|---|---|---|
+| Selected but ungradeable | **yes** | The scenario is in the artifact, it ran, and no repetition produced a verdict. Printed as its own state, never as a pass rate of zero. |
+| Not yet present | no | No artifact records it at or before that position. |
+| Present but not selected | no | Nothing in an artifact distinguishes a scenario the selector skipped from one that was not in the suite. |
+| Absent for an unknown reason | no | A run that errored before it could record the scenario leaves the same hole as the two above. |
+
+What the series *does* establish is **where the hole sits**, and each shape narrows the causes it
+is consistent with. The three shapes are worded differently and each says what it does not know:
+
+```
+- `search-ranking` — graded at 2 of 4 position(s), outside the stable core.
+  - **1.** **no record** — no artifact up to this point records it
+  - **2.** 80% (n=5, 95% Wilson CI 37.6%-96.4%)
+  - **3.** **no record** — a gap: artifacts on both sides of this one record it and this one does not
+  - **4.** 60% (n=5, 95% Wilson CI 23.1%-88.2%)
+  - Movement: -20 points, 80% (n=5) at position 2 → 60% (n=5) at position 4. …
+```
+
+Closing the undecidable three would take a field in the artifact recording what the selector
+decided. There is none, and inferring one from the shape of the record would be the same defect
+wearing a different hat.
+
+### The suite figure moves over a population that does not
+
+The subtle one. A suite-level rate pooled over whatever each artifact happened to carry moves when
+the **population** changes rather than when **behaviour** does — dropping three failing scenarios
+would read as an improvement nobody earned, and adding three would read as a regression nobody
+caused.
+
+So the suite figure is pooled over the **stable core**: the scenarios graded at *every* position.
+Everything outside the core appears in the per-scenario series with its own figures and in no
+suite line. The report states this in the body, not only here, because a reader cannot check a
+population they were never told about.
+
+**An empty core is a refusal, not a zero.** If no scenario was graded in every artifact, no
+suite-level rate is reported and the headline says why — a zero there would read as a suite that
+failed everything rather than as a population that never held still.
+
+**No interval is printed beside a suite figure, and that is stated as a decision rather than left
+as an omission.** Pooling repetitions of different scenarios is not a single binomial experiment,
+so an interval over them would have the shape of evidence and none of its meaning. Every
+per-scenario interval is the figure the run recorded; this report computes none of its own and
+runs **no significance test anywhere** — the artifacts in a series are independent runs rather
+than a matched pair, so there is nothing for a paired test to pair.
+
+Where two ends of a series are compared, whether their recorded intervals overlap is stated, and
+stated carefully: non-overlap is suggestive and is not a test, and overlap establishes nothing
+either way. Neither branch uses the word "significant", which no figure on this page is entitled
+to.
+
+**And it is stated only where both ends carry bounds this report is willing to show.** One method
+decides whether bounds may be displayed and the same method is asked before anything reasons from
+them, so a value untrustworthy enough to withhold from the page cannot reach a conclusion printed
+beside it. It answers "no" in five cases:
+
+| Case | Why no bound is shown |
+|---|---|
+| The summary disagrees with its own runs | Its figures do not describe the runs beneath them. |
+| **No repetition produced a verdict** | There is nothing for a bound to be about — and verification would recompute through a routine that refuses fewer than one trial, faulting out of the renderer. |
+| A single observation | At `n=1` the interval spans most of the unit interval and reads as a measurement. |
+| The run recorded no interval method | A bound is checked by recomputing it; without the method there is nothing to recompute. |
+| The run recorded no confidence level | Likewise — and printing one needs the level to label it with. |
+
+**Both settings, not either.** A run carrying a level and a method this build does not recognise
+has settings present enough to pass a null check and not enough to check a bound with, so
+verification is skipped entirely while the bounds still look recorded. Requiring only one let
+exactly that through. Worth stating because the earlier fix made the two consumers *consistent*
+and left the rule underneath them wrong: consistency is a property of the mechanism and
+correctness is a property of the rule, and the first can hide the absence of the second.
+
+**A recorded summary is never trusted before the runs beneath it.** An artifact claiming an
+aggregate over repetitions that all errored is checked for graded runs first, in the
+classification and in the rendering alike — otherwise it reports a pass rate of zero from a
+scenario nobody graded, and enters the stable core, where it moves the most authoritative figure
+in the document.
+
+### What gets refused
+
+| Refusal | Why |
+|---|---|
+| Fewer than two readable artifacts | A trend is movement, and one point has none. "Nothing to compare" and "nothing moved" must not render alike, and a single-column chart reads as the second. |
+| Two artifacts at the same instant | See above — the order is undecidable and every figure below rests on it. |
+| Runs of two different suites | Two suites share no scenario definitions. |
+| A shared id whose **definition fingerprint** disagrees | A rate recorded before an edit and one recorded after it answer different questions; a line between them reports the edit as movement the suite made. |
+| A shared id whose **kind** disagrees | `ScenarioFingerprint` deliberately excludes the kind and says every consumer owes it a second comparison. This is that comparison. |
+| A shared id with **no** fingerprint on one side | Absent is not the same as matching. (An id only one artifact carries is trended as the single point it is — there is nothing to establish.) |
+| `intervalMethod` or `intervalConfidence` disagreeing | Those decide what every printed interval *means*; a 95% Wilson bound beside a 99% Agresti-Coull bound under one heading is evidence from one context presented as another. |
+| One artifact recorded twice under one id | The id is the join key; picking a side would make every figure below it a silent choice between two runs. |
+| Any file in the directory that will not read | Refused rather than skipped — dropping it would take a run out of the series silently, and every scenario would then carry a hole at that position that nothing caused. This includes a directory that cannot be listed and a file that is listed and gone when it is read. |
+| `--report-markdown` resolving inside `--artifacts` | Exits `1`, not `4`: the invocation was refused before anything was read. `--overwrite` does not lift it. |
+
+All of the trend-analysis refusals exit `4`. **The refusal names the file by its path relative to `--root`**, through the
+same display and redaction rules the Markdown uses, because the message reaches stderr and from
+there the build log. The engine's own message is deliberately not forwarded: it carries the
+reference it was handed.
+
+**Membership moving is not a fingerprint disagreement.** A scenario appearing or disappearing is
+the movement this report exists to show, so the fingerprint check is a relation over the scenarios
+two artifacts *share* rather than a digest over the whole set. Folding membership into it would
+refuse exactly the series worth trending.
+
+### What it will not do
+
+- **No chart and no image.** Text and tables only.
+- **No gate.** `--fail-on-regression` is not accepted by this command at all; exit codes `10`–`19`
+  stay unallocated. An option accepted here would read as one that might act.
+- **No posting.** Same as the comparison report: the tool writes a file, CI attaches it.
+- **It conducts nothing.** There is no `--suite` and no `--endpoint`; this command runs no scenario
+  and dials nothing.
+- **It is never read back.** The JSON artifacts are the durable evidence. This Markdown is a
+  rendering of them and is never itself trended against.
+
+### Size
+
+The same 65,536-character comment budget and the same deterministic, severity-ordered truncation
+as the comparison report — one implementation, shared, because two budget allocators would
+eventually disagree about what "truncated" means and the one that disagrees drops a section
+silently. The roster of runs is allocated first, because every position number below it is
+unreadable without it; the gaps come next. A budget too small to hold the headings and standing
+explanations is refused rather than fitted: in this report those explanations are what stop a hole
+being read as a flat line.
 
 ## Updating a committed baseline
 
@@ -725,6 +907,163 @@ its own adapter.
   may not name the same address, `--baseline` and `--out` may not name the same file, scenarios
   this run did not conduct are withheld rather than reported as removed, and a pair that could not
   be compared exits non-zero instead of printing "0 regressed".
+- **`trend` cannot destroy the evidence it was asked to read.** `--report-markdown` is refused when
+  it resolves inside the directory `--artifacts` names, and **`--overwrite` does not lift that**:
+  the opt-in is about replacing a file you chose, not about writing Markdown over one of the run
+  artifacts the report is made of. Doing so would take a run out of the series permanently, and the
+  next trend would classify the resulting hole in every scenario as though something had caused it.
+  It is a containment test rather than a prefix test — `trendy/report.md` is not inside `trend` —
+  and it is **asked again immediately before the write**, because the answer is a property of the
+  file system and a directory swapped for a link in between would redirect the write into the
+  series. `--overwrite` without `--report-markdown` is refused outright: it names the only
+  irreversible thing this command can do, and an opt-in with nothing to opt in to reads as one that
+  might act.
+- **An interruption after a durable write says so.** "Interrupted, and nothing was written" is two
+  claims and only the first is always true. This defect arrived **six times** — `baseline update
+  --apply`, `run --out`, the live-baseline comparison, the staged-file cleanup, and the report
+  write — and each fix was correct about the operation it named and silent about the next, because
+  the property was written as *this step, after this write* and kept being a local flag beside a
+  filtered `catch`. It is now structural: `ArtifactWriter` records every publication into a ledger
+  it is handed, and `DurableWrites.GuardAsync` issues that ledger **together with** the catch that
+  wraps the whole command body, so every later step is covered including ones nobody has written
+  yet. The ledger's constructor is private, so a command cannot skip the guard and still have
+  somewhere to record — that does not compile. The residual hole is named in the code: a step
+  added *outside* the command body, after the guard returns. Each entry point is an expression
+  body precisely so there is no statement position there to add one into.
+- **A staged file this tool cannot identify is never unlinked.** Every write is staged under
+  `<destination>.partial` and renamed into place. Before publication the staged file is read back
+  and matched against the bytes this run wrote **and both paths are re-contained** — a content
+  hash says what the bytes are, not where they live, and a pathname redirected onto an identical
+  copy satisfies it exactly. **If either check fails, the cleanup leaves the file alone**: the
+  refusal is precisely that the pathname no longer denotes this run's file, and deleting it
+  afterwards would destroy the thing the refusal was about. A parent directory exchanged for a
+  link in that window makes it a file outside the root that no argument named; this is the only
+  place in the tool that could destroy something the caller never named. Removal is taken **only**
+  where identity and containment were established a moment earlier, and the cleanup re-asserts
+  containment once more immediately before unlinking. .NET exposes no portable unlink through an
+  open handle, so even that is by pathname and has a residual window. Everywhere else the
+  `.partial` is left, and the refusal **says it was left and where** — including on interruption,
+  where the blanket "nothing was written" sentence would otherwise send a reader past a file they
+  now have.
+- **No refusal names a path on your machine.** Every message `PathGuard`, `ArtifactWriter`,
+  `RunPlan`, `SuiteDiscovery`, `BaselineCommand` and `BaselineComparison` produce states its path
+  **relative to `--root`**, through the same display and redaction rules
+  the Markdown report uses, and no exception prose is forwarded — an engine refusal carries the
+  reference it was handed, and the operating system's own wording carries the absolute path it was
+  handed, on every platform and in every locale. A refusal reaches stderr and from there the build
+  log, which is read by anyone who can read the repository, and a CI checkout directory names the
+  account the job runs as. `ArtifactWriter`'s messages matter particularly: they fire when a
+  destination stops being writable *after* the arguments were validated, which is the window an
+  opt-in cannot cover because nothing was there when the opt-in would have been asked for.
+
+  **The relative form is not a loss.** What an argument can get wrong is the part below the root;
+  a wrong `--root` fails earlier and differently, in `PathGuard.ForRoot`. The engine makes the
+  same judgement for the same reason — `suite.notFound` names its `sourceLabel`, which carries no
+  machine path — so a refusal from either layer names the same path in the same form.
+
+  **The `run` and `baseline update` *result* documents are a known exception and still print
+  absolute paths.** The `root`, `suite`, `baseline` and `artifact` values in `--dry-run` output,
+  in the `baseline update` preview, and in a completed run's summary are the command's result on
+  **stdout**, not a refusal on stderr: they are a declared schema (`eval-cli/dry-run/1`) and the
+  documented way to confirm what an invocation resolved to before it is spent. `root` in
+  particular has no relative form. Closing them is a contract change and is tracked separately
+  from the refusal surface above.
+
+  The one case that cannot be covered is `--root` itself failing to resolve: there is no boundary
+  yet to state anything relative to, so the published net is applied to the value **as supplied**,
+  which is strictly less than the caller already typed. **That applies to text the caller typed
+  and to nothing else** — a root this tool derived and canonicalised is re-resolved at the moment
+  of a write, and a refusal out of *that* check says so rather than echoing a machine path. The
+  distinction is carried by `PathValue`, whose two factories every call site must choose between,
+  because the rule was twice written as a convention about which method you were in and twice
+  compiled with the wrong value. **A type can force the question to be asked; it cannot make the
+  answer true** — the first wrong answer was `--root` itself, whose default factory materialised
+  `Directory.GetCurrentDirectory()` at binding, so an omitted option arrived indistinguishable
+  from one the caller typed. The option now carries no default: absence is carried as absence, and
+  the single place that turns it into a working directory is the place that marks it derived.
+  (It also means `--help` no longer prints the machine's working directory.) A value that will not
+  parse as a path at all is refused **without being repeated**, because neither label can be
+  trusted to render something `Path` has just rejected. The net's holes are listed under
+  [What it will not print](#what-it-will-not-print).
+- **Artifact-derived text is netted before it reaches stderr.** A suite name or scenario id in a
+  `trend`, `run` or `baseline update` refusal goes through the report's own redaction net rather
+  than being printed as
+  recorded. The engine's authoring-time control exempts a leading request method — ADR 0005 records
+  that `GET /home/dashboard` must load and that the exemption *necessarily* admits
+  `GET /home/ci-user/repo` — so an identifier carrying a machine path behind a method token reaches
+  artifact read-back intact. That concession was documented against the Markdown document, where
+  the report's stricter net catches it; a refusal in the build log is a second published surface and
+  does not inherit the concession by omission. This covers the comparator's own account of a
+  divergence — which quotes the suite names and setting keys that disagreed — and the per-scenario
+  reasons in a partial-comparison refusal.
+
+  **Four channels, not one.** The same admitted identifier reaches stderr through a loader
+  **warning**, a loader **error**, the engine's **log stream**, and an engine refusal printed by
+  the **exit-code reporter**. All four are netted. The exemption never changed; the number of
+  surfaces it reaches did, which is the failure mode ADR 0005's amendment predicts.
+
+  **A finding carries author text in two places.** The scenario id is exposed structurally and is
+  netted as a value, which is where the net works. The *explanation* can also quote the author
+  back — an assertion finding embeds `category:parameter`, so `exactMatch:/home/ci-user/repo`
+  arrives mid-sentence. Both are netted, fail-closed, rather than against a list of codes known to
+  embed author text: a list would be right about today's branches and silent about the next one
+  added upstream.
+
+  **Where the net shortens a message, the message says so — and says why.** `MachinePath` matches
+  to the end of the value by design, so in a sentence it takes the explanation with it. Rather
+  than let that read as a finding with no finding in it, the line states that the rest was
+  withheld and where to look. An ordinary finding matches nothing and is carried through whole;
+  only one that embeds a machine path pays. A better pattern is not the answer, because prose does
+  not tokenise like an identifier.
+
+  **The cause is asked, not inferred.** `Sanitize` has four effects — it flattens control
+  characters, replaces comment delimiters, aliases machine paths, and clips over-long text — so
+  "the string changed" is evidence for any of them, and only one is a reason to tell an author to
+  rename something. Redaction is therefore asked about directly, through
+  `MarkdownReport.ContainsMachinePath`, which shares its pre-steps with `Sanitize` so it sees the
+  same text the net runs over. Any other transformation gets a cause-neutral note instead. A
+  message that accuses an author of a machine path that is not there sends them looking for
+  nothing and teaches them the tool is unreliable.
+
+  **The alias-collision guard checks what is rendered, not what was recorded.** It nets the same
+  flattened text the renderer does — asking about the raw value invents aliases for shapes that
+  flatten away and misses collisions that only appear once flattened — and it additionally refuses
+  two *different* values that render to the same string for any reason, because that, not the hash
+  collision, is the defect it exists to prevent.
+
+  **No log record prints a stack trace.** Frames carry the checkout directory and the source
+  layout of the build machine. `ExitCodeReporter` already refused that for everything except a
+  defect; the log provider now refuses it too, printing the exception's type and netted message
+  instead. A run the harness could not conduct is a deliberate refusal, not a defect.
+
+  **A deliberate refusal never reaches the defect branch.** The coordinator refuses a suite whose
+  plan would exceed the run budget, and signals it with an exception type that would otherwise be
+  classified as an unexpected defect — which prints the scenario id unredacted *and* the frames.
+  It is translated where the suite is conducted, in one place for both commands, into a usage
+  error that names `--max-total-runs` and not the scenario. The defect branch still prints frames
+  for genuine defects, which is the other half of the rule and is tested as such.
+- **A rejected option value is not echoed.** `--rest-exchange`/`--llm-exchange` name a closed set,
+  and a value outside it is refused **without being repeated** — the option name and the valid
+  values are what a caller acts on, and they already have what they typed. Netting it would not
+  do: the net catches machine paths, and a credential is not path-shaped. This is the same choice
+  `PathGuard` makes for a value that will not parse as a path at all, and the same reason
+  `ArgumentRedactor` strips supplied values out of parser diagnostics.
+- **The changed-file set names neither the revision nor git's own wording.** `--changed-since`
+  takes a caller-supplied value that can be neither a path nor safe, and git echoes whatever it
+  was handed straight back on its standard error. The refusal that reaches the log therefore names
+  the *option* and the category of failure, and nothing else — git's explanation is not forwarded,
+  for the same reason no operating-system message is.
+
+  **Known gap, tracked with the stdout class:** on the *success* path the report's
+  `changed files` line still prints the full git command it ran, which carries the absolute root
+  and the revision. It reaches stdout and the run-report JSON — the same result-document surface
+  as `--dry-run`'s `root` and `suite` rows — and is deferred with them rather than half-fixed here.
+- **No harness setting's recorded text is ever printed.** `HarnessConfig` is an open map of strings
+  in a file anyone can write, so a setting could carry a credential. Only values this build
+  re-derives into a typed form reach the page — a method name matched against a closed set prints
+  the *matched literal*, a number is parsed and re-rendered — and a setting this build does not
+  recognise is **counted without its name or its value**, with the count stated so a change that
+  moved is never indistinguishable from one that did not.
 - **Redirects are neither followed nor graded.** `HttpClient` follows them by default, and that
   default is a false green here: every claim this harness makes about *where* a run went is made
   from the address that was **requested**, so a baseline address answering `307` with the
@@ -776,7 +1115,7 @@ only and are never renumbered.
 | `1` | The invocation was refused — bad argument, value, or path. This includes a `--baseline` that exists but is not a readable run artifact: the invocation named it, and a baseline that cannot be read is not the same as no baseline. It also includes a `--baseline` that reads cleanly but carries a **machine path in one of its identifiers** — the engine refuses those on read-back, and this tool reports the field and the scenario position so the author can rename it, never the offending value itself (that message goes to the build log). |
 | `2` | The suite could not be loaded or did not validate — including a suite that declares no scenarios, which is refused before anything runs rather than reported as `0 of 0`, and a suite name, scenario id, or slicing tag carrying a machine path (`suite.name.machinePath`, `scenario.id.machinePath`), which the engine refuses at load so the author can rename it. |
 | `3` | The run could not complete — at least one run was recorded as an error (including an address that answered with a redirect), or the artifact could not be written, or the destination stopped being the file the command read. |
-| `4` | Baseline and candidate were not conducted alike, so the comparison was refused. Also produced when *any* available pair could not be compared — reported as a refusal rather than as "no regressions found", because those scenarios were not examined. |
+| `4` | Baseline and candidate were not conducted alike, so the comparison was refused. Also produced when *any* available pair could not be compared — reported as a refusal rather than as "no regressions found", because those scenarios were not examined. **`trend` uses the same code for every refusal it makes**: fewer than two readable artifacts, two artifacts stamped with the same instant, runs of two suites, a scenario redefined mid-series, disagreeing interval settings, or a file in `--artifacts` that will not read. The meaning is the same in both commands — two or more runs could not be set against each other, and the analysis did not happen. The message says which. |
 | `5` | A baseline was required and none was found — including one that goes away between being read and being replaced. *(No baseline is not the same as no regression.)* |
 | `10`–`19` | **Reserved for the gate.** `10` is "regressions found"; nothing produces it yet. |
 | `70` | The requested operation is not wired up in this build. |
@@ -811,19 +1150,25 @@ widen the selection instead.
 
 ## Current state
 
-**`partial` — the suite runs, the comparison reports, and the report is attachable (T15a).**
-Argument parsing and validation, the exit-code contract, `--help`, `--dry-run`, `--json`, suite
-discovery and validation, impacted-scenario selection, the run itself, artifact writing, both
-baseline mechanisms, the comparison and its refusals, the [Markdown pull-request
-report](#the-pull-request-report), and `baseline update` are complete and tested. Deliberately not
-here yet:
+**`partial` — the suite runs, the comparison reports, the report is attachable (T15a), and the
+trend reports across a series (T15b).** Argument parsing and validation, the exit-code contract,
+`--help`, `--dry-run`, `--json`, suite discovery and validation, impacted-scenario selection, the
+run itself, artifact writing, both baseline mechanisms, the comparison and its refusals, the
+[Markdown pull-request report](#the-pull-request-report), the [trend report](#the-trend-report),
+and `baseline update` are complete and tested. Deliberately not here yet:
 
-- **No gate.** `--fail-on-regression` is parsed, documented, and reported, and changes nothing: a
-  regression is reported, not enforced. Exit codes `10`–`19` are reserved so the gate can be added
-  without renumbering. A *refused* comparison is a different thing and is already non-zero (`4`) —
-  that is not the gate, it is the refusal to pretend a comparison happened.
-- **No trend report.** `--report-markdown` renders one comparison. A report across a run of
-  comparisons is a separate task.
+- **No gate.** `--fail-on-regression` is parsed by `run`, documented, and reported, and changes
+  nothing: a regression is reported, not enforced. `trend` does not accept it at all. Exit codes
+  `10`–`19` are reserved so the gate can be added without renumbering. A *refused* comparison or a
+  refused trend is a different thing and is already non-zero (`4`) — that is not the gate, it is
+  the refusal to pretend an analysis happened.
+- **No selection record in the artifact.** The engine's `SuiteResult` can now carry one —
+  `selectionDecisions`, optional and absent when unset — but **this tool does not write it yet**,
+  so every artifact it produces still carries the scenarios that ran and nothing about the ones
+  that did not. That is why the trend can tell "selected but ungradeable" from a hole and cannot
+  tell the three causes of a hole apart. The limit is unchanged; what changed is that closing it
+  is now a change to this tool rather than to the engine's schema. The report states the limit
+  rather than guessing past it.
 - **No posting.** The tool writes a file and CI attaches it. That is settled, not pending: a
   GitHub API client here would need a token, a network, and a host, and would stop the harness
   working anywhere else.

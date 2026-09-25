@@ -125,11 +125,20 @@ internal static partial class MarkdownReport
             ),
             MarkdownSection.List(
                 "Withheld from coverage",
-                Withholding(outcome.Result.NewlyCoveredWithheldReason),
+                WithheldLead,
                 "**No coverage claim was withheld.** Every newly covered scenario's own record supported the claim.",
                 [
                     .. analysis.Withheld.Select(entry =>
-                        string.Join('\n', [Headline(entry, Held), Pair(entry), Delta(entry)])
+                        string.Join(
+                            '\n',
+                            [
+                                Headline(entry.Comparison, Held),
+                                Pair(entry.Comparison),
+                                Delta(entry.Comparison),
+                                $"  - Cause: **{ComparisonReport.Name(entry.Cause)}** — "
+                                    + Prose(ComparisonReport.Withholding(entry.Cause), MaxReasonCharacters),
+                            ]
+                        )
                     ),
                 ],
                 always: true
@@ -220,7 +229,7 @@ internal static partial class MarkdownReport
             : "new in this change, and it passes.";
 
     private static string Held(ScenarioComparison entry) =>
-        Coverage(entry) + " **The coverage claim is withheld** — see the reason above.";
+        Coverage(entry) + " **The coverage claim is withheld** — see the cause below.";
 
     private static string NewFailing(ScenarioComparison entry) =>
         $"new in this change, and it recorded {ComparisonReport.Name(entry.CandidateOutcome)}.";
@@ -239,38 +248,35 @@ internal static partial class MarkdownReport
     private static string Orphan(string id) => $"- {Code(id)} — no per-scenario comparison accompanies this claim.";
 
     /// <summary>
-    /// The standing explanation of the withheld section, including the comparator's own reason.
+    /// The standing explanation of the withheld section.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>It does not say what went wrong, because the field it has cannot support that.</b> The
+    /// <b>It does not say what went wrong, because that is not a claim about the set.</b> The
     /// comparator withholds a claim for three different reasons — fewer repetitions recorded than
     /// declared, <i>more</i> recorded than declared, or a repetition that produced no verdict —
-    /// and an earlier wording here asserted the first of them for every withheld scenario. Nothing
-    /// is missing in the over-recorded case, so a reader sent looking for an absent repetition was
-    /// looking for something that was never absent.
+    /// and an earlier wording here asserted the first of them for every withheld scenario.
+    /// Nothing is missing in the over-recorded case, so a reader sent looking for an absent
+    /// repetition was looking for something that was never absent.
     /// </para>
     /// <para>
-    /// <b>Stated as a claim about the withheld set, not about any one scenario in it.</b>
-    /// <see cref="ComparisonResult.NewlyCoveredWithheldReason"/> is a single suite-level string:
-    /// where more than one cause occurred it carries every one of their sentences, and nothing in
-    /// it says which scenario had which. Splitting it here to guess an attribution would be
-    /// exactly the cross-context inference this report exists to refuse.
+    /// <b>Each row states its own cause, so the lead does not have to hedge about attribution.</b>
+    /// An earlier version of this lead carried the comparator's single suite-level reason and
+    /// admitted, in the text a reviewer reads, that where more than one cause occurred it could
+    /// not say which scenario had which. The comparator attributes the cause per scenario now
+    /// (<see cref="WithheldCoverage"/>) and the rows print it, so that admission has not been
+    /// softened — it has been removed, because it is no longer true.
     /// </para>
     /// </remarks>
-    private static string Withholding(string? reason) =>
+    private const string WithheldLead =
         "These scenarios classified as newly covered and **the claim is not made**, because the candidate's own "
         + "record of them does not support it: the repetitions it recorded and the repetitions its policy declared "
         + "do not agree, or not every repetition produced a verdict. They are named here rather than dropped — a "
         + "shorter coverage list and a withheld scenario read identically, and a refusal that renders as an absence "
         + "cannot be told from nothing having happened.\n\n"
-        + (
-            reason is null
-                ? "The comparator recorded no reason for this run."
-                : "Reason recorded for the withheld set as a whole — the comparator records one reason per run "
-                    + "rather than one per scenario, so where more than one cause occurred this carries all of "
-                    + $"them and does not say which scenario had which: {Prose(reason, MaxReasonCharacters)}"
-        );
+        + "**Each scenario below carries the cause the comparator attributed to it**, because the three lead to "
+        + "different actions: a repetition that errored is a flake to re-run, a repetition that never happened is a "
+        + "harness that lost work, and an artifact recording more runs than its policy declared is neither.";
 
     private static Dictionary<string, ScenarioResult> Index(SuiteResult artifact)
     {
