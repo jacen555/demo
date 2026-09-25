@@ -80,16 +80,40 @@ internal sealed class StubEndpoint : IAsyncDisposable
     /// an address carrying one.
     /// </param>
     public StubEndpoint(Func<string, StubReply> respond, string path = "evaluate")
+        : this(respond, path, []) { }
+
+    /// <summary>Starts an endpoint answering on several paths of one host and port.</summary>
+    /// <param name="respond">Given the request body, returns what to answer with.</param>
+    /// <param name="path">The path <see cref="Address"/> points at, without a leading slash.</param>
+    /// <param name="alsoServe">
+    /// Further paths on the same host and port. Two deployments distinguished only by path is
+    /// exactly the shape a baseline identity has to keep apart, and it cannot be built from two
+    /// listeners on two ports.
+    /// </param>
+    public StubEndpoint(Func<string, StubReply> respond, string path, IReadOnlyList<string> alsoServe)
     {
+        ArgumentNullException.ThrowIfNull(alsoServe);
+
         _respond = respond;
 
         Address = new Uri($"http://localhost:{FreePort()}/{path}");
 
         _listener.Prefixes.Add(Address.GetLeftPart(UriPartial.Path) + "/");
+
+        foreach (var extra in alsoServe)
+        {
+            _listener.Prefixes.Add($"http://localhost:{Address.Port}/{extra}/");
+        }
+
         _listener.Start();
 
         _loop = Task.Run(ServeAsync);
     }
+
+    /// <summary>An address on this endpoint's host and port, at another path.</summary>
+    /// <param name="path">The path, without a leading slash.</param>
+    /// <returns>The address.</returns>
+    public Uri At(string path) => new($"http://localhost:{Address.Port}/{path}");
 
     /// <summary>Gets the address to point <c>--endpoint</c> at.</summary>
     public Uri Address { get; }

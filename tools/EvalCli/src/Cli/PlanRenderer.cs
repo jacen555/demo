@@ -42,6 +42,10 @@ internal sealed record DryRunReport
     [JsonPropertyName("artifact")]
     public string? Artifact { get; init; }
 
+    /// <summary>Gets the canonical Markdown report destination, or null when none would be written.</summary>
+    [JsonPropertyName("reportMarkdown")]
+    public string? ReportMarkdown { get; init; }
+
     /// <summary>Gets whether replacing an existing artifact was opted into.</summary>
     [JsonPropertyName("overwriteArtifact")]
     public required bool OverwriteArtifact { get; init; }
@@ -135,6 +139,7 @@ internal static class PlanRenderer
             Root = plan.RootDirectory,
             Baseline = plan.BaselinePath,
             Artifact = plan.ArtifactPath,
+            ReportMarkdown = plan.MarkdownReportPath,
             OverwriteArtifact = plan.OverwriteArtifact,
             RootSeed = plan.RootSeed,
             MaxConcurrency = plan.MaxConcurrency,
@@ -180,10 +185,16 @@ internal static class PlanRenderer
         Row(text, "artifact", plan.ArtifactPath ?? $"{NoneMarker} - no --out, so nothing would be written");
         Row(
             text,
+            "report markdown",
+            plan.MarkdownReportPath
+                ?? $"{NoneMarker} - no --report-markdown, so no pull-request report would be written"
+        );
+        Row(
+            text,
             "overwrite",
             plan.OverwriteArtifact
-                ? "allowed - an existing artifact at --out would be replaced"
-                : "refused - an existing artifact at --out would stop the run"
+                ? "allowed - an existing file at --out or --report-markdown would be replaced"
+                : "refused - an existing file at --out or --report-markdown would stop the run"
         );
         Row(text, "root seed", plan.RootSeed.ToString(CultureInfo.InvariantCulture));
         Row(text, "max concurrency", plan.MaxConcurrency.ToString(CultureInfo.InvariantCulture));

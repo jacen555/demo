@@ -110,6 +110,8 @@ internal static class RunCommand
                 .CompareAsync(provider, plan, conducted, summary.Selection.Skipped, result, baseline, cancellationToken)
                 .ConfigureAwait(false);
 
+            await WriteMarkdownReportAsync(plan, comparison, artifactPath, cancellationToken).ConfigureAwait(false);
+
             var rendered = plan.Json
                 ? RunReport.RenderJson(plan, summary, result, artifactPath, comparison)
                 : RunReport.RenderText(plan, summary, result, artifactPath, comparison);
@@ -221,6 +223,79 @@ internal static class RunCommand
                     Contents = CanonicalJson.Serialize(ArtifactRedaction.Redact(result)),
                     FailureContext = "The run completed but its artifact could not be written",
                     LossNote = "The evidence the run produced was not recorded",
+                },
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes the pull-request comparison report, when a destination was asked for.
+    /// </summary>
+    /// <param name="plan">The validated plan.</param>
+    /// <param name="comparison">The comparison that happened, or null when no baseline was named.</param>
+    /// <param name="artifactPath">Where the durable artifact was written, or null.</param>
+    /// <param name="cancellationToken">Cancels the write.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>After the artifact, and through the same writer.</b> The JSON is the evidence and this
+    /// is a rendering of it, so the evidence reaches disk first — and the containment, the staged
+    /// <c>.partial</c> name, the re-verification with the file in hand, and the atomic rename are
+    /// the ones <see cref="ArtifactWriter"/> already documents rather than a second, weaker path.
+    /// </para>
+    /// <para>
+    /// <b>Nothing is written when the comparison was refused</b>, because a refusal throws before
+    /// reaching here. That is deliberate: the alternative is a file on disk for CI to post, and
+    /// the only honest thing it could contain is the refusal — which is already the exit code and
+    /// the message on stderr. A report that existed would be posted and read, and a reader who
+    /// sees a comment stops looking for the failed step above it.
+    /// </para>
+    /// <para>
+    /// The null comparison cannot be reached with a destination set: <see cref="RunPlan"/> refuses
+    /// <c>--report-markdown</c> without a baseline. It is handled rather than asserted because a
+    /// report rendered from no comparison would print a zero under every heading, and that is the
+    /// one outcome this whole option exists to make unreachable.
+    /// </para>
+    /// </remarks>
+    private static async Task WriteMarkdownReportAsync(
+        RunPlan plan,
+        ComparisonOutcome? comparison,
+        string? artifactPath,
+        CancellationToken cancellationToken
+    )
+    {
+        if (plan.MarkdownReportPath is not { } destination || comparison is null)
+        {
+            return;
+        }
+
+        var rendering = MarkdownReport.Render(
+            new MarkdownReportRequest
+            {
+                Comparison = comparison,
+                RootDirectory = plan.RootDirectory,
+                SuitePath = plan.SuitePath,
+                ArtifactPath = artifactPath,
+                GateMode = plan.GateMode,
+            }
+        );
+
+        _ = await ArtifactWriter
+            .WriteAsync(
+                new ArtifactWrite
+                {
+                    Destination = destination,
+                    RootDirectory = plan.RootDirectory,
+                    OptionName = "--report-markdown",
+                    ReplaceOptionName = "--overwrite",
+                    Publication = plan.OverwriteArtifact
+                        ? ArtifactPublication.CreateOrReplace
+                        : ArtifactPublication.CreateOnly,
+                    Contents = rendering.Text,
+                    FailureContext = "The run and its comparison completed but the report could not be written",
+                    LossNote =
+                        "The comparison is on stdout and, where --out was given, in the artifact; only the "
+                        + "rendering for a pull request was lost",
                 },
                 cancellationToken
             )

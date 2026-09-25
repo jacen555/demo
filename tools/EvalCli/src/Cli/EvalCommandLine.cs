@@ -73,9 +73,18 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "path",
     };
 
+    private readonly Option<string?> _reportMarkdown = new(
+        "--report-markdown",
+        "Where to write the Markdown comparison report for a pull request. Needs a baseline. This tool writes the "
+            + "file and never posts it: CI attaches it."
+    )
+    {
+        ArgumentHelpName = "path",
+    };
+
     private readonly Option<bool> _overwrite = new(
         "--overwrite",
-        "Allow --out to replace a file that already exists. Refused without this."
+        "Allow --out and --report-markdown to replace a file that already exists. Refused without this."
     );
 
     private readonly Option<long> _seed = new(
@@ -181,6 +190,7 @@ internal sealed class EvalCommandLine
             Root = parseResult.GetValueForOption(_root) ?? string.Empty,
             Baseline = parseResult.GetValueForOption(_baseline),
             Out = parseResult.GetValueForOption(_out),
+            ReportMarkdown = parseResult.GetValueForOption(_reportMarkdown),
             Overwrite = parseResult.GetValueForOption(_overwrite),
             Seed = parseResult.GetValueForOption(_seed),
             MaxConcurrency = parseResult.GetValueForOption(_maxConcurrency),
@@ -288,6 +298,7 @@ internal sealed class EvalCommandLine
             _root,
             _baseline,
             _out,
+            _reportMarkdown,
             _overwrite,
             _seed,
             _maxConcurrency,
