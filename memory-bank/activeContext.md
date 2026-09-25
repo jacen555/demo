@@ -27,14 +27,21 @@ planner → builder → cross-family reviewer → iterate.
 | T14 artifacts + baseline comparison | done | 308 (cli) |
 | T14a coverage withholding (engine) | done | 1545 |
 | T14b CLI pass-through | done | 313 (cli) |
-| **T15a PR comparison report** | **in flight** | — |
+| T15a PR comparison report | done | 442 (cli) |
+| T15d machine-path refusal at load | done | 1657 |
+| T15f CLI consequences of T15d | done | 442 (cli) |
+| T15e stop printing the caller's suite path | done | 1724 |
+| T16 ADR 0004 + 0005 | done | — |
+| **T17 memory bank** | **in flight** | — |
 | T15b trend report | not started | — |
-| T16 ADR 0004, T17 memory bank | not started | — |
+| T15c per-scenario withholding attribution | not started | — |
+| T15g `scriptedStimuli[].field` classification | not started | — |
+| T15h three CLI-owned absolute paths | not started | — |
 
-**Repo-wide green: 1545 engine + 313 CLI = 1858.** Commits `ac6ff11`, `8f52efa`, `fe65696`.
+**Repo-wide green: 1724 engine + 442 CLI = 2166.** Commits `ac6ff11`, `8f52efa`,
+`fe65696`, `708cd0b`, `c2d980e`, `c8e1f7a`.
 
-Remaining: the Markdown PR report (T15a) and the trend report (T15b), ADR 0004 (T16),
-and the final memory-bank pass (T17).
+Remaining: the trend report (T15b) and four tracked follow-ups, none blocking.
 
 ## Decisions taken during the build
 
@@ -45,8 +52,11 @@ and the final memory-bank pass (T17).
   marks every scenario `Fixed` and prints "newly covered: everything". See
   `RedirectRefusingHandler`. Revisit as a new scenario kind if redirect assertions are ever
   needed; do not loosen the transport.
-- **Per-scenario attribution for `NewlyCoveredWithheldReason` is deferred to T15a**, where
-  the requirement becomes concrete. If the report needs it, it is a Tier 1 engine change.
+- **Machine paths are refused at authoring time, not filtered in the report** — ADR 0005.
+  The report-side pattern was written five times and ended up failing in both directions at
+  once. The report keeps a narrow net whose holes are published in its README.
+- **The harness is report-only.** `--fail-on-regression` is inert and exit codes `10`–`19`
+  are reserved. Gating is a later decision once the reports have been trusted in practice.
 - **§I was amended** so a domain's `README.md` belongs to its domain (`fe65696`).
 
 ## The design idea everything rests on
