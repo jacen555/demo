@@ -29,6 +29,15 @@ namespace Forge.EvalEngine.Loading;
 /// caused it, rather than handing the suite author a JSON path to decode. Content problems are
 /// returned rather than thrown, so every finding can be reported at once.
 /// </para>
+/// <para>
+/// <b>No finding names the suite by a path on the caller's machine.</b> Findings are written to
+/// standard error by the command-line tool and land in CI logs, and the suite path it supplies is
+/// absolute, so a checkout path in a finding discloses the account a job runs as (§V). This is
+/// not the identifier guard and must not be built out of it: a suite path is caller-supplied and
+/// legitimate, so it is <i>not printed</i> rather than refused. The label a finding uses comes
+/// from <see cref="RootRelativeLabel"/> or <see cref="FileNameLabel"/>, and the unreduced path is
+/// returned on <see cref="SuiteLoadResult.SourcePath"/> for a caller that wants it.
+/// </para>
 /// </remarks>
 public sealed class SuiteLoader
 {
@@ -68,47 +77,164 @@ public sealed class SuiteLoader
     public async Task<SuiteLoadResult> LoadAsync(string suitePath, CancellationToken cancellationToken = default)
     {
         var resolved = ResolveWithinRoot(suitePath);
+        var label = RootRelativeLabel(resolved);
+        var (text, outcome) = await ReadTextAsync(resolved, cancellationToken).ConfigureAwait(false);
 
-        string json;
-        try
+        // Attached here, after every finding has already been composed. This method holds the
+        // path and writes no message; FromOutcome and LoadDocument write every message and do
+        // not have the path.
+        return FromOutcome(text, outcome, label) with
         {
-            json = await File.ReadAllTextAsync(resolved, cancellationToken).ConfigureAwait(false);
-        }
-        catch (FileNotFoundException)
-        {
-            return Failed("suite.notFound", $"Suite file '{suitePath}' was not found under the suite root.");
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return Failed("suite.notFound", $"Suite file '{suitePath}' was not found under the suite root.");
-        }
-        catch (IOException)
-        {
-            return Failed("suite.unreadable", $"Suite file '{suitePath}' could not be read.");
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Failed("suite.unreadable", $"Suite file '{suitePath}' could not be read: access was denied.");
-        }
-
-        return LoadFromJson(json, suitePath);
+            SourcePath = resolved,
+        };
     }
 
     /// <summary>Validates suite content that has already been read.</summary>
     /// <param name="json">The suite document.</param>
-    /// <param name="sourceName">A label for the source, used in findings.</param>
+    /// <param name="sourceName">
+    /// A label for the source, used in findings. Reduced to a file name before it is used — see
+    /// the remarks.
+    /// </param>
     /// <returns>The loaded suite, or the findings that prevented it.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This overload has no containment root, so it cannot name the source relatively.</b> It
+    /// reduces <paramref name="sourceName"/> to its file name, which is the only reduction that
+    /// is safe without a root to be relative to, and loses directory context as the honest price
+    /// of that. <see cref="LoadAsync"/> does have a root and names the suite relative to it.
+    /// </para>
+    /// <para>
+    /// The reduction happens here rather than at the call site so that a direct caller of this
+    /// method is covered too. The unreduced value is returned on
+    /// <see cref="SuiteLoadResult.SourcePath"/>.
+    /// </para>
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="json"/> is null.</exception>
     public static SuiteLoadResult LoadFromJson(string json, string sourceName)
     {
         ArgumentNullException.ThrowIfNull(json);
 
+        return LoadDocument(json, FileNameLabel(sourceName)) with
+        {
+            SourcePath = sourceName,
+        };
+    }
+
+    /// <summary>Why a suite file could not be read.</summary>
+    /// <remarks>
+    /// The read reports its outcome as one of these rather than composing a message, so that the
+    /// only method holding the path holds nothing to print it into. See
+    /// <see cref="ReadTextAsync"/> and <see cref="FromOutcome"/>.
+    /// </remarks>
+    private enum ReadOutcome
+    {
+        /// <summary>The bytes were read.</summary>
+        Read,
+
+        /// <summary>Nothing is there.</summary>
+        NotFound,
+
+        /// <summary>Something is there and could not be read.</summary>
+        Unreadable,
+
+        /// <summary>Something is there and access to it was refused.</summary>
+        AccessDenied,
+    }
+
+    /// <summary>Turns a read outcome into findings, without the path that produced it.</summary>
+    /// <param name="text">The document, when it was read.</param>
+    /// <param name="outcome">Why it was or was not read.</param>
+    /// <param name="sourceLabel">What findings call the suite. Carries no machine path.</param>
+    /// <returns>The loaded suite, or the findings that prevented it.</returns>
+    /// <remarks>
+    /// <b>There is deliberately no path parameter here, and there must not be one.</b> Reading a
+    /// file requires the path, so some method has to hold it — <see cref="ReadTextAsync"/> does,
+    /// and it reports an outcome rather than a message. Splitting it this way is what makes the
+    /// isolation a property the compiler enforces instead of a rule stated in a comment: the
+    /// method that could name the path has nothing to name it in, and the method that writes the
+    /// message cannot reach it.
+    /// </remarks>
+    private static SuiteLoadResult FromOutcome(string? text, ReadOutcome outcome, string sourceLabel) =>
+        outcome switch
+        {
+            ReadOutcome.Read => LoadDocument(text!, sourceLabel),
+            ReadOutcome.NotFound => Failed(
+                "suite.notFound",
+                $"Suite file '{sourceLabel}' was not found under the suite root."
+            ),
+            ReadOutcome.AccessDenied => Failed(
+                "suite.unreadable",
+                $"Suite file '{sourceLabel}' could not be read: access was denied."
+            ),
+            _ => Failed("suite.unreadable", $"Suite file '{sourceLabel}' could not be read."),
+        };
+
+    /// <summary>
+    /// The only method that both holds the suite path and touches the file system.
+    /// </summary>
+    /// <param name="resolvedPath">The real path to read.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <returns>The text, or why it could not be read.</returns>
+    /// <remarks>
+    /// <b>It reports an outcome, not a message.</b> Reading a file requires the path, so some
+    /// method has to hold it; what this shape guarantees is that the method holding it has no
+    /// message to interpolate it into, and the methods that compose messages do not have it.
+    /// That is the difference between a rule stated in a comment and one the compiler enforces.
+    /// </remarks>
+    private static async Task<(string? Text, ReadOutcome Outcome)> ReadTextAsync(
+        string resolvedPath,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return (
+                await File.ReadAllTextAsync(resolvedPath, cancellationToken).ConfigureAwait(false),
+                ReadOutcome.Read
+            );
+        }
+        catch (FileNotFoundException)
+        {
+            return (null, ReadOutcome.NotFound);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return (null, ReadOutcome.NotFound);
+        }
+        catch (IOException)
+        {
+            return (null, ReadOutcome.Unreadable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (null, ReadOutcome.AccessDenied);
+        }
+    }
+
+    /// <summary>
+    /// Validates a suite document against a label already made safe to print.
+    /// </summary>
+    /// <param name="json">The suite document.</param>
+    /// <param name="sourceLabel">
+    /// What findings call the suite. Already reduced to a form carrying no machine path.
+    /// </param>
+    /// <returns>The loaded suite, or the findings that prevented it.</returns>
+    /// <remarks>
+    /// <b>There is deliberately no path parameter here, and there must not be one.</b> Every
+    /// suite-level finding is composed in this method or below it, so the isolation is only real
+    /// if the path is absent from the scope rather than merely unused in it. An earlier shape
+    /// carried the path alongside the label so it could be attached to the result; that left a
+    /// new finding one identifier away from the original defect. The caller attaches
+    /// <see cref="SuiteLoadResult.SourcePath"/> to what this returns.
+    /// </remarks>
+    private static SuiteLoadResult LoadDocument(string json, string sourceLabel)
+    {
         JsonObject document;
         try
         {
             if (JsonNode.Parse(json) is not JsonObject parsed)
             {
-                return Failed("suite.malformed", $"Suite '{sourceName}' must be a JSON object.");
+                return Failed("suite.malformed", $"Suite '{sourceLabel}' must be a JSON object.");
             }
 
             // A JsonObject builds its key index lazily, so a duplicate key does not surface at
@@ -120,7 +246,7 @@ public sealed class SuiteLoader
         }
         catch (JsonException)
         {
-            return Failed("suite.malformed", $"Suite '{sourceName}' is not valid JSON.");
+            return Failed("suite.malformed", $"Suite '{sourceLabel}' is not valid JSON.");
         }
         catch (ArgumentException)
         {
@@ -128,7 +254,7 @@ public sealed class SuiteLoader
             // author-supplied. Described from the type instead — see Unreadable.
             return Failed(
                 "suite.malformed",
-                $"Suite '{sourceName}' is not valid JSON: it declares the same property more than once."
+                $"Suite '{sourceLabel}' is not valid JSON: it declares the same property more than once."
             );
         }
 
@@ -141,10 +267,15 @@ public sealed class SuiteLoader
                 SuiteValidator.Error(
                     "suite.name.missing",
                     null,
-                    $"Suite '{sourceName}' does not declare a name. The name labels the resulting artifact."
+                    $"Suite '{sourceLabel}' does not declare a name. The name labels the resulting artifact."
                 )
             );
-            name = sourceName;
+
+            // The label, not the path. This finding is an error, so `refused` below is always
+            // true and this value never reaches an artifact today — but it is one severity
+            // change away from writing a caller's checkout path into the committed JSON, which
+            // is the disclosure the name guard above exists to prevent.
+            name = sourceLabel;
         }
         else if (MachinePath.IsPresentIn(name))
         {
@@ -162,8 +293,8 @@ public sealed class SuiteLoader
             );
         }
 
-        var schemaVersion = ValidateSchemaVersion(document, sourceName, messages);
-        var scenarios = ReadScenarios(document["scenarios"], sourceName, messages);
+        var schemaVersion = ValidateSchemaVersion(document, sourceLabel, messages);
+        var scenarios = ReadScenarios(document["scenarios"], sourceLabel, messages);
         messages.AddRange(SuiteValidator.Validate(scenarios));
 
         // A refused suite yields no suite. SuiteLoadResult documents Suite as null on failure,
@@ -186,9 +317,139 @@ public sealed class SuiteLoader
         };
     }
 
+    /// <summary>
+    /// Names a suite for a finding, relative to the root it is confined to.
+    /// </summary>
+    /// <param name="resolvedPath">The real path, already proven to lie under the root.</param>
+    /// <returns>A label carrying no machine path.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The suite path is caller-supplied, and through the command-line tool it is absolute.</b>
+    /// Findings are written to standard error and land in CI logs, which on many setups are
+    /// readable by anyone who can read the repository, and a checkout path names the account the
+    /// job runs as (§V). This is <i>not</i> the same problem as an identifier containing a
+    /// machine path: that value is author-supplied and can be refused, whereas a caller naming a
+    /// real file they chose has done nothing wrong. So the path is not validated and not refused
+    /// — it is simply not printed.
+    /// </para>
+    /// <para>
+    /// <b>Relative to the root loses nothing a reader needs.</b> The root is supplied separately
+    /// and has its own diagnostics; the relative portion is the whole of what a caller can get
+    /// wrong in a suite argument, and it is the whole of what a typo shows up in. The absolute
+    /// path is that plus exactly the component that identifies the machine.
+    /// </para>
+    /// <para>
+    /// Falls back to the file name if the relative form is not actually relative, or ascends out
+    /// of the root. Containment makes that unreachable — <see cref="PathBoundary.Resolve"/> has
+    /// already proven <paramref name="resolvedPath"/> lies under the root — and it is kept
+    /// because the failure it guards is a silent disclosure rather than a crash.
+    /// </para>
+    /// </remarks>
+    private string RootRelativeLabel(string resolvedPath)
+    {
+        var relative = Path.GetRelativePath(_root.Root, resolvedPath);
+
+        return Path.IsPathRooted(relative) || AscendsFromRoot(relative) ? FileNameLabel(resolvedPath) : relative;
+    }
+
+    /// <summary>
+    /// Whether a relative path's <b>first segment</b> is an ascent.
+    /// </summary>
+    /// <param name="relative">The path relative to the root, as the runtime produced it.</param>
+    /// <returns><see langword="true"/> when the path climbs above the root.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Category: a path this machine resolved, so the host's separators are the correct
+    /// ones.</b> This string came out of <see cref="Path.GetRelativePath"/> against a root the
+    /// boundary canonicalised, so it is spelled the way this OS spells paths. That is the
+    /// opposite of <see cref="FileNameLabel"/>, whose input is caller text of unknown
+    /// provenance — and the two rules must not be swapped. Reading <c>\</c> as a separator here
+    /// is wrong on Unix, where it is an ordinary filename character: a contained directory named
+    /// <c>..\draft</c> would be read as an ascent and lose its name from the finding.
+    /// </para>
+    /// <para>
+    /// <b>Asked about a segment, because the question is about a segment.</b> Asking it as
+    /// <c>StartsWith("..")</c> also matches <c>..draft/</c>, an ordinary contained directory, so
+    /// a perfectly valid in-root suite fell through to the file name. That is the opposite of
+    /// what the relative label exists for: a mistyped directory is half of what a caller can get
+    /// wrong in a suite argument.
+    /// </para>
+    /// </remarks>
+    private static bool AscendsFromRoot(string relative) =>
+        relative.Equals("..", StringComparison.Ordinal)
+        || (
+            relative.Length > 2 && relative.StartsWith("..", StringComparison.Ordinal) && IsNativeSeparator(relative[2])
+        );
+
+    /// <summary>Whether a character separates path segments <b>on this host</b>.</summary>
+    /// <remarks>
+    /// On Unix both of these are <c>/</c>, so <c>\</c> is correctly not a separator. On Windows
+    /// they are <c>\</c> and <c>/</c>, so both are.
+    /// </remarks>
+    private static bool IsNativeSeparator(char character) =>
+        character == Path.DirectorySeparatorChar || character == Path.AltDirectorySeparatorChar;
+
+    /// <summary>
+    /// Names a suite for a finding when there is no root to be relative to.
+    /// </summary>
+    /// <param name="sourceName">The caller's label, which may be an absolute path.</param>
+    /// <returns>A label carrying no machine path.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Category: caller text of unknown provenance, so both separator styles are read and
+    /// <see cref="Path"/> is deliberately not used.</b> <see cref="Path.GetFileName(string)"/> is
+    /// host-dependent: on Windows both <c>\</c> and <c>/</c> separate, but on Unix only <c>/</c>
+    /// does. A Windows-shaped absolute label therefore comes back <i>whole</i> from a Unix host —
+    /// the full checkout path, printed into the log, on the platform most CI runs on. A label is
+    /// not a path being resolved against this machine's file system; it is text that may have
+    /// come from anywhere, so it is reduced by the rule rather than by the host. That is the
+    /// opposite of <see cref="AscendsFromRoot"/>, which inspects a path this machine produced and
+    /// must therefore use the host's own separators — <b>do not unify the two.</b>
+    /// </para>
+    /// <para>
+    /// A label that is already a bare name is returned unchanged, so a caller that passes
+    /// something descriptive keeps it. One that names no file — blank, a bare separator, a bare
+    /// drive such as <c>C:\</c>, or a UNC authority with no share — becomes
+    /// <see cref="UnnamedSource"/>, because what is left of those is either nothing or the name
+    /// of a machine.
+    /// </para>
+    /// </remarks>
+    private static string FileNameLabel(string? sourceName)
+    {
+        if (string.IsNullOrWhiteSpace(sourceName))
+        {
+            return UnnamedSource;
+        }
+
+        var trimmed = sourceName.Trim().TrimEnd(Separators);
+        var cut = trimmed.LastIndexOfAny(Separators);
+
+        // An authority with no share reduces to the host, which names a machine rather than a
+        // file. Each of the two leading positions is tested for *either* separator: the pair is
+        // not necessarily matching, and reading it as one of "\\" or "//" let "\/host" through.
+        if (cut <= 1 && trimmed.Length > 1 && IsEitherSeparator(trimmed[0]) && IsEitherSeparator(trimmed[1]))
+        {
+            return UnnamedSource;
+        }
+
+        var name = cut < 0 ? trimmed : trimmed[(cut + 1)..];
+
+        return string.IsNullOrWhiteSpace(name) || IsDriveSpecification(name) ? UnnamedSource : name;
+    }
+
+    /// <summary>Whether a reduced label is a bare drive such as <c>C:</c>, all that is left of <c>C:\</c>.</summary>
+    private static bool IsDriveSpecification(string name) =>
+        name.Length == 2 && char.IsAsciiLetter(name[0]) && name[1] == ':';
+
+    /// <summary>Whether a character separates path segments <b>in caller text</b>, on any host.</summary>
+    private static bool IsEitherSeparator(char character) => character is '/' or '\\';
+
+    /// <summary>Both path separators, because a label may have been written on another host.</summary>
+    private static readonly char[] Separators = ['/', '\\'];
+
     private static string ValidateSchemaVersion(
         JsonObject document,
-        string sourceName,
+        string sourceLabel,
         List<ValidationMessage> messages
     )
     {
@@ -198,7 +459,7 @@ public sealed class SuiteLoader
                 SuiteValidator.Warning(
                     "suite.schemaVersion.missing",
                     null,
-                    $"Suite '{sourceName}' declares no schemaVersion, so it is being read as "
+                    $"Suite '{sourceLabel}' declares no schemaVersion, so it is being read as "
                         + $"'{SchemaVersions.Suite}'. Declare it so a future reader does not have to guess."
                 )
             );
@@ -213,7 +474,7 @@ public sealed class SuiteLoader
                 SuiteValidator.Error(
                     "suite.schemaVersion.unsupported",
                     null,
-                    $"Suite '{sourceName}' declares a schemaVersion this engine cannot read. It reads version "
+                    $"Suite '{sourceLabel}' declares a schemaVersion this engine cannot read. It reads version "
                         + $"'{SchemaVersions.Suite}'. The declared value is not repeated here because this finding "
                         + "is written to the build log."
                 )
@@ -223,7 +484,7 @@ public sealed class SuiteLoader
         return declared ?? SchemaVersions.Suite;
     }
 
-    private static List<Scenario> ReadScenarios(JsonNode? node, string sourceName, List<ValidationMessage> messages)
+    private static List<Scenario> ReadScenarios(JsonNode? node, string sourceLabel, List<ValidationMessage> messages)
     {
         var scenarios = new List<Scenario>();
 
@@ -233,7 +494,7 @@ public sealed class SuiteLoader
                 SuiteValidator.Error(
                     "suite.scenarios.missing",
                     null,
-                    $"Suite '{sourceName}' does not declare a 'scenarios' array."
+                    $"Suite '{sourceLabel}' does not declare a 'scenarios' array."
                 )
             );
             return scenarios;
@@ -245,7 +506,7 @@ public sealed class SuiteLoader
                 SuiteValidator.Warning(
                     "suite.scenarios.empty",
                     null,
-                    $"Suite '{sourceName}' declares no scenarios, so a run against it would prove nothing."
+                    $"Suite '{sourceLabel}' declares no scenarios, so a run against it would prove nothing."
                 )
             );
         }
@@ -361,6 +622,14 @@ public sealed class SuiteLoader
     /// the guard exists to keep it out of. It sanitised the value it was warned about and printed
     /// an unsanitised one immediately next to it. <b>Reasoning did not catch that; running it and
     /// reading the real output did.</b> If you add a finding here, read what it actually prints.
+    /// </para>
+    /// <para>
+    /// <b>The suite path is now structurally out of reach of a finding.</b> Every message is
+    /// composed from a <c>sourceLabel</c> that was reduced before it was passed down, and the
+    /// unreduced path is carried separately to <see cref="SuiteLoadResult.SourcePath"/>. That is
+    /// deliberate: the previous shape kept the raw path in scope everywhere a finding was written,
+    /// so the fix for one site left the next one an identical trap. If you need to name the suite
+    /// in a new finding, use the label you were given — there is no path in scope to reach for.
     /// </para>
     /// <para>
     /// A position is still enough to act on, which is the point: a refusal a reader cannot act on
@@ -508,6 +777,9 @@ public sealed class SuiteLoader
 
     private static SuiteLoadResult Failed(string code, string message) =>
         new() { Messages = [SuiteValidator.Error(code, null, message)] };
+
+    /// <summary>What a finding calls a source that reduced to nothing printable.</summary>
+    private const string UnnamedSource = "<unnamed>";
 
     private static string? ReadString(JsonNode? node) =>
         node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
