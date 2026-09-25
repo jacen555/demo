@@ -71,6 +71,9 @@ internal sealed record RunRequest
     /// <summary>Gets the artifact destination as supplied, or <see langword="null"/>.</summary>
     public string? Out { get; init; }
 
+    /// <summary>Gets the Markdown comparison report destination as supplied, or <see langword="null"/>.</summary>
+    public string? ReportMarkdown { get; init; }
+
     /// <summary>Gets whether replacing an existing artifact was opted into.</summary>
     public bool Overwrite { get; init; }
 
@@ -145,6 +148,18 @@ internal sealed record RunPlan
 
     /// <summary>Gets the canonical path the artifact would be written to, or <see langword="null"/>.</summary>
     public string? ArtifactPath { get; init; }
+
+    /// <summary>
+    /// Gets the canonical path the Markdown comparison report would be written to, or
+    /// <see langword="null"/> when none was asked for.
+    /// </summary>
+    /// <remarks>
+    /// Never set without a baseline. A comparison report with nothing to compare against would
+    /// print a heading and a count of zero beside it, and a reader takes a zero under
+    /// "Regressions" for a finding rather than for an absence of evidence — so the invocation is
+    /// refused at argument time instead.
+    /// </remarks>
+    public string? MarkdownReportPath { get; init; }
 
     /// <summary>Gets whether replacing an existing artifact was opted into.</summary>
     public bool OverwriteArtifact { get; init; }
@@ -306,6 +321,10 @@ internal sealed record RunPlan
             ? null
             : guard.ResolveOutputFile(request.Out, request.Overwrite, "--out", "--overwrite");
 
+        var markdown = request.ReportMarkdown is null
+            ? null
+            : guard.ResolveOutputFile(request.ReportMarkdown, request.Overwrite, "--report-markdown", "--overwrite");
+
         if (updating)
         {
             RefuseRunOnlyOptions(request);
@@ -364,6 +383,7 @@ internal sealed record RunPlan
         }
 
         RefuseUnpairableBaselines(baseline, artifact, endpoint, baselineEndpoint, requiresEndpoint);
+        RefuseUnreportableComparisons(markdown, baseline, baselineEndpoint, artifact);
 
         return new RunPlan
         {
@@ -371,6 +391,7 @@ internal sealed record RunPlan
             RootDirectory = guard.Root,
             BaselinePath = baseline,
             ArtifactPath = artifact,
+            MarkdownReportPath = markdown,
             OverwriteArtifact = request.Overwrite,
             RootSeed = request.Seed,
             MaxConcurrency = request.MaxConcurrency,
@@ -477,9 +498,89 @@ internal sealed record RunPlan
         }
     }
 
+    /// <summary>
+    /// Refuses a comparison report that would have nothing to report, or somewhere unsafe to go.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A report with no baseline is refused rather than written empty.</b> The document is a
+    /// comparison: its headings are "Regressions", "Newly covered", "Not comparable". Rendered
+    /// with nothing to compare against, every one of them carries a zero — and a reader who sees
+    /// zero under "Regressions" reads it as a finding, not as the absence of an examination.
+    /// That is a green check over an unexamined change, posted where the most people will see it,
+    /// so the invocation stops here instead.
+    /// </para>
+    /// <para>
+    /// <b>The report may never be the artifact, and may never be the baseline.</b> The JSON is the
+    /// durable evidence and the only thing a later comparison is made against; the Markdown is a
+    /// rendering of it that nothing reads back. Writing one over the other would replace evidence
+    /// with a view of it, and in the baseline's case the next run would refuse to compare at all
+    /// — with the original gone. Refused even under <c>--overwrite</c>, because that opt-in is
+    /// about replacing a stale report, not about destroying the record.
+    /// </para>
+    /// </remarks>
+    private static void RefuseUnreportableComparisons(
+        string? markdown,
+        string? baseline,
+        Uri? baselineEndpoint,
+        string? artifact
+    )
+    {
+        if (markdown is null)
+        {
+            return;
+        }
+
+        if (baseline is null && baselineEndpoint is null)
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                "--report-markdown was given but no baseline was, so there would be nothing to compare and nothing "
+                    + "to report.",
+                "Nothing was executed. The report is a comparison: written with no baseline it would print a zero "
+                    + "under every heading, and a zero under \"Regressions\" reads as a finding rather than as an "
+                    + "unexamined change. Pass --baseline <path> or --baseline-endpoint <url> as well."
+            );
+        }
+
+        if (artifact is not null && string.Equals(markdown, artifact, PathComparison))
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"--report-markdown and --out name the same file: {artifact}",
+                "Nothing was executed. The JSON artifact is the durable evidence a later comparison is made "
+                    + "against; the Markdown is a rendering of it that nothing reads back. Give --report-markdown a "
+                    + "different destination."
+            );
+        }
+
+        if (baseline is not null && string.Equals(markdown, baseline, PathComparison))
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"--report-markdown and --baseline name the same file: {baseline}",
+                "Nothing was executed. Writing the report over the baseline would destroy the artifact this run was "
+                    + "compared against, and the next run would have nothing to compare to. Give --report-markdown "
+                    + "a different destination."
+            );
+        }
+    }
+
     /// <summary>Refuses the options that belong to <c>run</c> and must not reach a baseline update.</summary>
     private static void RefuseRunOnlyOptions(RunRequest request)
     {
+        if (request.ReportMarkdown is not null)
+        {
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                "--report-markdown is not an option of `baseline update`: that command replaces a baseline rather "
+                    + "than reporting a change for review.",
+                "The report describes what a change did to a suite against the baseline it is being judged "
+                    + "against. A baseline update has no such reading — its comparison exists to preview what the "
+                    + "replacement would move. Use `eval-cli run --baseline ... --report-markdown` instead."
+            );
+        }
+
         if (request.Out is not null)
         {
             throw new EvalCliException(

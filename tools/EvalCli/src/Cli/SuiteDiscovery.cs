@@ -156,7 +156,10 @@ internal static class SuiteDiscovery
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
-    /// <exception cref="EvalCliException">A baseline was named and could not be read.</exception>
+    /// <exception cref="EvalCliException">
+    /// A baseline was named and could not be read, or carries an identifier that is a path on
+    /// somebody's machine. Both are refusals with a code, never a silent absence.
+    /// </exception>
     /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
     public static async Task<SuiteResult?> LoadBaselineAsync(
         ArtifactBaseline baselines,
@@ -177,6 +180,25 @@ internal static class SuiteDiscovery
         try
         {
             baseline = await baselines.TryGetBaselineAsync(reference, cancellationToken).ConfigureAwait(false);
+        }
+        catch (UnsafeIdentifierException refusal)
+        {
+            // A refusal the engine made on purpose, not a failure to read. Caught ahead of the
+            // filter below and given its own message, because the two mean different things to
+            // whoever has to act: that one says regenerate the file, this one says rename an
+            // identifier in the suite first — regenerating alone would write the same value back.
+            //
+            // The offending value is deliberately not repeated. The engine withheld it because
+            // this message reaches standard error and from there the build log, and a tool that
+            // re-prints it there has moved the disclosure rather than removed it (§V).
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"--baseline names an artifact whose {Located(refusal)} is a path on somebody's machine: {reference}",
+                "Nothing was executed. Rename the identifier in the suite, regenerate the baseline from a run, and "
+                    + "commit the replacement. The value itself is not repeated here because this message is written "
+                    + "to the build log. An artifact that cannot be read back safely is not the same as no baseline, "
+                    + "and must not be treated as one."
+            );
         }
         catch (Exception exception)
             when (exception
@@ -207,4 +229,19 @@ internal static class SuiteDiscovery
 
         return baseline;
     }
+
+    /// <summary>
+    /// Names where in the artifact a refused identifier sits, without naming the identifier.
+    /// </summary>
+    /// <param name="refusal">The engine's refusal.</param>
+    /// <returns>Something like <c>scenarioId at scenario #3</c>.</returns>
+    /// <remarks>
+    /// A field and a position are enough for a reader to find the entry in a file they already
+    /// have, and are the most that can be said without re-printing the value the engine withheld.
+    /// The fallback covers a refusal constructed without them: <c>"identifier"</c> is vaguer than
+    /// this would like, and still better than a message that names nothing at all.
+    /// </remarks>
+    private static string Located(UnsafeIdentifierException refusal) =>
+        (refusal.Field ?? "identifier")
+        + (refusal.Position is { } position ? $" at scenario {position}" : string.Empty);
 }

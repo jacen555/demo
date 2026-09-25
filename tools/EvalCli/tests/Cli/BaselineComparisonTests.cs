@@ -438,6 +438,9 @@ public class BaselineComparisonTests
         {
             Mechanism = BaselineMechanism.Artifact,
             Reference = "artifacts/baseline.json",
+            ReferenceIdentity = ReportIdentity.ForSegments(["artifacts", "baseline.json"]),
+            Baseline = ReportFixture.Artifact(ReportFixture.Ungradeable(ComparisonWorkspace.Checkout)),
+            Candidate = ReportFixture.Artifact(ReportFixture.Scenario(ComparisonWorkspace.Checkout, 1, 1)),
             Result = new ComparisonResult
             {
                 SuiteName = "regression",
@@ -744,6 +747,12 @@ public class BaselineComparisonTests
         {
             Mechanism = BaselineMechanism.Artifact,
             Reference = "artifacts/baseline.json",
+            ReferenceIdentity = ReportIdentity.ForSegments(["artifacts", "baseline.json"]),
+            Baseline = ReportFixture.Artifact(ReportFixture.Scenario(ComparisonWorkspace.Checkout, 0, 1)),
+            Candidate = ReportFixture.Artifact(
+                ReportFixture.Scenario(ComparisonWorkspace.Checkout, 1, 1),
+                ReportFixture.Scenario("flaky", 1, 1)
+            ),
             Result = new ComparisonResult
             {
                 SuiteName = "regression",

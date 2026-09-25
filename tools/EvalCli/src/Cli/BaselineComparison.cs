@@ -38,8 +38,61 @@ internal sealed record ComparisonOutcome
     /// <summary>Gets the reference the baseline came from — a path, or a redacted address.</summary>
     public required string Reference { get; init; }
 
+    /// <summary>
+    /// Gets the value that distinguishes this baseline from another one, for a consumer that
+    /// needs an identity rather than something to print.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><see cref="Reference"/> is a display string and must not be used as an identity.</b> For
+    /// a live baseline it is the <i>redacted</i> address, so <c>https://host/main</c> and
+    /// <c>https://host/release</c> are the same text — two different deployments that a consumer
+    /// keying on it would treat as one. Redaction is a §V control on what may be printed; telling
+    /// two baselines apart is a correctness concern, and the two must not share a value.
+    /// </para>
+    /// <para>
+    /// For a live baseline this is scheme, host, port, and path — the same notion of "a different
+    /// deployment" that <see cref="RunPlan"/> already refuses a self-comparison on, so the two
+    /// rules cannot disagree about what counts as one system. The query string and the fragment
+    /// are absent because <see cref="EndpointGuard.ValidateBaselineReference"/> refuses an address
+    /// carrying either.
+    /// </para>
+    /// <para>
+    /// <b>This is never printed.</b> It exists to be hashed. A caller that renders it would
+    /// reintroduce exactly the disclosure redaction exists to prevent.
+    /// </para>
+    /// </remarks>
+    public required ReportIdentity ReferenceIdentity { get; init; }
+
     /// <summary>Gets what the comparator found.</summary>
     public required ComparisonResult Result { get; init; }
+
+    /// <summary>Gets the baseline artifact the comparison was actually made against.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Carried rather than re-read, and required rather than optional.</b> This is not the
+    /// artifact a caller handed in: the committed one is narrowed to what this run conducted, and
+    /// a live baseline is produced here. Only this type knows which artifact the comparator
+    /// actually saw, and a reporter that went back to the file would show rates drawn from
+    /// scenarios the comparison never included.
+    /// </para>
+    /// <para>
+    /// Required because <see cref="ComparisonResult"/> carries no pass rates and no confidence
+    /// intervals — those live on <see cref="ScenarioResult.Summary"/> in the two artifacts. A
+    /// nullable member here would let a report render a comparison with the denominators
+    /// silently missing, and a rate with no <c>n</c> beside it is the shape this report exists to
+    /// refuse.
+    /// </para>
+    /// </remarks>
+    public required SuiteResult Baseline { get; init; }
+
+    /// <summary>Gets the candidate artifact this run produced.</summary>
+    /// <remarks>
+    /// Also where the harness settings are read from, including the confidence level the
+    /// intervals were computed at — <see cref="ConfidenceInterval"/> has nowhere to carry one,
+    /// and a report that assumed 95% would state a level the run may not have used.
+    /// </remarks>
+    public required SuiteResult Candidate { get; init; }
 
     /// <summary>
     /// Gets the scenarios withheld from the comparison because this run did not conduct them.
@@ -136,7 +189,7 @@ internal static class BaselineComparison
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var (mechanism, reference, baseline, withheld) = plan.BaselineEndpoint is not null
+        var (mechanism, reference, identity, baseline, withheld) = plan.BaselineEndpoint is not null
             ? await LiveAsync(provider, plan, conducted, cancellationToken).ConfigureAwait(false)
             : Artifact(plan, artifactBaseline, skipped);
 
@@ -153,7 +206,10 @@ internal static class BaselineComparison
         {
             Mechanism = mechanism,
             Reference = reference,
+            ReferenceIdentity = identity,
             Result = comparison,
+            Baseline = baseline,
+            Candidate = candidate,
             WithheldScenarios = withheld,
         };
     }
@@ -297,18 +353,25 @@ internal static class BaselineComparison
     private static (
         BaselineMechanism Mechanism,
         string Reference,
+        ReportIdentity Identity,
         SuiteResult? Baseline,
         IReadOnlyList<string> Withheld
     ) Artifact(RunPlan plan, SuiteResult? baseline, IReadOnlyList<string> skipped)
     {
         if (plan.BaselinePath is not { } reference || baseline is null)
         {
-            return (BaselineMechanism.None, string.Empty, null, []);
+            return (BaselineMechanism.None, string.Empty, default, null, []);
         }
 
         if (skipped.Count == 0)
         {
-            return (BaselineMechanism.Artifact, reference, baseline, []);
+            return (
+                BaselineMechanism.Artifact,
+                reference,
+                ReportIdentity.ForPath(plan.RootDirectory, reference),
+                baseline,
+                []
+            );
         }
 
         var withheld = skipped.ToHashSet(StringComparer.Ordinal);
@@ -320,6 +383,7 @@ internal static class BaselineComparison
         return (
             BaselineMechanism.Artifact,
             reference,
+            ReportIdentity.ForPath(plan.RootDirectory, reference),
             baseline with
             {
                 ScenarioResults =
@@ -347,6 +411,7 @@ internal static class BaselineComparison
     private static async Task<(
         BaselineMechanism Mechanism,
         string Reference,
+        ReportIdentity Identity,
         SuiteResult? Baseline,
         IReadOnlyList<string> Withheld
     )> LiveAsync(IServiceProvider provider, RunPlan plan, Suite conducted, CancellationToken cancellationToken)
@@ -401,6 +466,6 @@ internal static class BaselineComparison
                 "No baseline is not the same as no regression, so this stops rather than reporting a clean "
                     + "comparison it never made."
             )
-            : (BaselineMechanism.LiveEndpoint, reference, baseline, []);
+            : (BaselineMechanism.LiveEndpoint, reference, ReportIdentity.ForAddress(endpoint), baseline, []);
     }
 }

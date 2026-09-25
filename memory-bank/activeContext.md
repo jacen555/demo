@@ -1,6 +1,6 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-09-23
+> **Last updated:** 2026-09-24
 
 ## Current focus
 
@@ -18,12 +18,36 @@ planner → builder → cross-family reviewer → iterate.
 | T5 deterministic caller | done | 597 |
 | T6 REST runner + MCP stub | done | 694 |
 | T7 LLM runner, caller, `ILlmClient` seam | done | 824 |
-| **T8 coordinator + `Ui` kind stub** | **in flight** | — |
-| T9–T15 | not started | — |
+| T8 coordinator + `Ui` kind stub | done | 1049 |
+| T9 aggregator + statistics seam | done | 1263 |
+| T10 comparator + baseline providers | done | 1421 |
+| T11 impacted-selection matcher | done | 1527 |
+| T12 CLI skeleton | done | 244 (cli) |
+| T13 discovery + selection wiring | done | 282 (cli) |
+| T14 artifacts + baseline comparison | done | 308 (cli) |
+| T14a coverage withholding (engine) | done | 1545 |
+| T14b CLI pass-through | done | 313 (cli) |
+| **T15a PR comparison report** | **in flight** | — |
+| T15b trend report | not started | — |
+| T16 ADR 0004, T17 memory bank | not started | — |
 
-Remaining: aggregator + statistics seam (T9), comparator + baseline providers (T10),
-impacted-selection matcher (T11), CLI skeleton/wiring/artifacts (T12–T14), the two reports
-(T15), ADR (T16), memory-bank update (T17).
+**Repo-wide green: 1545 engine + 313 CLI = 1858.** Commits `ac6ff11`, `8f52efa`, `fe65696`.
+
+Remaining: the Markdown PR report (T15a) and the trend report (T15b), ADR 0004 (T16),
+and the final memory-bank pass (T17).
+
+## Decisions taken during the build
+
+- **`eval-cli` emits report files; CI posts them.** No GitHub API, no token, no network in
+  the tool — §V stays simple and the harness works outside GitHub.
+- **A suite cannot assert on a `3xx`.** Redirects are raised as failed requests, because a
+  3xx left standing grades as an answer — and against a redirecting *baseline* address that
+  marks every scenario `Fixed` and prints "newly covered: everything". See
+  `RedirectRefusingHandler`. Revisit as a new scenario kind if redirect assertions are ever
+  needed; do not loosen the transport.
+- **Per-scenario attribution for `NewlyCoveredWithheldReason` is deferred to T15a**, where
+  the requirement becomes concrete. If the report needs it, it is a Tier 1 engine change.
+- **§I was amended** so a domain's `README.md` belongs to its domain (`fe65696`).
 
 ## The design idea everything rests on
 

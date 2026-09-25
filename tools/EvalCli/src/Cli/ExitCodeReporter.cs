@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.IO;
 using System.Globalization;
 using Forge.EvalEngine.Comparison;
+using Forge.EvalEngine.Serialization;
 
 namespace Forge.EvalCli.Cli;
 
@@ -17,6 +18,13 @@ namespace Forge.EvalCli.Cli;
 /// <para>
 /// Diagnostics go to stderr. A caller that is piping the machine-readable result into another
 /// process still sees the error, and the result stream stays clean.
+/// </para>
+/// <para>
+/// <b>A stack trace is printed for one outcome only: a defect.</b> Frames carry the checkout
+/// directory and the source layout of the machine that built the tool, so dumping them for a
+/// refusal the engine made on purpose discloses exactly what that refusal was protecting — and
+/// tells the user to report working software as a bug. Every deliberate refusal is classified
+/// before it can reach that branch (§V).
 /// </para>
 /// </remarks>
 internal static class ExitCodeReporter
@@ -39,6 +47,7 @@ internal static class ExitCodeReporter
             EvalCliException refusal => refusal.ExitCode,
             OperationCanceledException => ExitCode.Interrupted,
             ComparisonRefusedException => ExitCode.ComparisonRefused,
+            UnsafeIdentifierException => ExitCode.UsageError,
             _ => ExitCode.UnexpectedError,
         };
     }
@@ -75,6 +84,11 @@ internal static class ExitCodeReporter
             console.Error.WriteLine($"          {remedy}");
         }
 
+        if (exception is UnsafeIdentifierException refused)
+        {
+            console.Error.WriteLine($"          {Located(refused)}");
+        }
+
         if (code == ExitCode.UnexpectedError)
         {
             // A defect in this tool rather than a refusal it meant to make. The stack is the only
@@ -87,4 +101,31 @@ internal static class ExitCodeReporter
 
         return code;
     }
+
+    /// <summary>
+    /// Says where a refused identifier sits and what to do about it, without repeating it.
+    /// </summary>
+    /// <param name="refusal">The engine's refusal.</param>
+    /// <returns>The line that follows the message.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>No path in this build reaches here.</b> Every stage that reads a durable artifact knows
+    /// which argument named it and turns the refusal into an <see cref="EvalCliException"/> that
+    /// says so — see <see cref="SuiteDiscovery.LoadBaselineAsync"/>. What matters is the arm in
+    /// <see cref="Classify"/> above it: it keeps this type out of the stack-trace branch no matter
+    /// which stage throws it, and a classification with no message behind it would report a
+    /// refusal as a bare code. This is that message, and it is exercised directly by test rather
+    /// than left as protection nothing can demonstrate.
+    /// </para>
+    /// <para>
+    /// The field and the position are the most that can be said. The engine withheld the value on
+    /// purpose, and re-deriving it here would move the disclosure rather than remove it.
+    /// </para>
+    /// </remarks>
+    private static string Located(UnsafeIdentifierException refusal) =>
+        "Refused rather than read: the artifact's "
+        + (refusal.Field ?? "identifier")
+        + (refusal.Position is { } position ? $" at scenario {position}" : string.Empty)
+        + " names a machine. Rename it in the suite and regenerate the artifact. The value is not repeated here, "
+        + "because this message is written to the build log.";
 }

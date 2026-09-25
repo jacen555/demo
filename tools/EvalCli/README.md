@@ -43,7 +43,8 @@ Planned run - dry run, nothing was executed.
   root              C:\repo
   baseline          (none)
   artifact          (none) - no --out, so nothing would be written
-  overwrite         refused - an existing artifact at --out would stop the run
+  report markdown   (none) - no --report-markdown, so no pull-request report would be written
+  overwrite         refused - an existing file at --out or --report-markdown would stop the run
   root seed         0
   max concurrency   1
   max total runs    100000
@@ -239,6 +240,226 @@ suite runs even when `--changed-since` narrows nothing away. That is deliberate:
 costs time, and the alternative is a scenario retired on evidence nobody has. It also means the
 suite is conducted **twice**, once against each address — the dry run says so before you spend it.
 
+## The pull-request report
+
+`--report-markdown <path>` writes the comparison as a Markdown file for attaching to a pull
+request — testing evidence in the same sense as a green integration-test run, except that **what
+the change newly covered leads it**, because that is the thing a test suite on its own cannot show
+you.
+
+**This tool writes a file. CI posts it.** There is no GitHub API here, no token, and no network —
+which keeps §V simple and keeps the harness usable outside GitHub.
+
+```powershell
+dotnet run --project tools/EvalCli/src -- run --suite eval-suites/regression.json --root . `
+    --endpoint http://localhost:8787/evaluate --rest-exchange json `
+    --baseline artifacts/baseline.json --out artifacts/candidate.json `
+    --report-markdown artifacts/report.md
+```
+
+```markdown
+<!-- eval-cli:report:ccf334d37370a05d -->
+## Evaluation report — `checkout-regression`
+
+> **Newly covered: 1 observed, 0 judged significant.** Regressions: 1 observed, 0 judged significant. Compared: 3 scenario(s). Not comparable: 0. Coverage claims withheld: 1. Unchanged: 1.
+
+### Regressions (1)
+
+Passed under the baseline and does not pass under this change. **An observed transition is not by itself a confirmed regression.** Of 1 here, 0 were judged significant against the run's significance level, 1 were tested and not judged significant, and 0 carried no test at all. Read the `n` and the adjusted p-value on each entry before acting.
+
+- `checkout` — passed under the baseline and now records failed.
+  - Pass rate: 100% (n=5, 95% Wilson CI 56.6%-100%) -> 0% (n=5, 95% Wilson CI 0%-43.4%)
+  - Change: -100 points over 5 graded repetition pair(s). p=0.063, benjamini-hochberg adjusted p=0.063 — judged not significant against the run's significance level.
+```
+
+The sections run in severity order — **regressions, newly covered, not comparable, withheld from
+coverage, new scenarios that did not pass, removed, unchanged, not run by this invocation** — while
+the summary line leads with the coverage the change gained. Both orderings are deliberate: a
+reviewer acts on the regression first and *reads* the report for what the change fixed.
+
+### An observed transition is not a confirmed regression
+
+A scenario that passed five times and now fails five times is **one observation of a change**, and
+at the repetition counts an evaluation suite runs at the adjusted p-value frequently does not
+support calling it real. So the qualification is in the summary and in the section lead, not only
+in the per-entry detail: a reviewer who reads the first line and stops must not come away believing
+a regression was confirmed. The same applies to a coverage claim.
+
+### Every rate carries its `n` and its interval
+
+`80% → 90%` on ten repetitions is noise presented as a result, so a pass rate is never printed
+without the denominator it rests on and the confidence interval the run recorded:
+
+- Two or more graded repetitions: `80% (n=5, 95% Wilson CI 37.6%-96.4%)`. The method and the
+  confidence level are read out of the artifact's harness settings, never assumed — an artifact
+  that recorded no level says `confidence level not recorded` rather than claiming 95%.
+- **One graded repetition** — the ordinary case for a deterministic REST scenario — says
+  `n=1 — a single observation, so no interval is reported: one run cannot bound a rate` instead of
+  printing an interval spanning most of the unit interval as though it were a measurement.
+- **No graded repetition at all** says `no pass rate`, which is a different claim from `0%`: one
+  says the system failed, the other says nothing was ever learned about it.
+- **A summary that disagrees with its own runs is refused, not printed and not recomputed.** A
+  committed baseline is a file anyone can edit, so every figure rendered as evidence is checked
+  against the runs beside it: the denominator, the point estimate, **and the interval** — its
+  bounds recomputed from the runs, its method and its confidence level checked against the ones
+  the run recorded. An interval that was edited, deleted, or computed by another method withholds
+  the whole set of figures with the discrepancy named. The bounds shown are always the artifact's
+  own; recomputation decides only whether they may be shown.
+- **An artifact that recorded no interval settings has its bounds withheld rather than shown
+  unverified.** The rate and its denominator were still checked, so those stand.
+
+Every interval and p-value is the figure the engine computed. This report surfaces them and
+calculates none of its own.
+
+### The marker, so CI replaces one comment instead of spamming a thread
+
+The first line is `<!-- eval-cli:report:<id> -->`. The id is a SHA-256 over **the complete suite
+path relative to `--root` and the baseline's identity**, truncated to sixteen hex characters — so a
+CI step can find its previous comment and replace it:
+
+```powershell
+$report = Get-Content artifacts/report.md -Raw
+$marker = ($report -split "`n")[0]
+$existing = gh pr view $PR --json comments --jq ".comments[] | select(.body | startswith(""$marker"")) | .id"
+# ... update $existing if there is one, otherwise create
+```
+
+**The identity is a separate type from the display string**, and that is the point. `ReportIdentity`
+can only be built from a root and a path, or from a `Uri` — there is no factory that takes the
+redacted text, so wiring the wrong one is a compile error rather than a convention somebody has to
+remember. Clipping a long path and redacting an address are presentation controls: feeding either
+into the marker makes two distinct reports hash to one identity, and the second then silently
+replaces the first — a §V control corrupting a §IV correctness property. For a live baseline the
+identity is the *unredacted* scheme, host, port and path, which is the same notion of "a different
+deployment" that `--baseline-endpoint` already refuses a self-comparison on. Neither value is ever
+printed.
+
+**The encoding is injective**, which is the property the marker actually needs — "unclipped and
+unredacted" was only the instance. Each path segment is percent-encoded before the segments are
+joined, so a Linux file genuinely named `a\b.json` cannot collide with `b.json` inside `a`; and the
+two inputs are length-prefixed rather than delimited, so `("a/b", "c")` and `("a", "b/c")` stay
+distinct. A lossy step *inside* the hash collides two inputs just as surely as one outside it.
+
+What else is **in** and **out** is equally deliberate:
+
+- **Out: everything the run found.** Counts, classifications, and scenario fingerprints all change
+  as a pull request evolves — a marker derived from them would post a new comment on every push,
+  which is the behaviour it exists to prevent.
+- **Out: the containment root.** A build agent's checkout is somewhere else than a developer's, so
+  an absolute path would make CI post a second comment rather than update the one already there.
+  Separators are normalised for the same reason.
+- **In: the baseline.** The same suite compared against trunk and against a release branch is two
+  different claims, and a shared marker would have the second silently replace the first.
+
+### Truncation is deterministic, and it says so
+
+GitHub refuses a comment over **65,536 characters**, and the reports this was generalised from
+reached 19 MB. So the document is fitted to the limit, and **never quietly**:
+
+- The frame is paid for first — every heading, every standing explanation, the footer, and a
+  worst-case omission notice per section. **A budget that cannot hold the frame is refused**, so
+  "no section can be truncated out of existence" is a property of every report that renders rather
+  than of the inputs that happened to be small enough. The real 65,536 always holds it.
+- What remains is allocated as a **strict prefix in severity order**. The first entry that does not
+  fit ends the allocation for the whole document rather than skipping ahead to a shorter one lower
+  down, so the budget cannot end up spent on removals while a regression goes unnamed.
+- A truncated section keeps its **true total** in the heading and states what it dropped:
+  `145 of 300 shown — 155 omitted to fit the comment limit.` A section that could show nothing
+  still renders, with the same notice. **A silently shortened list is a refusal rendering as an
+  absence**, which is the failure this whole report is designed against.
+- **The recovery pointer is truthful.** `--report-markdown` does not require `--out`, and where no
+  JSON artifact was written the notice says so — *"There is no fuller record… Re-run with `--out`
+  to keep them"* — rather than directing a reader to a file that does not exist.
+- The same comparison and the same budget always produce byte-identical output.
+
+### What it will not print
+
+- **"No regressions" is not printable when nothing was compared.** The empty form of that section
+  is chosen on the number of pairs actually diffed, not on the number that regressed — a zero
+  drawn from nothing examined is not a finding, and the report says `Nothing was compared` instead.
+- **`--report-markdown` without a baseline is refused at argument time** (exit `1`). Rendered with
+  nothing to compare against, every heading would carry a zero, and a zero under "Regressions"
+  reads as a finding rather than as an unexamined change.
+- **No file is written when the comparison is refused.** The run exits `4` and says why on stderr.
+  A Markdown file whose contents could only be the refusal would still be posted and read, and a
+  reader who sees a comment stops looking for the failed step above it.
+- **No absolute path reaches the document.** Every path is stated relative to `--root`. Separately,
+  an *unmistakable machine path* appearing in a **suite name or scenario id** — free text the suite
+  author controls — is replaced with `[path-redacted:<digest>]`, along with the remainder of that
+  value: nothing in the text distinguishes a space inside a path from one after it, and a partial
+  redaction leaving half an account name is worse than losing a trailing word. **The alias is a
+  stand-in, not concealment**: the digest is unkeyed, so a guessable path is confirmable by anyone
+  who tries. What it buys is that two different paths do not collapse into one indistinguishable
+  string, and the renderer refuses outright if two ever share an alias.
+
+  **This is a safety net, not the control, and it is deliberately narrow.** The control is
+  `Forge.EvalEngine`, which refuses a machine path in an identifier at *suite load* and at
+  *artifact read-back* — the layer that can tell the author to rename the value instead of the
+  report mangling it on every push forever. This net catches what gets past that: an artifact
+  written by an older build, and any gap that guard turns out to have.
+
+  | | |
+  |---|---|
+  | **Redacted** | a path under `home`, `Users`, `root`, `var`, `tmp`, `mnt`, `opt`, or `srv` with a segment beneath it (`/home/ci-user/repo`, `//home/ci-user/repo`, `checkout path:/home/ci-user/repo`); a drive letter with a separator (`C:\Users\someone`, `D:/build/x`); a UNC host (`\\build-host\share`); anything behind a colon that does **not** open an absolute URL (`https:///home/ci-user/repo`, `file://home/ci-user/repo`, `foo-https://home/ci-user/repo`) |
+  | **Verbatim** | every route-shaped identifier — `/api/v1/refund`, `/orders/{id}/refund`, `/users/42`, `/media/upload`, `/workspace/42` — and absolute URLs, including one whose authority is spelled like a system root (`https://home/dashboard`, `HTTPS://home/dashboard`, `ws://home/events`) |
+  | **Not caught** | a machine path under any other root (`/workspace/ci-user/repo`, `/data/…`); a relative or tilde path (`ci-user/repo`, `~/repo`); UNC with forward slashes (`//host/share`, indistinguishable from a protocol-relative URL); a drive letter with no separator (`C:work`, indistinguishable from `X:12`); a path in the *path* of a URL (`https://example.com/home/dashboard`) |
+
+  **A colon is read as an address only when it opens an absolute URL** — a scheme from a closed set
+  (`http`, `https`, `ws`, `wss`), then `//`, then a **non-empty** authority. All three requirements
+  are positive, and each is load-bearing: `https:///home/ci-user/repo` fails the third and is a
+  path; `file://` is absent from the set because a `file://` URL *is* a machine path; and the
+  scheme is the whole run of RFC 3986 §3.1 scheme characters before the colon, so
+  `foo-https://home/ci-user/repo` has the scheme `foo-https` and is a path. Schemes are matched
+  case-**insensitively** per RFC 3986 §3.1 — deliberately unlike the engine's request-method
+  exemption, which RFC 9110 §9.1 defines as case-sensitive. Two specifications, not two
+  conventions.
+
+  The earlier rule matched *any* rooted path of two or more segments. That shape cannot tell
+  `/home/ci-user/repo` from `/orders/{id}/refund`, so it destroyed legitimate route identifiers on
+  every push while still leaking `checkout path:/home/ci-user/repo` — it excluded `:` from its
+  lookbehind to protect `https://`. A heuristic that mangles good data and misses bad data is worse
+  than a narrow one that admits what it cannot see, so the net was narrowed rather than broadened a
+  fifth time. **Every hole this rule has ever had came from writing it as an exclusion** — `//home`,
+  `path:/`, `path:///`, quoted, spaced — each fix correct about the case in front of it and silent
+  about the next variant. If a new variant appears, restate what the rule admits; do not add
+  another thing for it to skip. It is also **stricter than the engine in one place**: the engine
+  exempts a leading request method so `GET /home/dashboard` loads, and this redacts it — a net that
+  copies the control's exemptions inherits its blind spots, and a false positive here costs one
+  heading while the JSON artifact still carries the value verbatim.
+- **Nothing author-supplied can forge the document.** Scenario identifiers are escaped into code
+  spans that survive backticks, line breaks are flattened, an HTML comment delimiter inside an
+  identifier is visibly replaced — otherwise a suite author could plant a second marker and send a
+  find-and-replace at the wrong comment — and free-form prose such as a refusal reason is HTML- and
+  Markdown-escaped so it renders as text rather than as structure.
+
+**The JSON artifact stays the durable record.** The Markdown is a rendering of it: never a
+baseline, never an input, never read back, and never compared against. `--report-markdown` is
+refused if it names the same file as `--out` or as `--baseline`, the second even with
+`--overwrite` — that opt-in is for replacing a stale report, not for destroying evidence.
+
+### Every number comes from one accounting
+
+The summary, the section headings, the section bodies and the footer all read a single partition
+of the comparison. Nothing counts anything twice, so no two of them can disagree — and the footer
+prints the arithmetic so a reader can check it:
+
+```
+**Accounting** — 1 regressed + 1 newly covered + 0 not comparable + 1 withheld + 1 new and not passing + 1 removed + 1 unchanged = 6 of 6 scenario entries in the comparison.
+```
+
+Every scenario the comparator reported lands in exactly one section. **The catch-all is
+deliberately not a term on the left of that equation**: with it there the sum balances however the
+partition behaves, and a check that cannot fail is not protection against a scenario falling
+between two sections. Excluded, a shortfall in the left-hand total *is* the warning, and it names
+how many entries reached no classified section.
+
+A section that lists scenarios takes its heading count **from a snapshot of its own entries** —
+there is no way to supply a different one, and no way for the caller to change the list afterwards
+— and the single section whose count is deliberately not an entry count is a different
+construction whose prose is derived from that same figure. Requiring a number only obliges a
+caller to supply one; deriving it from a copy nobody else holds is what makes a heading that
+contradicts its body unwritable.
+
 ## Updating a committed baseline
 
 This is the one genuinely destructive thing this tool does, and it lives in its own command.
@@ -355,7 +576,8 @@ other interruption, but it does **not** claim nothing was written — it names t
 | `--baseline <path>` | none | A committed baseline artifact to compare against. Read only; never modified. Also tells [selection](#selection-is-opt-in) which scenarios there is evidence to skip. |
 | `--baseline-endpoint <url>` | none | Conduct the suite against this address and compare the candidate to that run. Must differ from `--endpoint`, may not carry a query string or a fragment, needs an exchange, and conducts the suite twice. Mutually exclusive with `--baseline`. |
 | `--out <path>` | none | Where the run artifact would be written. **Omit it and nothing is written at all.** May not be the same file as `--baseline`. |
-| `--overwrite` | off | Opt in to replacing an existing file at `--out`. Without it, an existing file stops the run. |
+| `--report-markdown <path>` | none | Where to write the [Markdown comparison report](#the-pull-request-report) for a pull request. Needs a baseline; refused without one. May not be the same file as `--out` or `--baseline`. This tool writes the file and never posts it. |
+| `--overwrite` | off | Opt in to replacing an existing file at `--out` or `--report-markdown`. Without it, an existing file stops the run. Never permits replacing `--baseline`. |
 | `--seed <n>` | `0` | The root seed. Fixed, not random: a baseline and a candidate must share it for the comparison to be paired. |
 | `--max-concurrency <n>` | `1` | Hard ceiling on runs in flight. Load on somebody else's system is opted into. |
 | `--max-total-runs <n>` | `100000` | Ceiling on the runs a suite may plan, so a mistyped repetition count is refused rather than executed. |
@@ -466,9 +688,9 @@ its own adapter.
 
 - **The default invocation writes nothing and mutates nothing.** There is no flag combination in
   this build that deletes anything.
-- The only write `run` performs is `--out`, and an existing file there is refused unless
-  `--overwrite` is passed as well. The refusal happens before anything runs, so it costs nothing
-  and leaves the file exactly as it was.
+- The only writes `run` performs are `--out` and `--report-markdown`, and an existing file at
+  either is refused unless `--overwrite` is passed as well. The refusal happens before anything
+  runs, so it costs nothing and leaves the file exactly as it was.
 - **Nothing is written through a truncating open, by either command.** A run takes as long as the
   system under test does, so a destination validated before it started is evidence about a
   directory tree that has had minutes to change — a directory swapped for a link in between would
@@ -551,14 +773,14 @@ only and are never renumbered.
 | Code | Meaning |
 |---|---|
 | `0` | The run completed and nothing asked for a non-zero exit. |
-| `1` | The invocation was refused — bad argument, value, or path. This includes a `--baseline` that exists but is not a readable run artifact: the invocation named it, and a baseline that cannot be read is not the same as no baseline. |
-| `2` | The suite could not be loaded or did not validate — including a suite that declares no scenarios, which is refused before anything runs rather than reported as `0 of 0`. |
+| `1` | The invocation was refused — bad argument, value, or path. This includes a `--baseline` that exists but is not a readable run artifact: the invocation named it, and a baseline that cannot be read is not the same as no baseline. It also includes a `--baseline` that reads cleanly but carries a **machine path in one of its identifiers** — the engine refuses those on read-back, and this tool reports the field and the scenario position so the author can rename it, never the offending value itself (that message goes to the build log). |
+| `2` | The suite could not be loaded or did not validate — including a suite that declares no scenarios, which is refused before anything runs rather than reported as `0 of 0`, and a suite name, scenario id, or slicing tag carrying a machine path (`suite.name.machinePath`, `scenario.id.machinePath`), which the engine refuses at load so the author can rename it. |
 | `3` | The run could not complete — at least one run was recorded as an error (including an address that answered with a redirect), or the artifact could not be written, or the destination stopped being the file the command read. |
 | `4` | Baseline and candidate were not conducted alike, so the comparison was refused. Also produced when *any* available pair could not be compared — reported as a refusal rather than as "no regressions found", because those scenarios were not examined. |
 | `5` | A baseline was required and none was found — including one that goes away between being read and being replaced. *(No baseline is not the same as no regression.)* |
 | `10`–`19` | **Reserved for the gate.** `10` is "regressions found"; nothing produces it yet. |
 | `70` | The requested operation is not wired up in this build. |
-| `71` | An unhandled internal failure — a defect in this tool. |
+| `71` | An unhandled internal failure — a defect in this tool. **The only code that prints a stack trace**: frames carry the checkout directory and the source layout of the machine that built the tool, so a deliberate refusal never reaches this branch. |
 | `130` | Interrupted (Ctrl+C). Partial state. Nothing was written **unless the message says otherwise** — `baseline update --apply` interrupted after the replacement names the file that changed. |
 
 `0` means *the run completed and nothing asked for a non-zero exit*. It never means "the tool
@@ -589,16 +811,27 @@ widen the selection instead.
 
 ## Current state
 
-**`partial` — the suite runs and the comparison reports (T14).** Argument parsing and validation,
-the exit-code contract, `--help`, `--dry-run`, `--json`, suite discovery and validation,
-impacted-scenario selection, the run itself, artifact writing, both baseline mechanisms, the
-comparison and its refusals, and `baseline update` are complete and tested. Deliberately not here
-yet:
+**`partial` — the suite runs, the comparison reports, and the report is attachable (T15a).**
+Argument parsing and validation, the exit-code contract, `--help`, `--dry-run`, `--json`, suite
+discovery and validation, impacted-scenario selection, the run itself, artifact writing, both
+baseline mechanisms, the comparison and its refusals, the [Markdown pull-request
+report](#the-pull-request-report), and `baseline update` are complete and tested. Deliberately not
+here yet:
 
 - **No gate.** `--fail-on-regression` is parsed, documented, and reported, and changes nothing: a
   regression is reported, not enforced. Exit codes `10`–`19` are reserved so the gate can be added
   without renumbering. A *refused* comparison is a different thing and is already non-zero (`4`) —
   that is not the gate, it is the refusal to pretend a comparison happened.
+- **No trend report.** `--report-markdown` renders one comparison. A report across a run of
+  comparisons is a separate task.
+- **No posting.** The tool writes a file and CI attaches it. That is settled, not pending: a
+  GitHub API client here would need a token, a network, and a host, and would stop the harness
+  working anywhere else.
+- **The Markdown's `not comparable` section is unreachable from `run`.** It renders correctly and
+  is tested, but `run` refuses the whole invocation (`4`) when *any* pair comes back
+  `not-comparable`, so no report is written in the only case that would populate it. The section
+  exists because `ComparisonResult` can carry the classification and because a future reporting
+  path — `baseline update`, or a report written alongside a refusal — would.
 - **No MCP or UI runner.** The engine's `NotImplementedMcpRunner` and `NotImplementedUiRunner` are
   registered, so a mixed suite still routes and the gap is recorded as a harness failure.
 - **One built-in exchange shape, and no credentials.** `json` is the only adapter this build has,

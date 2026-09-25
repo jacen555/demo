@@ -23,8 +23,8 @@
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
 | `sizzlecraft` | tool (`node`) | 2 | `partial` | 13 passing | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. |
-| `eval-engine` | lib | 1 | `partial` | 309 passing | Generic eval harness contracts/seams/serialization (T3). Contracts, assertions, results, transcripts and serialization reviewed clean. **`SuiteLoader` path confinement has 3 open findings — see below.** Runners, evaluators, aggregation, comparison and reporting are T4–T15, not yet built. |
-| `eval-cli` | tool | 2 | `partial` | 1 passing | Scaffold only. Does not yet reference `eval-engine`. |
+| `eval-engine` | lib | 1 | `working` | 1545 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection. **`SuiteLoader` path confinement has 3 open findings — see below.** `Mcp` and `Ui` scenario kinds are declared stubs. |
+| `eval-cli` | tool | 2 | `working` | 313 passing | `run` and `baseline update`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text reports. Markdown PR report is T15a; trend report T15b. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -135,13 +135,14 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    complete story.
 8. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
    base SDK. Worth a spike and an ADR before the first real desktop app.
-9. **`ComparisonResult.NewlyCovered` overclaims, in the engine.** A scenario with both a
-   passing and an errored repetition is reported as newly covered: the comparator counts its
-   graded passes, but the scenario was not fully conducted. `eval-cli` withholds these at the
-   report boundary (T14 finding 8), which fixes the CLI's output and nothing else — the
-   origin is `libs/EvalEngine`, and **every other `SuiteComparator` consumer inherits the
-   overclaim**. Escalated by the T14 builder rather than fixed, correctly: the engine is a
-   different domain and Tier 1. Fix there, then drop the CLI-side workaround.
+9. ~~**`ComparisonResult.NewlyCovered` overclaims, in the engine.**~~ **Closed** by T14a
+   (`8f52efa`). The engine now withholds any scenario that was not fully conducted, in three
+   named causes — incomplete, over-recorded, errored — and reports them on
+   `NewlyCoveredWithheld` / `…Reason` rather than dropping them. `eval-cli`'s workaround was
+   deleted in T14b and replaced by a pass-through. One residual, deferred to T15a: the reason
+   is a single suite-level string, so a reader cannot attribute a cause to a specific scenario
+   from that field alone. Per-scenario attribution is a Tier 1 change and will be sequenced
+   only if the report genuinely needs it.
 
 ## Next
 

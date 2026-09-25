@@ -368,7 +368,10 @@ internal static class BaselineCommand
                 {
                     Mechanism = BaselineMechanism.Artifact,
                     Reference = plan.BaselinePath!,
+                    ReferenceIdentity = ReportIdentity.ForPath(plan.RootDirectory, plan.BaselinePath!),
                     Result = provider.GetRequiredService<SuiteComparator>().Compare(committed, candidate),
+                    Baseline = committed,
+                    Candidate = candidate,
                 },
                 null
             );

@@ -57,6 +57,27 @@ public sealed record SuiteLoadResult
     public IReadOnlyList<ValidationMessage> Messages { get; init; } = [];
 
     /// <summary>
+    /// Gets the source this result was produced from, exactly as it was named — the resolved
+    /// suite path for a file load, or the caller's own label for a document load.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the only place the real path survives, and that is deliberate.</b> A finding
+    /// names the suite in a form carrying no machine path, because the command-line tool writes
+    /// findings to standard error and from there into CI logs, which on many setups are readable
+    /// by anyone who can read the repository (§V). Removing the path from the message and from
+    /// the result alike would trade that disclosure for a usability defect, so it is kept here
+    /// for programmatic use and for a caller that decides to print it under its own policy.
+    /// </para>
+    /// <para>
+    /// <b>A caller that renders this is choosing to.</b> That includes rendering this record
+    /// itself: the compiler-generated <c>ToString()</c> of a record prints every property.
+    /// Nothing in this library writes it anywhere.
+    /// </para>
+    /// </remarks>
+    public string? SourcePath { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether a suite was produced with no errors. Warnings do not
     /// prevent success, but they are still worth surfacing.
     /// </summary>

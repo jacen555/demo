@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using FluentAssertions;
 using Forge.EvalCli.Cli;
 using Forge.EvalCli.Tests.Support;
@@ -811,5 +812,75 @@ public class BaselineCommandTests
 
         plan.ApplyBaselineUpdate.Should().BeFalse("the opt-in is absent, so nothing may be replaced");
         plan.Operation.Should().Be(CliOperation.BaselineUpdate);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheCommittedBaselineCarriesAMachinePathIdentifier_RefusesWithoutPrintingAStack()
+    {
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var endpoint = ComparisonWorkspace.Endpoint();
+
+        var path = await SeedBaselineAsync(workspace, endpoint);
+
+        // Edited rather than conducted, deliberately, and this is the only fixture in this file
+        // that is. The engine refuses this value at suite load now, so no run can produce such an
+        // artifact today — but a committed baseline written by an earlier build can carry one,
+        // which is precisely the case the read-back guard exists for. Everything else about the
+        // file stays as the run wrote it.
+        await RewriteScenarioIdAsync(path, "checkout /home/ci-user/build");
+
+        var before = await File.ReadAllBytesAsync(path, CancellationToken.None);
+
+        using var console = new RecordingConsole();
+
+        var act = async () =>
+            await BaselineCommand.ExecuteAsync(
+                Plan(workspace, endpoint, apply: false),
+                console,
+                CancellationToken.None
+            );
+
+        var refusal = await act.Should().ThrowAsync<EvalCliException>();
+
+        // A refusal, with a code a caller can act on — not UnexpectedError, which tells the user
+        // this tool fell over and invites an issue about working software.
+        refusal.Which.ExitCode.Should().Be(ExitCode.UsageError);
+        refusal.Which.ExitCode.Should().NotBe(ExitCode.UnexpectedError);
+
+        // Actionable: the field and the entry, and what to do about them.
+        refusal.Which.Message.Should().Contain("scenarioId").And.Contain("#1");
+        refusal.Which.Remedy.Should().NotBeNull();
+
+        // And the value that caused it is still not on the page, on either channel.
+        refusal.Which.Message.Should().NotContain("/home/ci-user");
+
+        ExitCodeReporter.Report(refusal.Which, console);
+
+        console.StandardError.Should().NotContain("/home/ci-user").And.NotContain("defect in eval-cli");
+        console.StandardError.Should().NotContain("   at ");
+
+        // The destructive command refused before it wrote anything.
+        (await File.ReadAllBytesAsync(path, CancellationToken.None))
+            .Should()
+            .Equal(before);
+    }
+
+    /// <summary>Renames the first scenario in a committed artifact, leaving everything else alone.</summary>
+    private static async Task RewriteScenarioIdAsync(string path, string id)
+    {
+        var artifact =
+            JsonNode.Parse(await File.ReadAllTextAsync(path, CancellationToken.None)) as JsonObject
+            ?? throw new InvalidOperationException("the seeded baseline was not a JSON object.");
+
+        var scenarios =
+            artifact["scenarioResults"] as JsonArray
+            ?? throw new InvalidOperationException("the seeded baseline recorded no scenarios.");
+
+        scenarios[0]!["scenarioId"] = id;
+
+        await File.WriteAllTextAsync(path, artifact.ToJsonString(), CancellationToken.None);
     }
 }

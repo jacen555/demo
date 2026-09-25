@@ -343,7 +343,12 @@ internal static class ComparisonReport
         return counts;
     }
 
-    private const string WithheldReason =
+    /// <summary>Why a scenario this run did not conduct is reported apart from the comparison.</summary>
+    /// <remarks>
+    /// Stated in one place so the text rendering, the JSON document, and the Markdown report
+    /// cannot drift into three accounts of the same withholding.
+    /// </remarks>
+    internal const string WithheldReason =
         "skipped by selection, so this run produced no candidate evidence about them. They are not unchanged and "
         + "they were not removed";
 
