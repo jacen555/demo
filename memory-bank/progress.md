@@ -23,8 +23,8 @@
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
 | `sizzlecraft` | tool (`node`) | 2 | `partial` | 13 passing | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. |
-| `eval-engine` | lib | 1 | `working` | 1545 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection. **`SuiteLoader` path confinement has 3 open findings — see below.** `Mcp` and `Ui` scenario kinds are declared stubs. |
-| `eval-cli` | tool | 2 | `working` | 313 passing | `run` and `baseline update`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text reports. Markdown PR report is T15a; trend report T15b. |
+| `eval-engine` | lib | 1 | `working` | 1724 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load and artifact read-back. **`SuiteLoader` path confinement has 3 open findings — see below.** `Mcp` and `Ui` scenario kinds are declared stubs. |
+| `eval-cli` | tool | 2 | `working` | 442 passing | `run` and `baseline update`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports. Trend report is T15b. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -143,6 +143,20 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    is a single suite-level string, so a reader cannot attribute a cause to a specific scenario
    from that field alone. Per-scenario attribution is a Tier 1 change and will be sequenced
    only if the report genuinely needs it.
+10. **Four tracked follow-ups from the T15 work**, none blocking:
+    - **T15b** — the trend report. The comparison report exists; a separate
+      dashboard showing movement across runs does not.
+    - **T15c** — `NewlyCoveredWithheldReason` is a single suite-level string, so
+      with mixed causes a reader cannot attribute a cause to a scenario. The
+      comparator already computes the per-scenario reason and discards it at the
+      boundary. Tier 1; the report evidenced the need (ADR 0004's consumer
+      argument).
+    - **T15g** — `simulation.scriptedStimuli[].field` is label-like but sits under
+      `simulation`, which the T15d enumeration classified as evidence. Where the
+      label/evidence line falls deserves its own decision, not a fix round.
+    - **T15h** — three CLI-owned messages still print an absolute path to stderr
+      deliberately. That may be correct — the tool printing it once under its own
+      policy — but it should be a decision rather than a leftover.
 
 ## Next
 

@@ -71,3 +71,5 @@ observations. No hand-waving.>
 | [0001](0001-multi-agent-orchestration-for-a-workshop-repo.md) | Tier multi-agent rigor by repository location | Accepted | 2026-09-15 |
 | [0002](0002-admit-nodejs-for-ecosystem-bound-tooling.md) | Admit Node.js for ecosystem-bound tooling | Accepted | 2026-09-15 |
 | [0003](0003-drive-real-uis-with-scripted-playwright-frame-capture.md) | Drive real UIs with scripted Playwright frame capture | Accepted | 2026-09-23 |
+| [0004](0004-split-the-eval-harness-into-an-engine-and-a-cli.md) | Split the eval harness into an engine and a CLI | Accepted | 2026-09-24 |
+| [0005](0005-refuse-machine-paths-at-authoring-time.md) | Refuse machine paths at authoring time, not in the report | Accepted | 2026-09-24 |

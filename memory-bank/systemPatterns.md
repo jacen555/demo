@@ -78,7 +78,50 @@ Every review finding cites a `file:line` **and** a constitution section. A findi
 cannot be located is not raised. This kills the two failure modes of AI review — vague
 stylistic grumbling, and confident hallucinated problems.
 
-## Pattern: written artifacts outlive the session
+## Pattern: settle disagreements with a measurement, not an argument
+
+**Problem.** A builder and a reviewer can both produce a plausible argument about whether
+a guard fires, a test covers something, or a statistic is calibrated. Plausible arguments
+are frequently wrong, and two of them cost a round each.
+
+**Practice.** When a claim is contested, produce a number:
+
+- **Run the mutant**, don't reason about the branch. A guard reported unreachable was
+  reachable twice before a third measurement settled it. A "redundant" backstop turned out
+  to be the only thing covering a duplicate-key path nobody had identified.
+- **Simulate the statistic**, don't trust the derivation. A paired bootstrap returned
+  `p=0.0001` where the true rejection rate was 50%; the first remedy fixed `n=2` and still
+  failed at `n=6`. Only a type-I error simulation caught either.
+- **Read the real output**, don't inspect the code. Three disclosure leaks were found that
+  way and none by reading — including one where a finding withheld the value it was warned
+  about and printed an unsanitised one in the same sentence.
+- **Probe the primitive.** `Path.GetFileName` ignores backslashes on Unix.
+  `FileSystemName.MatchesSimpleExpression` treats `\` as an escape. `FileSystemInfo.LinkTarget`
+  never throws on Windows. All three were found by constructing the case.
+
+## Pattern: the defect that keeps coming back
+
+Roughly twenty review findings across the eval harness were one shape: **evidence from one
+context treated as though it came from another.** Its commonest form is **a refusal
+rendering as an absence** — a guard that fires only in the total case, a count that reads
+zero when nothing was comparable, a truncated section that looks empty.
+
+Three things reliably surface it:
+
+1. **Enumerate, don't sample.** Fixing where a finding points leaves the next instance. The
+   T15d surface was five sites by inspection and twelve by enumeration.
+2. **Verify the property, not the reported case.** A builder reports the case it tested; the
+   predicate usually covers less.
+3. **Distrust green.** A passing test is not evidence until you know why it passes. Repeated
+   causes here: testing the helper rather than the path production takes, a lock that did not
+   take, a relative path that echoed relative, a conditional skip keyed on the assertion's
+   own subject.
+
+And a caution on fixes: `required`, a name, and a convention all look structural in a diff
+and are not. Four "structural" guarantees in this work still compiled with a wrong value.
+The ones that held were enforced by the compiler — a count derived from an immutable
+snapshot, a type with no display-string constructor, a method with no string overload.
+
 
 Agent memory resets. The repo's memory does not. So:
 
