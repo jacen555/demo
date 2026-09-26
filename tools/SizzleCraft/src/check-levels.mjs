@@ -79,10 +79,15 @@ await runCli(() => {
 
   const FF = resolveFfmpeg(projectDir, values.ffmpeg);
 
+  // The third window is the TAIL, not necessarily an end card. It was labelled
+  // "end card — music only", which is true only for a project that has one: with
+  // endCard.enabled false there is no end card, and the last 2s may still carry
+  // narration. The measurement is useful either way; the label just has to stop
+  // asserting a configuration it cannot see from here.
   const sections = [
     ['whole file', []],
     ['lead-in (first 1.5s — music only, no speech yet)', ['-t', '1.5']],
-    ['last 2s (end card — music only)', ['-sseof', '-2']],
+    ['last 2s (tail — music only when the project ends on an end card)', ['-sseof', '-2']],
   ];
 
   const labelWidth = Math.max(...files.map((f) => f.label.length), 20);

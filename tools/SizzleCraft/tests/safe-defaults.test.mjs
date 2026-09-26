@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
 import { normalizeEndCardFields } from '../src/end-card.mjs';
+import { classifyGainPin, describeGainPinRefusal } from '../src/gain-pin.mjs';
 import { assertCleanExit } from './_helpers.mjs';
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -835,7 +836,10 @@ describe('remux-music safety', () => {
   // source, and it is asserted at the point the source changes.
   const lockPath = (dir) => path.join(dir, 'music-gain.lock.json');
   const pinTo = (dir, sha256, musicGain = 1.5) =>
-    fs.writeFileSync(lockPath(dir), JSON.stringify({ source: 'music.wav', sha256, musicGain }));
+    fs.writeFileSync(
+      lockPath(dir),
+      JSON.stringify({ source: 'music.wav', sha256, musicGain, evidence: 'operator-confirmed' }),
+    );
 
   test('remuxMusic_musicSourceChangedButGainDidNot_refusesAndNamesBothTracks', (t) => {
     const dir = project(t);
@@ -879,7 +883,10 @@ describe('remux-music safety', () => {
     );
 
     assert.equal(r.code, EXIT.OK, `an unchanged source must plan cleanly, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /source unchanged/, 'the plan must state the pin status in words');
+    // Was /source unchanged/. The pin now covers the GAIN as well as the source, so the
+    // plan states both — asserting only the source would no longer be the whole status.
+    assert.match(r.all, /confirmed for/, 'the plan must state the pin status in words');
+    assert.match(r.all, /gain 1\.5/, 'and must name the gain that confirmation covers, not just the track');
   });
 
   // Planning must stay answerable about inputs that are stubbed, absent or not yet
@@ -954,5 +961,328 @@ describe('cli-support primitives', () => {
 
   test('requirePositiveNumber_nonIntegerWhenIntegerRequired_throws', () => {
     assert.throws(() => requirePositiveNumber(12.5, { name: 'totalFrames', integer: true }), CliError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gain-pin.mjs — the pure classifier behind the pin, tested directly.
+//
+// It answers one question: has anyone confirmed THIS gain for THIS source? Every way of
+// answering "no" must require a confirmation, because each of them is a way for a gain
+// nobody agreed to to reach the mix.
+// ---------------------------------------------------------------------------
+describe('gain pin classifier', () => {
+  const current = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+  // Named `confirmed`, so it must actually BE confirmed. Without `evidence` this is the
+  // legacy self-pinned shape, and a fixture that quietly supplies the defective form is
+  // how a test comes to assert the hole rather than the fix.
+  const confirmed = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5, evidence: 'operator-confirmed' };
+
+  test('classifyGainPin_noLock_requiresConfirmationBecauseNothingHasBeenConfirmed', () => {
+    const v = classifyGainPin(null, current);
+    assert.equal(v.first, true);
+    assert.equal(v.requiresConfirmation, true, 'a first run has no confirmation behind its gain');
+  });
+
+  test('classifyGainPin_sameSourceAndGain_requiresNothing', () => {
+    const v = classifyGainPin(confirmed, current);
+    assert.equal(v.requiresConfirmation, false);
+    assert.equal(v.sourceChanged, false);
+    assert.equal(v.gainChanged, false);
+  });
+
+  test('classifyGainPin_sourceChanged_requiresConfirmation', () => {
+    const v = classifyGainPin({ ...confirmed, sha256: 'a'.repeat(64) }, current);
+    assert.equal(v.sourceChanged, true);
+    assert.equal(v.requiresConfirmation, true);
+  });
+
+  test('classifyGainPin_gainChanged_requiresConfirmation', () => {
+    const v = classifyGainPin({ ...confirmed, musicGain: 0.4 }, current);
+    assert.equal(v.gainChanged, true);
+    assert.equal(v.requiresConfirmation, true);
+  });
+
+  // A lock that cannot be read as a pin is not a pin. Treating an absent or unparseable
+  // field as "matches" would let a truncated or hand-edited file wave a gain through,
+  // which is the permissive-default failure this whole check exists to avoid.
+  test('classifyGainPin_lockMissingItsFields_requiresConfirmationRatherThanAssumingAMatch', () => {
+    for (const lock of [{}, { sha256: 'b'.repeat(64) }, { musicGain: 1.5 }, { sha256: 'b'.repeat(64), musicGain: 'x' }]) {
+      const v = classifyGainPin(lock, current);
+      assert.equal(v.requiresConfirmation, true, `a lock of ${JSON.stringify(lock)} must not satisfy the pin`);
+    }
+  });
+
+  // A LEGACY LOCK MATCHES ON VALUES AND RECORDS NO CONFIRMATION. The old code pinned its
+  // own default without asking anyone, so those files exist in the wild with exactly the
+  // shape below. Reading them as confirmed means the tool agreeing with itself, and a
+  // successful run would then rewrite them stamped `operator-confirmed` — laundering a
+  // record into provenance it never had.
+  test('classifyGainPin_legacyLockWithNoEvidence_requiresConfirmationRatherThanTrustingIt', () => {
+    const legacy = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+
+    const v = classifyGainPin(legacy, current);
+
+    assert.equal(v.sourceChanged, false, 'the values do match — that is precisely the trap');
+    assert.equal(v.gainChanged, false);
+    assert.equal(v.unconfirmedPin, true, 'but it records no operator confirmation');
+    assert.equal(v.requiresConfirmation, true, 'so it must be re-confirmed, not trusted');
+  });
+
+  test('classifyGainPin_evidenceIsNotTheOperatorKind_requiresConfirmation', () => {
+    for (const evidence of ['self-pinned', 'measured', '', null, true]) {
+      const v = classifyGainPin({ ...confirmed, evidence }, current);
+      assert.equal(v.requiresConfirmation, true, `evidence ${JSON.stringify(evidence)} must not be trusted`);
+    }
+  });
+
+  test('classifyGainPin_operatorConfirmedAndMatching_requiresNothing', () => {
+    const v = classifyGainPin({ ...confirmed, evidence: 'operator-confirmed' }, current);
+    assert.equal(v.requiresConfirmation, false);
+  });
+
+  // A LEGACY PIN THAT IS ALSO STALE IS STILL A PIN NOBODY CONFIRMED. Both cases below are
+  // already refused — what is under test is the NARRATIVE. Describing the old value as
+  // "confirmed against" asserts an agreement that never happened, in the one feature
+  // built to stop a tool certifying what nobody confirmed. A reader who follows that text
+  // reasons from a history that does not exist.
+  //
+  // Asserted on the line that DESCRIBES THE PIN, not on the whole message: the standing
+  // explanation ("a gain is only meaningful for the track it was confirmed against") is a
+  // true general statement and must not be mistaken for a claim about this lock.
+  const legacy = { source: 'music.wav', sha256: 'a'.repeat(64), musicGain: 1.5 };
+  const pinLineOf = (text, sha) => text.split('\n').find((l) => l.includes(sha.slice(0, 12)));
+
+  test('classifyGainPin_legacyPinWithChangedSource_doesNotClaimTheOldPinWasConfirmed', () => {
+    const v = classifyGainPin(legacy, current);
+    assert.equal(v.sourceChanged, true, 'it is stale');
+    assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
+
+    const line = pinLineOf(describeGainPinRefusal(v, current), legacy.sha256);
+    assert.match(line, /NEVER CONFIRMED/, 'the pin line must name the absent confirmation');
+    assert.doesNotMatch(line, /^\s*confirmed/, 'and must not present it as an agreement that happened');
+  });
+
+  test('classifyGainPin_legacyPinWithChangedGain_doesNotClaimTheOldPinWasConfirmed', () => {
+    const askingFor3 = { ...current, musicGain: 3 };
+    const v = classifyGainPin({ ...legacy, sha256: current.sha256 }, askingFor3);
+    assert.equal(v.gainChanged, true, 'it is stale on the gain');
+    assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
+
+    const line = pinLineOf(describeGainPinRefusal(v, askingFor3), current.sha256);
+    assert.match(line, /NEVER CONFIRMED/, 'the pin line must name the absent confirmation');
+    assert.doesNotMatch(line, /^\s*confirmed/, 'and must not present the old gain as one somebody agreed to');
+  });
+
+  test('classifyGainPin_confirmedPinThatIsStale_stillDescribesTheOldPinAsConfirmed', () => {
+    const stale = { ...confirmed, sha256: 'a'.repeat(64) };
+    const v = classifyGainPin(stale, current);
+    assert.equal(v.pinRecordsConfirmation, true);
+
+    const line = pinLineOf(describeGainPinRefusal(v, current), stale.sha256);
+    assert.match(line, /^\s*confirmed against/, 'a genuinely confirmed pin must still be described as one');
+    assert.doesNotMatch(line, /NEVER CONFIRMED/, 'and must not be slandered as unconfirmed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remux-music.mjs — the gain pin (bug-ledger 16), re-audited.
+//
+// The pin exists so a gain calibrated against one track cannot be applied to another.
+// It asked only whether the SOURCE had changed, which left three routes to an
+// unconfirmed gain: a FIRST run pinned whatever was supplied with nobody confirming it,
+// a changed --music-gain on an unchanged source was never questioned, and --confirm-gain
+// was read as a blanket answer rather than an answer to a specific question.
+//
+// WHAT THE PIN RECORDS IS A CONFIRMATION, NOT A MEASUREMENT — see gain-pin.mjs. No
+// measured bed level is reachable at pin time, so the honest contract is "a human was
+// asked, and said yes to THIS gain for THIS source". These are the three occasions on
+// which it must ask.
+// ---------------------------------------------------------------------------
+describe('remux-music gain pin', () => {
+  const MUSIC_BYTES = 'music bytes';
+  const MUSIC_SHA = crypto.createHash('sha256').update(MUSIC_BYTES).digest('hex');
+
+  const project = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': MUSIC_BYTES,
+      ...files,
+    });
+
+  const lockFile = (dir) => path.join(dir, 'music-gain.lock.json');
+  // Defaults to a CONFIRMED pin. A lock without `evidence` is the legacy self-pinned
+  // shape and is deliberately exercised on its own below, not used as a stand-in for a
+  // settled one — seeding the defective shape and asserting it passes is how the hole
+  // stayed open through a round of review.
+  const pin = (dir, { sha256 = MUSIC_SHA, musicGain = 1.5, evidence = 'operator-confirmed' } = {}) =>
+    fs.writeFileSync(
+      lockFile(dir),
+      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, musicGain }
+        : { source: 'music.wav', sha256, musicGain, evidence }),
+    );
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  // HOLE 1: with no lock there was nothing to compare against, so the check passed and
+  // the run pinned its own default — manufacturing a calibration record for a gain that
+  // no one had ever confirmed, let alone measured.
+  test('remuxMusic_firstApplyWithoutConfirmGain_refusesRatherThanPinningAnUnconfirmedGain', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal on first use, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /never been confirmed/i, 'the refusal must say the gain has no confirmation behind it');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that supplies one');
+    assert.equal(fs.existsSync(lockFile(dir)), false, 'a refused run must not write a pin');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'and must not produce output');
+  });
+
+  // HOLE 2: the source is the same file, so the old check was satisfied — but the gain
+  // being applied to it is not the gain anybody agreed to. -43.1 dB vs -11.4 dB was the
+  // source moving; this is the multiplier moving, and it lands in the same place.
+  test('remuxMusic_gainChangedOnUnchangedSource_refusesWithoutConfirmGain', (t) => {
+    const dir = project(t);
+    pin(dir, { musicGain: 1.5 });
+
+    const r = remux(dir, ['--music-gain', '3.0', '--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal when the gain moved, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /gain/i, 'the refusal must be about the gain');
+    assert.match(r.all, /1\.5/, 'and must name the gain that was confirmed');
+    assert.match(r.all, /3/, 'and the gain now being asked for');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+  });
+
+  // HOLE 3, restated: the source moving must still be caught. This is the case the pin
+  // was originally built for and it must not regress while the other two are closed.
+  test('remuxMusic_sourceChangedWithoutConfirmGain_refusesAndNamesBothTracks', (t) => {
+    const dir = project(t);
+    pin(dir, { sha256: 'a'.repeat(64) });
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal when the source moved, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /source/i, 'the refusal must say the source changed');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that re-pins it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+  });
+
+  test('remuxMusic_unchangedSourceAndGain_doesNotAskAgain', (t) => {
+    const dir = project(t);
+    pin(dir, { musicGain: 1.5 });
+
+    const r = remux(dir);
+
+    assert.equal(r.code, EXIT.OK, `a confirmed pin must plan cleanly, got ${r.code}\n${r.all}`);
+    assert.doesNotMatch(r.all, /--confirm-gain/, 'a settled pin must not nag for a confirmation it already has');
+  });
+
+  // Planning writes nothing, so it must stay answerable — but it must also not imply the
+  // gain is settled when --apply is going to refuse. Saying so is the whole value.
+  test('remuxMusic_planWithUnconfirmedGain_stillPlansAndSaysConfirmationIsRequired', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir);
+
+    assert.equal(r.code, EXIT.OK, `planning must not require a confirmed gain, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--confirm-gain/, 'the plan must say --apply will require a confirmation');
+    assert.equal(fs.existsSync(lockFile(dir)), false, 'and planning must still write no pin');
+  });
+
+  // THE LAUNDERING CASE. A legacy lock matches on every value the old check compared and
+  // records no confirmation, because the code that wrote it never asked. Trusting it
+  // would let a successful run rewrite it stamped `operator-confirmed` with a fresh
+  // timestamp — turning a record nobody made into provenance, and making the laundered
+  // copy look stronger than the thing it came from.
+  test('remuxMusic_legacyPinWithNoEvidence_refusesAndDoesNotLaunderItIntoAConfirmation', (t) => {
+    const dir = project(t);
+    pin(dir, { evidence: null });
+    const before = fs.readFileSync(lockFile(dir), 'utf8');
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `a pin recording no confirmation must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /RECORDS NO CONFIRMATION/, 'the refusal must say the pin carries no confirmation');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that supplies one');
+    assert.equal(fs.readFileSync(lockFile(dir), 'utf8'), before, 'and must not rewrite the pin it refused');
+    assert.doesNotMatch(fs.readFileSync(lockFile(dir), 'utf8'), /operator-confirmed/, 'least of all stamping it');
+  });
+
+  // The refusal names check-levels.mjs, which measures a RENDERED FILE. On first use no
+  // such file exists — the refusal is what stopped it being made — so an instruction to
+  // measure BEFORE confirming cannot be followed. The order has to be stated correctly.
+  test('remuxMusic_firstUseRefusal_givesAnOrderThatCanActuallyBeFollowed', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--apply']);
+
+    assert.match(r.all, /re-run with --confirm-gain/, 'step 1 must be the confirmation');
+    assert.match(r.all, /check-levels\.mjs --file/, 'step 2 must be measuring the file it produces');
+    assert.match(
+      r.all,
+      /nothing to measure yet/i,
+      'and it must say why the measurement cannot come first, rather than asking for the impossible order',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remux-music.mjs --video-seconds — documented, read, and absent from the parser, so
+// the override could not be reached from the command line at all.
+// ---------------------------------------------------------------------------
+describe('remux-music video-seconds override', () => {
+  const project = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': 'music bytes',
+      ...files,
+    });
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  test('remuxMusic_videoSecondsFlag_isAcceptedByTheParser', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--video-seconds', '30']);
+
+    assert.doesNotMatch(r.all, /Unknown option/, 'the documented override must be reachable from the CLI');
+    assert.equal(r.code, EXIT.OK, `a valid override must plan, got ${r.code}\n${r.all}`);
+  });
+
+  // The case the override exists for: timing.json cannot be used, and the caller knows
+  // the length anyway. Without the override this same project is refused.
+  test('remuxMusic_videoSecondsOverrideWithUnreadableTiming_plansWithoutReadingTiming', (t) => {
+    const dir = project(t, { 'timing.json': '{ this is not json' });
+
+    const refused = remux(dir);
+    assert.equal(refused.code, EXIT.USAGE, `malformed timing must be refused, got ${refused.code}\n${refused.all}`);
+
+    const r = remux(dir, ['--video-seconds', '30']);
+    assert.equal(r.code, EXIT.OK, `the override must bypass unreadable timing, got ${r.code}\n${r.all}`);
+  });
+
+  test('remuxMusic_videoSecondsOutsideAllowedRange_exitsUsageError', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--video-seconds', '0']);
+
+    assert.equal(r.code, EXIT.USAGE, `an out-of-range override must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--video-seconds/, 'and must name the option it rejected');
   });
 });

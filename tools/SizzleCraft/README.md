@@ -192,11 +192,48 @@ Each candidate gate was real and one inferential step short of the claim:
 | `{words, chars, clipMs}` | a summary matches | the text is identical |
 | `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
 | normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
+| `sha256(--music)` unchanged | the track is the same file | the gain was ever calibrated for it |
 
 **Evidence weaker than the claim cannot establish the claim.** The correct response to
 insufficient evidence is to not certify, so there is no tool — and leaving a calibration
 UNPROVEN is a correct outcome. It costs only the word budget, which is evaluated rather
 than suppressed.
+
+### The music gain pin — a confirmation, not a measurement
+
+`remux-music.mjs` pins `--music-gain` to the music source (bug-ledger 16: a generated bed
+at −43.1 dB RMS and a licensed master at −11.4 dB are 31.7 dB apart, both accept the same
+in-range gain, and the narration-gap checks measure *presence*, not *level*).
+
+The pin requires `--confirm-gain` on **first use**, whenever **either** the source or the
+gain changes, and whenever the existing pin **records no confirmation** — the shape older
+self-pinning versions wrote. The earlier version asked only whether the source had
+*changed*, which is the last row of the table above: a changed input shows a calibration
+is stale, not that one ever happened. That left a first run pinning its own unconfirmed
+default, and left a legacy lock being read as agreement when it only ever recorded the
+tool agreeing with itself.
+
+`--confirm-gain` records a **provisional acceptance**, and the order it implies is the
+only one that can actually be carried out — `check-levels.mjs` measures a *rendered file*,
+so there is nothing to measure until the remux has run:
+
+1. `--confirm-gain` to accept the gain and produce the mix;
+2. `node src/check-levels.mjs --file <out>` to measure it;
+3. read the lead-in window, where the bed plays alone, **before delivering**.
+
+`confirmedAt` and `evidence` are written only on a run where someone actually passed
+`--confirm-gain`; a settled pin is left untouched rather than restamped.
+
+**Known gap — what this pin does not do.** It records that an operator confirmed a gain,
+not that anyone measured the result. `music-gain.lock.json` carries
+`evidence: "operator-confirmed"` so the file cannot be misread as a calibration record. A
+measured pin is not buildable from what exists today: `check-levels.mjs` writes no
+artifact, measures a *rendered video* rather than the music source, has no way to bind a
+reading to the source hash, and the render it would measure does not exist until after
+the remux the pin guards. Closing it properly means `remux-music` taking its own astats
+reading of the source and recording `sourceRms + 20·log10(gain)` as the predicted bed
+level — a real measurement, and a change that trades directly against keeping the plan
+path cheap. It is named here rather than approximated in code.
 
 ### Re-running the voice stage — what it actually costs, and the recovery
 
@@ -258,7 +295,7 @@ node src/frame-capture.mjs                     # then: --apply
 node src/encode-mp4.mjs                        # then: --apply --replace
 node src/vo-envelope.mjs                       # then: --apply --replace
 node src/make-music.mjs --out bed.wav --seconds 240 --preset bright   # then: --apply
-node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply
+node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply --confirm-gain
 
 # pure helpers
 node src/canonical-json.mjs fixed-key-order-json-utf8-v1 < input.json

@@ -26,7 +26,7 @@ import {
   CliError,
   EXIT,
 } from '../src/cli-support.mjs';
-import { makeProject, makeOutsideDir, runScript, tryMakeDirLink, tryMakeFileLink } from './_helpers.mjs';
+import { makeProject, makeOutsideDir, runScript, tryMakeDirLink, tryMakeFileLink, MISSING_FFMPEG } from './_helpers.mjs';
 
 const SENTINEL = 'SENTINEL — MUST SURVIVE AN ENGINE-CHOSEN WRITE';
 
@@ -329,5 +329,62 @@ describe('path confinement reaches the CLI', () => {
 
     assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
     assert.equal(fs.existsSync(path.join(outside, 'out.mp3')), false, 'must never write outside the project root');
+  });
+
+  // remux-music's gain lock is ENGINE-CHOSEN: the caller names --music and --out, never
+  // `music-gain.lock.json`. The engine picks that name on its own initiative, so an
+  // in-root link at it redirects a write the caller never asked for — which is exactly
+  // the distinction resolveInternalArtifact draws and resolveOutput deliberately does not.
+  const remuxProject = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': 'music bytes',
+      ...files,
+    });
+
+  const runRemux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  test('remuxMusic_gainLockIsLinkToOutsideVictim_refusesWithoutClobberingIt', (t) => {
+    const root = remuxProject(t);
+    const outside = makeOutsideDir(t, { 'victim.json': 'ORIGINAL VICTIM' });
+    const link = path.join(root, 'music-gain.lock.json');
+    if (!tryMakeFileLink(link, path.join(outside, 'victim.json'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runRemux(root, ['--apply', '--confirm-gain']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /link/i, 'the refusal must say the pin path is a link');
+    assert.equal(
+      fs.readFileSync(path.join(outside, 'victim.json'), 'utf8'),
+      'ORIGINAL VICTIM',
+      'a link at an engine-chosen path must never be written through',
+    );
+  });
+
+  // timing.json is read on the engine's own initiative too. An unconfined read through a
+  // link put the first bytes of whatever it pointed at into the JSON parser's error,
+  // which the PLAN then printed while exiting 0 — a read primitive with a report channel.
+  test('remuxMusic_timingIsLinkToOutsideSecret_refusesWithoutDisclosingItsContents', (t) => {
+    const root = remuxProject(t);
+    const outside = makeOutsideDir(t, { 'secret.txt': 'SQUIRRELTOKEN-do-not-disclose' });
+    const link = path.join(root, 'timing.json');
+    if (!tryMakeFileLink(link, path.join(outside, 'secret.txt'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runRemux(root);
+
+    assert.doesNotMatch(r.all, /SQUIRRELTOKEN/, 'the contents of a refused read must never reach the output');
+    assert.equal(r.code, EXIT.USAGE, `a planted link must be refused, not planned around, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /link/i, 'and the refusal must say why');
   });
 });
