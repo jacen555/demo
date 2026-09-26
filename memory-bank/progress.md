@@ -22,7 +22,7 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 266 (265 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 331 (330 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. |
 | `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
 | `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42, shipped at 4K/JPEG. Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
 | `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
@@ -235,6 +235,22 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     - **T15h** — three CLI-owned messages still print an absolute path to stderr
       deliberately. That may be correct — the tool printing it once under its own
       policy — but it should be a decision rather than a leftover.
+
+20. **`resolveFfmpeg` builds its pointer-file path with a raw `path.join`**, in
+    `remux-music.mjs` and `check-levels.mjs` both. Graded narrow and left open
+    deliberately: the path is `--apply`-only, and an attacker who can write
+    `ffmpeg-path.txt` in the project root can set the binary directly, so
+    confining it buys only the link-without-write case. **Fix both files in one
+    task**, and settle whether the pointer file is engine-chosen or author-chosen
+    first — that answer decides which resolver it wants.
+
+21. **12 raw `path.join(projectDir, …)` sinks across 9 files — swept, not traced.**
+    **Severity unknown, and that is the point.** A builder declined three rounds
+    running to grade them without tracing each to its resolver, which was correct:
+    **a sweep produces candidates, not conclusions.** Publishing 12
+    unsecured-sounding items would have overstated the evidence in exactly the way
+    this audit spent forty rounds learning not to. Schedule the traced sweep as its
+    own task; grade each sink only once its resolver is known.
 
 ## Next
 
