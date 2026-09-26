@@ -101,8 +101,12 @@ reordering segments), never to read or set a value.
 
 1. **Run intake.** Work through `references/planning.md` §2. Answer what you can from
    context, then ask only what is genuinely unresolved — max three questions at a time,
-   each with a recommended default. The one group you must never assume is **Evidence**:
-   every figure needs a named source before it reaches a script.
+   each with a recommended default. **Two groups must never be assumed: Evidence** (every
+   figure needs a named source before it reaches a script) **and Register/point of view**
+   — how technical, how educational, how much room for delight, whose voice it is in, and
+   what the viewer should feel at the end. Those belong among the *first* three questions,
+   not deferred as answerable from context: they look inferable from a brief and are not,
+   and getting them wrong costs a rewrite rather than a correction.
 2. **Write the narration script and the storyboard.** Text and visual plan only.
    Two constraints that are easy to miss and expensive to retrofit:
    - **Narration must convey everything visually essential** — it is this pipeline's only

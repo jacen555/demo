@@ -1,14 +1,14 @@
 # How do you test a conversation?
 
 **Audience:** engineering leadership / partner-level
-**Final length:** 4:41 · no end card · 16:9 · 3840×2160 @ 30fps (live)
+**Final length:** 4:36 · no end card · 16:9 · 3840×2160 @ 30fps (live)
 **Voice:** en-US-AndrewNeural @ 1.2× · **Engagement:** rich · **Background:** white
-**Approval owner:** jonosace · **Words:** 950 · **Measured rate:** 3.529 words/sec
+**Approval owner:** jonosace · **Words:** 929 · **Measured rate:** 3.519 words/sec
 
 > Hundreds of simulated customers, each with their own knowledge of their own problem, run against a pull-request branch before anyone opens the review.
 >
 > **End card is OFF** — the canonical disabled form, in which `builderVersion`, `contentMs` and
-> `outroMs` are all **absent** and `durationMs` (281712 ms) is the last segment's `endMs`.
+> `outroMs` are all **absent** and `durationMs` (276528 ms) is the last segment's `endMs`.
 > Nothing is padded or appended.
 >
 > **Measured pacing** (decoded, not metadata): lead-in 2.04s against a 2.0s target; perceived inter-segment gaps 1.80–1.90s (mean 1.84s) against a 1.5s target — see render-log.md.
@@ -32,7 +32,7 @@ Claim types: `direct` = read straight from a source · `derived` = computed from
 
 > Let's look at one specific scenario definition. The opening is what the conversation starts with: my email has just stopped working. That is deliberately vague, because that is how people actually write. Underneath it sits the target: Outlook, on iOS, not receiving email. The interview never sees that, we are using it to grade once the conversation ends. Then we have the knowledge bank. Three authored facts this customer knows and will say if asked: that they are using the mail app on an iPhone; that they can still send messages, but nothing new ever arrives; and that they have checked junk, and the mailbox is not full. Notice the second one. Can send, cannot receive — that is the detail separating this from a dozen neighbouring categories, and the interview only learns it if it thinks to ask. Then a pool of alternative phrasings, so the customer can choose different phrasings to not repeat every time. And last, the assertions this scenario has to satisfy. That is what makes it a conversation and not a prompt. We have defined nearly two-hundred of them.
 
-**On screen:** The real scenario object from scenarios.json, rendered as syntax-highlighted JSON. Six fields are outlined and the rest dimmed, one at a time, each landing on the word that names it: opening, targetPath, the facts array, the second fact, answerPool, assertions. Internal ids and the taxonomy description are removed; the 13 alternative phrasings are elided to a count, since they derive from real support data.
+**On screen:** The real scenario object from scenarios.json, rendered as syntax-highlighted JSON. Six fields are outlined and the rest dimmed, one at a time, each landing on the word that names it: opening, targetPath, the facts array, the second fact, answerPool, assertions. Four authored facts are shown. Internal ids are removed and the 13 alternative phrasings are elided to a count, since they derive from real support data; the taxonomy description is kept to its first sentence and placed last.
 
 **Claims:** `c-scenario` direct (interview-eval/scenarios.json:onedrive-data-loss (opening, targetPath, facts[3], answerPool[11], assertions[3]))<br>`c-suite` direct (interview-eval/scenarios.json:162 objects, counted by kind)
 
@@ -88,12 +88,12 @@ Claim types: `direct` = read straight from a source · `derived` = computed from
 
 ---
 
-### 8 · `loop` — The comparison exists before the pull request does · 4:01–4:41 · 40.1s · 139 words
+### 8 · `loop` — The comparison exists before the pull request does · 4:01–4:36 · 34.9s · 118 words
 
-> We deploy the pull-request branch, point the harness at it, and run it three times. Then the same suite against main, and we diff the two. The comparison exists before the review does. On one real change, routing got clearly better. Cases reaching the right support area went from twenty-seven to thirty-five out of sixty-seven. Cases where the interview came back with nothing were almost halved. Twenty-six fewer failed assertions. And then the harness flagged something the totals would have buried. A prompt-injection probe — one that exists to be refused — had quietly started getting answered. Every headline number said this build was better. It was also less safe, and one line caught it. Not in production. Not in review. Before the pull request was ever opened. That is what this buys. Run it against your branch first.
+> We deploy the pull-request branch, point the harness at it, and run it three times. Then the same suite against main, and we diff the two. The comparison exists before the review does. On one real change, routing got clearly better. Cases reaching the right support area went from twenty-seven to thirty-five out of sixty-seven. Cases where the interview came back with nothing were almost halved. Twenty-six fewer failed assertions. And when something regresses, we see it immediately — in the same report, on the same run, while the change is still a branch. Not in production. Not in review. Before the pull request was ever opened. That is what this buys. Run it against your branch first.
 
-**On screen:** **The loop builds first** — deploy, run x3, read the delta, fix, re-run — and completes one revolution, with the 'open the pull request' marker attaching on the way OUT. Then three metric rows animate up. Beat. Then the flagged panel slides in, retitled CAUGHT BEFORE THE PULL REQUEST because the probe getting through is the harness succeeding, not the product failing. Finally the closing triad lands ONE BEAT AT A TIME with the narration — not in production, not in review, before the pull request was ever opened. NO END CARD. These rows are rendered natively, never cropped from the source report, which carries a deployment endpoint and pull-request ids in its own markup.
+**On screen:** The loop builds as it is narrated — deploy, run x3, read the delta, fix, re-run — and closes back on the suite. "Open the pull request" sits outside the cycle to the right, drawn from "fix", so it reads as the output of fixing rather than a step inside the loop. The three measured deltas land one per sentence on the left. The claim panel "REGRESSIONS SURFACE ON THE SAME RUN" is marked with a sustained outline as the narration reaches it, then the closing triad lands as three separate beats.
 
-**Claims:** `c-win` direct (report-1602086-vs-1601897.html:L3 or better 27.0->35.0/67 (ranges 24-29 vs 34-37) · report-1602086-vs-1601897.html:Returned NO path 21.3->11.7/67 — spoken as "almost halved" · report-1602086-vs-1601897.html:Assertions failed delta -26.0 · report-1602086-vs-1601897.html:3 runs per arm)<br>`c-caveat` direct (report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -> 1/3)
+**Claims:** `c-win` direct (report-1602086-vs-1601897.html:L3 or better 27.0->35.0/67 (ranges 24-29 vs 34-37) · report-1602086-vs-1601897.html:Returned NO path 21.3->11.7/67 — spoken as "almost halved" · report-1602086-vs-1601897.html:Assertions failed delta -26.0 · report-1602086-vs-1601897.html:3 runs per arm)
 
 ---

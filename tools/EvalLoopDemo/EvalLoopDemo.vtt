@@ -381,12 +381,13 @@ on screen fill against the same
 clock.
 
 83
-00:03:20.749 --> 00:03:25.260
-The upper lane, labelled U I, clears thirteen scenarios in three runs each — about
+00:03:20.749 --> 00:03:25.027
+The upper lane, labelled U I, clears
+thirteen scenarios in three runs each
 
 84
-00:03:25.300 --> 00:03:26.932
-three and a half minutes.
+00:03:25.067 --> 00:03:26.932
+— about three and a half minutes.
 
 85
 00:03:26.972 --> 00:03:31.600
@@ -448,95 +449,77 @@ and cannot say any of that.
 Different data, not just slower data.
 
 98
-00:04:01.740 --> 00:04:04.503
+00:04:01.740 --> 00:04:04.507
 We deploy the pull-request
 branch, point the harness at it,
 
 99
-00:04:04.543 --> 00:04:05.920
+00:04:04.547 --> 00:04:05.925
 and run it three times.
 
 100
-00:04:05.960 --> 00:04:08.523
+00:04:05.965 --> 00:04:08.531
 Then the same suite against
 main, and we diff the two.
 
 101
-00:04:08.563 --> 00:04:10.906
+00:04:08.571 --> 00:04:10.917
 The comparison exists
 before the review does.
 
 102
-00:04:10.946 --> 00:04:13.478
+00:04:10.957 --> 00:04:13.492
 On one real change,
 routing got clearly better.
 
 103
-00:04:13.518 --> 00:04:15.997
+00:04:13.532 --> 00:04:16.015
 Cases reaching the right support
 area went from twenty-seven
 
 104
-00:04:16.037 --> 00:04:18.107
+00:04:16.055 --> 00:04:18.127
 to thirty-five out of sixty-seven.
 
 105
-00:04:18.147 --> 00:04:20.594
+00:04:18.167 --> 00:04:20.617
 Cases where the interview came
 back with nothing were almost
 
 106
-00:04:20.634 --> 00:04:21.308
+00:04:20.657 --> 00:04:21.333
 halved.
 
 107
-00:04:21.348 --> 00:04:23.418
+00:04:21.373 --> 00:04:23.444
 Twenty-six fewer failed assertions.
 
 108
-00:04:23.458 --> 00:04:25.318
-And then the harness flagged
-something the totals would have
+00:04:23.484 --> 00:04:27.418
+And when something regresses, we see
+it immediately — in the same report,
 
 109
-00:04:25.358 --> 00:04:26.053
-buried.
+00:04:27.458 --> 00:04:30.308
+on the same run, while the
+change is still a branch.
 
 110
-00:04:26.093 --> 00:04:29.989
-A prompt-injection probe — one that
-exists to be refused — had quietly started
-
-111
-00:04:30.029 --> 00:04:30.955
-getting answered.
-
-112
-00:04:30.995 --> 00:04:33.159
-Every headline number said
-this build was better.
-
-113
-00:04:33.199 --> 00:04:35.500
-It was also less safe,
-and one line caught it.
-
-114
-00:04:35.540 --> 00:04:36.486
+00:04:30.348 --> 00:04:31.296
 Not in production.
 
-115
-00:04:36.526 --> 00:04:37.368
+111
+00:04:31.336 --> 00:04:32.179
 Not in review.
 
-116
-00:04:37.408 --> 00:04:39.258
+112
+00:04:32.219 --> 00:04:34.071
 Before the pull request was ever opened.
 
-117
-00:04:39.298 --> 00:04:40.444
+113
+00:04:34.111 --> 00:04:35.258
 That is what this buys.
 
-118
-00:04:40.484 --> 00:04:41.712
+114
+00:04:35.298 --> 00:04:36.528
 Run it against your branch first.

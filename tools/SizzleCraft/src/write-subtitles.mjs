@@ -110,6 +110,14 @@ for (let i = 0; i < words.length; i++) {
   const projected = next ? text.length + 1 + next.text.length : text.length;
   const projectedCps = next ? projected / (Math.max(next.endMs - cur[0].startMs, 1) / 1000) : cps;
   const wouldOverflow = projected > MAX_LINE * MAX_LINES;
+  // WRAPPABILITY, NOT JUST LENGTH. A cue is allowed up to MAX_LINE * MAX_LINES on the
+  // assumption it wraps to two legal lines — but that assumption fails when a long word
+  // sits near the midpoint and no split lands inside the window. Measured case: an
+  // 82-character cue whose only candidate splits were 35 and 44, with nothing in 39..42.
+  // Checking the raw length accepts it; checking whether it can actually wrap rejects it
+  // one word earlier and produces two clean cues instead of one over-wide line.
+  const wouldNotWrap = next && projected > MAX_LINE
+    && wrap(`${text} ${next.text}`).split('\n').some(l => l.length > MAX_LINE);
   // Only split on reading speed once the cue is already substantial — splitting a short
   // cue does not help, because display time shrinks with it and cps barely moves.
   const wouldOutrun = projectedCps > MAX_CPS && text.length > MAX_LINE * 1.4;
@@ -118,7 +126,7 @@ for (let i = 0; i < words.length; i++) {
   // then gets less display time — which makes reading speed WORSE, not better.
   const clause = ENDS_CLAUSE.test(w.text) && text.length > MAX_LINE * 1.2;
 
-  if (!next || segmentBreak || sentence || clause || wouldOverflow || wouldOutrun) flush();
+  if (!next || segmentBreak || sentence || clause || wouldOverflow || wouldNotWrap || wouldOutrun) flush();
 }
 flush();
 
@@ -135,17 +143,36 @@ for (let i = 0; i < cues.length; i++) {
 }
 
 // ---- wrap to <=2 balanced lines -------------------------------------------------------
+// DEGRADE, DO NOT GIVE UP. An earlier version returned the text unwrapped whenever no
+// split put BOTH halves under MAX_LINE — so a cue whose word boundaries straddle the limit
+// was emitted as a single line of double the width, which is the worst available outcome
+// and looked like the wrapper had simply not run.
+//
+// It happens in a narrow band: cue grouping accepts anything up to MAX_LINE * MAX_LINES,
+// but a long word near the midpoint can leave no legal split inside that. Real case at 82
+// chars: the candidate splits were 35 and 44, with nothing in the 39..42 window.
+//
+// So: prefer a split where both lines fit; otherwise take the split that minimises the
+// LONGEST line, and let the caller report that the ceiling was missed. Two lines of 35/45
+// read far better than one of 82, and an honest report beats a silent overrun.
 function wrap(text) {
   if (text.length <= MAX_LINE) return text;
   const parts = text.split(' ');
-  let best = null;
+  let legal = null, fallback = null;
   for (let i = 1; i < parts.length; i++) {
     const a = parts.slice(0, i).join(' '), b = parts.slice(i).join(' ');
-    if (a.length > MAX_LINE || b.length > MAX_LINE) continue;
-    const score = Math.abs(a.length - b.length);
-    if (!best || score < best.score) best = { a, b, score };
+    const longest = Math.max(a.length, b.length);
+    const balance = Math.abs(a.length - b.length);
+    if (a.length <= MAX_LINE && b.length <= MAX_LINE) {
+      if (!legal || balance < legal.balance) legal = { a, b, balance };
+    }
+    if (!fallback || longest < fallback.longest
+      || (longest === fallback.longest && balance < fallback.balance)) {
+      fallback = { a, b, longest, balance };
+    }
   }
-  return best ? `${best.a}\n${best.b}` : text;
+  const pick = legal ?? fallback;
+  return pick ? `${pick.a}\n${pick.b}` : text;
 }
 
 const pad = (n, w = 2) => String(n).padStart(w, '0');
@@ -167,9 +194,15 @@ fs.writeFileSync(path.join(projectDir, `${projectName}.srt`), srt);
 const cpsOf = c => c.text.length / ((c.endMs - c.startMs) / 1000);
 const over = cues.filter(c => cpsOf(c) > MAX_CPS);
 const longest = Math.max(...cues.map(c => c.text.length));
+// Report the longest rendered LINE, not the longest cue. A cue is allowed to be twice
+// MAX_LINE because it wraps to two; measuring the cue therefore cannot see a line that
+// failed to wrap, which is exactly how an 82-character line shipped under a "longest cue
+// 82 chars" report that looked like it was describing the limit being respected.
+const longestLine = Math.max(...cues.map(c => Math.max(...wrap(c.text).split('\n').map(l => l.length))));
+const wideLines = cues.filter(c => wrap(c.text).split('\n').some(l => l.length > MAX_LINE)).length;
 const median = [...cues.map(cpsOf)].sort((a, b) => a - b)[Math.floor(cues.length / 2)];
 console.log(`wrote ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries`);
-console.log(`  longest cue ${longest} chars · median ${median.toFixed(1)} cps · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`);
+console.log(`  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ', all within'}) · longest cue ${longest} chars · median ${median.toFixed(1)} cps · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`);
 
 // Narration rate sets a FLOOR on caption reading speed, and no amount of re-splitting
 // escapes it: display time tracks speech time, so verbatim cues run at roughly the rate

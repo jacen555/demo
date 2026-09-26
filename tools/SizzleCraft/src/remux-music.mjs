@@ -177,6 +177,10 @@ Options
   --confirm-gain        confirm --music-gain for the current music source (bug-ledger 16).
                         Required on first use and whenever the source or the gain changes.
   --video-seconds <n>   override the video length used to size the loop
+  --ceiling <dB>        limiter headroom in dB BELOW full scale, 0.1..12 (default: 1.0).
+                        NOTE this is dBFS and TRUE PEAK sits above it, because
+                        inter-sample peaks exceed sample peaks. Use about 2.5 to deliver
+                        -1.0 dBTP.
   --project <dir>       project root; no path may escape it (default: current directory)
   --ffmpeg <path>       ffmpeg binary (default: read from ffmpeg-path.txt in the project)
   --apply               actually remux. Without it nothing is written.
@@ -199,6 +203,7 @@ await runCli(async () => {
         crossfade: { type: 'string' },
         'no-loop': { type: 'boolean' },
         'confirm-gain': { type: 'boolean' },
+        ceiling: { type: 'string' },
         'video-seconds': { type: 'string' },
         project: { type: 'string' },
         ffmpeg: { type: 'string' },
@@ -265,6 +270,21 @@ await runCli(async () => {
   const xfade = parseBoundedNumber(values.crossfade ?? '3', {
     name: '--crossfade', min: 0.1, max: 30,
   });
+
+  // A LIMITER CEILING IS dBFS; A DELIVERY TARGET IS USUALLY dBTP. The two are not the
+  // same number: inter-sample peaks reconstructed on playback run above the sample peaks
+  // the limiter clamps, so a -1.0 dBFS ceiling measured -0.3 to -0.7 dBTP on real mixes
+  // here. A project asked to deliver <= -1.0 dBTP could not reach it at any input gain,
+  // because the ceiling was fixed.
+  //
+  // Expressed as dB BELOW full scale (a positive number) rather than as a negative dBFS
+  // value: gains reach an ffmpeg filter graph, so the shared parser refuses anything that
+  // is not a plain decimal, and a leading dash is also ambiguous to parseArgs. "How much
+  // headroom" is the more natural question anyway.
+  const ceilingBelowFs = parseBoundedNumber(values.ceiling ?? '1.0', {
+    name: '--ceiling', min: 0.1, max: 12,
+  });
+  const ceilingLinear = Number(Math.pow(10, -ceilingBelowFs / 20).toFixed(6));
 
   // A BAD ARGUMENT IS A USAGE ERROR, NOT AN UNDECIDABLE INPUT. Parsed here, outside the
   // try below, because that try turns anything it catches into "could not decide" on the
@@ -341,7 +361,7 @@ await runCli(async () => {
     `[1:a]volume=${voiceGain},pan=stereo|c0=c0|c1=c0[vo];` +
     musicFilter +
     `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
-    `[mx]alimiter=limit=0.891:level=disabled[out]`;
+    `[mx]alimiter=limit=${ceilingLinear}:level=disabled[out]`;
 
   const musicInputs = Array.from({ length: copies }, () => ['-i', music]).flat();
 
