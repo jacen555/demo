@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { EXIT, guard, resolveOutput, describeWrite, readLockOwner, requireFiniteNumber, pathExists, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, guard, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, requireExistingFile, describeWrite, readLockOwner, requireFiniteNumber, pathExists, planFooter } from './cli-support.mjs';
 
 const ENCODE_USAGE = `
 encode-mp4 — encode the captured frame sequence to MP4 (pipeline stage S7).
@@ -51,7 +51,13 @@ if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
 // This script and its encoder-page.html ship together in the plugin. Resolve the shipped encoder page
 // relative to this file (not the project) so the render is self-contained and never hand-transcribed.
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const timing = JSON.parse(fs.readFileSync(path.join(projectDir, 'timing.json'), 'utf8'));
+// timing.json is an ENGINE-chosen read: the caller named a project directory, not this file.
+// Joining it raw followed a planted link and handed the target to JSON.parse, whose error
+// message quotes the first bytes of what it parsed — disclosing a file outside the project
+// on the default no-flag path. Every other stage already resolves it through
+// requireExistingFile; this one was the outlier.
+const timingPath = guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file'));
+const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
 // `timing.project` permits additionalProperties, so `project.name` is untrusted input that gets
 // interpolated into the output filename (outPath -> lockPath/partPath). Sanitize it to a
 // filename-safe basename — strip any path separators (basename + regex) and characters that are
@@ -140,8 +146,6 @@ const toleranceMs = guard(() =>
 const frameDir = path.join(projectDir, 'frames');
 const audioPath = path.join(projectDir, 'voiceover.mp3');
 const outPath = path.join(projectDir, `${projectName}.mp4`);
-const encoderDir = path.join(projectDir, 'encoder');
-const encoderHtml = path.join(encoderDir, 'encoder-page.html');
 
 // --- The safe default. The final step of this script renames the encoded file over
 // <project>.mp4 — that rename IS the publish, and on a bare run it replaced an approved
@@ -171,12 +175,48 @@ if (!encodeArgs.apply) {
   process.exit(EXIT.OK);
 }
 // Guarded before the lock and before any work, so a refusal costs nothing.
-guard(() => resolveOutput(projectDir, path.basename(outPath), { apply: true, replace: encodeArgs.replace, label: 'output MP4' }));
+//
+// Every destination below is ENGINE-chosen: the caller named a project directory and
+// nothing else. resolveOutput deliberately FOLLOWS an in-root link because the caller
+// named that path; none of these were named, so following a link here writes to a file
+// nobody asked for. resolveEngineOutput refuses links outright instead.
+//
+// Each guard also RETURNS the entry its action then operates on. The publish guard used
+// to resolve the link's canonical TARGET while renameSync replaced the link ENTRY —
+// guard and action describing different files, which is "correct for a reason nothing
+// enforces". Refusing links makes the two the same path by construction.
+//
+// These run BEFORE the encoder-page prerequisite check below, so the confinement does
+// not depend on the encoder page shipping — it was that file's absence, not a guard,
+// that kept these writes from being reached.
+const publishPath = guard(() =>
+  resolveEngineOutput(projectDir, path.basename(outPath), { apply: true, replace: encodeArgs.replace, label: 'output MP4' }));
+const encoderDirPath = guard(() => {
+  const abs = resolveInternalArtifact(projectDir, 'encoder', 'encoder directory');
+  // An ordinary file sitting at `encoder/` made mkdirSync throw a raw EEXIST stack and
+  // exit 1. It is a refusable situation with an actionable message, not a crash.
+  let st;
+  try {
+    st = fs.lstatSync(abs, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(`encoder directory: could not inspect ${abs} (${err.code ?? err.message}) — refusing`);
+  }
+  if (st !== undefined && !st.isDirectory()) {
+    throw new CliError(`encoder directory "encoder" exists and is not a directory (${abs}) — remove it and re-run`);
+  }
+  return abs;
+});
+// `replace: true` is correct for both: they are engine-owned scratch reinstalled on every
+// run, not a deliverable. --replace guards the MP4 the caller would lose.
+const encoderHtml = guard(() =>
+  resolveEngineOutput(projectDir, path.join('encoder', 'encoder-page.html'), { apply: true, replace: true, label: 'encoder page' }));
+const muxerDest = guard(() =>
+  resolveEngineOutput(projectDir, path.join('encoder', 'mp4-muxer.js'), { apply: true, replace: true, label: 'encoder muxer' }));
 
 // --- Single-writer lock (prevents concurrent encoders clobbering the output).
 // A stale lock whose owner PID is dead is taken over; a live owner makes us exit
 // cleanly so we never truncate a good file out from under another encoder.
-const lockPath = `${outPath}.lock`;
+const lockPath = `${publishPath}.lock`;
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
 function acquireLock() {
   while (true) {
@@ -190,7 +230,7 @@ function acquireLock() {
         return false;
       }
       if (!pidAlive(owner.pid)) { fs.rmSync(lockPath, { force: true }); continue; } // stale -> take over
-      console.error(`encode already running (pid ${owner.pid}); skipped without touching ${path.basename(outPath)}`);
+      console.error(`encode already running (pid ${owner.pid}); skipped without touching ${path.basename(publishPath)}`);
       return false;
     }
   }
@@ -208,7 +248,7 @@ let lockOwned = true;
 function releaseLock() { if (lockOwned) { lockOwned = false; try { fs.rmSync(lockPath, { force: true }); } catch {} } }
 process.on('exit', releaseLock);
 
-fs.mkdirSync(encoderDir, { recursive: true });
+fs.mkdirSync(encoderDirPath, { recursive: true });
 // Install the shipped encoder page into the project's encoder/ dir so the WebCodecs encode is fully
 // self-contained (no per-project transcription of the encoder HTML). Check both prerequisites first
 // so a missing file fails fast with an actionable message instead of an opaque ENOENT from copyFileSync.
@@ -221,7 +261,7 @@ if (!fs.existsSync(muxerSrc)) {
   throw new Error(`mp4-muxer not installed (${muxerSrc}) — run \`npm install mp4-muxer\` in ${projectDir}`);
 }
 fs.copyFileSync(encoderPageSrc, encoderHtml);
-fs.copyFileSync(muxerSrc, path.join(encoderDir, 'mp4-muxer.js'));
+fs.copyFileSync(muxerSrc, muxerDest);
 
 const frameIndex = (name) => Number((name.match(/^frame_(\d+)\./) || [])[1]);
 const frameFiles = fs.readdirSync(frameDir)
@@ -252,10 +292,11 @@ if (wantAudio) {
   console.log('silent render requested (timing.intake.silent=true) — encoding without an audio track');
 }
 let maxEnd = 0;
-// Encode into a temp file, then atomically rename onto outPath only on success.
+// Encode into a temp file, then atomically rename onto publishPath only on success.
 // The real output is never truncated until a complete MP4 exists, so a failed or
 // late-arriving encoder can never reduce a good <project>.mp4 to 0 bytes.
-const partPath = `${outPath}.part-${process.pid}`;
+const partName = `${path.basename(publishPath)}.part-${process.pid}`;
+let tempFile = null;
 let fd = null;
 
 // Loaded here rather than at module scope so the lock check and the prerequisite checks
@@ -273,11 +314,21 @@ const browser = await chromium.launch({
   args: ['--autoplay-policy=no-user-gesture-required', '--allow-file-access-from-files'],
 });
 
+let encodeFailure = null;
 try {
   // Open the temp output only now, inside the try, after Chromium has launched. If any pre-encode
   // setup (chromium.launch, etc.) throws, no stray `.part-*` file (or open fd) is left behind — the
   // catch/finally below own cleanup of everything created inside this block.
-  fd = fs.openSync(partPath, 'w+');
+  //
+  // Created EXCLUSIVELY: `'w+'` follows a link, so an entry planted at this name was opened and
+  // truncated, destroying whatever it pointed at. The PID in the name made that hard to aim, not
+  // safe. `'wx+'` refuses any existing entry, with no window between deciding and acting.
+  //
+  // The handle owns removal. Cleaning up by path deleted whatever sat at that name — including a
+  // pre-existing entry the open had just refused to touch — so the guard destroyed the thing it
+  // exists to protect. A handle only exists when this run created the file.
+  tempFile = openExclusiveEngineFile(projectDir, partName, 'encode temp file');
+  fd = tempFile.fd;
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   page.on('console', (msg) => console.log(`[encoder] ${msg.text()}`));
@@ -316,7 +367,7 @@ try {
   fs.fsyncSync(fd);
   fs.closeSync(fd);
   if (maxEnd <= 0) throw new Error('encoder produced 0 bytes');
-  if (wantAudio && !mp4HasSoundTrack(partPath)) {
+  if (wantAudio && !mp4HasSoundTrack(tempFile.path)) {
     throw new Error('encoded MP4 has no audio (soun) track — refusing to publish a silent video');
   }
   // A/V sync assert: video frame-duration must match narration length within tolerance.
@@ -327,16 +378,33 @@ try {
   const audioMs = Number(timing.durationMs || 0);
   const tolMs = Math.max(toleranceMs, 1500);
   if (wantAudio && audioMs > 0 && Math.abs(videoMs - audioMs) > tolMs) {
-    fs.rmSync(partPath, { force: true });
+    tempFile.cleanup();
     throw new Error(`A/V sync drift ${Math.abs(videoMs - audioMs)}ms (video ${videoMs}ms vs audio ${audioMs}ms) exceeds ${tolMs}ms`);
   }
-  fs.renameSync(partPath, outPath); // atomic publish
-  console.log(`wrote ${outPath} (${maxEnd} bytes, ${frameFiles.length} frames, A/V drift ${Math.abs(videoMs - audioMs)}ms)`);
+  fs.renameSync(tempFile.path, publishPath); // atomic publish — the entry the guard resolved
+  console.log(`wrote ${publishPath} (${maxEnd} bytes, ${frameFiles.length} frames, A/V drift ${Math.abs(videoMs - audioMs)}ms)`);
 } catch (err) {
-  if (fd !== null) { try { fs.closeSync(fd); } catch {} }
-  fs.rmSync(partPath, { force: true }); // never leave a partial as the deliverable
-  throw err;
+  // Removes ONLY a part file this run created. The previous version deleted whatever sat at
+  // partPath, so a refused collision — the one case where the open deliberately touched
+  // nothing — had its existing entry destroyed by the cleanup that followed the refusal.
+  //
+  // A removal that fails is reported rather than swallowed: the encode error below stays the
+  // primary failure, but the stranded artifact gets named so it is not left silently behind.
+  const leftover = tempFile?.cleanup();
+  if (leftover) console.error(`warning: ${leftover.message}`);
+  encodeFailure = err;
 } finally {
   await browser.close();
   releaseLock();
+}
+
+if (encodeFailure) {
+  // A CliError is a refusal this script decided on, so it is reported the way every other
+  // refusal in this engine is reported — with the documented usage exit code, not as an
+  // uncaught stack and exit 1. A genuine encode failure still surfaces with its stack.
+  if (encodeFailure instanceof CliError) {
+    console.error(`error: ${encodeFailure.message}`);
+    process.exit(encodeFailure.exitCode);
+  }
+  throw encodeFailure;
 }

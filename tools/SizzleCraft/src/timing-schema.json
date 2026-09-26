@@ -5,7 +5,22 @@
   "description": "The timing contract every pipeline stage after S4 reads. validate-timing.mjs checks a project's timing.json against this. Unknown properties are permitted throughout: projects carry their own authoring metadata, and stages read only what they declare.",
   "type": "object",
   "required": ["segments"],
+  "$defs": {
+    "theme": {
+      "description": "A shipped background theme. write-build-html looks the name up in THEMES and silently falls back to midnight on a miss, so an unknown name or an object rendered the wrong theme instead of failing.",
+      "enum": ["midnight", "light", "microsoft", "azure", "aurora", "mesh", "slate", "dawn"]
+    }
+  },
   "properties": {
+    "version": {
+      "type": "string",
+      "description": "Authoring version. MUST be a string: `1.0` in JSON is the number 1, which collapses \"1.10\" and \"1.1\" onto the same value."
+    },
+    "theme": { "$ref": "#/$defs/theme" },
+    "builderVersion": {
+      "type": "string",
+      "description": "Version string displayed on the end card. Present only when the end card is enabled — see the allOf rule below."
+    },
     "project": {
       "type": "object",
       "description": "Render parameters. Consumed by frame-capture and encode-mp4.",
@@ -16,6 +31,7 @@
         "width": { "type": "integer", "exclusiveMinimum": 0 },
         "height": { "type": "integer", "exclusiveMinimum": 0 },
         "mode": { "enum": ["draft", "live", "publish"] },
+        "theme": { "$ref": "#/$defs/theme" },
         "frameFormat": { "enum": ["png", "jpg", "jpeg"] },
         "jpegQuality": { "type": "integer", "minimum": 1, "maximum": 100 }
       },
@@ -35,7 +51,8 @@
       "description": "Authoring calibration. wordsPerSecond x wpsSafetyMargin gives the word budget ceiling.",
       "properties": {
         "wordsPerSecond": { "type": "number", "exclusiveMinimum": 0 },
-        "wpsSafetyMargin": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+        "wpsSafetyMargin": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "theme": { "$ref": "#/$defs/theme" }
       },
       "additionalProperties": true
     },
@@ -64,5 +81,29 @@
       }
     }
   },
+  "allOf": [
+    {
+      "title": "A disabled end card carries none of its fields",
+      "description": "builderVersion, contentMs and outroMs exist to describe an end card. With no end card they must be ABSENT, not present-and-zero: zero reads as 'measured it, got nothing', which is a different claim from 'there is nothing to measure'. Each is a separate `not` so ajv reports each violation rather than one opaque failure.",
+      "if": {
+        "type": "object",
+        "required": ["endCard"],
+        "properties": {
+          "endCard": {
+            "type": "object",
+            "required": ["enabled"],
+            "properties": { "enabled": { "const": false } }
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          { "not": { "required": ["builderVersion"] } },
+          { "not": { "required": ["contentMs"] } },
+          { "not": { "required": ["outroMs"] } }
+        ]
+      }
+    }
+  ],
   "additionalProperties": true
 }

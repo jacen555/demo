@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
+import { normalizeEndCardFields } from '../src/end-card.mjs';
 import { assertCleanExit } from './_helpers.mjs';
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -234,6 +235,232 @@ describe('validate-timing exit contract', () => {
     const r = runScript('validate-timing.mjs', ['--schema', 'no-such-schema.json'], dir);
 
     assert.equal(r.code, EXIT.USAGE, r.all);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The schema IS the rule, and a rule that cannot fail reads exactly like a rule that
+// passed.
+//
+// As shipped, `required` listed only `segments`: `version` was unconstrained, `theme`
+// was undeclared, and the end-card rule was absent entirely. Round 1 made the validator
+// able to REPORT schema errors and then handed it a schema that barely checked anything,
+// so a timing.json with four real violations validated clean.
+// ---------------------------------------------------------------------------
+describe('the shipped schema enforces the timing contract', { skip: ajvAvailable ? false : 'ajv not installed' }, () => {
+  const validate = (t, extra) => {
+    const dir = makeProject(t, { 'timing.json': timingFixture(contiguousSegments, extra) });
+    return runScript('validate-timing.mjs', [], dir);
+  };
+  const assertRejected = (r, why) => {
+    assert.equal(r.code, EXIT.FAILED, `${why}\n${r.all}`);
+    assert.match(r.all, /SCHEMA: INVALID/, why);
+  };
+  const assertAccepted = (r, why) => {
+    assert.equal(r.code, EXIT.OK, `${why}\n${r.all}`);
+    assert.match(r.all, /SCHEMA: valid/, why);
+  };
+
+  test('validateTiming_numericVersion_isRejected', (t) => {
+    assertRejected(validate(t, { version: 1 }), 'version must be a string, not a number');
+  });
+
+  test('validateTiming_floatVersion_isRejected', (t) => {
+    // `1.0` in JSON is the number 1 — the version "1.10" and the version "1.1" are the
+    // same value once a float has eaten them.
+    assertRejected(validate(t, { version: 1.0 }), 'a float version must be rejected');
+  });
+
+  test('validateTiming_stringVersion_isAccepted', (t) => {
+    assertAccepted(validate(t, { version: '1.0' }), 'a string version is the contract');
+  });
+
+  test('validateTiming_themeAsObject_isRejected', (t) => {
+    // `THEMES[{}]` is undefined and the lookup falls back to midnight, so an object here
+    // silently rendered the wrong theme rather than failing.
+    assertRejected(validate(t, { theme: {} }), 'an object theme must be rejected');
+  });
+
+  test('validateTiming_unknownThemeName_isRejected', (t) => {
+    assertRejected(validate(t, { theme: 'neon' }), 'an unknown theme silently becomes midnight');
+  });
+
+  test('validateTiming_knownThemeName_isAccepted', (t) => {
+    assertAccepted(validate(t, { theme: 'slate' }), 'every shipped theme must still validate');
+  });
+
+  test('validateTiming_projectThemeAsObject_isRejected', (t) => {
+    // project.theme is the FIRST lookup write-build-html tries, so constraining only the
+    // top-level copy would leave the one that actually wins unchecked.
+    assertRejected(
+      validate(t, { project: { name: 'demo', fps: 30, width: 1280, height: 720, theme: {} } }),
+      'project.theme is read before the top-level one',
+    );
+  });
+
+  test('validateTiming_intakeThemeUnknown_isRejected', (t) => {
+    assertRejected(validate(t, { intake: { theme: 'neon' } }), 'intake.theme is the third lookup and is read too');
+  });
+
+  test('validateTiming_disabledEndCardWithStrayBuilderVersion_isRejected', (t) => {
+    assertRejected(
+      validate(t, { endCard: { enabled: false }, contentMs: undefined, builderVersion: '1.2.3' }),
+      'a disabled end card must not carry a builderVersion',
+    );
+  });
+
+  test('validateTiming_disabledEndCardWithPresentButValidFields_isRejected', (t) => {
+    // Isolates the absence rule: 4000/2500 satisfy every type constraint they have, so
+    // the ONLY thing that can reject this timeline is "a disabled end card carries none
+    // of its fields".
+    assertRejected(
+      validate(t, { endCard: { enabled: false }, contentMs: 4000, outroMs: 2500 }),
+      'contentMs/outroMs must be ABSENT when the end card is off',
+    );
+  });
+
+  test('validateTiming_disabledEndCardWithZeroedFields_isRejectedBySchema', (t) => {
+    // Present-and-zero is not absent. Zero reads as "measured it, got nothing", which is
+    // a different claim from "there is no end card".
+    //
+    // Asserted on the SCHEMA verdict rather than the exit code: zero additionally trips
+    // the contentMs >= 1 range guard, which throws EXIT.USAGE before the verdict is
+    // computed. The code is a symptom of the earlier guard; the schema's judgement is
+    // the property under test.
+    const r = validate(t, { endCard: { enabled: false }, contentMs: 0, outroMs: 0 });
+
+    assert.match(r.all, /SCHEMA: INVALID/, `present-and-zero must not satisfy the rule\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, 'and it must never be reported as a pass');
+  });
+
+  test('validateTiming_disabledEndCardWithNoEndCardFields_isAccepted', (t) => {
+    assertAccepted(
+      validate(t, { endCard: { enabled: false }, contentMs: undefined }),
+      'a correctly-stripped disabled end card must still validate',
+    );
+  });
+
+  test('validateTiming_enabledEndCardWithItsFields_isAccepted', (t) => {
+    // The rule must not misfire on the case it does not govern.
+    assertAccepted(
+      validate(t, { endCard: { enabled: true }, contentMs: 4000, outroMs: 2500, builderVersion: '1.2.3' }),
+      'an enabled end card legitimately carries all three fields',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enforcing the end-card rule exposes a real defect rather than fixing one: voice.mjs
+// stripped contentMs and outroMs when the end card was disabled and left builderVersion
+// behind, so once the rule is enforced NO run could produce a schema-valid disabled
+// end-card timeline. Enforcing the schema without this turns a silent defect into a
+// broken pipeline for every consumer that disables the end card.
+// ---------------------------------------------------------------------------
+describe('end-card field normalisation', () => {
+  const base = () => ({
+    builderVersion: '1.2.3',
+    contentMs: 999,
+    outroMs: 999,
+    durationMs: 999,
+    endCard: { enabled: false },
+  });
+
+  test('normalizeEndCardFields_endCardDisabled_stripsEveryEndCardOnlyField', () => {
+    const timing = normalizeEndCardFields(base(), { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(Object.hasOwn(timing, 'builderVersion'), false, 'builderVersion is an end-card field too');
+    assert.equal(Object.hasOwn(timing, 'contentMs'), false);
+    assert.equal(Object.hasOwn(timing, 'outroMs'), false);
+    assert.equal(timing.durationMs, 4000, 'a disabled end card ends at the content');
+  });
+
+  test('normalizeEndCardFields_endCardEnabled_populatesAllThreeFields', () => {
+    const timing = normalizeEndCardFields({ ...base(), endCard: { enabled: true } }, { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(timing.builderVersion, '1.2.3', 'an enabled end card keeps the version it displays');
+    assert.equal(timing.contentMs, 4000);
+    assert.equal(timing.outroMs, 2500);
+    assert.equal(timing.durationMs, 6500, 'content plus outro');
+  });
+
+  test('normalizeEndCardFields_disabledEndCardResult_validatesAgainstTheShippedSchema', { skip: ajvAvailable ? false : 'ajv not installed' }, async () => {
+    // The direction that matters: what a real run PRODUCES must satisfy the rule the
+    // validator now enforces. Asserting the rejection alone would have shipped a schema
+    // no pipeline output could pass.
+    const { default: Ajv } = await import('ajv/dist/2020.js');
+    const schema = JSON.parse(fs.readFileSync(path.join(srcDir, 'timing-schema.json'), 'utf8'));
+    const validateSchema = new Ajv({ allErrors: true, strict: false }).compile(schema);
+
+    const timing = normalizeEndCardFields({ ...base(), segments: contiguousSegments }, { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(validateSchema(timing), true, `voice.mjs output must satisfy the schema: ${JSON.stringify(validateSchema.errors)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remix is the OTHER producer of a timing file, and it wrote contentMs/outroMs
+// unconditionally — so it exited 0 having produced a file the restored schema rejects.
+//
+// normalizeEndCardFields was extracted this round to be reusable and then applied to one
+// of its two call sites. This domain's record: assertDistinctDestinations applied to one
+// collection, resolveInternalArtifact to capture metadata only, and now this. The newest
+// mechanism is the least applied.
+// ---------------------------------------------------------------------------
+describe('every producer of a timing file obeys the end-card rule', { skip: ajvAvailable ? false : 'ajv not installed' }, () => {
+  /** Real, probeable MP3s built with the engine's own generator — remix measures them. */
+  const remixableProject = (t, endCardEnabled) => {
+    const dir = makeProject(t);
+    for (const name of ['segment_000.mp3', 'segment_001.mp3']) {
+      const g = runScript('silence-gen.mjs', ['--out', name, '--ms', '2000', '--apply'], dir);
+      assert.equal(g.code, EXIT.OK, `fixture audio must build for this test to mean anything\n${g.all}`);
+    }
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
+      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+    ];
+    fs.writeFileSync(
+      path.join(dir, 'timing.json'),
+      JSON.stringify({
+        project: { name: 'demo', fps: 30, width: 320, height: 240 },
+        durationMs: 4000,
+        contentMs: 4000,
+        outroMs: 2500,
+        endCard: { enabled: endCardEnabled },
+        builderVersion: '9.9.9',
+        intake: { toleranceMs: 60_000, leadInMs: 0, perceivedGapMs: 0 },
+        segments,
+      }),
+    );
+    return dir;
+  };
+
+  test('remix_disabledEndCard_producesTimingTheShippedSchemaAccepts', (t) => {
+    const dir = remixableProject(t, false);
+
+    const remix = runScript('remix.mjs', ['--apply', '--replace'], dir);
+    assert.equal(remix.code, EXIT.OK, `remix must succeed for its output to be judged\n${remix.all}`);
+
+    // Judged by the shipped schema, not by an expectation restated here.
+    const check = runScript('validate-timing.mjs', [], dir);
+    assert.match(check.all, /SCHEMA: valid/, `remix produced a timing file its own validator rejects\n${check.all}`);
+
+    const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    assert.equal(Object.hasOwn(produced, 'builderVersion'), false, 'builderVersion is an end-card field');
+    assert.equal(Object.hasOwn(produced, 'contentMs'), false);
+    assert.equal(Object.hasOwn(produced, 'outroMs'), false);
+  });
+
+  test('remix_enabledEndCard_stillPopulatesTheEndCardFields', (t) => {
+    // The rule must not misfire on the case it does not govern.
+    const dir = remixableProject(t, true);
+
+    const remix = runScript('remix.mjs', ['--apply', '--replace'], dir);
+    assert.equal(remix.code, EXIT.OK, remix.all);
+
+    const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    assert.equal(produced.builderVersion, '9.9.9', 'an enabled end card keeps the version it displays');
+    assert.equal(typeof produced.contentMs, 'number');
+    assert.equal(typeof produced.outroMs, 'number');
   });
 });
 

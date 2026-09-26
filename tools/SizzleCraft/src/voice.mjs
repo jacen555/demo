@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { canonicalBytes } from './canonical-json.mjs';
+import { normalizeEndCardFields } from './end-card.mjs';
 import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
 
 const USAGE = `
@@ -269,8 +270,11 @@ fs.writeFileSync(voiceOutPath,
 const bvOk = typeof timing.builderVersion === 'string' && timing.builderVersion.trim() !== ''
   && !['undefined', 'null'].includes(timing.builderVersion.trim().toLowerCase());
 if (timing.endCard.enabled && !bvOk) throw new Error('approved enabled endCard requires a valid builderVersion');
-if (timing.endCard.enabled) { timing.contentMs = contentMs; timing.outroMs = outroRealMs; timing.durationMs = contentMs + outroRealMs; }
-else { delete timing.contentMs; delete timing.outroMs; timing.durationMs = contentMs; }
+// A disabled end card must leave NONE of its three fields behind. This stripped contentMs
+// and outroMs and kept builderVersion, which was invisible until the schema enforced the
+// rule — at which point no run could have produced a schema-valid disabled-end-card
+// timeline. The rule lives in end-card.mjs so it can be tested without synthesising speech.
+normalizeEndCardFields(timing, { contentMs, outroMs: outroRealMs });
 timing.leadInMs = leadRealMs;
 
 const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));

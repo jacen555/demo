@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { EXIT, guard, parseCli, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter } from './cli-support.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -32,7 +32,11 @@ const cli = (() => {
 })();
 
 const dir = cli.projectDir;
-const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+// timing.json is ENGINE-chosen: the caller named a project directory, not this file. Joined
+// raw, a planted link was followed and handed to JSON.parse, whose message quotes the bytes
+// it parsed — disclosing a file outside the project on the bare invocation path.
+const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
+const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
 // Harden DOM tokens: segment ids AND node/edge ids (and edge from/to) get interpolated into DOM/SVG
 // element ids (e.g. `${seg.id}-label`, `${seg.id}-shot-0`, node/edge ids) and `url(#…)` marker refs. The
 // timing schema already constrains these to a safe token, so VALIDATE (fail fast) here rather than
@@ -120,15 +124,18 @@ const assertNoSrcErrors = () => {
 // ---- footage (real user clip) metadata, resolved from clip-video output --------------------------
 // A `footage` segment plays REAL extracted clip frames (evidence-pack/footage/<clipId>/frame_*.jpg)
 // as a full-bleed background; the frame index is chosen per capture frame by window.__setFootageFrame.
-let FOOTAGE = {};
-try { FOOTAGE = JSON.parse(fs.readFileSync(path.join(dir, 'evidence-pack', 'footage', 'clips.json'), 'utf8')); } catch {}
-let MANIFEST = {};
-try { MANIFEST = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch {}
+// Each of these is an OPTIONAL engine-chosen input, and `catch {}` collapsed several distinct
+// states into one: genuinely absent (fine), unreadable or corrupt (silently removed content),
+// and redirected through a link (silently ADDED content from outside the project — suppressing
+// the error hid the message, not the read). readOptionalEngineJson keeps them apart, reserves
+// null for ENOENT alone, and is told the shape each caller below actually iterates — so a
+// present-but-empty file can never arrive here disguised as an absent one.
+let FOOTAGE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'footage', 'clips.json'), 'footage clips.json', { clips: 'array' })) ?? {};
+let MANIFEST = guard(() => readOptionalEngineJson(dir, 'manifest.json', 'manifest.json', { stages: 'object' })) ?? {};
 const DERIVED_FOOTAGE = MANIFEST.stages?.['materialize-footage']?.derivedFootage || null;
 // C-11: evidence-pack.json is the SINGLE source of truth for what may appear on-screen. clips.json alone
 // is NOT sufficient — a tampered clips.json must not be able to smuggle an unapproved clip in.
-let EVIDENCE = {};
-try { EVIDENCE = JSON.parse(fs.readFileSync(path.join(dir, 'evidence-pack', 'evidence-pack.json'), 'utf8')); } catch {}
+let EVIDENCE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'evidence-pack.json'), 'evidence-pack.json', { assets: 'array' })) ?? {};
 const evidenceApprovedClip = id => !!id && (EVIDENCE.assets || []).some(a => a && a.kind === 'clip' && a.approvedForUse === true && a.id === id);
 // clipId is used verbatim as a path segment; force it to a single safe token (no separators / `..`)
 // so neither the fallback path nor the frame URLs can escape evidence-pack/footage/.

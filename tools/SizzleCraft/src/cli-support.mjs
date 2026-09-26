@@ -228,7 +228,7 @@ export function createBoundary(rootDirectory) {
  * recursively: following an in-root link there clobbers whatever it points at, which the
  * caller never named.
  */
-function resolveUnlinkedPath(boundary, candidate, label) {
+function resolveUnlinkedPath(boundary, candidate, label, action = 'write') {
   const lexical = trimTrailingSep(path.resolve(boundary.root, candidate));
   if (!contains(boundary.root, lexical)) {
     throw new CliError(`${label} "${candidate}" resolves outside the project root (${boundary.root}) — refusing`);
@@ -242,24 +242,28 @@ function resolveUnlinkedPath(boundary, candidate, label) {
   }
   if (st?.isSymbolicLink()) {
     throw new CliError(
-      `${label} "${candidate}" is a link (${lexical}) — refusing to write through it. ` +
+      `${label} "${candidate}" is a link (${lexical}) — refusing to ${action} through it. ` +
         `Being inside the project root is not the same as being the file that was named.`,
     );
   }
 
   const resolved = boundary.resolve(candidate, label);
   if (!samePath(resolved, lexical)) {
-    throw new CliError(`${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to write through a link`);
+    throw new CliError(`${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to ${action} through a link`);
   }
   return { lexical, stat: st };
 }
 
 /**
- * Resolves a path the engine writes on its own initiative — its own metadata, not a
+ * Resolves a path the engine touches on its own initiative — its own metadata, not a
  * destination the user named. Refuses links outright.
+ *
+ * `action` only shapes the diagnostic. It is not cosmetic: these paths are both written
+ * and read, and telling someone a read was "refused to write through" sends them looking
+ * for the wrong thing.
  */
-export function resolveInternalArtifact(root, candidate, label = 'engine metadata') {
-  return resolveUnlinkedPath(createBoundary(root), candidate, label).lexical;
+export function resolveInternalArtifact(root, candidate, label = 'engine metadata', action = 'write') {
+  return resolveUnlinkedPath(createBoundary(root), candidate, label, action).lexical;
 }
 
 /**
@@ -566,6 +570,142 @@ export function resolveOutput(root, candidate, { apply, replace, label = 'output
  */
 export function resolveEngineOutput(root, candidate, { apply, replace, label = 'output' }) {
   return applyWriteGuards(resolveInternalArtifact(root, candidate, label), candidate, { apply, replace, label });
+}
+
+/**
+ * Creates and opens an engine-chosen temp file, refusing to write through anything that
+ * is already there, and returns a handle that owns it.
+ *
+ * Resolving the path and then opening it with `'w+'` puts the decision and the action in
+ * two places, and `'w+'` follows a link: an entry planted at this name is opened and
+ * TRUNCATED, destroying whatever it points at. So the exclusivity is the open itself —
+ * `'wx+'` refuses to create through any existing entry, link or file, with no window
+ * between the check and the act.
+ *
+ * The handle exists because the refusal is only half the job. A caller that cleans up by
+ * path deletes whatever is at that path — including the pre-existing entry it was just
+ * told it may not touch, which makes the guard perform the destruction it exists to
+ * prevent. Cleanup belongs to the handle, and a handle is only ever returned when THIS
+ * call created the file, so there is nothing to delete when the open was refused.
+ *
+ * The boundary resolve is still not redundant: it keeps the path inside the project and
+ * turns a planted link into a clear refusal instead of a bare EEXIST.
+ *
+ * @returns {{fd: number, path: string, cleanup: () => void}}
+ */
+export function openExclusiveEngineFile(root, candidate, label = 'temp file') {
+  const abs = resolveInternalArtifact(root, candidate, label);
+
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'wx+');
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      throw new CliError(
+        `${label} already exists: ${abs} — refusing to write through an entry this run did not create. ` +
+          `It has been left untouched; delete it and re-run.`,
+      );
+    }
+    throw new CliError(`${label}: could not create ${abs} (${err.code ?? err.message})`);
+  }
+
+  let done = false;
+  let outcome = null;
+  return {
+    fd,
+    path: abs,
+    /**
+     * Closes and removes the file this handle created. Idempotent.
+     *
+     * @returns {null|{path: string, code: string|null, message: string}} null when the
+     *   file is gone, otherwise the artifact left behind. Swallowing a failed removal
+     *   reported the "no partial is left behind" guarantee as honoured whether or not it
+     *   was, so a failed encode could strand an unreported `.part-*` file.
+     */
+    cleanup() {
+      if (done) return outcome;
+      done = true;
+      try { fs.closeSync(fd); } catch {}
+      try {
+        fs.rmSync(abs, { force: true });
+      } catch (err) {
+        outcome = {
+          path: abs,
+          code: err.code ?? null,
+          message: `${label} ${abs} could not be removed (${err.code ?? err.message}) — delete it by hand`,
+        };
+      }
+      return outcome;
+    },
+  };
+}
+
+/** Names a JSON value for a diagnostic, keeping `null` distinct from "an object". */
+function describeJsonValue(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+/**
+ * Reads an OPTIONAL engine-chosen JSON file, keeping apart the states that
+ * `try { ... } catch {}` collapses into one.
+ *
+ * Absent is a legitimate answer for an optional input. "Present but unreadable",
+ * "present but malformed" and "present but redirected through a link" are not, and
+ * swallowing the error renders all of them as "not present" — so a corrupted file
+ * silently removes content from the output while a planted one silently adds it.
+ * Suppressing the error hides the message, not the read.
+ *
+ * `null` is therefore reserved for ENOENT and nothing else. A present file whose JSON is
+ * `null` — or an array, or a scalar — is NOT an absent file, even though every caller
+ * here spells its default `?? {}` and would have accepted one. That equivalence is the
+ * same ambiguity one layer down, and it is why this returns a plain object or throws.
+ *
+ * @param {object} [expect] per-property shape the caller relies on, e.g. `{ clips: 'array' }`
+ * @returns {object|null} the parsed object, or null when the file is genuinely absent
+ * @throws {CliError} when the path is unsafe, unreadable, malformed, or the wrong shape
+ */
+export function readOptionalEngineJson(root, candidate, label, expect = {}) {
+  const abs = resolveInternalArtifact(root, candidate, label, 'read');
+
+  let raw;
+  try {
+    raw = fs.readFileSync(abs, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null; // the only state that means "absent"
+    throw new CliError(
+      `${label}: could not read ${abs} (${err.code ?? err.message}) — refusing to treat an unreadable file as an absent one`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`${label}: ${abs} is not valid JSON — ${err.message}`);
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new CliError(
+      `${label}: ${abs} must contain a JSON object — got ${describeJsonValue(parsed)}. ` +
+        `A file that is present with nothing in it is not the same as no file; delete it if there is nothing to declare.`,
+    );
+  }
+
+  for (const [key, kind] of Object.entries(expect)) {
+    if (!Object.hasOwn(parsed, key)) continue; // an absent optional property is fine
+    const value = parsed[key];
+    const ok =
+      kind === 'array' ? Array.isArray(value) : value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!ok) {
+      throw new CliError(
+        `${label}: ${abs} property "${key}" must be ${kind === 'array' ? 'an array' : 'an object'} — got ${describeJsonValue(value)}`,
+      );
+    }
+  }
+
+  return parsed;
 }
 
 /**

@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { canonicalBytes } from './canonical-json.mjs';
+import { normalizeEndCardFields } from './end-card.mjs';
 import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
 
 const USAGE = `
@@ -183,9 +184,12 @@ if (outroFile) parts.push(outroFile);
 fs.writeFileSync(voiceOutPath,
   Buffer.concat(parts.map((p, i) => { const b = fs.readFileSync(p); return i === 0 ? b : b.subarray(audioStart(b)); })));
 
-timing.contentMs = contentMs;
-timing.outroMs = outroRealMs;
-timing.durationMs = contentMs + outroRealMs;
+// remix is the second producer of a timing file, and it wrote these unconditionally — so a
+// disabled end card still shipped contentMs/outroMs/builderVersion and the result failed the
+// schema that forbids them. Same rule, same helper as voice.mjs: state it once, apply it at
+// every producer. `outroRealMs` is already 0 when the end card is off, so durationMs is
+// unchanged; what changes is that the end-card-only fields are no longer left behind.
+normalizeEndCardFields(timing, { contentMs, outroMs: outroRealMs });
 timing.leadInMs = leadRealMs;
 
 const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));
