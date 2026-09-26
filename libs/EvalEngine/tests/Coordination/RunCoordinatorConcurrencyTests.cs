@@ -226,10 +226,14 @@ public sealed class RunCoordinatorConcurrencyTests
     }
 
     /// <summary>
-    /// Seeds are drawn in suite order before anything is dispatched, so a run's seed is a function
-    /// of where it sits in the suite rather than of which worker reached it first. Without that,
+    /// A run's seed is a function of the run, not of which worker reached it first. Without that,
     /// raising the throttle would silently change what a baseline is compared against.
     /// </summary>
+    /// <remarks>
+    /// Compared against the single-threaded run of the same suite rather than against literals,
+    /// so it exercises the source a composition root actually registers instead of a fixture's
+    /// counter — the engine, not the helper.
+    /// </remarks>
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
@@ -242,18 +246,27 @@ public sealed class RunCoordinatorConcurrencyTests
             CoordinatorFixtures.Scenario("c", repetitions: 4)
         );
 
+        var sequential = await Seeds(suite, throttle: 1);
+        var throttled = await Seeds(suite, throttle);
+
+        throttled.Should().BeEquivalentTo(sequential, because: "the throttle must not reach the seeds");
+        throttled.SelectMany(seeds => seeds).Should().OnlyHaveUniqueItems();
+    }
+
+    private static async Task<long[][]> Seeds(Suite suite, int throttle)
+    {
         var result = await CoordinatorFixtures
             .Coordinator(
                 [new StubRunner(ScenarioKind.Rest)],
                 options: new RunCoordinatorOptions { MaxConcurrency = throttle },
-                seeds: new CountingSeedSource(rootSeed: 500)
+                seeds: new DeterministicSeedSource(500)
             )
             .RunAsync(suite, default);
 
-        result
-            .ScenarioResults.Select(scenario => scenario.Runs.Select(run => run.Transcript.Seed).ToArray())
-            .Should()
-            .BeEquivalentTo(new[] { new long[] { 501, 502, 503 }, [504, 505], [506, 507, 508, 509] });
+        return
+        [
+            .. result.ScenarioResults.Select(scenario => scenario.Runs.Select(run => run.Transcript.Seed).ToArray()),
+        ];
     }
 
     /// <summary>

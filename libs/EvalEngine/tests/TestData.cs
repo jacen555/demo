@@ -41,7 +41,14 @@ internal static class TestData
             {
                 Kind = "http",
                 Endpoint = "https://localhost:5001/eval",
-                Attributes = new Dictionary<string, string>(StringComparer.Ordinal) { ["statusCode"] = "200" },
+
+                // The reserved keys a real runner records, merged with what it observed on the
+                // wire. A transcript without them is a shape no runner in this library emits, and
+                // a fixture that omitted them is why an evidence-free pass stayed invisible.
+                Attributes = new Dictionary<string, string>(ArtifactShapes.GradedSuccess(), StringComparer.Ordinal)
+                {
+                    ["statusCode"] = "200",
+                },
             },
         };
 

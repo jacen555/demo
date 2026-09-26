@@ -28,6 +28,14 @@ namespace Forge.EvalEngine.Paths;
 /// only at the start of the value would admit the first two.
 /// </para>
 /// <para>
+/// <b>Each token is reduced before it is tested.</b> A leading run of <c>./</c> or <c>.\</c> is
+/// removed, because it changes whether a path looks rooted without changing where it points —
+/// <c>./C:/Users/&lt;account&gt;</c> and <c>.//home/&lt;account&gt;</c> are the same disclosure as
+/// the unprefixed spellings and were admitted by both doors. Reducing is what makes the answer a
+/// property of the path rather than of the producer's spelling; see
+/// <see cref="WithoutRelativePrefix"/> for why it widens nothing.
+/// </para>
+/// <para>
 /// <b>Case-sensitive, deliberately.</b> The macOS home root is <c>/Users</c> and the canonical
 /// REST collection route is <c>/users</c>. No case-insensitive rule keeps both, and the route is
 /// overwhelmingly the more likely thing for an author to have written.
@@ -142,6 +150,13 @@ internal static class MachinePath
 
             var token = text[start..cursor];
 
+            // Reduced before it is tested. A leading './' or '.\' makes a drive-qualified or
+            // system-rooted path read as relative, in both separator conventions — and the
+            // recogniser would then answer about the spelling rather than about the path. The
+            // property has to hold whatever a producer wrote, not for the spellings somebody
+            // thought of.
+            var bare = WithoutRelativePrefix(token);
+
             if (ordinal == 0 && IsExemptMethod(token))
             {
                 addressed = true;
@@ -153,12 +168,12 @@ internal static class MachinePath
                 // `/home/dashboard` is a plausible route and is not distinguishable in text from
                 // `/home/<account>`. A drive prefix and a UNC path carry no such ambiguity:
                 // neither is ever a route, so there is nothing to concede and they stay refused.
-                if (IsDriveRooted(token) || IsUncRooted(token) || CarriesLabelledPath(token))
+                if (IsDriveRooted(bare) || IsUncRooted(bare) || CarriesLabelledPath(bare))
                 {
                     return true;
                 }
             }
-            else if (StartsPath(token) || CarriesLabelledPath(token))
+            else if (StartsPath(bare) || CarriesLabelledPath(bare))
             {
                 return true;
             }
@@ -245,7 +260,11 @@ internal static class MachinePath
                 continue;
             }
 
-            if (StartsPath(token[(index + 1)..]))
+            // Reduced here too. This is the second entry to the same predicate: the whitespace
+            // boundary reduces its tokens at the top of IsPresentIn, and the text after a
+            // `label:` separator arrives straight from here — so a relative prefix hid a rooted
+            // path from exactly one of the two routes into StartsPath.
+            if (StartsPath(WithoutRelativePrefix(token[(index + 1)..])))
             {
                 return true;
             }
@@ -318,6 +337,49 @@ internal static class MachinePath
 
     private static bool StartsPath(ReadOnlySpan<char> text) =>
         IsDriveRooted(text) || IsUncRooted(text) || IsSystemRooted(text);
+
+    /// <summary>
+    /// The token with any leading run of <c>./</c> or <c>.\</c> removed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Canonicalisation, not another spelling in a list.</b> A relative prefix is the one
+    /// transformation that changes whether a path <i>looks</i> rooted without changing where it
+    /// points, and it applies to every rooted shape at once — <c>./C:/Users/…</c>,
+    /// <c>.\D:\build\…</c>, <c>.//home/…</c>. Testing the reduced token means the answer is about
+    /// the path rather than about how the producer wrote it.
+    /// </para>
+    /// <para>
+    /// <b>The two spellings of a dot prefix are not the same path, and the difference is the
+    /// whole subtlety.</b> <c>./home/&lt;account&gt;</c> reduces to <c>home/&lt;account&gt;</c> —
+    /// <i>relative</i>, which this recogniser has always accepted, because a relative path
+    /// beginning <c>home/</c> is indistinguishable from a repository directory of that name.
+    /// <c>.//home/&lt;account&gt;</c> reduces to <c>/home/&lt;account&gt;</c> — <i>rooted</i>, and
+    /// refused, as the unprefixed spelling always was. The reduction changes which of those two a
+    /// value is read as; it does not change what either is worth.
+    /// </para>
+    /// <para>
+    /// <b>So this widens nothing.</b> <c>./api/v1/refund</c> reduces to <c>api/v1/refund</c>,
+    /// which is not rooted and was never refused; <c>GET ./home/dashboard</c> reduces to the route
+    /// the method exemption already waives. What it removes is the ability to hide an
+    /// <i>already-refused</i> path behind two characters.
+    /// </para>
+    /// <para>
+    /// <b>Applied at both entries to <see cref="StartsPath"/>.</b> The whitespace boundary reduces
+    /// its tokens in <see cref="IsPresentIn"/>; the <c>label:</c> boundary reduces in
+    /// <see cref="CarriesLabelledPath"/>. Reducing at one of them is what let
+    /// <c>checkout path:.//home/&lt;account&gt;</c> through while the bare spelling was refused.
+    /// </para>
+    /// </remarks>
+    private static ReadOnlySpan<char> WithoutRelativePrefix(ReadOnlySpan<char> token)
+    {
+        while (token.Length >= 2 && token[0] == '.' && token[1] is '/' or '\\')
+        {
+            token = token[2..];
+        }
+
+        return token;
+    }
 
     /// <summary><c>C:\Users\…</c> or <c>D:/build/…</c>.</summary>
     /// <remarks>

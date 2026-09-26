@@ -653,7 +653,12 @@ public sealed class SuiteLoader
     /// </remarks>
     private static ValidationMessage UnsafeIdentifier(string position, string field, string what) =>
         SuiteValidator.Error(
-            what == "scenario" ? "scenario.id.machinePath" : "scenario.tag.machinePath",
+            what switch
+            {
+                "scenario" => "scenario.id.machinePath",
+                "carve-out reason" => "scenario.expectedFailure.machinePath",
+                _ => "scenario.tag.machinePath",
+            },
             null,
             $"scenario {position} declares a {what} containing a machine path, in '{field}'. That value is copied "
                 + "into the committed artifact, so it discloses the account a job runs as and the layout of the "
@@ -681,6 +686,16 @@ public sealed class SuiteLoader
             return ("identity.id", "scenario");
         }
 
+        // The carve-out reason is copied verbatim into ScenarioResult.ExpectedFailure and from
+        // there into the committed artifact, so it is the same surface as a tag and gets the same
+        // check. Caught here as well as on read-back: catching it only there means the run
+        // happens, writes an artifact CanonicalJson then refuses, and takes every other
+        // scenario's evidence down with it.
+        if (MachinePath.IsPresentIn(scenario.Grading.ExpectedFailure?.Reason))
+        {
+            return ("grading.expectedFailure.reason", "carve-out reason");
+        }
+
         foreach (var tag in scenario.Slicing.Tags)
         {
             if (MachinePath.IsPresentIn(tag.Key))
@@ -694,6 +709,16 @@ public sealed class SuiteLoader
             }
         }
 
+        // Assertion expressions are deliberately NOT checked. MachinePath guards labels — names
+        // somebody chose, where a path is always an authoring error — and an assertion's operand
+        // is evidence: the thing the assertion is about. 'presence:response/GET /home/dashboard'
+        // is a legitimate response-token assertion that the token rule refuses, and the method
+        // exemption cannot rescue it because the leading token is 'presence:response/GET'. The
+        // label half cannot carry a path in the first place — the grammar admits only
+        // [A-Za-z][A-Za-z0-9_.-]* before the colon — so there is nothing there to guard either.
+        // MachinePath's own remarks say not to tighten it onto assertion expressions; ADR 0005
+        // made that call, and a guard that refuses a valid suite is worse than the disclosure it
+        // would prevent.
         return null;
     }
 

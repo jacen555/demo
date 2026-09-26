@@ -29,6 +29,20 @@ internal sealed class DeterministicParticipantFactory : IParticipantFactory
     public static string DisplayName => nameof(DeterministicParticipantFactory);
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// <b>Empty, stated rather than defaulted.</b> The callers this builds replay the scenario's
+    /// own scripted material: there is no stimulus ceiling to truncate against, no persona to
+    /// change what the text says, and no sampling knob to draw from — the mode comes from the
+    /// scenario and the script comes from the suite, both of which the artifact already records
+    /// through the definition fingerprint. So no setting of this factory's can move a verdict, and
+    /// the honest attestation is an empty map rather than a member this type declined to answer.
+    /// That is the point of the interface requiring it: two runs cannot silently disagree about a
+    /// setting one of them never declared.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <inheritdoc/>
     /// <exception cref="ArgumentNullException"><paramref name="scenario"/> is null.</exception>
     public IParticipant Create(Scenario scenario, long seed, int repetition)
     {

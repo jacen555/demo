@@ -116,6 +116,22 @@ public sealed class ScenarioAggregator
                 throw new ArgumentException("A run must not be null.", nameof(runs));
             }
 
+            // A public method's callers are whatever its signature admits, not whatever happens
+            // to call it today. RunCoordinator hands this runs it has just produced and graded,
+            // where the property holds by construction — but nothing stops a caller passing the
+            // runs of an artifact it read from a file, and a pass beside an exchange that
+            // gathered nothing would then be reported as a point estimate of 1.0 with an interval
+            // around it. Asked of VerdictEvidence rather than restated here (§V).
+            if (VerdictEvidence.IsUnbacked(run))
+            {
+                throw new ArgumentException(
+                    $"A run carrying the verdict '{run.Status}' records no successful exchange with the system "
+                        + $"under test, so {VerdictEvidence.Why}. It cannot be counted as a pass, as a failure, or "
+                        + "as ungradeable.",
+                    nameof(runs)
+                );
+            }
+
             switch (run.Status)
             {
                 // Error is the one status that produced no verdict about the system under test,

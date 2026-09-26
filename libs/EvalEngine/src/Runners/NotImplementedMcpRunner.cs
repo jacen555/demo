@@ -84,6 +84,11 @@ public sealed class NotImplementedMcpRunner : IScenarioRunner
     /// <inheritdoc/>
     public ScenarioKind Kind => ScenarioKind.Mcp;
 
+    /// <inheritdoc/>
+    /// <remarks>Nothing is conducted, so no setting of this runner's can vary a verdict.</remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     /// <summary>Reports that this build cannot run the scenario, without throwing.</summary>
     /// <param name="scenario">The scenario. Must declare <see cref="ScenarioKind.Mcp"/>.</param>
     /// <param name="context">The participant and seed for this run. The participant is not consulted.</param>

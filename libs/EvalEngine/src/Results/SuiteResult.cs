@@ -1,4 +1,6 @@
+using System.Collections.Frozen;
 using Forge.EvalEngine.Assertions;
+using Forge.EvalEngine.Paths;
 using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Serialization;
 using Forge.EvalEngine.Transcripts;
@@ -75,6 +77,20 @@ public sealed record ScenarioResult
     /// declared policy when the harness was told to override it.
     /// </summary>
     public required RepetitionPolicy RepetitionPolicyUsed { get; init; }
+
+    /// <summary>Gets the failure carve-out in force when these runs were graded, if any.</summary>
+    /// <remarks>
+    /// <para>
+    /// A <see cref="RunStatus.ExpectedFailure"/> in <see cref="Runs"/> is a status; this is the
+    /// stated justification for it, so a reader of the committed artifact can see what was
+    /// excluded from counting as a regression and why, without the suite file that produced it.
+    /// </para>
+    /// <para>
+    /// Optional, and absent from the JSON when unset, so an artifact written before carve-outs
+    /// existed still reads and <see cref="SchemaVersions.SuiteResult"/> does not move.
+    /// </para>
+    /// </remarks>
+    public ExpectedFailure? ExpectedFailure { get; init; }
 
     /// <summary>
     /// Gets the <see cref="Scenarios.ScenarioFingerprint"/> of the definition these runs were
@@ -158,6 +174,8 @@ public sealed record RecordedSelection
 /// </summary>
 public sealed record EvaluationEnvironment
 {
+    private readonly IReadOnlyDictionary<string, string> _harnessConfig = FrozenDictionary<string, string>.Empty;
+
     /// <summary>Gets the address the suite was run against.</summary>
     public string? Endpoint { get; init; }
 
@@ -177,8 +195,24 @@ public sealed record EvaluationEnvironment
     public required DateTimeOffset Timestamp { get; init; }
 
     /// <summary>Gets the harness settings in force, for a reader trying to reproduce the run.</summary>
-    public IReadOnlyDictionary<string, string> HarnessConfig { get; init; } =
-        new Dictionary<string, string>(StringComparer.Ordinal);
+    /// <remarks>
+    /// Frozen on assignment rather than merely copied. An
+    /// <see cref="IReadOnlyDictionary{TKey,TValue}"/> is an interface, not a guarantee: handing
+    /// back a <see cref="Dictionary{TKey,TValue}"/> through it leaves a caller one cast away from
+    /// editing what a committed artifact says the run was conducted under, after the run it
+    /// describes (§IV).
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">The value is null.</exception>
+    public IReadOnlyDictionary<string, string> HarnessConfig
+    {
+        get => _harnessConfig;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+
+            _harnessConfig = value.ToFrozenDictionary(StringComparer.Ordinal);
+        }
+    }
 }
 
 /// <summary>

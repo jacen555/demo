@@ -254,10 +254,6 @@ public class EndpointRedactionTests
             CancellationToken.None
         );
 
-        provider
-            .GetRequiredService<SeedSchedule>()
-            .PinTo(suite, [.. suite.Scenarios.Select(scenario => scenario.Identity.Id)]);
-
         var conducted = await provider.GetRequiredService<RunCoordinator>().RunAsync(suite, CancellationToken.None);
 
         // The seam. BaselineEndpointCoordinators builds the baseline harness's runners around an

@@ -3,6 +3,7 @@ using Forge.EvalEngine.Assertions;
 using Forge.EvalEngine.Comparison;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Scenarios;
+using Forge.EvalEngine.Transcripts;
 
 namespace Forge.EvalEngine.Tests.Comparison;
 
@@ -20,6 +21,10 @@ public sealed class SuiteComparatorIntegrityTests
 {
     private const string ExpectsEscalated = "sha256:expects-escalated";
     private const string ExpectsResolved = "sha256:expects-resolved";
+
+    /// <summary>One check, and the two together — the material the per-repetition tests pair on.</summary>
+    private static readonly string[] OneCheck = ["exactMatch:outcome"];
+    private static readonly string[] BothChecks = ["exactMatch:outcome", "slotAbsent:scope/confirm"];
 
     // -----------------------------------------------------------------------------------------
     // The definition fingerprint: same id, same assertions, different expectations.
@@ -334,6 +339,287 @@ public sealed class SuiteComparatorIntegrityTests
 
         comparison.Classification.Should().Be(ScenarioClassification.Fixed);
         comparison.Comparison!.PValue.Should().BeApproximately(0.03125, 1e-12);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The assertions each repetition was actually graded against.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A set unioned across a scenario's repetitions cannot see a repetition that checked less.
+    /// </summary>
+    /// <remarks>
+    /// The fabrication in full. Both artifacts grade repetition two against both assertions, so
+    /// the union of specs across each scenario is identical and any comparison of those unions
+    /// agrees the two scenarios ask the same thing. Repetition <i>one</i> of the candidate was
+    /// graded against only the first assertion — the second was never evaluated — so its pass is
+    /// "nothing that ran failed" rather than "every declared check held". Paired against a
+    /// baseline repetition that did evaluate both, it becomes a discordant pair: a fifty-point
+    /// effect size and a p-value, earned by an assertion that never ran.
+    /// </remarks>
+    [Fact]
+    public void Compare_CandidateRepetitionGradedAgainstFewerAssertionsThanItsPair_ReportsNoEffectItCannotPair()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Fail, RunStatus.Fail],
+                perRunAssertions: [BothChecks, BothChecks]
+            ),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Pass, RunStatus.Fail],
+                perRunAssertions: [OneCheck, BothChecks]
+            ),
+        ]);
+
+        var comparison = ComparisonFixtures.For(ComparisonFixtures.WithStatistics().Compare(baseline, candidate), "a");
+
+        comparison.Classification.Should().Be(ScenarioClassification.NotComparable);
+        comparison.NotComparableReason.Should().Contain("'a'").And.Contain("Repetition");
+        comparison.GradedPairs.Should().Be(0);
+        comparison.Comparison.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The same fabrication carried all the way to a reported fix.
+    /// </summary>
+    /// <remarks>
+    /// Every candidate repetition passes, so the scenario reads as fixed — but one of those
+    /// passes was drawn over a strictly smaller set of checks than the baseline repetition it is
+    /// paired against, so what it establishes is not what the baseline failed.
+    /// </remarks>
+    [Fact]
+    public void Compare_EveryCandidateRepetitionPassesButOneCheckedLessThanItsPair_IsNotComparableRatherThanFixed()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Fail, RunStatus.Fail],
+                perRunAssertions: [BothChecks, BothChecks]
+            ),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Pass, RunStatus.Pass],
+                perRunAssertions: [OneCheck, BothChecks]
+            ),
+        ]);
+
+        var result = new SuiteComparator().Compare(baseline, candidate);
+
+        ComparisonFixtures.For(result, "a").Classification.Should().Be(ScenarioClassification.NotComparable);
+        result.NewlyCovered.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// The same divergence in the other direction: the candidate checked <i>more</i>.
+    /// </summary>
+    /// <remarks>
+    /// Not a false green on its own, but it is the same pair of repetitions graded against
+    /// different questions — and a regression reported from it would be earned by the extra
+    /// assertion rather than by the change.
+    /// </remarks>
+    [Fact]
+    public void Compare_CandidateRepetitionGradedAgainstAnExtraAssertionItsPairNeverRan_IsNotComparable()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Pass, RunStatus.Pass],
+                perRunAssertions: [OneCheck, BothChecks]
+            ),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Fail, RunStatus.Pass],
+                perRunAssertions: [BothChecks, BothChecks]
+            ),
+        ]);
+
+        var comparison = ComparisonFixtures.For(new SuiteComparator().Compare(baseline, candidate), "a");
+
+        comparison.Classification.Should().Be(ScenarioClassification.NotComparable);
+        comparison.NotComparableReason.Should().Contain("Repetition");
+    }
+
+    /// <summary>
+    /// Repetitions graded against different checks on <b>both</b> sides, pairwise identical.
+    /// </summary>
+    /// <remarks>
+    /// Each pair was asked the same question, which is all the pairing needs. A rule phrased
+    /// over the scenario rather than over the pair would refuse this, and refusing a comparison
+    /// that is genuinely matched spends the guard's credibility for nothing.
+    /// </remarks>
+    [Fact]
+    public void Compare_RepetitionsGradedAgainstDifferentChecksButMatchedPairwise_StillCompares()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Fail, RunStatus.Fail],
+                perRunAssertions: [OneCheck, BothChecks]
+            ),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario(
+                "a",
+                [RunStatus.Pass, RunStatus.Pass],
+                perRunAssertions: [OneCheck, BothChecks]
+            ),
+        ]);
+
+        var comparison = ComparisonFixtures.For(new SuiteComparator().Compare(baseline, candidate), "a");
+
+        comparison.Classification.Should().Be(ScenarioClassification.Fixed);
+        comparison.GradedPairs.Should().Be(2);
+    }
+
+    /// <summary>
+    /// A repetition that errored under one variant must not veto the scenario.
+    /// </summary>
+    /// <remarks>
+    /// An errored run never reached grading, so it carries no verdicts at all. Comparing its
+    /// empty set against its pair's would make every mixed scenario not-comparable — and the
+    /// errored pair is already conditioned out of the denominator everywhere else, so it has no
+    /// business vetoing the repetitions that did produce evidence.
+    /// </remarks>
+    [Fact]
+    public void Compare_RepetitionThatErroredUnderOneVariant_StillComparesOnTheRepetitionsThatGraded()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Error, RunStatus.Fail]),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Pass, RunStatus.Pass]),
+        ]);
+
+        var comparison = ComparisonFixtures.For(new SuiteComparator().Compare(baseline, candidate), "a");
+
+        comparison.Classification.Should().Be(ScenarioClassification.Fixed);
+        comparison.GradedPairs.Should().Be(1);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // A verdict has to be backed by an exchange that gathered evidence.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A pass whose own transcript says the system under test was never reached.
+    /// </summary>
+    /// <remarks>
+    /// The coordinator never writes this: a run whose exchange state
+    /// <see cref="Transcripts.ExchangeState.IsHarnessFailure(string?)"/> classifies as a harness
+    /// failure is recorded <see cref="RunStatus.Error"/> and its assertions are not evaluated at
+    /// all. An artifact read from disk carries no such guarantee, and a pass with no assertions
+    /// beside it satisfies "nothing failed" vacuously — so a baseline truncated to the runs that
+    /// never happened is indistinguishable from one that genuinely passed.
+    /// </remarks>
+    [Theory]
+    [InlineData(ExchangeState.RunnerFailed)]
+    [InlineData(ExchangeState.Unsupported)]
+    [InlineData(ExchangeState.TimedOut)]
+    [InlineData(ExchangeState.RequestFailed)]
+    [InlineData(ExchangeState.NotAttempted)]
+    [InlineData(ExchangeState.ParticipantFailed)]
+    [InlineData(ExchangeState.AdapterFailed)]
+    public void Compare_PassRecordedBesideATranscriptThatGatheredNoEvidence_RefusesRatherThanCountingIt(string exchange)
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Pass], gradedExchange: exchange),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Pass)]);
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        act.Should().Throw<ArgumentException>().WithMessage("*'a'*");
+    }
+
+    /// <summary>
+    /// A transcript that recorded no exchange state at all is not a transcript that succeeded.
+    /// </summary>
+    [Fact]
+    public void Compare_PassRecordedWithNoExchangeStateAtAll_RefusesBecauseAbsenceIsNotEvidence()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Pass], gradedExchange: null),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Pass)]);
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        act.Should().Throw<ArgumentException>().WithMessage("*'a'*");
+    }
+
+    /// <summary>
+    /// The same refusal for a graded non-pass, because the predicate is the same fact.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="RunStatus.Fail"/> beside a transcript that gathered nothing is not a false
+    /// green, but it is the same self-contradiction: a verdict about a system that was never
+    /// successfully asked. Counting it would put a fabricated failure into the denominator of a
+    /// paired test.
+    /// </remarks>
+    [Theory]
+    [InlineData(RunStatus.Fail)]
+    [InlineData(RunStatus.ExpectedFailure)]
+    public void Compare_GradedNonPassRecordedBesideATranscriptThatGatheredNoEvidence_Refuses(RunStatus status)
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [status], gradedExchange: ExchangeState.RequestFailed),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Pass)]);
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        act.Should().Throw<ArgumentException>().WithMessage("*'a'*");
+    }
+
+    /// <summary>
+    /// A malformed response <i>is</i> evidence, so a verdict drawn from one stands.
+    /// </summary>
+    /// <remarks>
+    /// The request was delivered and the adapter reached a considered verdict on the body, so
+    /// what is wrong is the system's output. Refusing it here would excuse a real regression —
+    /// which is the exact reason <see cref="Transcripts.ExchangeState.IsHarnessFailure(string?)"/>
+    /// names it beside <see cref="Transcripts.ExchangeState.Responded"/> rather than with the
+    /// harness failures.
+    /// </remarks>
+    [Fact]
+    public void Compare_VerdictRecordedBesideAMalformedResponse_IsCountedBecauseTheSystemAnswered()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Fail], gradedExchange: ExchangeState.MalformedResponse),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Pass)]);
+
+        ComparisonFixtures
+            .For(new SuiteComparator().Compare(baseline, candidate), "a")
+            .Classification.Should()
+            .Be(ScenarioClassification.Fixed);
+    }
+
+    /// <summary>
+    /// An errored run is allowed to carry a harness-failure state — that is what it records.
+    /// </summary>
+    [Fact]
+    public void Compare_ErroredRunCarryingAHarnessFailureState_IsAcceptedBecauseThatIsWhatAnErrorIs()
+    {
+        var baseline = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Error, RunStatus.Fail]),
+        ]);
+        var candidate = ComparisonFixtures.Artifact([
+            ComparisonFixtures.Scenario("a", [RunStatus.Error, RunStatus.Pass]),
+        ]);
+
+        ComparisonFixtures
+            .For(new SuiteComparator().Compare(baseline, candidate), "a")
+            .Classification.Should()
+            .Be(ScenarioClassification.Fixed);
     }
 
     // -----------------------------------------------------------------------------------------

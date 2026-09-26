@@ -1126,11 +1126,12 @@ its own adapter.
   fixed. So a redirect is raised as a request that never arrived, which produces no verdict at all.
   **The trade is total: a suite cannot assert on a `3xx`.** Point the endpoint at the address that
   answers.
-- **Narrowing a run does not change the seeds its scenarios are driven with.** Seeds are drawn in
-  suite order, so dropping a scenario before the run would shift the draw of every scenario after
-  it — and the comparison is paired *by seed*, so the selected scenarios would stop comparing
-  against their own baseline. The schedule is computed from the suite as declared and replayed for
-  the scenarios that run.
+- **Narrowing a run does not change the seeds its scenarios are driven with.** A run's seed is
+  derived from the scenario's own identity — the root seed, the scenario id, and the repetition
+  number — and never from its position in the suite. Reordering the suite, or dropping a scenario
+  before the run, therefore leaves every other scenario's seed exactly where it was, and the
+  comparison, which is paired *by seed*, still pairs a narrowed candidate against a full-suite
+  baseline.
 - **`git` is invoked with an argument array, never a concatenated command line**, and never
   through a shell. `--changed-since` is validated as well, and `--end-of-options` stands between
   its value and git's own option parser, so a value beginning with `-` cannot become a flag.

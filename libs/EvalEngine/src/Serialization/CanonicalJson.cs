@@ -65,8 +65,22 @@ public static class CanonicalJson
     /// <param name="value">The value.</param>
     /// <returns>Canonical JSON text, with keys ordered and <c>\n</c> line endings.</returns>
     /// <exception cref="JsonException">The value could not be serialized.</exception>
+    /// <exception cref="UnsafeIdentifierException">
+    /// <typeparamref name="T"/> is <see cref="SuiteResult"/> and it names a machine path in a
+    /// position that reaches a committed, published file.
+    /// </exception>
     public static string Serialize<T>(T value)
     {
+        // The write door. DeserializeSuiteResult refuses an artifact that names somebody's
+        // machine; nothing refused one on the way out, so a caller that builds a SuiteResult in
+        // process — which is what every consumer of the coordinator does — could serialize one
+        // and publish it without ever passing a guard. Same rule, same implementation, both
+        // directions, special-cased on the same type Deserialize<T> special-cases.
+        if (value is SuiteResult artifact)
+        {
+            _ = RequireSafeIdentifiers(artifact);
+        }
+
         var node = JsonSerializer.SerializeToNode(value, Options);
 
         return Canonicalize(node)?.ToJsonString(Options) ?? "null";
@@ -146,11 +160,67 @@ public static class CanonicalJson
             };
         }
 
-        return RequireSafeIdentifiers(
-            RequireWellFormedShape(
-                Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.")
+        return RequireBackedVerdicts(
+            RequireSafeIdentifiers(
+                RequireWellFormedShape(
+                    Bind<SuiteResult>(json) ?? throw new JsonException("A suite result must not be the literal null.")
+                )
             )
         );
+    }
+
+    /// <summary>
+    /// Refuses an artifact recording a verdict its own evidence cannot support.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The read door, not a duplicate of the decision points.</b>
+    /// <see cref="Comparison.SuiteComparator"/> and <see cref="Impact.ImpactSelector"/> establish
+    /// the same property because a <see cref="SuiteResult"/> is also built in process and never
+    /// serialized — which is a reason to keep those checks, not a reason to leave file input
+    /// unvalidated. Every consumer that reads an artifact and counts its runs <i>without</i> going
+    /// through the comparator — a trend report, a summary table — otherwise reads the
+    /// contradiction as a pass and exits successfully.
+    /// </para>
+    /// <para>
+    /// The rule itself lives in <see cref="VerdictEvidence"/> and is asked rather than restated,
+    /// so the four places that enforce it cannot drift into four rules.
+    /// </para>
+    /// <para>
+    /// This runs after <see cref="RequireSafeIdentifiers"/> so that a refusal here cannot be the
+    /// first thing to touch an artifact whose identifiers are unsafe to name — and it names none
+    /// of them anyway, only a field and a position.
+    /// </para>
+    /// </remarks>
+    private static SuiteResult RequireBackedVerdicts(SuiteResult artifact)
+    {
+        for (var index = 0; index < artifact.ScenarioResults.Count; index++)
+        {
+            var scenario = artifact.ScenarioResults[index];
+
+            for (var position = 0; position < scenario.Runs.Count; position++)
+            {
+                if (!VerdictEvidence.IsUnbacked(scenario.Runs[position]))
+                {
+                    continue;
+                }
+
+                throw new ContradictoryArtifactException(
+                    $"This artifact records a verdict for a run whose own transcript says no successful exchange "
+                        + $"with the system under test took place, at scenario {Ordinal(index)}, run "
+                        + $"{Ordinal(position)}. A run that gathered no evidence is recorded as an error by the "
+                        + $"harness that conducts it, so {VerdictEvidence.Why}. The run needs to happen — "
+                        + "regenerating the file from the same incomplete state would reproduce it. No value read "
+                        + "out of the artifact is repeated here, because this message is written to the build log."
+                )
+                {
+                    Field = "runs",
+                    Position = "scenario " + Ordinal(index) + ", run " + Ordinal(position),
+                };
+            }
+        }
+
+        return artifact;
     }
 
     /// <summary>
@@ -290,6 +360,8 @@ public static class CanonicalJson
     /// <summary>
     /// Refuses an artifact whose identifiers name somebody's machine.
     /// </summary>
+    /// <param name="artifact">The artifact to check.</param>
+    /// <returns>The same artifact, when every identifier in it is safe to name.</returns>
     /// <remarks>
     /// <para>
     /// Validating a suite on load does not cover this. An artifact was written by an earlier run,
@@ -299,12 +371,17 @@ public static class CanonicalJson
     /// rendered into the published report as a removed scenario.
     /// </para>
     /// <para>
-    /// Here rather than in <see cref="Baselines.ArtifactBaseline"/> because this is the one door
-    /// every reader of a durable artifact passes through, and a guard one call away from being
-    /// bypassed is not a guard.
+    /// <b>Internal rather than private, because reading a file is not the only way an artifact
+    /// arrives.</b> <see cref="Comparison.SuiteComparator"/> and
+    /// <see cref="Impact.ImpactSelector"/> are handed <see cref="SuiteResult"/> instances built in
+    /// process, which reach neither this reader nor <see cref="Serialize{T}(T)"/> — and both then
+    /// compose refusals and log lines naming the identifiers they were given. Each stage runs this
+    /// on what it is handed, so every message downstream of it is safe by construction rather than
+    /// by a per-message audit that has to be redone every time a message is added.
     /// </para>
     /// </remarks>
-    private static SuiteResult RequireSafeIdentifiers(SuiteResult artifact)
+    /// <exception cref="UnsafeIdentifierException">An identifier names a machine path.</exception>
+    internal static SuiteResult RequireSafeIdentifiers(SuiteResult artifact)
     {
         if (MachinePath.IsPresentIn(artifact.SuiteName))
         {
@@ -314,6 +391,20 @@ public static class CanonicalJson
         if (MachinePath.IsPresentInAny(artifact.SlicingDimensions))
         {
             throw Unsafe("slicingDimensions", null);
+        }
+
+        // Two surfaces that did not exist when the machine-path trade-off was reasoned about,
+        // and both carry author-supplied free text verbatim into a committed, published file.
+        // ADR 0005 is explicit that a documented trade-off is scoped to the surfaces that existed
+        // when it was made, so neither inherits the reasoning — the same call the selection
+        // decisions got below. The key is guarded as well as the value: a key is as
+        // author-supplied as a value, and a reader reproducing the run reads both.
+        if (
+            MachinePath.IsPresentInAny(artifact.Environment.HarnessConfig.Keys)
+            || MachinePath.IsPresentInAny(artifact.Environment.HarnessConfig.Values)
+        )
+        {
+            throw Unsafe("environment.harnessConfig", null);
         }
 
         for (var index = 0; index < artifact.ScenarioResults.Count; index++)
@@ -326,9 +417,34 @@ public static class CanonicalJson
                 throw Unsafe("scenarioId", position);
             }
 
+            if (MachinePath.IsPresentIn(scenario.ExpectedFailure?.Reason))
+            {
+                throw Unsafe("expectedFailure", position);
+            }
+
             if (MachinePath.IsPresentInAny(scenario.Tags.Keys) || MachinePath.IsPresentInAny(scenario.Tags.Values))
             {
                 throw Unsafe("tags", position);
+            }
+
+            // The fingerprint is a label the engine stamps, and the selector quotes both sides of
+            // a mismatch into a selection reason. An artifact from elsewhere can carry anything
+            // in it.
+            if (MachinePath.IsPresentIn(scenario.DefinitionFingerprint))
+            {
+                throw Unsafe("definitionFingerprint", position);
+            }
+
+            // Each run's transcript carries its own scenario id, and the comparator and the
+            // selector both name it when it disagrees with the one the run is filed under — which
+            // is precisely the misattribution they exist to catch. Checking only the
+            // ScenarioResult's id left the value that actually gets quoted unguarded.
+            for (var run = 0; run < scenario.Runs.Count; run++)
+            {
+                if (MachinePath.IsPresentIn(scenario.Runs[run].Transcript?.ScenarioId))
+                {
+                    throw Unsafe("transcript.scenarioId", position + ", run " + Ordinal(run));
+                }
             }
         }
 

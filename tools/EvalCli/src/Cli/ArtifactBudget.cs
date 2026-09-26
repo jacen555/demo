@@ -87,7 +87,7 @@ internal static partial class ArtifactBudget
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(maxBytes, Bytes);
 
-        var text = CanonicalJson.Serialize(ArtifactRedaction.Redact(result));
+        var text = Serialized(ArtifactRedaction.Redact(result));
         var size = Encoding.UTF8.GetByteCount(text);
 
         // Strictly greater, because the reader's own check is strictly greater: an artifact of
@@ -110,6 +110,42 @@ internal static partial class ArtifactBudget
         RequireTheReaderWouldAcceptIt(text);
 
         return text;
+    }
+
+    /// <summary>Serializes the redacted artifact, translating the engine's write door.</summary>
+    /// <param name="redacted">The redacted artifact.</param>
+    /// <returns>The canonical JSON text.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The engine refuses an unsafe identifier on the way out as well as on the way in.</b>
+    /// <see cref="CanonicalJson.Serialize{T}(T)"/> is a write door for <see cref="SuiteResult"/>,
+    /// so the refusal now arrives here — before the budget check and before
+    /// <see cref="RequireTheReaderWouldAcceptIt"/>, which is the catch that used to receive it.
+    /// Left unhandled it would leave this method by a path its own contract does not document.
+    /// </para>
+    /// <para>
+    /// <b>It is translated rather than propagated, because the exit code is the contract.</b> An
+    /// engine exception reaching the top-level handler exits
+    /// <see cref="ExitCode.UnexpectedError"/> — documented as <i>a defect in this tool</i>. An
+    /// identifier the suite author chose is not that; it is
+    /// <see cref="ExitCode.RunFailed"/>, documented as <i>what it produced could not be
+    /// published</i>, which is exactly what happened and is the code this condition already
+    /// returned. Propagating would therefore be a silent exit-code change from 3 to 71, reporting
+    /// a user-correctable input as an internal fault and dropping the remedy that tells them how
+    /// to correct it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="EvalCliException">The artifact names a machine path.</exception>
+    private static string Serialized(SuiteResult redacted)
+    {
+        try
+        {
+            return CanonicalJson.Serialize(redacted);
+        }
+        catch (UnsafeIdentifierException refusal)
+        {
+            throw Unpublishable(refusal);
+        }
     }
 
     /// <summary>
@@ -147,11 +183,7 @@ internal static partial class ArtifactBudget
         }
         catch (UnsafeIdentifierException refusal)
         {
-            throw Unpublishable(
-                $"its {Located(refusal)} is a path on somebody's machine",
-                "Rename the identifier in the suite and re-run. The value itself is not repeated here because this "
-                    + "message is written to the build log."
-            );
+            throw Unpublishable(refusal);
         }
         catch (Exception refusal)
             when (refusal is JsonException or MalformedArtifactException or SchemaVersionException)
@@ -163,6 +195,23 @@ internal static partial class ArtifactBudget
             );
         }
     }
+
+    /// <summary>
+    /// The refusal for an identifier naming a machine path, wherever the engine refused it.
+    /// </summary>
+    /// <remarks>
+    /// One reading of one rule. The write door and the read door refuse the same artifact for the
+    /// same reason, so they report it in the same words — a second phrasing here would be the pair
+    /// of messages that eventually describe one condition two ways. The value is named by field
+    /// and position only: repeating it would move the disclosure to the build log rather than
+    /// remove it (§V).
+    /// </remarks>
+    private static EvalCliException Unpublishable(UnsafeIdentifierException refusal) =>
+        Unpublishable(
+            $"its {Located(refusal)} is a path on somebody's machine",
+            "Rename the identifier in the suite and re-run. The value itself is not repeated here because this "
+                + "message is written to the build log."
+        );
 
     /// <summary>The refusal shared by every way the reader would decline the bytes.</summary>
     private static EvalCliException Unpublishable(string because, string remedy) =>

@@ -30,6 +30,35 @@ namespace Forge.EvalEngine.Abstractions;
 /// </remarks>
 public interface IParticipantFactory
 {
+    /// <summary>
+    /// Gets the settings in force on this factory, and on the callers it builds, that change what
+    /// a run sends to the system under test.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Required rather than defaulted, for the reason
+    /// <see cref="IScenarioRunner.VerdictBearingSettings"/> is.</b> A stimulus ceiling truncates
+    /// before the text is sent, and a persona changes what the text says — two runs differing only
+    /// in either ask the system a different question, and a comparison that did not know would
+    /// report the difference as a system change. The coordinator holds this seam only as an
+    /// interface, so a setting a factory does not declare is one two runs can silently disagree
+    /// about. A default returning nothing would make that silence the behaviour every existing
+    /// factory inherited without anyone choosing it.
+    /// </para>
+    /// <para>
+    /// A factory with genuinely nothing that can vary — a fully scripted replayer — returns an
+    /// empty map, explicitly. <see cref="Participants.LlmCallerOptions.VerdictBearingSettings"/>
+    /// supplies the map for this library's own caller so a composition root does not re-derive the
+    /// key names.
+    /// </para>
+    /// <para>
+    /// The coordinator records these under <c>participants.&lt;key&gt;</c>. Values must be
+    /// invariantly rendered and free of credentials and free text — they are written verbatim into
+    /// a committed, published artifact (§V).
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, string> VerdictBearingSettings { get; }
+
     /// <summary>Creates the participant for one run.</summary>
     /// <param name="scenario">The scenario about to be run.</param>
     /// <param name="seed">The seed this run is driven with, stamped into its transcript.</param>

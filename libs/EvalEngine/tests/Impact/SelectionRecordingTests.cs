@@ -260,12 +260,21 @@ public class SelectionRecordingTests
     [InlineData("checkout path:/home/ci-user/repo")]
     public void DeserializeSuiteResult_SkippedScenarioIdIsAMachinePath_ThrowsWithoutRepeatingTheValue(string id)
     {
-        var json = CanonicalJson.Serialize(
-            ImpactFixtures.Artifact() with
-            {
-                SelectionDecisions = [new RecordedSelection { ScenarioId = id, Decision = SelectionDecision.Skipped }],
-            }
-        );
+        // Substituted into the text rather than serialized, because the writer now refuses this
+        // too. The read door's subject is a file written by something else, so a test for it must
+        // produce one — routing through this library's own writer would only prove the write door
+        // works, which is a different test.
+        var json = CanonicalJson
+            .Serialize(
+                ImpactFixtures.Artifact() with
+                {
+                    SelectionDecisions =
+                    [
+                        new RecordedSelection { ScenarioId = "placeholder", Decision = SelectionDecision.Skipped },
+                    ],
+                }
+            )
+            .Replace("\"placeholder\"", System.Text.Json.JsonSerializer.Serialize(id), StringComparison.Ordinal);
 
         var read = () => CanonicalJson.DeserializeSuiteResult(json);
 

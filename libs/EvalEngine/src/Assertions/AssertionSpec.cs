@@ -72,12 +72,28 @@ public enum AssertionPolarity
 public sealed record AssertionSpec
 {
     private readonly int? _turnDependency;
+    private readonly string _category = string.Empty;
 
     /// <summary>
     /// Gets the category token — the text before the first colon. This is the dispatch key that
     /// selects an <see cref="Abstractions.IAssertionEvaluator"/>.
     /// </summary>
-    public required string Category { get; init; }
+    public required string Category
+    {
+        get => _category;
+        init =>
+            _category = IsValidCategory(value)
+                ? value
+                : throw new ArgumentException(
+                    "An assertion category must start with a letter and continue with letters, digits, '_', '.' "
+                        + "or '-'. The grammar is enforced here as well as in "
+                        + $"{nameof(Parse)}, because this property is public and direct initialisation reaches it "
+                        + "without going through the parser — and the category is named in the diagnostic the "
+                        + "harness writes when an evaluator refuses an assertion. The offending value is not "
+                        + "repeated here, because it is author-supplied and that diagnostic reaches the build log.",
+                    nameof(value)
+                );
+    }
 
     /// <summary>
     /// Gets the text after the first colon, verbatim, or <see langword="null"/> when the

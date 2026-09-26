@@ -96,13 +96,6 @@ internal static class RunCommand
         var summary = Select(suite, changes, baseline);
         var conducted = Narrow(suite, summary);
 
-        // Pinned before anything is conducted. The coordinator draws its seeds sequentially over
-        // the suite it is handed, so narrowing the suite shifts the draw of every scenario after
-        // a skipped one — and the comparison is paired by seed. See SeedSchedule.
-        provider
-            .GetRequiredService<SeedSchedule>()
-            .PinTo(suite, [.. conducted.Scenarios.Select(scenario => scenario.Identity.Id)]);
-
         var result = await SuiteDiscovery
             .ConductAsync(provider.GetRequiredService<RunCoordinator>(), conducted, cancellationToken)
             .ConfigureAwait(false);

@@ -33,6 +33,10 @@ internal sealed class StubRunner : IScenarioRunner
 
     public ScenarioKind Kind { get; }
 
+    /// <inheritdoc/>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     public ConcurrentQueue<RunRecord> Seen { get; } = new();
 
     public Task<Transcript> RunAsync(Scenario scenario, RunContext context, CancellationToken cancellationToken)
@@ -77,6 +81,10 @@ internal sealed class ConcurrencyProbeRunner(ScenarioKind kind, int expectedPeak
     private int _settled;
 
     public ScenarioKind Kind => kind;
+
+    /// <inheritdoc/>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     /// <summary>Gets the most runs this probe ever saw in flight at one time.</summary>
     public int Peak => Volatile.Read(ref _peak);
@@ -158,6 +166,11 @@ internal sealed class StubParticipantFactory(Func<Scenario, long, int, IParticip
 {
     public ConcurrentQueue<IParticipant> Created { get; } = new();
 
+    /// <inheritdoc/>
+    /// <remarks>A scripted stub has nothing that can vary between two runs, and says so.</remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     public IParticipant Create(Scenario scenario, long seed, int repetition)
     {
         var participant = create is null ? new CountingParticipant() : create(scenario, seed, repetition);
@@ -202,6 +215,8 @@ internal sealed class CollidingSeedSource(long seed = 4242) : ISeedSource
     public long RootSeed => _seed;
 
     public long NextSeed() => _seed;
+
+    public long SeedFor(string scenarioId, int repetition) => _seed;
 }
 
 /// <summary>
@@ -265,6 +280,13 @@ internal sealed class RecordingLogger : ILogger<RunCoordinator>
 }
 
 /// <summary>A seed source whose sequence is a plain counter, so a test can predict it exactly.</summary>
+/// <remarks>
+/// <see cref="SeedFor"/> is what the coordinator actually draws from, and it is a function of the
+/// run rather than of the call order — a counter-keyed source would put position back in as the
+/// input the engine was just changed to stop using, and a test asserting on it would be pinning
+/// this fixture rather than the engine. <see cref="Issued"/> still counts the draws, which is what
+/// lets a test establish that the whole plan is settled before anything is dispatched.
+/// </remarks>
 internal sealed class CountingSeedSource(long rootSeed = 1000) : ISeedSource
 {
     private long _next = rootSeed;
@@ -281,6 +303,20 @@ internal sealed class CountingSeedSource(long rootSeed = 1000) : ISeedSource
 
         return Interlocked.Increment(ref _next);
     }
+
+    public long SeedFor(string scenarioId, int repetition)
+    {
+        Interlocked.Increment(ref _issued);
+
+        var offset = 0L;
+
+        foreach (var character in scenarioId)
+        {
+            offset = (offset * 31) + character;
+        }
+
+        return RootSeed + (offset * 1000) + repetition;
+    }
 }
 
 internal static class CoordinatorFixtures
@@ -294,14 +330,19 @@ internal static class CoordinatorFixtures
         IEnumerable<string>? assertions = null,
         IReadOnlyDictionary<string, string>? tags = null,
         ExecutionMode mode = ExecutionMode.Deterministic,
-        Simulation? simulation = null
+        Simulation? simulation = null,
+        ExpectedFailure? expectedFailure = null
     ) =>
         new()
         {
             Identity = new ScenarioIdentity { Id = id, Kind = kind },
             Execution = new Execution { Mode = mode, RepetitionPolicy = RepetitionPolicy.Repeat(repetitions) },
-            Simulation = simulation ?? new Simulation(),
-            Grading = new Grading { Assertions = [.. (assertions ?? []).Select(AssertionSpec.Parse)] },
+            Simulation = simulation ?? new Simulation { Opening = "opening stimulus" },
+            Grading = new Grading
+            {
+                Assertions = [.. (assertions ?? []).Select(AssertionSpec.Parse)],
+                ExpectedFailure = expectedFailure,
+            },
             Slicing = new Slicing { Tags = tags ?? new Dictionary<string, string>(StringComparer.Ordinal) },
         };
 
@@ -319,11 +360,18 @@ internal static class CoordinatorFixtures
         long? seed = null
     )
     {
-        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            [TransportAttributes.Exchange] = exchange,
-            [TransportAttributes.StoppedBy] = StopReason.ParticipantComplete,
-        };
+        var attributes = new Dictionary<string, string>(
+            // The shape a real runner records for this exchange, taken from the one description
+            // every fixture shares rather than spelled out again here. A stop reason written by
+            // hand is how two fixture files came to pair a resolved outcome with
+            // participantComplete, which is a run this engine cannot produce. A state this
+            // library does not define has no modelled shape by design — that case exists only to
+            // prove the gradeability rule fails closed on one.
+            ArtifactShapes.Models(exchange)
+                ? ArtifactShapes.For(exchange, reachedTerminalOutcome: !string.IsNullOrWhiteSpace(observedOutcome))
+                : ArtifactShapes.Unrecognised(exchange),
+            StringComparer.Ordinal
+        );
 
         if (failure is not null)
         {

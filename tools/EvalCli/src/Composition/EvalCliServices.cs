@@ -64,11 +64,11 @@ internal static class EvalCliServices
         // would make the seed a scenario was driven with depend on scheduling, which silently
         // breaks both reproducibility and the pairing a comparison rests on.
         //
-        // Drawn through SeedSchedule rather than straight from the root seed, because a narrowed
-        // run must replay the draws the full suite would have made — see that type for what goes
-        // wrong when it does not.
-        services.AddSingleton(_ => new SeedSchedule(plan.RootSeed));
-        services.AddTransient<ISeedSource>(provider => provider.GetRequiredService<SeedSchedule>().Create());
+        // Drawn straight from the root seed. The engine derives a run's seed from the scenario's
+        // own identity — ISeedSource.SeedFor(scenarioId, repetition) is a pure function of the
+        // root seed and those two values — so a narrowed run already gives every scenario it
+        // keeps exactly the seed a full run would have, with nothing here to pin or replay.
+        services.AddTransient<ISeedSource>(_ => new DeterministicSeedSource(plan.RootSeed));
 
         services.AddSingleton(AssertionEvaluatorRegistry.CreateDefault());
 

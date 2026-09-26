@@ -3,6 +3,7 @@ using Forge.EvalCli.Cli;
 using Forge.EvalCli.Tests.Support;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Serialization;
+using Forge.EvalEngine.Transcripts;
 
 namespace Forge.EvalCli.Tests.Cli;
 
@@ -441,5 +442,111 @@ public class TrendCommandTests
 
         code.Should().Be(ExitCode.Success, error);
         output.Should().Contain("2 run(s)");
+    }
+
+    // -------------------------------------------------------------------------------------
+    // The read door's contradiction refusal, surfaced. The engine refuses an artifact that
+    // records a graded verdict beside an exchange that gathered nothing; this command reads
+    // every artifact through that door, so the refusal has to arrive as a stated exit code
+    // rather than as an uncaught stack.
+    // -------------------------------------------------------------------------------------
+
+    /// <summary>Rewrites one recorded run so it claims a pass nothing in it can support.</summary>
+    /// <remarks>
+    /// <para>
+    /// Built by mutating a run that really happened, so the artifact differs from a conducted one
+    /// in exactly the contradiction under test and in nothing else. A hand-built artifact would
+    /// differ in fields nobody is asserting about, and a refusal could then be attributed to any
+    /// of them.
+    /// </para>
+    /// <para>
+    /// The contradiction is a graded status beside a harness-failure exchange rather than a
+    /// missing transcript: a transcript removed outright is refused as a malformed shape instead,
+    /// which is a different door and would pass this test for the wrong reason.
+    /// </para>
+    /// </remarks>
+    private static async Task ContradictAsync(TempWorkspace workspace, string name)
+    {
+        var path = Path.Combine(workspace.Root, ArtifactsDirectory, name + ".json");
+        var artifact = CanonicalJson.DeserializeSuiteResult(await File.ReadAllTextAsync(path));
+        var scenario = artifact.ScenarioResults[0];
+        var run = scenario.Runs[0];
+
+        var contradicted = run with
+        {
+            Status = RunStatus.Pass,
+            Transcript = run.Transcript with
+            {
+                Transport = run.Transcript.Transport with
+                {
+                    Attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        [TransportAttributes.Exchange] = ExchangeState.RunnerFailed,
+                    },
+                },
+            },
+        };
+
+        await File.WriteAllTextAsync(
+            path,
+            CanonicalJson.Serialize(
+                artifact with
+                {
+                    ScenarioResults =
+                    [
+                        scenario with
+                        {
+                            Runs = [contradicted, .. scenario.Runs.Skip(1)],
+                        },
+                        .. artifact.ScenarioResults.Skip(1),
+                    ],
+                }
+            )
+        );
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAnArtifactRecordsAPassWithNoExchangeEvidence_RefusesTheWholeSeries()
+    {
+        using var workspace = new TempWorkspace();
+
+        await SeedSeriesAsync(workspace);
+
+        // The control, in the same test and on the same fixture. Without it the refusal below
+        // could be caused by anything in the seeding path, and this would be a "must refuse" test
+        // that passes because the subject refused for an unrelated reason.
+        (await RunAsync(Request(workspace)))
+            .Code.Should()
+            .Be(ExitCode.Success);
+
+        await ContradictAsync(workspace, "second");
+
+        var (code, output, error) = await RunAsync(Request(workspace));
+
+        code.Should().Be(ExitCode.ComparisonRefused);
+        code.Should().NotBe(ExitCode.Success);
+
+        // The message, not just the code: the refusal has to be the one about this file being
+        // unreadable, and it has to name which file so the caller can act on it.
+        error.Should().Contain("trend/second.json").And.Contain("not a readable run artifact");
+
+        // Refused whole rather than rendered short. The prior behaviour counted the contradictory
+        // artifact as a pass; skipping it instead would take a run out of the series silently.
+        output.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAnArtifactRecordsAPassWithNoExchangeEvidence_DoesNotDiscloseTheWorkspacePath()
+    {
+        // The refusal reaches stderr and from there the build log. TempWorkspace's root is under
+        // the account's profile directory, so this is the assertion a CI log would make (§V).
+        using var workspace = new TempWorkspace();
+
+        await SeedSeriesAsync(workspace);
+        await ContradictAsync(workspace, "second");
+
+        var (_, _, error) = await RunAsync(Request(workspace));
+
+        error.Should().NotContain(workspace.Root);
     }
 }

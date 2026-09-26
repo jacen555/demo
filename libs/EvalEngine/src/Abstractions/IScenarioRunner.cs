@@ -134,6 +134,33 @@ public interface IScenarioRunner
     /// <summary>Gets the kind of scenario this runner handles.</summary>
     ScenarioKind Kind { get; }
 
+    /// <summary>
+    /// Gets the settings in force on this runner that change what a run observes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Required rather than defaulted, deliberately.</b> A verdict is only meaningful relative
+    /// to the configuration that produced it, and
+    /// <see cref="Results.EvaluationEnvironment.HarnessConfig"/> is what
+    /// <see cref="Comparison.SuiteComparator"/> refuses two unlike runs on. The coordinator holds
+    /// runners only as this interface, so a setting a runner does not declare here is a setting
+    /// two runs can silently disagree about while a delta between them is reported as the
+    /// change's doing. A default implementation returning nothing would make that silence the
+    /// behaviour every existing runner inherited without anyone choosing it — so there is no
+    /// default, and adding a runner is a decision about what it must attest.
+    /// </para>
+    /// <para>
+    /// Return an empty map only when the runner genuinely has no setting that can vary between
+    /// two runs. The keys are namespaced by the coordinator under
+    /// <c>runner.&lt;kind&gt;.&lt;key&gt;</c>, so a runner names its settings in its own terms.
+    /// </para>
+    /// <para>
+    /// Values must be invariantly rendered and free of credentials — they are written verbatim
+    /// into a committed, published artifact (§V).
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<string, string> VerdictBearingSettings { get; }
+
     /// <summary>Runs the scenario once.</summary>
     /// <param name="scenario">The scenario to run.</param>
     /// <param name="context">The participant and seed for this run.</param>

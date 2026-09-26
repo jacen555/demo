@@ -2,6 +2,9 @@ using System.Text.Json;
 using FluentAssertions;
 using Forge.EvalCli.Cli;
 using Forge.EvalCli.Tests.Support;
+using Forge.EvalEngine.Results;
+using Forge.EvalEngine.Serialization;
+using Forge.EvalEngine.Transcripts;
 
 namespace Forge.EvalCli.Tests.Cli;
 
@@ -369,6 +372,117 @@ public class RunCommandTests
         var act = async () => await RunCommand.ExecuteAsync(null!, console, CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheBaselineRecordsAPassWithNoExchangeEvidence_SaysTheRunIsWhatIsMissing()
+    {
+        // The engine's read door refuses an artifact that records a verdict its own evidence
+        // cannot support, and this path already refused it — but through the generic filter, whose
+        // remedy advises regenerating the file. For this one case that instruction is wrong in a
+        // way that costs the reader a cycle: the file is not corrupt, it parses perfectly, and
+        // regenerating it from the same incomplete state reproduces it exactly. What is missing is
+        // the run.
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var endpoint = ComparisonWorkspace.Endpoint();
+
+        using var seeding = new RecordingConsole();
+
+        var seeded = await RunCommand.ExecuteAsync(
+            RunPlan.Create(
+                new RunRequest
+                {
+                    Suite = "eval-suites/regression.json",
+                    Root = workspace.Root,
+                    Out = "artifacts/baseline.json",
+                    Endpoint = endpoint.Address.ToString(),
+                    RestExchange = "json",
+                }
+            ),
+            seeding,
+            CancellationToken.None
+        );
+
+        seeded.Should().Be(ExitCode.Success, seeding.StandardError);
+
+        var path = Path.Combine(workspace.Root, "artifacts", "baseline.json");
+        var artifact = CanonicalJson.DeserializeSuiteResult(await File.ReadAllTextAsync(path));
+        var scenario = artifact.ScenarioResults[0];
+        var run = scenario.Runs[0];
+
+        // A graded status beside a harness-failure exchange, rather than a removed transcript: a
+        // missing transcript is refused as a malformed shape instead, which is a different door
+        // and would satisfy this test through the branch it is not about.
+        await File.WriteAllTextAsync(
+            path,
+            CanonicalJson.Serialize(
+                artifact with
+                {
+                    ScenarioResults =
+                    [
+                        scenario with
+                        {
+                            Runs =
+                            [
+                                run with
+                                {
+                                    Status = RunStatus.Pass,
+                                    Transcript = run.Transcript with
+                                    {
+                                        Transport = run.Transcript.Transport with
+                                        {
+                                            Attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+                                            {
+                                                [TransportAttributes.Exchange] = ExchangeState.RunnerFailed,
+                                            },
+                                        },
+                                    },
+                                },
+                                .. scenario.Runs.Skip(1),
+                            ],
+                        },
+                        .. artifact.ScenarioResults.Skip(1),
+                    ],
+                }
+            )
+        );
+
+        using var console = new RecordingConsole();
+
+        var refusal = await Assert.ThrowsAsync<EvalCliException>(async () =>
+            await RunCommand.ExecuteAsync(
+                RunPlan.Create(
+                    new RunRequest
+                    {
+                        Suite = "eval-suites/regression.json",
+                        Root = workspace.Root,
+                        Baseline = "artifacts/baseline.json",
+                        Endpoint = endpoint.Address.ToString(),
+                        RestExchange = "json",
+                    }
+                ),
+                console,
+                CancellationToken.None
+            )
+        );
+
+        refusal.ExitCode.Should().Be(ExitCode.UsageError);
+        refusal.ExitCode.Should().NotBe(ExitCode.Success);
+
+        // The branch, not just the code. The generic unreadable-artifact refusal shares this exit
+        // code, so the remedy is what establishes which one was reached.
+        refusal.Message.Should().Contain("records a verdict its own evidence cannot support");
+        refusal.Remedy.Should().Contain("it is the run that needs to happen");
+        refusal.Remedy.Should().NotContain("rather than editing it by hand");
+
+        // The engine withheld every value in the offending entry; naming the position is the most
+        // this may add, and the workspace root is never one of them (§V).
+        (refusal.Message + refusal.Remedy)
+            .Should()
+            .NotContain(workspace.Root);
     }
 
     private static RunPlan Request(

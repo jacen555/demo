@@ -1,7 +1,11 @@
 using System.Globalization;
 using Forge.EvalEngine.Assertions;
+using Forge.EvalEngine.Paths;
 using Forge.EvalEngine.Results;
+using Forge.EvalEngine.Runners;
 using Forge.EvalEngine.Scenarios;
+using Forge.EvalEngine.Serialization;
+using Forge.EvalEngine.Transcripts;
 
 namespace Forge.EvalEngine.Impact;
 
@@ -74,6 +78,11 @@ namespace Forge.EvalEngine.Impact;
 ///   </description></item>
 ///   <item><description>its runs are filed under the scenario they claim;</description></item>
 ///   <item><description>
+///     every run carrying a verdict records an exchange that actually gathered evidence — a
+///     verdict about a system that was never successfully asked is not a verdict, and a pass
+///     recorded that way is indistinguishable from a run that never happened;
+///   </description></item>
+///   <item><description>
 ///     no run is recorded as a pass beside an assertion verdict that did not hold, or without a
 ///     verdict for an assertion the suite declares.
 ///   </description></item>
@@ -145,6 +154,41 @@ public static class ImpactSelector
         var doubt = Normalize(changedFiles, out var changed);
         Dictionary<string, ScenarioResult>? recorded = null;
 
+        // Every finding this stage composes names a scenario id or the suite's name, and both the
+        // suite and the baseline can arrive built in process — reaching neither SuiteLoader's
+        // guard nor the artifact reader's. Refused rather than described, because unlike an
+        // untrustworthy baseline this is not a condition a wider run repairs (§V, ADR 0005).
+        if (MachinePath.IsPresentIn(suite.Name))
+        {
+            throw new UnsafeIdentifierException(
+                "This suite's name contains a machine path, and this stage renders it into a selection finding. "
+                    + "The offending value is not repeated here because those findings reach the build log."
+            )
+            {
+                Field = "suiteName",
+            };
+        }
+
+        foreach (var scenario in scenarios)
+        {
+            if (MachinePath.IsPresentIn(scenario.Identity.Id))
+            {
+                throw new UnsafeIdentifierException(
+                    "A scenario in this suite declares an id containing a machine path, which this stage renders "
+                        + "into its selection findings. The offending value is not repeated here because those "
+                        + "findings reach the build log."
+                )
+                {
+                    Field = "identity.id",
+                };
+            }
+        }
+
+        if (baseline is not null)
+        {
+            _ = CanonicalJson.RequireSafeIdentifiers(baseline);
+        }
+
         if (doubt is null)
         {
             doubt = Index(suite, baseline, out recorded);
@@ -194,7 +238,13 @@ public static class ImpactSelector
                 // Dropping the entry and matching the rest would be quieter and wrong: whatever
                 // this path mapped to would then be skipped, and the report would look identical
                 // to a run in which it had genuinely matched nothing.
-                return $"Changed-file entry '{raw}' {rejection}. The whole suite was selected rather than "
+                //
+                // The entry is quoted unless it is a machine path, in which case it is described.
+                // It arrives from a caller's revision range rather than from an author, so it
+                // cannot be guarded by refusing somebody's spelling — and a fallback nobody can
+                // trace is noise, so the ordinary case keeps its text. A redaction still tells
+                // two rejected entries apart (§V, ADR 0005).
+                return $"Changed-file entry {Describe(raw)} {rejection}. The whole suite was selected rather than "
                     + "matching against a set that is missing a file nobody can account for.";
             }
 
@@ -275,8 +325,8 @@ public static class ImpactSelector
             if (!ImpactGlob.TryParse(pattern, out var glob, out var rejection))
             {
                 unreadable ??=
-                    $"impact glob '{pattern}' {rejection}, so this scenario's mapping is incomplete — \"none of "
-                    + "the patterns that could be read matched\" is not \"nothing matched\"";
+                    $"impact glob {Describe(pattern)} {rejection}, so this scenario's mapping is incomplete — "
+                    + "\"none of the patterns that could be read matched\" is not \"nothing matched\"";
                 continue;
             }
 
@@ -458,6 +508,22 @@ public static class ImpactSelector
                 return false;
             }
 
+            // A graded verdict claims the system under test behaved, or misbehaved. The
+            // transcript beside it says whether the system was ever successfully asked, and the
+            // coordinator refuses to grade a run whose exchange gathered nothing — it records
+            // Error and never evaluates an assertion. A baseline read from disk carries no such
+            // guarantee (§V), and this is the road with no downstream catch: a pass believed here
+            // retires the scenario, so it never runs, emits nothing, and never reaches the
+            // comparator that would have refused it. A pass with no verdicts beside it satisfies
+            // both checks below vacuously, which is precisely an absence rendering as a result.
+            if (VerdictEvidence.IsUnbacked(run))
+            {
+                contradiction =
+                    $"a baseline run of scenario '{result.ScenarioId}' records the verdict "
+                    + $"'{Render((int)run.Status)}' beside a transcript recording no successful exchange with the "
+                    + $"system under test; {VerdictEvidence.Why}, so it cannot retire the scenario";
+                return false;
+            }
             switch (run.Status)
             {
                 case RunStatus.Error:
@@ -532,14 +598,26 @@ public static class ImpactSelector
 
         var evaluated = new HashSet<AssertionSpec>(run.AssertionResults.Select(verdict => verdict.Spec));
 
-        foreach (var assertion in declared)
+        for (var index = 0; index < declared.Count; index++)
         {
-            if (!evaluated.Contains(assertion))
+            var assertion = declared[index];
+
+            if (evaluated.Contains(assertion))
             {
-                return assertion is null
-                    ? "an assertion this suite declares as null"
-                    : $"the declared assertion '{assertion.ToExpression()}'";
+                continue;
             }
+
+            // Identified, not quoted. This text becomes ScenarioSelection.Detail, which the
+            // consumer copies into its JSON run report and its verbose text report without
+            // netting it — so an operand here is published rather than merely living in the
+            // suite file, which is the line ADR 0005 actually draws. The category carries no
+            // separator by grammar, the ordinal locates it in the scenario's own grading, and the
+            // fingerprint tells two of them apart (§V).
+            return assertion is null
+                ? "an assertion this suite declares as null"
+                : $"declared assertion {Render(index + 1)}, of category '{assertion.Category}' "
+                    + $"({RunnerSupport.Redact(assertion.ToExpression())}) — its operand is not repeated here "
+                    + "because this detail is published";
         }
 
         return null;
@@ -563,4 +641,60 @@ public static class ImpactSelector
         };
 
     private static string Render(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// A rejected author-supplied pattern or entry, as a selection finding may state it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Quoted when it is ordinary — a pattern nobody can find is a pattern nobody fixes, and a
+    /// fallback nobody can trace is noise. Described when it names a machine, because this text
+    /// becomes <see cref="ScenarioSelection.Detail"/> and
+    /// <see cref="SelectionResult.FallbackReason"/>, which the consumer publishes into its run
+    /// report without netting.
+    /// </para>
+    /// <para>
+    /// <b>The unquoted form is tested too, and that is the whole subtlety.</b>
+    /// <see cref="ChangedPath.TryNormalize"/> refuses a double-quoted entry <i>before</i> looking
+    /// at its path, and <see cref="MachinePath"/> deliberately does not see through a leading
+    /// quote. Each is right alone; composed, a git C-quoted machine path takes the ordinary
+    /// branch and reaches the report verbatim — a gap exactly where neither component's own rules
+    /// look.
+    /// </para>
+    /// <para>
+    /// Used for <b>both</b> author-supplied inputs this stage rejects: a changed-file entry and
+    /// an impact glob. Fixing one and leaving the other is how the second was found.
+    /// </para>
+    /// </remarks>
+    private static string Describe(string raw) => NamesAMachine(raw) ? RunnerSupport.Redact(raw) : $"'{raw}'";
+
+    /// <summary>
+    /// Whether a rejected entry names a machine, in any spelling this stage would reduce it to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="MachinePath"/> reasons about one spelling: forward separators, no wrapping
+    /// quotes. The values reaching this stage arrive in the spellings a producer emits — git
+    /// C-quotes a non-ASCII name, Windows tools emit backslashes — and both
+    /// <see cref="ChangedPath"/> and <see cref="ImpactGlob"/> unify separators before reasoning
+    /// about a path for exactly that reason.
+    /// </para>
+    /// <para>
+    /// So the guard is asked about the forms the code around it normalises to, rather than only
+    /// the one it was handed. Neither transformation decodes anything: the escapes inside a
+    /// C-quoted name are left alone, because decoding has its own silent failure modes and the
+    /// value is refused rather than interpreted either way.
+    /// </para>
+    /// </remarks>
+    private static bool NamesAMachine(string raw)
+    {
+        // Two questions, not a list of spellings. MachinePath reduces a token's relative prefix
+        // and understands both separator conventions itself, so it is asked about the value as
+        // written; the only thing it deliberately does not see through is a producer's wrapping
+        // quotes, and git C-quoting is this stage's own domain knowledge rather than the
+        // recogniser's. Nothing is decoded: the escapes inside a C-quoted name are left alone,
+        // because the value is refused rather than interpreted either way.
+        return MachinePath.IsPresentIn(raw)
+            || MachinePath.IsPresentIn(raw.Replace("\"", string.Empty, StringComparison.Ordinal));
+    }
 }

@@ -1,3 +1,6 @@
+using System.Globalization;
+using Forge.EvalEngine.Runners;
+
 namespace Forge.EvalEngine.Participants;
 
 /// <summary>
@@ -79,4 +82,34 @@ public sealed record LlmCallerOptions
             _maxStimulusLength = value;
         }
     }
+
+    /// <summary>
+    /// Gets the settings that change what a caller built from these options sends.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Supplied here so an <see cref="Abstractions.IParticipantFactory"/> that builds an
+    /// <see cref="LlmCaller"/> can attest without re-deriving the key names. Two composition roots
+    /// spelling them differently would make two artifacts incomparable for no reason.
+    /// </para>
+    /// <para>
+    /// <b><see cref="Persona"/> is witnessed, not quoted.</b> What a comparison needs is whether
+    /// it changed, and the text is operator-authored free-form prose bound for a committed,
+    /// published artifact — the one category of value this library never copies verbatim into
+    /// one. The witness is stable, so the same persona compares equal across runs.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings =>
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            // Truncation happens before the stimulus is sent, so this changes the question the
+            // system under test is asked rather than only what is recorded.
+            ["maxStimulusLength"] = MaxStimulusLength.ToString(CultureInfo.InvariantCulture),
+
+            // The EFFECTIVE persona, not the supplied one. LlmCaller trims before placing it in
+            // the instruction, so two options differing only in surrounding whitespace produce an
+            // identical instruction — and witnessing the raw value would refuse a comparison over
+            // a difference no run could observe. An attestation witnesses what was used.
+            ["persona"] = RunnerSupport.Redact(Persona?.Trim()),
+        };
 }

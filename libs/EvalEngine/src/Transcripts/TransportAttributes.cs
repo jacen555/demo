@@ -228,6 +228,29 @@ public static class ExchangeState
             string.Equals(state, Responded, StringComparison.Ordinal)
             || string.Equals(state, MalformedResponse, StringComparison.Ordinal)
         );
+
+    /// <summary>Determines whether a state is one this library declares.</summary>
+    /// <param name="state">The recorded state, which may be absent or unrecognised.</param>
+    /// <returns><see langword="true"/> only for a value named in this type.</returns>
+    /// <remarks>
+    /// A transcript's attributes are written by an injected
+    /// <see cref="Abstractions.IScenarioRunner"/>, so the recorded state is that runner's text
+    /// rather than this library's. A value that matches one of these exactly may be named in a
+    /// message or a log line, because this library chose it; anything else is described instead.
+    /// This is the same distinction a reserved harness key draws, and for the same reason — a
+    /// message composed here reaches a committed artifact and the build log (§V).
+    /// </remarks>
+    public static bool IsDeclared(string? state) =>
+        state
+            is Responded
+                or MalformedResponse
+                or AdapterFailed
+                or TimedOut
+                or RequestFailed
+                or NotAttempted
+                or ParticipantFailed
+                or Unsupported
+                or RunnerFailed;
 }
 
 /// <summary>

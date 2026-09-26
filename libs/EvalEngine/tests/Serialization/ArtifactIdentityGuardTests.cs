@@ -34,26 +34,75 @@ public class ArtifactIdentityGuardTests
     private static string Artifact(
         string suiteName = "regression",
         string scenarioId = "refund-flow",
-        string? tag = null
-    ) =>
-        CanonicalJson.Serialize(
+        string? tag = null,
+        IReadOnlyDictionary<string, string>? harnessConfig = null,
+        string? expectedFailureReason = null
+    )
+    {
+        // Serialized with safe placeholders and substituted afterwards. The writer refuses an
+        // unsafe identifier too now, and the subject of these tests is the *reader* — a file
+        // written by something else, which is the only way such an artifact can exist.
+        var json = CanonicalJson.Serialize(
             new SuiteResult
             {
-                SuiteName = suiteName,
-                Environment = new EvaluationEnvironment { Seed = 1, Timestamp = DateTimeOffset.UnixEpoch },
+                SuiteName = "suite-placeholder",
+                Environment = new EvaluationEnvironment
+                {
+                    Seed = 1,
+                    Timestamp = DateTimeOffset.UnixEpoch,
+                    HarnessConfig = harnessConfig is null
+                        ? new Dictionary<string, string>(StringComparer.Ordinal)
+                        : new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["config-placeholder"] = "value-placeholder",
+                        },
+                },
                 ScenarioResults =
                 [
                     new ScenarioResult
                     {
-                        ScenarioId = scenarioId,
+                        ScenarioId = "id-placeholder",
                         Kind = ScenarioKind.Rest,
                         RepetitionPolicyUsed = RepetitionPolicy.Once,
+                        ExpectedFailure = expectedFailureReason is null
+                            ? null
+                            : new ExpectedFailure { Reason = "reason-placeholder" },
                         Tags = tag is null
                             ? new Dictionary<string, string>(StringComparer.Ordinal)
-                            : new Dictionary<string, string>(StringComparer.Ordinal) { ["area"] = tag },
+                            : new Dictionary<string, string>(StringComparer.Ordinal) { ["area"] = "tag-placeholder" },
                     },
                 ],
             }
+        );
+
+        json = Substitute(json, "suite-placeholder", suiteName);
+        json = Substitute(json, "id-placeholder", scenarioId);
+
+        if (tag is not null)
+        {
+            json = Substitute(json, "tag-placeholder", tag);
+        }
+
+        if (expectedFailureReason is not null)
+        {
+            json = Substitute(json, "reason-placeholder", expectedFailureReason);
+        }
+
+        if (harnessConfig is not null)
+        {
+            var entry = harnessConfig.Single();
+            json = Substitute(json, "config-placeholder", entry.Key);
+            json = Substitute(json, "value-placeholder", entry.Value);
+        }
+
+        return json;
+    }
+
+    private static string Substitute(string json, string placeholder, string value) =>
+        json.Replace(
+            System.Text.Json.JsonSerializer.Serialize(placeholder),
+            System.Text.Json.JsonSerializer.Serialize(value),
+            StringComparison.Ordinal
         );
 
     [Fact]
@@ -125,6 +174,75 @@ public class ArtifactIdentityGuardTests
         var read = () => CanonicalJson.Deserialize<SuiteResult>(Artifact(scenarioId: "/home/ci-user/repo"));
 
         read.Should().Throw<UnsafeIdentifierException>();
+    }
+
+    /// <summary>
+    /// Two surfaces that did not exist when the trade-off was reasoned about.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The harness settings and the failure carve-out are both <b>author-supplied free text</b>
+    /// written verbatim into a committed, published artifact — the first surfaces of that shape
+    /// the artifact has carried. ADR 0005 is explicit that a documented trade-off is scoped to
+    /// the surfaces that existed when it was made, so neither inherits the reasoning: they are
+    /// guarded, exactly as the selection decisions were when they were added.
+    /// </para>
+    /// <para>
+    /// A harness setting is guarded on both its key and its value. A key is as author-supplied as
+    /// a value, and a reader who tried to reproduce the run would read either.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DeserializeSuiteResult_HarnessSettingValueIsAMachinePath_ThrowsWithoutRepeatingTheValue()
+    {
+        var config = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["suiteRoot"] = "/home/ci-user/repo/suites",
+        };
+
+        var read = () => CanonicalJson.DeserializeSuiteResult(Artifact(harnessConfig: config));
+
+        var thrown = read.Should().Throw<UnsafeIdentifierException>().Which;
+        thrown.Field.Should().Be("environment.harnessConfig");
+        thrown.Message.Should().NotContain("/home/ci-user");
+    }
+
+    [Fact]
+    public void DeserializeSuiteResult_HarnessSettingKeyIsAMachinePath_ThrowsWithoutRepeatingTheValue()
+    {
+        var config = new Dictionary<string, string>(StringComparer.Ordinal) { [@"C:\Users\ci-user\repo"] = "30" };
+
+        var read = () => CanonicalJson.DeserializeSuiteResult(Artifact(harnessConfig: config));
+
+        var thrown = read.Should().Throw<UnsafeIdentifierException>().Which;
+        thrown.Field.Should().Be("environment.harnessConfig");
+        thrown.Message.Should().NotContain("Users");
+    }
+
+    [Fact]
+    public void DeserializeSuiteResult_ExpectedFailureReasonIsAMachinePath_ThrowsWithoutRepeatingTheValue()
+    {
+        var read = () =>
+            CanonicalJson.DeserializeSuiteResult(
+                Artifact(expectedFailureReason: "blocked on the fixture at /home/ci-user/repo/fixtures")
+            );
+
+        var thrown = read.Should().Throw<UnsafeIdentifierException>().Which;
+        thrown.Field.Should().Be("expectedFailure");
+        thrown.Message.Should().NotContain("/home/ci-user").And.Contain("#1");
+    }
+
+    [Fact]
+    public void DeserializeSuiteResult_OrdinaryHarnessSettingsAndCarveOut_ReadsThem()
+    {
+        var config = new Dictionary<string, string>(StringComparer.Ordinal) { ["restTimeoutSeconds"] = "30" };
+
+        var artifact = CanonicalJson.DeserializeSuiteResult(
+            Artifact(harnessConfig: config, expectedFailureReason: "known gap, tracked as FORGE-214")
+        );
+
+        artifact.Environment.HarnessConfig.Should().Contain("restTimeoutSeconds", "30");
+        artifact.ScenarioResults[0].ExpectedFailure!.Reason.Should().Be("known gap, tracked as FORGE-214");
     }
 
     /// <summary>

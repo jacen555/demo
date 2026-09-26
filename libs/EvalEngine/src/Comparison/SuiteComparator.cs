@@ -3,6 +3,7 @@ using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Serialization;
 using Forge.EvalEngine.Statistics;
+using Forge.EvalEngine.Transcripts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -162,6 +163,8 @@ public sealed partial class SuiteComparator
     /// <item><description>
     /// every entry of <see cref="EvaluationEnvironment.HarnessConfig"/>, which is by definition
     /// the settings in force. A different throttle changes what a rate-limited system returns.
+    /// An artifact that records <b>none</b> is refused rather than matched: every other check
+    /// here passes vacuously against an empty map, so absence would read as agreement.
     /// </description></item>
     /// </list>
     /// <para>
@@ -186,7 +189,12 @@ public sealed partial class SuiteComparator
     /// </description></item>
     /// <item><description>
     /// the set of assertions the runs were graded against — same id, different assertions is a
-    /// different scenario wearing the same name;
+    /// different scenario wearing the same name — <b>and the set each repetition that carries
+    /// evidence was graded against, pairwise</b>. The scenario-level set is a union across runs
+    /// and cannot see a repetition that checked less than its pair: a pass drawn over fewer
+    /// assertions means "nothing that ran failed" rather than "every declared check held", and
+    /// paired against a repetition that evaluated all of them it becomes an effect size earned by
+    /// an assertion that never ran;
     /// </description></item>
     /// <item><description>
     /// the seed of every repetition, pairwise and in order. This is the pairing itself:
@@ -221,7 +229,8 @@ public sealed partial class SuiteComparator
     /// An artifact names the same scenario twice, carries a null scenario or run, carries a
     /// <see cref="RunStatus"/> outside the declared values, files a run whose transcript names
     /// another scenario, records a <see cref="RunStatus.Pass"/> beside an assertion verdict that
-    /// did not hold, or reuses one seed across a scenario's repetitions.
+    /// did not hold, records a graded verdict beside a transcript that gathered no evidence, or
+    /// reuses one seed across a scenario's repetitions.
     /// </exception>
     /// <exception cref="ComparisonRefusedException">
     /// The two artifacts were not produced under conditions that can be compared.
@@ -238,6 +247,14 @@ public sealed partial class SuiteComparator
         ArgumentNullException.ThrowIfNull(baseline);
         ArgumentNullException.ThrowIfNull(candidate);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Every refusal and log line this stage composes names identifiers it was handed. An
+        // artifact read from a file has been through this guard already; one built in process has
+        // not, and reaches neither the reader nor the writer. Running it here is what makes the
+        // messages below safe by construction rather than by an audit that has to be redone
+        // whenever a message is added (§V, ADR 0005).
+        _ = CanonicalJson.RequireSafeIdentifiers(baseline);
+        _ = CanonicalJson.RequireSafeIdentifiers(candidate);
 
         RequireComparableRuns(baseline, candidate);
 
@@ -420,9 +437,10 @@ public sealed partial class SuiteComparator
         if (!string.Equals(baseline.SuiteName, candidate.SuiteName, StringComparison.Ordinal))
         {
             throw new ComparisonRefusedException(
-                $"The baseline is a run of suite '{baseline.SuiteName}' and the candidate is a run of suite "
-                    + $"'{candidate.SuiteName}'. Two different suites share no scenario definitions, so a delta "
-                    + "between them would be arithmetic over unrelated work."
+                "The baseline and the candidate are runs of different suites. Two different suites share no "
+                    + "scenario definitions, so a delta between them would be arithmetic over unrelated work. "
+                    + "Neither name is repeated here: both are read out of an artifact and this message reaches "
+                    + "the build log, and a caller that passed both already holds them."
             )
             {
                 Property = "suiteName",
@@ -447,6 +465,27 @@ public sealed partial class SuiteComparator
         // it, so two runs that disagree on any of it are not reproductions of each other: a
         // different throttle changes what a rate-limited system returns, and a different
         // interval method changes what the artifact's figures mean.
+        //
+        // Absence is checked first, because every comparison below passes vacuously when there
+        // is nothing to compare — so an artifact that recorded no settings at all is the one
+        // input on which the whole set of them agrees the runs match, on the strength of neither
+        // run having said anything. Every artifact this engine writes carries settings, so the
+        // only way here is an artifact written elsewhere or edited by hand (§V).
+        if (baseline.Environment.HarnessConfig.Count == 0 || candidate.Environment.HarnessConfig.Count == 0)
+        {
+            throw new ComparisonRefusedException(
+                "The "
+                    + (baseline.Environment.HarnessConfig.Count == 0 ? "baseline" : "candidate")
+                    + " records no harness settings at all, so nothing states what it was conducted under. Two runs "
+                    + "that say nothing about their configuration are not two runs conducted alike — an absence "
+                    + "would make every setting check below pass without comparing anything, and a delta between "
+                    + "them could be the configuration rather than the change."
+            )
+            {
+                Property = "harnessConfig",
+            };
+        }
+
         foreach (var setting in baseline.Environment.HarnessConfig)
         {
             if (
@@ -455,9 +494,12 @@ public sealed partial class SuiteComparator
             )
             {
                 throw new ComparisonRefusedException(
-                    $"The baseline and the candidate disagree on harness setting '{setting.Key}'. That setting is "
-                        + "part of what a reader reproduces the run from, so the two runs were not conducted alike "
-                        + "and a delta between them would measure the harness rather than the change."
+                    "The baseline and the candidate disagree on a harness setting. That setting is part of what a "
+                        + "reader reproduces the run from, so the two runs were not conducted alike and a delta "
+                        + "between them would measure the harness rather than the change. The setting's name is "
+                        + $"carried on {nameof(ComparisonRefusedException)}."
+                        + $"{nameof(ComparisonRefusedException.Property)} rather than repeated here, because it is "
+                        + "read out of an artifact and this message reaches the build log."
                 )
                 {
                     Property = setting.Key,
@@ -470,8 +512,11 @@ public sealed partial class SuiteComparator
             if (!baseline.Environment.HarnessConfig.ContainsKey(setting.Key))
             {
                 throw new ComparisonRefusedException(
-                    $"The candidate declares harness setting '{setting.Key}' and the baseline does not. A setting "
-                        + "that was in force for only one of the two runs means they were not conducted alike."
+                    "The candidate declares a harness setting the baseline does not. A setting that was in force "
+                        + "for only one of the two runs means they were not conducted alike. The setting's name is "
+                        + $"carried on {nameof(ComparisonRefusedException)}."
+                        + $"{nameof(ComparisonRefusedException.Property)} rather than repeated here, because it is "
+                        + "read out of an artifact and this message reaches the build log."
                 )
                 {
                     Property = setting.Key,
@@ -521,11 +566,15 @@ public sealed partial class SuiteComparator
     /// </para>
     /// <para>
     /// The runs are also checked here, before anything is classified, because an artifact this
-    /// comparator did not produce is untrusted in three further ways (§V). A run whose transcript
+    /// comparator did not produce is untrusted in four further ways (§V). A run whose transcript
     /// names another scenario is evidence from one context filed under another. A run stamped
     /// <see cref="RunStatus.Pass"/> beside a failed assertion verdict claims coverage its own
-    /// evidence denies. And repetitions sharing a seed are one observation recorded several
-    /// times, which the paired test would read as several independent ones.
+    /// evidence denies. A run carrying any graded verdict beside a transcript whose exchange
+    /// gathered nothing is a verdict about a system that was never successfully asked — and a
+    /// pass with no verdicts beside it satisfies every other check vacuously, so an incomplete
+    /// baseline would be indistinguishable from a passing one. And repetitions sharing a seed are
+    /// one observation recorded several times, which the paired test would read as several
+    /// independent ones.
     /// </para>
     /// </remarks>
     private static Evidence Measure(ScenarioResult scenario)
@@ -565,6 +614,25 @@ public sealed partial class SuiteComparator
                         + "that did not hold. The verdicts are the evidence and the status is a claim about them, "
                         + "so an artifact whose own run contradicts itself cannot establish that the scenario is "
                         + "covered.",
+                    nameof(scenario)
+                );
+            }
+
+            // A graded verdict claims the system under test did, or did not, do the right thing.
+            // The transcript beside it says whether the system was ever successfully asked, and
+            // the coordinator refuses to grade a run whose exchange gathered nothing — it records
+            // Error and never evaluates an assertion. An artifact from elsewhere carries no such
+            // guarantee, and the dangerous case is quiet: a pass with no assertion verdicts
+            // beside it satisfies "nothing failed" vacuously, so a baseline truncated to the runs
+            // that never happened is indistinguishable from one that genuinely passed. Checked
+            // here, where the evidence is counted, so the absence cannot become a pass rate, a
+            // delta, or a merge decision (§V).
+            if (VerdictEvidence.IsUnbacked(run))
+            {
+                throw new ArgumentException(
+                    $"A run of scenario '{scenario.ScenarioId}' carries the verdict '{run.Status}' beside a "
+                        + $"transcript that records no successful exchange with the system under test. "
+                        + $"{char.ToUpperInvariant(VerdictEvidence.Why[0])}{VerdictEvidence.Why[1..]}.",
                     nameof(scenario)
                 );
             }
@@ -803,7 +871,65 @@ public sealed partial class SuiteComparator
                 + "them measures the change in the assertions.";
         }
 
+        return Mismatched(baseline, candidate, id);
+    }
+
+    /// <summary>
+    /// States which repetition pair was graded against different assertions, or null when every
+    /// pair that carries evidence was asked the same question.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Per repetition, because a set unioned across a scenario's runs cannot see a run that
+    /// checked less.</b> Two artifacts can agree on every spec the scenario ever evaluated while
+    /// one of their repetitions evaluated only some of them: a pass from that repetition means
+    /// "nothing that ran failed" rather than "every declared check held", and paired against a
+    /// repetition that did evaluate all of them it becomes a discordant pair — an effect size and
+    /// a p-value earned by an assertion that never ran. The check above compares the scenario;
+    /// this compares the pair, which is what the delta is actually drawn from.
+    /// </para>
+    /// <para>
+    /// <b>A repetition that errored under either variant is passed over.</b> It never reached
+    /// grading, so it carries no verdicts at all, and it is already conditioned out of the
+    /// denominator by <see cref="Pair"/>. Comparing its empty set against its pair's would make
+    /// every scenario with one flaky repetition not-comparable, which spends the guard's
+    /// credibility on a pair that contributes no evidence either way.
+    /// </para>
+    /// </remarks>
+    private static string? Mismatched(ScenarioResult baseline, ScenarioResult candidate, string id)
+    {
+        for (var index = 0; index < baseline.Runs.Count; index++)
+        {
+            if (baseline.Runs[index].Status == RunStatus.Error || candidate.Runs[index].Status == RunStatus.Error)
+            {
+                continue;
+            }
+
+            if (
+                !Evaluated(baseline.Runs[index]).SequenceEqual(Evaluated(candidate.Runs[index]), StringComparer.Ordinal)
+            )
+            {
+                return $"Repetition {Render(index + 1)} of scenario '{id}' was graded against a different set of "
+                    + "assertions in each artifact. The two runs were asked different questions, so they are not a "
+                    + "matched pair — a transition between them would be earned by the assertions that differ "
+                    + "rather than by the change under review.";
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>The assertions one run was graded against, in a canonical order.</summary>
+    private static List<string> Evaluated(RunResult run)
+    {
+        var specs = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var assertion in run.AssertionResults)
+        {
+            specs.Add(CanonicalJson.Serialize(assertion.Spec));
+        }
+
+        return [.. specs];
     }
 
     /// <summary>The assertions a scenario's runs were graded against, in a canonical order.</summary>
@@ -811,6 +937,12 @@ public sealed partial class SuiteComparator
     /// Compared as a set: the order assertions are evaluated in is not part of what a scenario
     /// checks. Each spec is reduced to its canonical JSON rather than compared with
     /// <c>==</c>, which is the notion of sameness the rest of this library uses for its records.
+    /// <para>
+    /// This is the scenario-level question — "do these two artifacts check the same things at
+    /// all" — and it is deliberately not the only one asked. <see cref="Mismatched"/> asks the
+    /// pair-level one, which this cannot see through: a union is identical whether or not every
+    /// repetition contributed the same members to it.
+    /// </para>
     /// </remarks>
     private static List<string> Assertions(ScenarioResult scenario)
     {

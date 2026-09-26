@@ -263,7 +263,16 @@ public sealed class ImpactSelectorSafetyNetTests
 
         var selection = ImpactFixtures.For(result, "unmatched");
         selection.Reason.Should().Be(SelectionReason.New);
-        selection.Detail.Should().Contain(ImpactFixtures.DeclaredAssertion);
+        selection
+            .Detail.Should()
+            .Contain(
+                "slotAbsent",
+                "the assertion is identified by its category, which the grammar keeps free of separators"
+            )
+            .And.NotContain(
+                "scope/confirm",
+                "the operand is evidence and this detail is published into the run report unnetted"
+            );
     }
 
     [Fact]
@@ -280,7 +289,16 @@ public sealed class ImpactSelectorSafetyNetTests
 
         var selection = ImpactFixtures.For(result, "unmatched");
         selection.Reason.Should().Be(SelectionReason.New);
-        selection.Detail.Should().Contain(ImpactFixtures.DeclaredAssertion);
+        selection
+            .Detail.Should()
+            .Contain(
+                "slotAbsent",
+                "the assertion is identified by its category, which the grammar keeps free of separators"
+            )
+            .And.NotContain(
+                "scope/confirm",
+                "the operand is evidence and this detail is published into the run report unnetted"
+            );
     }
 
     [Fact]
@@ -428,6 +446,91 @@ public sealed class ImpactSelectorSafetyNetTests
     // -----------------------------------------------------------------------------------------
     // The report a reviewer actually reads.
     // -----------------------------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------------------------
+    // A recorded pass has to be backed by an exchange that gathered evidence.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The most consequential shape the defect takes: a scenario retired on a run that never
+    /// reached the system under test.
+    /// </summary>
+    /// <remarks>
+    /// The coordinator never writes this — a run whose exchange state
+    /// <see cref="Transcripts.ExchangeState.IsHarnessFailure(string?)"/> classifies as a harness
+    /// failure is recorded <see cref="RunStatus.Error"/> and its assertions are never evaluated.
+    /// A baseline read from disk carries no such guarantee (§V), and this is the road with no
+    /// downstream catch: a scenario skipped here emits nothing, so the comparator one stage later
+    /// never sees it at all.
+    /// </remarks>
+    [Theory]
+    [InlineData(Transcripts.ExchangeState.RunnerFailed)]
+    [InlineData(Transcripts.ExchangeState.Unsupported)]
+    [InlineData(Transcripts.ExchangeState.TimedOut)]
+    [InlineData(Transcripts.ExchangeState.RequestFailed)]
+    [InlineData(Transcripts.ExchangeState.NotAttempted)]
+    [InlineData(Transcripts.ExchangeState.ParticipantFailed)]
+    [InlineData(Transcripts.ExchangeState.AdapterFailed)]
+    public void Select_BaselinePassRecordedBesideATranscriptThatGatheredNoEvidence_SelectsRatherThanSkipping(
+        string exchange
+    )
+    {
+        var result = SelectAgainst(ImpactFixtures.Recorded(Unmatched, [RunStatus.Pass], gradedExchange: exchange));
+
+        result.Skipped.Should().BeEmpty();
+        ImpactFixtures.For(result, "unmatched").Reason.Should().Be(SelectionReason.New);
+    }
+
+    [Fact]
+    public void Select_BaselinePassWithNoExchangeStateRecorded_SelectsRatherThanSkipping()
+    {
+        var result = SelectAgainst(ImpactFixtures.Recorded(Unmatched, [RunStatus.Pass], gradedExchange: null));
+
+        result.Skipped.Should().BeEmpty();
+        ImpactFixtures.For(result, "unmatched").Reason.Should().Be(SelectionReason.New);
+    }
+
+    /// <summary>
+    /// One repetition of many gathering nothing is enough: the record contradicts itself.
+    /// </summary>
+    [Fact]
+    public void Select_OneOfSeveralBaselinePassesGatheredNoEvidence_SelectsTheWholeScenario()
+    {
+        var recorded = ImpactFixtures.Recorded(Unmatched, [RunStatus.Pass, RunStatus.Pass]);
+        var corrupted = recorded with
+        {
+            Runs =
+            [
+                recorded.Runs[0],
+                recorded.Runs[1] with
+                {
+                    Transcript = ImpactFixtures.Transcript("unmatched", 1001, Transcripts.ExchangeState.RequestFailed),
+                },
+            ],
+        };
+
+        var result = SelectAgainst(corrupted);
+
+        result.Skipped.Should().BeEmpty();
+        ImpactFixtures.For(result, "unmatched").Reason.Should().Be(SelectionReason.New);
+    }
+
+    /// <summary>
+    /// A malformed response is evidence, so a pass drawn beside one is still a pass.
+    /// </summary>
+    [Fact]
+    public void Select_BaselinePassRecordedBesideAMalformedResponse_IsStillTrustworthyEnoughToSkip()
+    {
+        var result = SelectAgainst(
+            ImpactFixtures.Recorded(
+                Unmatched,
+                [RunStatus.Pass],
+                gradedExchange: Transcripts.ExchangeState.MalformedResponse
+            )
+        );
+
+        result.Skipped.Should().Equal("unmatched");
+    }
 
     [Fact]
     public void Select_AMixedSuite_ReportsEveryScenarioExactlyOnceInSuiteOrderWithItsOwnReason()

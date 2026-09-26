@@ -30,11 +30,19 @@ internal static class ImpactFixtures
     public const string DeclaredAssertion = "slotAbsent:scope/confirm";
 
     /// <summary>A scenario declaring the given impact globs and nothing else of interest.</summary>
+    /// <remarks>
+    /// It declares an opening stimulus because it declares
+    /// <see cref="ExecutionMode.Deterministic"/>: a deterministic caller replays scripted
+    /// material, so one with neither an opening nor scripted stimuli has nothing to send and is a
+    /// suite the loader refuses. A selector test that retires such a scenario would be reasoning
+    /// about a suite nobody could run — see <see cref="Tests.FixtureFidelityTests"/>.
+    /// </remarks>
     public static Scenario Declaring(string id, params string[] globs) =>
         new()
         {
             Identity = new ScenarioIdentity { Id = id, Kind = ScenarioKind.Rest },
             Execution = new Execution { Mode = ExecutionMode.Deterministic },
+            Simulation = new Simulation { Opening = "opening stimulus" },
             Grading = new Grading { Assertions = [AssertionSpec.Parse(DeclaredAssertion)] },
             Selection = new Selection { ImpactGlobs = globs },
         };
@@ -88,6 +96,12 @@ internal static class ImpactFixtures
     /// <param name="verdictSpec">
     /// Records the verdicts against another assertion than the one the scenario declares.
     /// </param>
+    /// <param name="gradedExchange">
+    /// The exchange state stamped on every run that carries a verdict. Defaults to the state a
+    /// real runner records for a run that reached the system under test; pass a harness-failure
+    /// state, or <see langword="null"/> for none at all, to record a verdict whose own transcript
+    /// says no evidence was gathered.
+    /// </param>
     public static ScenarioResult Recorded(
         Scenario scenario,
         RunStatus[]? statuses = null,
@@ -97,7 +111,8 @@ internal static class ImpactFixtures
         bool contradictAssertions = false,
         int? declaredRepetitions = null,
         bool recordVerdicts = true,
-        string? verdictSpec = null
+        string? verdictSpec = null,
+        string? gradedExchange = ExchangeState.Responded
     )
     {
         var verdicts = statuses ?? [RunStatus.Pass];
@@ -115,7 +130,11 @@ internal static class ImpactFixtures
                     (status, index) =>
                         new RunResult
                         {
-                            Transcript = Transcript(transcriptScenarioId ?? id, 1000 + index),
+                            Transcript = Transcript(
+                                transcriptScenarioId ?? id,
+                                1000 + index,
+                                status == RunStatus.Error ? ExchangeState.RunnerFailed : gradedExchange
+                            ),
                             Status = status,
                             ErrorDetail = status == RunStatus.Error ? "transport refused the connection" : null,
                             AssertionResults =
@@ -146,7 +165,14 @@ internal static class ImpactFixtures
             Environment = new EvaluationEnvironment { Seed = 20260922, Timestamp = TestData.FixedInstant },
         };
 
-    public static Transcript Transcript(string scenarioId, long seed) =>
+    /// <summary>A transcript shaped the way a runner in this library actually writes one.</summary>
+    /// <param name="scenarioId">The scenario the run belongs to.</param>
+    /// <param name="seed">The seed the run was driven with.</param>
+    /// <param name="exchange">
+    /// What happened on the wire, or <see langword="null"/> to record nothing — the shape of a
+    /// baseline whose transcript never says whether the system under test was reached at all.
+    /// </param>
+    public static Transcript Transcript(string scenarioId, long seed, string? exchange = ExchangeState.Responded) =>
         new()
         {
             ScenarioId = scenarioId,
@@ -164,6 +190,7 @@ internal static class ImpactFixtures
                 },
             ],
             Outcome = new Outcome { ObservedOutcome = "resolved", ObservedPath = "triage/resolve" },
+            Transport = new TransportMetadata { Kind = "http", Attributes = ArtifactShapes.For(exchange) },
         };
 
     /// <summary>The entry for one scenario, or a failure naming what was selected instead.</summary>

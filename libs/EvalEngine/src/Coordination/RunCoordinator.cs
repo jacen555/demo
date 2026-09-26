@@ -3,9 +3,11 @@ using System.Globalization;
 using System.Text.Json;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Assertions;
+using Forge.EvalEngine.Paths;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Runners;
 using Forge.EvalEngine.Scenarios;
+using Forge.EvalEngine.Serialization;
 using Forge.EvalEngine.Transcripts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,11 +34,15 @@ namespace Forge.EvalEngine.Coordination;
 /// it once per run establishes nothing about what it handed back.
 /// </description></item>
 /// <item><description>
-/// <b>Seeds are drawn before anything is dispatched</b>, sequentially, in suite order. A run's
-/// seed is therefore a function of where it sits in the suite and of the root seed, never of
-/// which worker reached it first. Drawing them inside the workers would make the artifact depend
-/// on the throttle, silently changing what a baseline is compared against — and
-/// <see cref="ISeedSource"/> implementations are not required to be thread-safe.
+/// <b>Seeds are drawn before anything is dispatched</b>, on one thread, in suite order. A run's
+/// seed is a function of the root seed, <b>the scenario's own id</b>, and the repetition number —
+/// never of where the scenario sits in the suite and never of which worker reached it first.
+/// Position is deliberately not an input: the comparison is paired by seed, so a positional draw
+/// would make reordering the suite file or narrowing it with impact selection move every
+/// subsequent scenario's seed out from under its own baseline, and the pairing guard would then
+/// report exactly the selected scenarios not-comparable. Drawing inside the workers would make
+/// the artifact depend on the throttle instead, and <see cref="ISeedSource"/> implementations are
+/// not required to be thread-safe.
 /// </description></item>
 /// <item><description>
 /// <b>Every result is written into the slot reserved for its own run.</b> There is no shared
@@ -251,6 +257,30 @@ public sealed partial class RunCoordinator
         cancellationToken.ThrowIfCancellationRequested();
 
         var startedAt = _clock.UtcNow;
+
+        // The suite's own name is stamped into the artifact and quoted by the stages that read
+        // it. SuiteLoader refuses a path-shaped one; a Suite constructed directly reaches neither
+        // that guard nor the artifact reader's.
+        if (MachinePath.IsPresentIn(suite.Name))
+        {
+            throw new UnsafeIdentifierException(
+                "This suite's name contains a machine path. It is stamped into the committed artifact and "
+                    + "rendered into published reports, so it is refused before anything is dispatched. The "
+                    + "offending value is not repeated here because this message is written to the build log."
+            )
+            {
+                Field = "suiteName",
+            };
+        }
+
+        // Read before anything is dispatched, and validated as it is read. What a runner attests
+        // is the record of the configuration that *governed* these runs, so collecting it after
+        // they finish would record what the runner says now: a setting changed halfway through
+        // would be stamped as though it had applied throughout, and a malformed attestation would
+        // discard a whole suite's evidence at the moment of assembly over a defect that was
+        // visible before the first request was sent.
+        var attested = _options.OwnSettings(_runners.Values, _participants);
+
         var results = new RunResult[suite.Scenarios.Count][];
         var plan = new List<PlannedRun>();
         var identifiers = new HashSet<string>(StringComparer.Ordinal);
@@ -283,6 +313,26 @@ public sealed partial class RunCoordinator
                 );
             }
 
+            // Every log line and refusal this stage composes names the scenario id. SuiteLoader
+            // refuses a path-shaped one, but a Suite can be constructed directly and reaches
+            // neither that guard nor the artifact reader's — so the check runs here too, before
+            // anything is dispatched. It also keeps the id out of the committed artifact, which
+            // the writer would otherwise refuse only after a whole suite had run (§V).
+            if (MachinePath.IsPresentIn(scenario.Identity.Id))
+            {
+                throw new UnsafeIdentifierException(
+                    "A scenario in this suite declares an id containing a machine path. That value names the "
+                        + "account a job runs as and the layout of the machine it runs on, it is written into a "
+                        + "committed artifact and into this harness's log lines, and it is refused before anything "
+                        + "is dispatched rather than after a whole suite has run. The offending value is not "
+                        + "repeated here because this message is written to the build log."
+                )
+                {
+                    Field = "identity.id",
+                    Position = "#" + Render(index + 1),
+                };
+            }
+
             // RepetitionPolicy refuses anything below one, so this always plans at least one run
             // and 'run once' needs no branch of its own. It does not cap the count, though: a
             // policy of int.MaxValue is valid and would exhaust memory in the allocation below
@@ -307,18 +357,21 @@ public sealed partial class RunCoordinator
 
             results[index] = new RunResult[repetitions];
 
-            // A seed is the other half of a run's identity. ISeedSource is injected, so nothing
-            // here guarantees the sequence is distinct — and a source that repeats one within a
-            // scenario makes two repetitions carry identical identity, at which point a replayed
-            // transcript satisfies every check the second run applies and is graded as an
-            // independent sample. Verified rather than assumed (§V).
+            // A seed is the other half of a run's identity, and it is drawn from the run's own
+            // identity rather than from its position: ISeedSource.SeedFor is a pure function of
+            // the root seed, the scenario id, and the repetition, so narrowing or reordering the
+            // suite cannot move a scenario's seed out from under its own baseline. ISeedSource is
+            // injected, though, so nothing here guarantees the sequence is distinct — and a
+            // source that repeats one within a scenario makes two repetitions carry identical
+            // identity, at which point a replayed transcript satisfies every check the second run
+            // applies and is graded as an independent sample. Verified rather than assumed (§V).
             var drawn = new HashSet<long>();
 
             for (var repetition = 0; repetition < repetitions; repetition++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var seed = _seeds.NextSeed();
+                var seed = _seeds.SeedFor(scenario.Identity.Id, repetition + 1);
 
                 if (!drawn.Add(seed))
                 {
@@ -369,7 +422,7 @@ public sealed partial class RunCoordinator
             )
             .ConfigureAwait(false);
 
-        return Assemble(suite, results, startedAt);
+        return Assemble(suite, results, startedAt, attested);
     }
 
     /// <summary>One planned run: which scenario, which repetition, and the seed for it.</summary>
@@ -672,17 +725,22 @@ public sealed partial class RunCoordinator
             //
             // The message is NOT recorded. AssertionEvaluatorRegistry is injected, so this text
             // is composed by whichever evaluator threw — not necessarily one of this library's —
-            // and it is written into a committed artifact. What a reader actually needs is which
-            // assertion was refused, and that comes from the suite file rather than from the
-            // evaluator: it is the caller's own text, already committed beside the scenario. The
-            // evaluator's message is reduced to a fingerprint, which still tells two refusals
-            // apart and recognises the same one recurring (§V).
+            // and it is written into a committed artifact.
+            //
+            // The assertion's OPERAND is not recorded either. ADR 0005 accepts an operand living
+            // in the suite file and in the scenario's grading, because those are evidence
+            // surfaces a consumer nets at publication; it says nothing about duplicating one into
+            // a diagnostic bound for ErrorDetail and the build log, where that net cannot reach.
+            // So the refusal identifies which assertion was refused — its category, whose grammar
+            // admits no separator, plus a fingerprint of the whole expression that tells two
+            // refusals apart and recognises the same one recurring (§V).
             var refusal =
                 $"Run {Render(planned.Repetition)} of scenario '{planned.Scenario.Identity.Id}' could not be "
-                + $"graded: assertion '{evaluating?.ToExpression() ?? "(none)"}' was refused by "
-                + $"{exception.GetType().Name} {RunnerSupport.Redact(exception.Message)}. The message is not "
-                + "recorded, because it is authored by the evaluator rather than by this library and this "
-                + "artifact is committed.";
+                + $"graded: the '{evaluating?.Category ?? "(none)"}' assertion "
+                + $"{RunnerSupport.Redact(evaluating?.ToExpression())} was refused by "
+                + $"{exception.GetType().Name} {RunnerSupport.Redact(exception.Message)}. Neither the evaluator's "
+                + "message nor the assertion's operand is repeated: the first is authored elsewhere and the "
+                + "second is evidence, and this text reaches both the committed artifact and the build log.";
 
             LogRunRefusedByEvaluator(planned.Repetition, planned.Scenario.Identity.Id, refusal);
 
@@ -701,7 +759,17 @@ public sealed partial class RunCoordinator
 
             // Vacuously true for a scenario that declares no assertions: it asserted nothing, and
             // nothing it asserted failed.
-            Status = verdicts.TrueForAll(verdict => verdict.Pass) ? RunStatus.Pass : RunStatus.Fail,
+            Status =
+                verdicts.TrueForAll(verdict => verdict.Pass)
+                    // A carved-out scenario that passes is recorded as a pass, never as its own
+                    // carve-out. A known gap clearing is the headline the harness exists to produce,
+                    // and burying it under the carve-out would make the repair invisible.
+                    ? RunStatus.Pass
+                : planned.Scenario.Grading.ExpectedFailure is null ? RunStatus.Fail
+                // Reached only from a graded run. Every path where the harness gathered no
+                // evidence has already returned Error above, so a carve-out excuses a
+                // verdict and never the absence of one.
+                : RunStatus.ExpectedFailure,
         };
     }
 
@@ -756,22 +824,36 @@ public sealed partial class RunCoordinator
 
     /// <summary>Why a run that did reach the system under test still cannot be graded.</summary>
     /// <remarks>
-    /// The runner's stated reason is quoted. That text is written by a runner rather than by this
-    /// layer, but it already travels into the artifact inside the transcript's
-    /// <see cref="TransportAttributes.Failure"/> attribute, so repeating it here exposes nothing
-    /// new — the runners in this library compose it under the same rule (§V).
+    /// <para>
+    /// <b>Neither the state nor the runner's stated reason is quoted, because both are written by
+    /// an injected runner.</b> Validating what a runner <i>declares</i> —
+    /// <see cref="IScenarioRunner.VerdictBearingSettings"/> — says nothing about what it
+    /// <i>produces</i>, and this text reaches two sinks the transcript does not: the artifact's
+    /// own <see cref="RunResult.ErrorDetail"/>, and a warning log line. The runners in this
+    /// library redact their own failure text unless a caller opts in; an injected one need not,
+    /// and this layer cannot tell the two apart.
+    /// </para>
+    /// <para>
+    /// An exchange state that exactly matches one this library declares is named, because this
+    /// library chose that value — the same distinction a reserved harness key draws. Anything
+    /// else is described by <see cref="RunnerSupport.Redact(string?)"/>, which still tells two
+    /// failures apart and recognises the same one recurring, without carrying the text. The
+    /// runner's own account remains in the transcript's
+    /// <see cref="TransportAttributes.Failure"/> attribute, under the runner's own policy, which
+    /// is where a reader who wants it should look.
+    /// </para>
     /// </remarks>
     private static string Ungradeable(PlannedRun planned, Transcript transcript, string? state) =>
         $"Run {Render(planned.Repetition)} of scenario '{planned.Scenario.Identity.Id}' recorded exchange "
-        + $"'{state ?? "(none recorded)"}', so the harness gathered no evidence about the system under test and "
-        + "this run's assertions were not evaluated: a verdict about a system that was never successfully asked "
-        + "is not a verdict. "
-        + (
-            transcript.Transport.Attributes.TryGetValue(TransportAttributes.Failure, out var stated)
-            && !string.IsNullOrWhiteSpace(stated)
-                ? stated
-                : "The runner stated no reason."
-        );
+        + $"'{(ExchangeState.IsDeclared(state) ? state : RunnerSupport.Redact(state))}', so the harness gathered "
+        + "no evidence about the system under test and this run's assertions were not evaluated: a verdict about a "
+        + "system that was never successfully asked is not a verdict. The runner stated: "
+        + RunnerSupport.Redact(
+            transcript.Transport.Attributes.TryGetValue(TransportAttributes.Failure, out var stated) ? stated : null
+        )
+        + ". That reason is described rather than repeated, because it is the runner's own text and this value "
+        + "reaches both the committed artifact and the build log; the runner's account of it is in the "
+        + $"transcript's '{TransportAttributes.Failure}' attribute.";
 
     /// <summary>
     /// Describes a failure in terms the coordinator can vouch for.
@@ -791,7 +873,12 @@ public sealed partial class RunCoordinator
     private string CouldNotBuildCaller() =>
         $"the participant for this run could not be built by {_participants.GetType().Name}";
 
-    private SuiteResult Assemble(Suite suite, RunResult[][] results, DateTimeOffset startedAt)
+    private SuiteResult Assemble(
+        Suite suite,
+        RunResult[][] results,
+        DateTimeOffset startedAt,
+        IReadOnlyDictionary<string, string> attested
+    )
     {
         var scenarios = new List<ScenarioResult>(suite.Scenarios.Count);
         var dimensions = new SortedSet<string>(StringComparer.Ordinal);
@@ -808,6 +895,12 @@ public sealed partial class RunCoordinator
                     Kind = scenario.Identity.Kind,
                     Runs = results[index],
                     RepetitionPolicyUsed = scenario.Execution.RepetitionPolicy,
+
+                    // The carve-out in force when these runs were graded, so a reader of the
+                    // committed artifact can see what was excluded from counting as a regression
+                    // and why. Without it an ExpectedFailure in the artifact is a status with no
+                    // stated justification anywhere near it.
+                    ExpectedFailure = scenario.Grading.ExpectedFailure,
                     Tags = new Dictionary<string, string>(scenario.Slicing.Tags, StringComparer.Ordinal),
 
                     // What these runs were produced from, so a later comparison can establish
@@ -844,24 +937,113 @@ public sealed partial class RunCoordinator
                 BaselineRef = null,
                 Seed = _seeds.RootSeed,
                 Timestamp = startedAt,
-                HarnessConfig = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    // The throttle changes what a run against a rate-limited system observes, so
-                    // a reader trying to reproduce the run needs the figure it ran under.
-                    ["maxConcurrency"] = Render(_options.MaxConcurrency),
-
-                    // An interval is uninterpretable without the confidence level it was
-                    // computed at, and ConfidenceInterval has nowhere to carry one — adding a
-                    // member would churn a schema T3 deliberately fixed in advance. It goes here
-                    // instead, named the same way the artifact names the method itself so the
-                    // two read as one setting.
-                    ["intervalMethod"] = JsonNamingPolicy.CamelCase.ConvertName(
-                        _options.Aggregator.IntervalMethod.ToString()
-                    ),
-                    ["intervalConfidence"] = _options.Aggregator.ConfidenceLevel.ToString(CultureInfo.InvariantCulture),
-                },
+                HarnessConfig = HarnessSettings(attested),
             },
         };
+    }
+
+    /// <summary>
+    /// The settings in force, as the artifact records them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <paramref name="attested"/> was read and validated before dispatch. It is re-read here
+    /// <b>only to establish that it did not move</b>: a runner whose effective configuration
+    /// changed while the suite was in flight would otherwise have the new figure stamped beside
+    /// runs the old one governed, and a comparison would then refuse — or accept — on a value no
+    /// run was conducted under. The runs exist by this point, so refusing costs evidence; a
+    /// committed artifact that misstates what produced it costs more, because nothing downstream
+    /// can tell that it did.
+    /// </para>
+    /// <para>
+    /// The caller's settings go in first and the ones this layer owns are written <b>last</b>, so
+    /// the record of what the run was actually conducted under cannot be displaced by a caller's
+    /// account of it — the same rule, for the same reason, that
+    /// <see cref="TransportAttributes"/> applies to a runner's reserved keys.
+    /// </para>
+    /// </remarks>
+    private Dictionary<string, string> HarnessSettings(IReadOnlyDictionary<string, string> attested)
+    {
+        foreach (var runner in _runners.Values)
+        {
+            if (
+                !StillAttests(
+                    runner.VerdictBearingSettings,
+                    attested,
+                    RunCoordinatorOptions.RunnerSetting(runner.Kind, string.Empty)
+                )
+            )
+            {
+                throw Drifted($"the runner registered for '{Name(runner.Kind)}' scenarios");
+            }
+        }
+
+        if (!StillAttests(_participants.VerdictBearingSettings, attested, RunCoordinatorOptions.ParticipantPrefix))
+        {
+            throw Drifted("the participant factory");
+        }
+
+        var settings = new Dictionary<string, string>(_options.HarnessConfig, StringComparer.Ordinal);
+
+        // From the pre-dispatch snapshot, which is the configuration these runs were actually
+        // conducted under, and written last so a caller's account cannot displace it.
+        foreach (var setting in attested)
+        {
+            settings[setting.Key] = setting.Value;
+        }
+
+        return settings;
+    }
+
+    private static string Name(ScenarioKind kind) => JsonNamingPolicy.CamelCase.ConvertName(kind.ToString());
+
+    private static InvalidOperationException Drifted(string seam) =>
+        new(
+            $"The settings {seam} attests are different now than when this suite was planned, so its runs were "
+                + "not all conducted under one configuration. The artifact records what governed a run, and a "
+                + "figure stamped beside runs it did not govern would be refused — or accepted — by a comparison "
+                + "on a value nothing was measured at. Hold a seam's effective settings steady for the duration "
+                + "of a suite. Neither figure is repeated here: both are the seam's own text and this message "
+                + "reaches the build log."
+        );
+
+    /// <summary>
+    /// Whether a seam still attests exactly what it attested before anything was dispatched.
+    /// </summary>
+    /// <remarks>
+    /// Compared per seam rather than over the merged map, so a divergence can be reported against
+    /// the seam — a <see cref="ScenarioKind"/> this library declares, or a fixed phrase — without
+    /// parsing a composite key whose suffix is the implementation's own text. Both directions are
+    /// checked: a changed value, and a setting withdrawn since planning.
+    /// </remarks>
+    private static bool StillAttests(
+        IReadOnlyDictionary<string, string>? now,
+        IReadOnlyDictionary<string, string> attested,
+        string prefix
+    )
+    {
+        if (now is null)
+        {
+            return false;
+        }
+
+        foreach (var setting in now)
+        {
+            if (string.IsNullOrWhiteSpace(setting.Key))
+            {
+                return false;
+            }
+
+            if (
+                !attested.TryGetValue(prefix + setting.Key, out var before)
+                || !string.Equals(before, setting.Value, StringComparison.Ordinal)
+            )
+            {
+                return false;
+            }
+        }
+
+        return now.Count == attested.Count(entry => entry.Key.StartsWith(prefix, StringComparison.Ordinal));
     }
 
     private static string Render(long value) => value.ToString(CultureInfo.InvariantCulture);
