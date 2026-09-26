@@ -7,13 +7,11 @@
 // Decoding is the only way to see the real tail.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
-import { canonicalBytes } from './canonical-json.mjs';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
 
 const USAGE = `
 remix — re-solve inserted silences from REAL measured audio and reflow the timeline
@@ -197,7 +195,7 @@ const driftMs = Math.abs(voiceMs - timing.durationMs);
 if (driftMs > Math.max(TOLERANCE_MS, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms`);
 
 delete timing.timingHash;
-timing.timingHash = crypto.createHash('sha256').update(canonicalBytes(timing)).digest('hex');
+timing.timingHash = timingSeal(timing);
 fs.writeFileSync(timingOutPath, JSON.stringify(timing, null, 2));
 
 const mm = ms => `${Math.floor(ms / 60000)}:${String(Math.round(ms % 60000 / 1000)).padStart(2, '0')}`;

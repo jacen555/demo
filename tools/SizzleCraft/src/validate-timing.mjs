@@ -36,7 +36,19 @@ const wordsIn = (s) => String(s?.voiceoverText ?? '').trim().split(/\s+/).filter
  *
  * A calibration written before fingerprinting existed carries no `textHash`. That is
  * treated as lineage UNPROVEN, not lineage intact — the suppression requires positive
- * proof, and the safe direction is to evaluate the budget.
+ * proof, and the safe direction is to evaluate the budget. UNPROVEN is reported
+ * separately from STALE because nothing has been shown to disagree, and because the
+ * advice differs: stale audio needs re-synthesis to be CORRECT, whereas an unproven
+ * calibration may well describe the current text perfectly.
+ *
+ * No post-hoc proof is possible, and the report says so. A tool to record the fingerprint
+ * without re-synthesising was built and withdrawn: `textHash` is over the EXACT narration
+ * bytes, and no VOICE-STAGE-BOUND record of them survives. `chars` is a count;
+ * `audio.words` is the TTS service's tokenisation, which does not voice punctuation, so a
+ * `?` -> `!` edit is invisible there while changing the hash. `storyboard.html` does hold
+ * the narration verbatim, but S2 regenerates it from the current timing.json, so it
+ * follows edits rather than recording what was synthesised — a copy, not a receipt.
+ * Evidence weaker than the claim cannot establish the claim.
  *
  * A mismatch is NOT an error — editing the script and re-validating before re-synthesising
  * is the normal authoring loop, and it is precisely when the budget is wanted. The
@@ -91,8 +103,12 @@ function calibrationLineage(segs, calibrationSegments) {
     if (c.textHash === undefined || c.textHash === null) {
       return {
         covers: false,
+        // Distinguished from a real mismatch: this calibration may describe the current
+        // text perfectly. Nothing disagrees — there is simply no proof either way, and the
+        // remedy is different, so the report must not tell the reader to re-synthesise.
+        unproven: true,
         reason: `segment "${s.id}" carries no narration fingerprint — this calibration predates `
-          + `fingerprinting, so lineage is UNPROVEN rather than intact (re-run the voice stage to record one)`,
+          + `fingerprinting, so lineage is UNPROVEN rather than intact`,
       };
     }
     if (String(c.textHash) !== narrationFingerprint(s.voiceoverText)) {
@@ -333,12 +349,46 @@ await runCli(async () => {
     console.log(`\nword rate: ${rate} wps x ${margin} margin = ${WPS.toFixed(2)} effective — ${rateKind} (source: ${source})`);
     console.log(`segment windows: ${measuredWindows ? 'MEASURED from synthesised audio' : 'AUTHORED estimates'}`);
     if (measuredRate && !lineage.covers) {
-      // The audio no longer matches the script. Loud, because every later stage renders
-      // the stale clips, and because this is the case the budget exists to catch.
-      console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
-      console.log('  The measured rate is still the best predictor available, so it is applied as a');
-      console.log('  PREDICTION against these windows, with the safety margin restored. Re-run the');
-      console.log('  voice stage to re-measure before rendering.');
+      if (lineage.unproven) {
+        // NOT stale — unproven. Nothing disagrees; there is only no evidence.
+        //
+        // And no post-hoc proof is available, which is the part worth saying out loud. A
+        // stamping tool was built for exactly this and then withdrawn: `textHash` is a
+        // fingerprint over EXACT narration bytes, and no voice-stage-bound record of them
+        // survives. `chars` is a count; segments[].audio.words carries the TTS service's
+        // tokenisation, which does not voice punctuation — so "ends with ?" and "ends
+        // with !" are indistinguishable there. Evidence weaker than the claim cannot
+        // establish the claim, so the honest move is to say what is true and stop, rather
+        // than certify on evidence that does not reach.
+        console.log(`\ncalibration lineage: UNPROVEN — ${lineage.reason}.`);
+        console.log('  The measured rate is still the best predictor available, so it is applied as a');
+        console.log('  PREDICTION against these windows, with the safety margin restored.');
+        console.log('\n  There is no way to record the fingerprint without re-synthesising. `textHash` is over');
+        console.log('  the EXACT narration bytes, and no VOICE-STAGE-BOUND record of them survives — the');
+        console.log('  word record drops punctuation, and every other calibration field is a summary.');
+        console.log('  (storyboard.html does carry the narration verbatim, but S2 regenerates it from');
+        console.log('  whatever timing.json says at the time, so it tracks edits instead of recording what');
+        console.log('  was synthesised — a copy of the script, not a receipt.) Anything claiming otherwise');
+        console.log('  would be certifying on evidence that does not reach.');
+        console.log('\n  Re-running the voice stage is therefore the only route, and it is a REGENERATION,');
+        console.log('  not a verification: `voice --apply` re-synthesises every clip and overwrites');
+        console.log('  voiceover.mp3. The new audio is length-deterministic but NOT byte-deterministic —');
+        console.log('  same durations to the millisecond, same byte lengths, different samples — so every');
+        console.log('  cheap check agrees and only a content hash disagrees.');
+        console.log('\n  If you need the proof AND the shipped artefact, you can have both: the fingerprint');
+        console.log('  is over the TEXT, so keep the re-run calibration and timeline and restore the');
+        console.log('  previously rendered audio files. Lineage proven, deliverable bit-reproducible.');
+        console.log('\n  If you do not need the proof, leaving this UNPROVEN is a correct outcome. It costs');
+        console.log('  only the word budget below, which is evaluated rather than suppressed.');
+      } else {
+        // The audio no longer matches the script. Loud, because every later stage renders
+        // the stale clips, and because this is the case the budget exists to catch.
+        console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
+        console.log('  The measured rate is still the best predictor available, so it is applied as a');
+        console.log('  PREDICTION against these windows, with the safety margin restored. Re-run the');
+        console.log('  voice stage to re-measure before rendering — here that IS the right move, because');
+        console.log('  the narration really has changed and the audio on disk is for the old text.');
+      }
     }
     console.log('\nsegment            window(s)  words  budget  headroom');
     for (const s of segs) {

@@ -45,6 +45,7 @@ place to fix a bug.
 | `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). |
 | `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. |
 | `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
+| `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
 | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
 
 Stage numbers refer to the pipeline contract in
@@ -147,6 +148,91 @@ they find a problem. `validate-timing` needs `ajv` for schema validation and **f
 rather than silently skipping** if it is missing; pass `--no-schema` to skip that check
 deliberately. `preview` treats a non-empty layout audit as a failure, matching
 `frame-capture` — the two stages must agree about whether the same condition is fatal.
+
+**A silent window is a measurement, not a failure.** `check-levels` reports three states,
+not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
+pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1`. Treating
+`-inf` as a failed probe made the last gate before delivery exit `1` on every correct
+narration-only render, and it named a cause — "the file may have no audio track" — that
+was false. That diagnosis is now only made after the input dump has actually been checked
+for an audio stream.
+
+**Proving lineage after the fact is not possible, and the report says so.** `validate-timing`
+treats a calibration with no `textHash` as lineage UNPROVEN. Only `voice` writes one — and
+**`voice --apply` is not a verification step, it is a regeneration**: it re-synthesises
+every clip and overwrites `voiceover.mp3` and `timing.json`. So the documented route to
+the proof read like a check and was a rewrite.
+
+A `stamp-lineage` tool was built here to close that, and **withdrawn**. It is worth
+recording why, because the next person to want it will reach the same design:
+
+`textHash` is a fingerprint over the **exact narration bytes**. No *voice-stage-bound*
+record of them survives. `voice` writes six things — the segment clips, `voiceover.mp3`,
+`timing.json`, `calibration-observed.json`, `sync-mapping.md` and `heal-log.txt` — and the
+only record of what was *spoken* is `segments[].audio.words`, the TTS service's
+tokenisation, which does not voice punctuation. Everything else is a summary: `chars` is a
+count. So an edit from `"… ready?"` to `"… ready!"` preserves word count, character count,
+clip duration **and** the word record, while changing the hash. `remix` then re-seals the
+edited timeline without re-synthesising, so `timingHash` verifies too — it proves
+self-consistency, never provenance.
+
+**`storyboard.html` is the near-miss, and it is worth knowing why it does not count.**
+S2 embeds `voiceoverText` verbatim (`write-storyboard.mjs:83`), so the exact narration
+*does* exist on disk. But S2 renders it from whatever `timing.json` holds **at the time it
+runs**, before and independently of synthesis, and re-running it after an edit silently
+updates it. It follows the script rather than recording what was spoken — a copy, not a
+receipt. Nothing binds a given `storyboard.html` to a given voice run, so it cannot
+witness one.
+
+Each candidate gate was real and one inferential step short of the claim:
+
+| Gate | Actually proves | Claim needed |
+|---|---|---|
+| `endMs - startMs === audio.durationMs` | the windows came from *some* audio | *this* audio |
+| `{words, chars, clipMs}` | a summary matches | the text is identical |
+| `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
+| normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
+
+**Evidence weaker than the claim cannot establish the claim.** The correct response to
+insufficient evidence is to not certify, so there is no tool — and leaving a calibration
+UNPROVEN is a correct outcome. It costs only the word budget, which is evaluated rather
+than suppressed.
+
+### Re-running the voice stage — what it actually costs, and the recovery
+
+**TTS here is length-deterministic, not byte-deterministic.** Measured on a real
+8-segment project, re-running `voice` on *unchanged* narration produced:
+
+| | |
+|---|---|
+| `durationMs`, every segment `endMs` | identical to the millisecond |
+| every clip's byte **length** | identical to the byte |
+| every clip's duration | identical |
+| **content hash — 5 of 8 segments + `voiceover.mp3`** | **different** |
+
+Neural synthesis varies sub-perceptually between runs while landing on the same frame
+count. This is the hardest shape of divergence to catch: every cheap check agrees and only
+a content hash disagrees. Do not write a check that compares TTS audio across runs by
+anything but content — and do not assume a re-run reproduces a shipped deliverable.
+
+**The recovery, if you have already re-run.** Nothing is lost. `textHash` hashes the
+narration **text**, not the audio, which makes the two separable: keep the re-run's
+`calibration-observed.json` and `timing.json`, restore the audio files that produced the
+shipped render, and you end with lineage proven *and* a bit-reproducible artefact. The
+general property, which is the reason to fingerprint inputs rather than outputs:
+
+> **A fingerprint over the input is separable from the output it certifies; a fingerprint
+> over the output is not.**
+
+Had `textHash` hashed the audio, that recovery would not exist — the choice would have
+been between proven lineage and a reproducible deliverable.
+
+Two notes on the recovery. `remix` is the reflow path that does *not* re-synthesise —
+it reuses the `segment_*.mp3` clips on disk byte-for-byte and only changes pacing. And
+`vo-envelope.json` is the one artefact derived from audio *content*; it is recomputed on
+every run and never compared against a stored value, so nothing breaks, but it describes
+whichever audio was on disk when it last ran — regenerate it if you restore clips and
+intend to re-render.
 
 ## How to run
 
@@ -271,7 +357,7 @@ sequences must add the flags.**
 | Package | Why |
 |---|---|
 | `playwright` | Headless browser for frame capture. No practical .NET equivalent for this workload — the reason this domain is Node (ADR 0002). |
-| `msedge-tts` | Narration synthesis. Deterministic, which the timing solve depends on. |
+| `msedge-tts` | Narration synthesis. **Length-deterministic, not byte-deterministic** — see "Re-running the voice stage" below. The timing solve depends on the length determinism, and nothing depends on the bytes. |
 | `music-metadata` | Cheap audio probing without a full decode. |
 | `ajv` | JSON Schema validation for `validate-timing.mjs`, against `src/timing-schema.json`. The script already imported it but never declared it, so schema validation failed at runtime; declaring it is what makes that stage real. Draft 2020-12 support is the reason for `ajv` specifically, and it brings 4 small transitive packages. |
 

@@ -7,13 +7,11 @@
 // PERCEIVED gap hits its target exactly.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
-import { canonicalBytes } from './canonical-json.mjs';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, narrationFingerprint } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, narrationFingerprint, timingSeal } from './cli-support.mjs';
 
 const USAGE = `
 voice — synthesise narration per segment and concatenate it (pipeline stage S3).
@@ -29,6 +27,13 @@ Options
 
 This stage calls a network TTS service and rewrites the approved timeline, so it does
 nothing without an explicit opt-in.
+
+--apply is NOT a verification step. It re-synthesises every clip and overwrites
+voiceover.mp3. The new audio is length-deterministic but NOT byte-deterministic — same
+durations to the millisecond, same byte lengths, different samples — so a re-run does not
+reproduce a shipped deliverable. If you need both the re-measurement and the shipped
+audio, keep this run's timing.json + calibration-observed.json and restore the previous
+audio files: the narration fingerprint is over the TEXT, so the two are separable.
 
 Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage or refused overwrite
 `.trimStart();
@@ -298,7 +303,7 @@ fs.writeFileSync(calibrationPath, JSON.stringify({
 }, null, 2));
 
 delete timing.timingHash;
-timing.timingHash = crypto.createHash('sha256').update(canonicalBytes(timing)).digest('hex');
+timing.timingHash = timingSeal(timing);
 fs.writeFileSync(timingOutPath, JSON.stringify(timing, null, 2));
 
 fs.writeFileSync(syncMappingPath,

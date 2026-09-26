@@ -7,12 +7,18 @@
  * exit 0. And the files were a hardcoded pair including an absolute machine path
  * (C:\dev\temp\...) from one old video, so the script could not run anywhere else
  * — see ADR 0005 on refusing machine paths at author time.
+ *
+ * A third: the fix for the first one classified DIGITAL SILENCE as a failed measurement,
+ * so this gate exited 1 on every correct narration-only render — the lead-in window is
+ * deliberately silent, and astats reports that correctly as `-inf`. Silence is now its
+ * own state. See astats-levels.mjs for why that distinction is the whole check.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, runCli, requireExistingFile } from './cli-support.mjs';
+import { readAstatsLevels, formatLevels, describeUnusableLevels } from './astats-levels.mjs';
 
 const USAGE = `
 check-levels — report RMS/peak audio levels for rendered video files.
@@ -27,7 +33,10 @@ Options
   --ffmpeg <path>        ffmpeg binary (default: read from ffmpeg-path.txt in the project)
   --help                 show this message
 
-Exit codes: 0 every file measured · 1 ffmpeg failed or a measurement was unusable · 2 bad usage
+A window reported as "digital silence" (-inf) is a MEASUREMENT, not a failure — the
+lead-in of a narration-only render is silent by design.
+
+Exit codes: 0 every file measured (silence included) · 1 ffmpeg failed or a window was unmeasurable · 2 bad usage
 `.trimStart();
 
 await runCli(() => {
@@ -83,7 +92,7 @@ await runCli(() => {
     first = false;
     for (const { label, file } of files) {
       const s = stats(FF, file, args);
-      console.log(`  ${label.padEnd(labelWidth)} RMS ${s.rms.toFixed(1)} dB   peak ${s.peak.toFixed(1)} dBFS`);
+      console.log(`  ${label.padEnd(labelWidth)} ${formatLevels(s)}`);
     }
   }
   return EXIT.OK;
@@ -106,6 +115,9 @@ function resolveFfmpeg(projectDir, override) {
 /**
  * Measures RMS and peak for `file`. Throws rather than returning NaN: a level this
  * script could not measure must not be printed as though it had been.
+ *
+ * A SILENT window is not such a case. See astats-levels.mjs — `-inf` is what a correct
+ * measurement of this pipeline's deliberate lead-in looks like.
  */
 function stats(FF, file, args = []) {
   const r = spawnSync(FF, ['-hide_banner', ...args, '-i', file,
@@ -120,17 +132,9 @@ function stats(FF, file, args = []) {
   }
 
   const out = (r.stdout || '') + (r.stderr || ''); // astats reports on stderr
-  const grab = (k) => {
-    const m = [...out.matchAll(new RegExp(k + ':\\s*(-?[\\d.]+)', 'g'))].map((x) => parseFloat(x[1]));
-    return m.length ? m[m.length - 1] : NaN;
-  };
-  const rms = grab('RMS level dB');
-  const peak = grab('Peak level dB');
-  if (!Number.isFinite(rms) || !Number.isFinite(peak)) {
-    throw new CliError(
-      `ffmpeg produced no usable astats levels for ${file} — the file may have no audio track`,
-      EXIT.FAILED,
-    );
+  const levels = readAstatsLevels(out);
+  if (levels.state === 'unmeasurable') {
+    throw new CliError(describeUnusableLevels(file, out, levels), EXIT.FAILED);
   }
-  return { rms, peak };
+  return levels;
 }

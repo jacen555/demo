@@ -513,6 +513,22 @@ section[data-mode="diagram"] .safe{align-content:start;top:8%;gap:calc(var(--fit
 .pulsing rect,.pulsing.dedge{animation:fxPulse 1.4s ease-in-out infinite}
 @keyframes fxPulse{0%,100%{filter:drop-shadow(0 0 0 rgba(80,230,255,0))}50%{stroke-width:7;filter:drop-shadow(0 0 .6vw rgba(80,230,255,.85))}}`;
 
+// ---------------------------------------------------------------------------------------------
+// WARNING — EDITING THIS BLOCK
+//
+// Everything from here to the closing backtick is a TEMPLATE LITERAL in this .mjs file that
+// happens to contain client-side JavaScript. Two traps follow from that, and both surface far
+// from the edit, at a line number in the GENERATED output:
+//
+//   1. Most statement lines here are MINIFIED — many statements to a line. A `//` comment added
+//      mid-line therefore comments out the rest of THAT LINE, silently deleting working code.
+//      Put comments on their own line, as the existing ones are.
+//   2. A backtick anywhere in here — including inside a comment — CLOSES this template literal
+//      and the file stops parsing as intended. Use '...' or "..." in emitted code; write "backtick"
+//      in prose rather than typing one.
+//
+// `${...}` is build-time interpolation and runs in THIS file's scope, not the browser's.
+// ---------------------------------------------------------------------------------------------
 const runtime = `
 const masterTimeline=gsap.timeline({paused:true});window.masterTimeline=masterTimeline;
 // %%SEGMENTS_START%%

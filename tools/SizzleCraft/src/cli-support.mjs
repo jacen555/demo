@@ -24,6 +24,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { canonicalBytes } from './canonical-json.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -435,6 +436,27 @@ export const KNOB_PREFIX = 'SIZZLECRAFT_';
  */
 export function narrationFingerprint(text) {
   return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex');
+}
+
+/**
+ * The timing seal: sha256 over the canonical bytes of a timeline, EXCLUDING its own
+ * `timingHash` so that re-sealing a sealed timeline reproduces the same value.
+ *
+ * Written by voice.mjs and remix.mjs at the end of a run. It lives here, in one place,
+ * because both were carrying their own copy of the expression and a hash rule with two
+ * implementations is a hash rule waiting to disagree.
+ *
+ * WHAT IT PROVES, EXACTLY: that nobody edited this file after it was sealed. That is
+ * self-consistency, NOT provenance — `remix` seals timelines it did not synthesise, so a
+ * valid seal says nothing about which stage produced the narration in the file. Reading
+ * it as provenance is a live hazard: it is what made a lineage-stamping tool look
+ * feasible when it was not (see README, "Proving lineage after the fact is not possible").
+ *
+ * Non-mutating, so a caller may verify a timeline it must not change.
+ */
+export function timingSeal(timing) {
+  const { timingHash: _recordedSeal, ...sealed } = timing;
+  return crypto.createHash('sha256').update(canonicalBytes(sealed)).digest('hex');
 }
 
 const TRUTHY_KNOB = Object.freeze(['1', 'true', 'yes', 'on']);
