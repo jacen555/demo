@@ -22,6 +22,7 @@
  */
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -413,6 +414,124 @@ export function requireFiniteNumber(raw, { name, min = -Infinity, max = Infinity
     throw new CliError(`${name} must be between ${min} and ${max} — got ${value}`);
   }
   return value;
+}
+
+/**
+ * The prefix every environment knob in this engine shares.
+ * @see resolveKnob for the precedence rule that governs all of them.
+ */
+export const KNOB_PREFIX = 'SIZZLECRAFT_';
+
+/**
+ * Fingerprints one segment's narration, so a later stage can prove a measurement was
+ * taken FROM this exact text.
+ *
+ * Written by voice.mjs into calibration-observed.json and checked by validate-timing.
+ * It exists because `{ words, chars, clipMs }` is a SUMMARY, and every summary collides:
+ * "word0 word1 word2 word3" and "other word1 word2 word3" agree on all three — same word
+ * count, same 23 characters, same audio duration — while being different scripts needing
+ * different audio. A lineage gate built on the summary passes the rewrite it exists to
+ * catch. The hash is over the exact bytes, so nothing survives it but the text itself.
+ */
+export function narrationFingerprint(text) {
+  return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex');
+}
+
+const TRUTHY_KNOB = Object.freeze(['1', 'true', 'yes', 'on']);
+const FALSY_KNOB = Object.freeze(['0', 'false', 'no', 'off']);
+
+function knobVariable(knob) {
+  if (typeof knob !== 'string' || knob.trim() === '') {
+    throw new CliError('a knob needs a name — got ' + JSON.stringify(knob));
+  }
+  if (knob.startsWith(KNOB_PREFIX)) {
+    throw new CliError(
+      `knob "${knob}" must be named WITHOUT the ${KNOB_PREFIX} prefix — the resolver adds it, ` +
+        `so passing the full name would read ${KNOB_PREFIX}${knob}, which nothing sets.`,
+    );
+  }
+  return `${KNOB_PREFIX}${knob}`;
+}
+
+/**
+ * Resolves one `SIZZLECRAFT_*` knob, and is the ONLY place that reads one.
+ *
+ * ## THE PRECEDENCE RULE — every knob in this engine obeys it, without exception:
+ *
+ *     argv  overrides  env  overrides  config  overrides  default
+ *
+ * Most specific wins. A flag typed on this invocation beats a variable exported for this
+ * shell, which beats a value committed to timing.json, which beats what the engine
+ * assumes when nobody said.
+ *
+ * This helper exists because there was no rule, only precedent. Three knobs
+ * (FRAME_FORMAT, JPEG_QUALITY, WORKERS) read env first and two (FPS, MODE) read config
+ * first, so the two that silently ignored the environment were indistinguishable from the
+ * three that honoured it — a consumer's half-fps draft rendered at 30 and nothing said
+ * why. The defect was never the inversion, it was the INCONSISTENCY: three-out-of-five is
+ * exactly the ratio that makes copying a neighbour feel safe, so the next knob added was a
+ * coin flip. Inverting the two outliers would have fixed that bug and left the next one.
+ *
+ * `envKnobs_everyDirectEnvironmentRead_goesThroughTheSharedResolver` in
+ * tests/env-precedence.test.mjs fails if any other file in src/ reads the environment
+ * directly, in any access form. A rule that is written but not enforceable decays back to
+ * precedent-by-proximity.
+ *
+ * Presence is `??`-shaped, never `||`-shaped: a configured `0` is a VALUE, not an absence,
+ * so it survives to be validated and refused rather than being silently replaced by the
+ * default. (`timing.project.fps` differed between two files for exactly this reason.) An
+ * empty environment variable IS treated as unset, because that is how a shell clears one.
+ *
+ * The caller still validates: this decides *which* value is in force and *where it came
+ * from*, not whether it is sane.
+ *
+ * @param {string} knob knob name WITHOUT the `SIZZLECRAFT_` prefix, e.g. `'FPS'`.
+ * @param {{argv?: unknown, config?: unknown, fallback?: unknown, legacy?: string[], env?: Record<string, string|undefined>}} [sources]
+ * @returns {{value: unknown, source: 'argument'|'environment'|'config'|'default', variable: string}}
+ */
+export function resolveKnob(knob, { argv, config, fallback, legacy = [], env = process.env } = {}) {
+  const variable = knobVariable(knob);
+  if (argv !== undefined && argv !== null) return { value: argv, source: 'argument', variable };
+  // `legacy` carries fully-qualified names predating the `SIZZLECRAFT_` convention, so an
+  // existing caller's exported variable keeps working while the canonical name takes over.
+  // They are consulted AFTER the canonical name, never before.
+  for (const name of [variable, ...legacy]) {
+    const raw = env[name];
+    if (raw !== undefined && raw !== null && String(raw) !== '') {
+      return { value: raw, source: 'environment', variable: name };
+    }
+  }
+  if (config !== undefined && config !== null) return { value: config, source: 'config', variable };
+  return { value: fallback, source: 'default', variable };
+}
+
+/**
+ * Resolves a boolean `SIZZLECRAFT_*` knob under the same precedence rule as
+ * {@link resolveKnob}.
+ *
+ * An unrecognised value is REFUSED rather than read as false. The previous shape,
+ * a `/^(1|true|yes)$/i` test against the raw variable coerced through `String(x || '')`,
+ * made `X=ture` and `X=off` and "never set it" all produce the same `false` — so a typo
+ * silently disabled the very flag the user was trying to turn on, which is the failure
+ * mode this engine keeps finding.
+ *
+ * @returns {{value: boolean, source: 'argument'|'environment'|'config'|'default', variable: string}}
+ */
+export function resolveBooleanKnob(knob, { argv, config, fallback = false, env = process.env } = {}) {
+  const variable = knobVariable(knob);
+  if (typeof argv === 'boolean') return { value: argv, source: 'argument', variable };
+  const raw = env[variable];
+  if (raw !== undefined && raw !== null && String(raw) !== '') {
+    const text = String(raw).trim().toLowerCase();
+    if (TRUTHY_KNOB.includes(text)) return { value: true, source: 'environment', variable };
+    if (FALSY_KNOB.includes(text)) return { value: false, source: 'environment', variable };
+    throw new CliError(
+      `${variable} must be one of ${[...TRUTHY_KNOB, ...FALSY_KNOB].join(', ')} — got ${JSON.stringify(String(raw))}. ` +
+        `An unrecognised value is refused rather than read as "off", so a typo cannot silently disable the flag you asked for.`,
+    );
+  }
+  if (typeof config === 'boolean') return { value: config, source: 'config', variable };
+  return { value: fallback, source: 'default', variable };
 }
 
 /**

@@ -11,9 +11,100 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { EXIT, CliError, runCli, requireExistingFile, requireFiniteNumber } from './cli-support.mjs';
+import { EXIT, CliError, runCli, requireExistingFile, requireFiniteNumber, narrationFingerprint } from './cli-support.mjs';
 
 const SHIPPED_SCHEMA = fileURLToPath(new URL('./timing-schema.json', import.meta.url));
+
+/** Words in a segment's narration, counted the same way voice.mjs counts them. */
+const wordsIn = (s) => String(s?.voiceoverText ?? '').trim().split(/\s+/).filter(Boolean).length;
+
+/**
+ * Does this calibration measure THIS script?
+ *
+ * `endMs - startMs === audio.durationMs` proves only that the windows came from SOME
+ * audio. It says nothing about whether the calibration corresponds to the text now in
+ * timing.json. Edit a segment's narration without re-running the voice stage and the
+ * stored durations are unchanged, the measured rate is unchanged, and that predicate
+ * still holds — so suppressing the word budget on it silently waves through the exact
+ * case the budget exists to catch: new text against stale audio.
+ *
+ * The authority is `textHash`, a fingerprint of the exact narration bytes.
+ * `{ words, chars, clipMs }` are kept as cheap pre-checks because they produce far better
+ * messages when they differ — but they must NOT be the gate. Every summary collides:
+ * "word0 word1 word2 word3" and "other word1 word2 word3" agree on all three while being
+ * different scripts. A gate built on the summary passes the rewrite it exists to catch.
+ *
+ * A calibration written before fingerprinting existed carries no `textHash`. That is
+ * treated as lineage UNPROVEN, not lineage intact — the suppression requires positive
+ * proof, and the safe direction is to evaluate the budget.
+ *
+ * A mismatch is NOT an error — editing the script and re-validating before re-synthesising
+ * is the normal authoring loop, and it is precisely when the budget is wanted. The
+ * measured rate stays the best available predictor (same voice, same speed), so it is used
+ * as a PREDICTION against the now-stale windows, with the safety margin restored.
+ *
+ * @returns {{covers: boolean, reason?: string}}
+ */
+function calibrationLineage(segs, calibrationSegments) {
+  if (!Array.isArray(calibrationSegments) || calibrationSegments.length === 0) {
+    return {
+      covers: false,
+      reason: 'the calibration file carries no per-segment evidence (`segments` absent or empty), '
+        + 'so it cannot be shown to measure this text',
+    };
+  }
+  if (calibrationSegments.length !== segs.length) {
+    return {
+      covers: false,
+      reason: `the timeline has ${segs.length} segment(s) but the calibration measured ${calibrationSegments.length}`,
+    };
+  }
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const c = calibrationSegments[i];
+    // Order and naming are part of the narration's identity: the same segments read in a
+    // different order is a different video. Compared POSITIONALLY, one id at a time.
+    //
+    // A delimiter-joined comparison was tried here first and is NOT injective:
+    // ["a\u0000b", "c"] and ["a", "b\u0000c"] produce the identical joined string, and
+    // timing-schema.json permits either id (`type: string, minLength: 1`). A joined string
+    // is a summary too — it just looks like a serialisation — so it reintroduced exactly
+    // the collision the fingerprint was added to remove, one field over.
+    if (String(c?.id) !== String(s.id)) {
+      return {
+        covers: false,
+        reason: `segment ${i + 1} is "${s.id}" but the calibration measured "${c?.id}" at that position `
+          + `— segments were renamed or reordered since the voice stage ran`,
+      };
+    }
+    const words = wordsIn(s);
+    const chars = String(s.voiceoverText ?? '').length;
+    if (Number(c.words) !== words) {
+      return { covers: false, reason: `segment "${s.id}" now has ${words} word(s); the calibration measured ${c.words}` };
+    }
+    if (Number(c.chars) !== chars) {
+      return { covers: false, reason: `segment "${s.id}" text changed since it was measured (${chars} chars now, ${c.chars} then)` };
+    }
+    if (Number(c.clipMs) !== s.endMs - s.startMs) {
+      return { covers: false, reason: `segment "${s.id}" window is ${s.endMs - s.startMs}ms but the measured clip was ${c.clipMs}ms` };
+    }
+    if (c.textHash === undefined || c.textHash === null) {
+      return {
+        covers: false,
+        reason: `segment "${s.id}" carries no narration fingerprint — this calibration predates `
+          + `fingerprinting, so lineage is UNPROVEN rather than intact (re-run the voice stage to record one)`,
+      };
+    }
+    if (String(c.textHash) !== narrationFingerprint(s.voiceoverText)) {
+      return {
+        covers: false,
+        reason: `segment "${s.id}" narration does not match the fingerprint taken when it was measured `
+          + `— an equal-length rewrite still needs new audio`,
+      };
+    }
+  }
+  return { covers: true };
+}
 
 const USAGE = `
 validate-timing — verify a project's timing.json before the render stages trust it.
@@ -128,40 +219,138 @@ await runCli(async () => {
   console.log(`lastSeg.endMs ${segs.at(-1).endMs} contentMs ${timing.contentMs} durationMs ${timing.durationMs}`);
   let prev = 0;
   const breaks = [];
+  const gaps = [];
   for (const s of segs) {
-    if (s.startMs !== prev) breaks.push(`${s.id} gap/overlap at ${s.startMs} (expected ${prev})`);
+    if (s.startMs < prev) {
+      breaks.push(`${s.id} OVERLAPS the previous segment — starts at ${s.startMs}, previous ended at ${prev}`);
+    } else if (s.startMs > prev) {
+      gaps.push({ id: s.id, ms: s.startMs - prev });
+    }
     prev = s.endMs;
   }
   if (breaks.length === 0) {
-    console.log('contiguity: OK');
+    // A GAP IS NOT A BREAK. voice.mjs deliberately inserts inter-segment silence — the
+    // "perceived gap" that stops one segment running into the next — plus a lead-in, so a
+    // timeline produced by the real pipeline is monotonic but NOT adjacent. Asserting
+    // adjacency made this check fail on every genuine run, which is the mirror of the
+    // ajv.errors defect above: a check that can never pass is as useless as one that can
+    // never fail, and worse in daily use, because a line that is always red trains the
+    // reader to stop reading — and it sits directly above the word-rate output that
+    // matters. Overlaps are still errors; gaps are reported so an UNEVEN one stays visible.
+    const uniq = [...new Set(gaps.map(g => g.ms))];
+    if (gaps.length === 0) console.log('contiguity: OK (adjacent)');
+    else if (uniq.length === 1) console.log(`contiguity: OK (${gaps.length} inter-segment gap(s), uniform ${uniq[0]} ms)`);
+    else {
+      console.log(`contiguity: OK (${gaps.length} inter-segment gap(s), UNEVEN: ${uniq.sort((a, b) => a - b).join(', ')} ms)`);
+      for (const g of gaps) console.log(`  ${g.id} +${g.ms} ms`);
+    }
   } else {
     console.log('contiguity: BROKEN');
     for (const b of breaks) console.log(`  ${b}`);
-    failures.push(`${breaks.length} contiguity break(s)`);
+    failures.push(`${breaks.length} segment overlap(s)`);
   }
 
-  // --- Word budget --------------------------------------------------------
-  const { wps: WPS, rate, margin, source } = resolveWps(timing, projectDir);
-  console.log(`\nword rate: ${rate} wps x ${margin} margin = ${WPS.toFixed(2)} effective (source: ${source})`);
-  console.log('\nsegment            window(s)  words  budget  headroom');
-  let tw = 0;
-  let over = 0;
-  for (const s of segs) {
-    const win = (s.endMs - s.startMs) / 1000;
-    const w = String(s.voiceoverText ?? '').trim().split(/\s+/).filter(Boolean).length;
-    tw += w;
-    const budget = Math.floor(win * WPS);
-    if (w > budget) over++;
-    const flag = w > budget ? '  <-- OVER' : '';
-    console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${String(w).padStart(5)}  ${String(budget).padStart(6)}  ${String(budget - w).padStart(8)}${flag}`);
-  }
-  // contentMs drives the implied-wps summary below; a non-numeric value would print NaN
-  // as though it were a measurement.
+  // --- Word rate ----------------------------------------------------------
+  const { rate, margin, marginConfigured, source, measuredRate, calibrationSegments } = resolveWordRate(timing, projectDir);
+
+  // Windows measured, or authored estimates? voice.mjs sets
+  // `seg.endMs = seg.startMs + <measured clip duration>` and records that same duration at
+  // `seg.audio.durationMs`, so the two agreeing means this timeline has been reflowed onto
+  // real audio. This is necessary for the suppression below but NOT sufficient — see
+  // calibrationLineage: it proves the windows came from some audio, not that the
+  // calibration measures the text that is in the file now.
+  const measuredWindows = segs.every((s) => {
+    const clipMs = Number(s.audio?.durationMs);
+    return Number.isFinite(clipMs) && s.endMs - s.startMs === clipMs;
+  });
+
+  const lineage = measuredRate
+    ? calibrationLineage(segs, calibrationSegments)
+    : { covers: false, reason: 'the rate is not a measurement' };
+
+  // Speech-only, excluding the clip's own leading/trailing silence — the same basis
+  // voice.mjs uses for `aggregate.observedEffWps`, so the two are directly comparable.
+  const speechMsOf = (s) =>
+    Number(s.audio?.durationMs) - (Number(s.audio?.headMs) || 0) - (Number(s.audio?.tailMs) || 0);
+
+  // contentMs drives the summary line below; a non-numeric value would print NaN as
+  // though it were a measurement.
   const contentMs = requireFiniteNumber(timing.contentMs ?? segs.at(-1).endMs, {
     name: 'timing.contentMs',
     min: 1,
   });
-  console.log(`\ntotal words ${tw}, total window ${contentMs / 1000}s, implied wps ${(tw / (contentMs / 1000)).toFixed(2)} (ceiling ${WPS.toFixed(2)})`);
+  const totalWords = segs.reduce((a, s) => a + wordsIn(s), 0);
+
+  // The budget is void in exactly ONE case: when the reference rate is a measurement OF
+  // THE SAME AUDIO that defines the windows, AND that measurement covers the text that is
+  // in the file right now. Then `words / window` IS that rate by construction, and
+  // comparing it to that rate minus a safety margin sets a threshold below the mean of the
+  // thing being measured — which half the population must exceed by definition. A safety
+  // margin hedges a GUESS; it cannot hedge a measurement of itself.
+  //
+  // Every other combination is a real comparison and keeps the budget:
+  //   measured rate + AUTHORED windows  -> a genuine prediction ("will this script fit?")
+  //   measured rate + EDITED text       -> also a prediction, against stale audio
+  //   estimate/default rate             -> "did the audio come out as planned?"
+  let over = 0;
+  if (measuredRate && measuredWindows && lineage.covers) {
+    console.log(`\nword rate: ${rate} wps — MEASURED (source: ${source})`);
+    console.log('segment windows: MEASURED from synthesised audio');
+    console.log(
+      '\nword budget: NOT EVALUATED — these windows were measured FROM this audio, so\n' +
+        '  words/window is that same measured rate by construction. Rate variance against the\n' +
+        '  measured mean is reported instead: it is true and actionable, where a budget verdict\n' +
+        '  here would be false whenever the audio exists and fits.',
+    );
+    console.log('\nsegment            window(s)  words     wps   vs mean');
+    for (const s of segs) {
+      const win = (s.endMs - s.startMs) / 1000;
+      const w = wordsIn(s);
+      const speechMs = speechMsOf(s);
+      const segRate = speechMs > 0 ? w / (speechMs / 1000) : NaN;
+      const delta = Number.isFinite(segRate) ? ((segRate - rate) / rate) * 100 : NaN;
+      const shown = Number.isFinite(segRate) ? segRate.toFixed(3) : 'n/a';
+      const variance = Number.isFinite(delta) ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : 'n/a';
+      console.log(
+        `${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${String(w).padStart(5)}  ${shown.padStart(6)}  ${variance.padStart(8)}`,
+      );
+    }
+    console.log(`\ntotal words ${totalWords}, total window ${contentMs / 1000}s, measured mean ${rate} wps`);
+    if (marginConfigured) {
+      // A configured value that is silently ignored is the same class of defect as a
+      // calibration file that is silently discarded: the author believes it is in force.
+      console.log(
+        `\nnote: intake.wpsSafetyMargin (${margin}) is NOT applied here — a margin hedges a guess,` +
+          ` and this rate is a measurement of this audio. It applies when the windows are authored.`,
+      );
+    }
+    if (values.strict) {
+      console.log('\nnote: --strict has no word budget to enforce here (see above) — rate variance is advisory.');
+    }
+  } else {
+    const WPS = rate * margin;
+    const rateKind = measuredRate ? 'MEASURED rate' : 'ESTIMATE';
+    console.log(`\nword rate: ${rate} wps x ${margin} margin = ${WPS.toFixed(2)} effective — ${rateKind} (source: ${source})`);
+    console.log(`segment windows: ${measuredWindows ? 'MEASURED from synthesised audio' : 'AUTHORED estimates'}`);
+    if (measuredRate && !lineage.covers) {
+      // The audio no longer matches the script. Loud, because every later stage renders
+      // the stale clips, and because this is the case the budget exists to catch.
+      console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
+      console.log('  The measured rate is still the best predictor available, so it is applied as a');
+      console.log('  PREDICTION against these windows, with the safety margin restored. Re-run the');
+      console.log('  voice stage to re-measure before rendering.');
+    }
+    console.log('\nsegment            window(s)  words  budget  headroom');
+    for (const s of segs) {
+      const win = (s.endMs - s.startMs) / 1000;
+      const w = wordsIn(s);
+      const budget = Math.floor(win * WPS);
+      if (w > budget) over++;
+      const flag = w > budget ? '  <-- OVER' : '';
+      console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${String(w).padStart(5)}  ${String(budget).padStart(6)}  ${String(budget - w).padStart(8)}${flag}`);
+    }
+    console.log(`\ntotal words ${totalWords}, total window ${contentMs / 1000}s, implied wps ${(totalWords / (contentMs / 1000)).toFixed(2)} (ceiling ${WPS.toFixed(2)})`);
+  }
 
   // The word budget is a calibration heuristic, not a hard contract — an over-budget
   // segment renders, it just reads fast. It is advisory by default and a failure under
@@ -213,21 +402,49 @@ async function validateAgainstSchema(timing, schemaPath) {
 }
 
 /**
- * Effective speech rate used for the word-budget check.
+ * Resolves the reference speech rate used to reason about the narration, and says where
+ * it came from.
  *
- * This is the ONLY thing that diverged between projects (3.43*0.97 vs 3.00*0.95), which
- * is calibration data, not logic — so it is read from the project rather than hardcoded.
- * Set `intake.wordsPerSecond` / `intake.wpsSafetyMargin` in timing.json, or drop a
- * calibration-observed.json next to it. Falls back to a conservative default.
+ * Calibration data, not logic, is what diverged between projects, so it is read from the
+ * project rather than hardcoded. In precedence order:
  *
- * Every value is validated before it is used. `"wordsPerSecond": "oops"` made the budget
- * NaN, and `words > NaN` is always false — so no segment was ever over budget and even
- * --strict exited 0. A threshold that cannot be compared does not relax the check, it
- * removes it. Only an ABSENT calibration file is ignored; a malformed one is an error,
- * because "I could not read your calibration" and "you have no calibration" are
- * different facts and only one of them is safe to assume.
+ *   1. `calibration-observed.json` -> `aggregate.observedEffWps`   (a MEASUREMENT)
+ *   2. `timing.json` -> `intake.wordsPerSecond`                    (an ESTIMATE)
+ *   3. 3.0                                                          (a DEFAULT)
+ *
+ * ## The key
+ *
+ * This used to look for a TOP-LEVEL `wordsPerSecond` in the calibration file. `voice.mjs`
+ * has never written that: it writes the rate NESTED, at `aggregate.observedEffWps`. So the
+ * lookup missed on every real project — the file was read, parsed, validated, and then
+ * silently discarded, and every project was checked against its planning estimate while
+ * appearing to use its measured rate. The tests that "covered" this hand-wrote a top-level
+ * key, so the reader was proven correct against a shape the writer never produced.
+ *
+ * ## The margin
+ *
+ * `wpsSafetyMargin` is read from `intake` ONLY, never from the calibration file. It is an
+ * authoring hedge, not an observable: timing-schema.json declares it under `intake` alone,
+ * and voice.mjs writes no margin-like key at any depth. (`observedSafeWps` is not one — it
+ * is the rate normalised to 1.0x speed, `effWps / roundedSpeed`.) Looking for a margin in
+ * a file of measurements is the same mistake as the key above, in a second location.
+ * It is validated whenever PRESENT, even where the caller will not apply it: an author who
+ * set the value believes it matters, and silently ignoring an invalid one is how a value
+ * comes to mean nothing.
+ *
+ * ## Absent, unreadable, and the third state
+ *
+ * Only an ABSENT calibration file is ignored; an unreadable or malformed one is an error,
+ * because "I could not read your calibration" and "you have no calibration" are different
+ * facts and only one is safe to assume. A THIRD state hid between them: read fine, key
+ * never written — which rendered identically to absent, and is exactly how the defect
+ * above stayed invisible for as long as it did. A calibration file that yields no rate is
+ * now its own error, naming the key it expected, so a future rename in voice.mjs surfaces
+ * here instead of silently reverting to the estimate.
+ *
+ * @returns {{rate: number, margin: number, source: string, measuredRate: boolean}}
  */
-function resolveWps(timing, projectDir) {
+function resolveWordRate(timing, projectDir) {
   const calibrationPath = path.join(projectDir, 'calibration-observed.json');
   let observed = null;
   let raw = null;
@@ -254,29 +471,36 @@ function resolveWps(timing, projectDir) {
   // `??` treats a PRESENT null as missing, so `{"wpsSafetyMargin": null}` silently took
   // the default and the run could still pass. An absent property and a present invalid
   // one are different facts; only the first is safe to substitute a default for.
-  const pick = (key) => {
-    if (observed !== null && Object.hasOwn(observed, key)) {
-      return { present: true, value: observed[key], from: 'calibration-observed.json' };
-    }
-    if (Object.hasOwn(intake, key)) {
-      return { present: true, value: intake[key], from: 'timing.json intake' };
-    }
-    return { present: false };
-  };
-
-  const ratePick = pick('wordsPerSecond');
-  const marginPick = pick('wpsSafetyMargin');
-
-  const rate = ratePick.present
-    ? requireFiniteNumber(ratePick.value, { name: 'wordsPerSecond', min: 0.1, max: 30 })
-    : 3.0;
-  const margin = marginPick.present
-    ? requireFiniteNumber(marginPick.value, { name: 'wpsSafetyMargin', min: 0.01, max: 1 })
+  const margin = Object.hasOwn(intake, 'wpsSafetyMargin')
+    ? requireFiniteNumber(intake.wpsSafetyMargin, { name: 'intake.wpsSafetyMargin', min: 0.01, max: 1 })
     : 0.95;
+  const marginConfigured = Object.hasOwn(intake, 'wpsSafetyMargin');
 
-  const source = ratePick.present ? ratePick.from : 'default';
+  if (observed !== null) {
+    const aggregate = observed.aggregate;
+    if (aggregate === null || typeof aggregate !== 'object' || !Object.hasOwn(aggregate, 'observedEffWps')) {
+      throw new CliError(
+        `${calibrationPath} was read and parsed but carries no \`aggregate.observedEffWps\` — ` +
+          `that is the key voice.mjs writes the measured rate to, and it is the only rate this file supplies. ` +
+          `Present-but-empty is reported rather than treated as absent, because a calibration that silently ` +
+          `degrades to the planning estimate is indistinguishable from one that was used. ` +
+          `Re-run the voice stage to regenerate it, or delete it to fall back to intake.wordsPerSecond deliberately.`,
+      );
+    }
+    const rate = requireFiniteNumber(aggregate.observedEffWps, {
+      name: 'calibration-observed.json aggregate.observedEffWps',
+      min: 0.1,
+      max: 30,
+    });
+    return { rate, margin, marginConfigured, source: 'calibration-observed.json aggregate.observedEffWps', measuredRate: true, calibrationSegments: observed.segments };
+  }
 
-  return { wps: rate * margin, rate, margin, source };
+  if (Object.hasOwn(intake, 'wordsPerSecond')) {
+    const rate = requireFiniteNumber(intake.wordsPerSecond, { name: 'intake.wordsPerSecond', min: 0.1, max: 30 });
+    return { rate, margin, marginConfigured, source: 'timing.json intake.wordsPerSecond', measuredRate: false, calibrationSegments: null };
+  }
+
+  return { rate: 3.0, margin, marginConfigured, source: 'default', measuredRate: false, calibrationSegments: null };
 }
 
 

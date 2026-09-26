@@ -52,6 +52,53 @@ Stage numbers refer to the pipeline contract in
 
 **`write-script.mjs` (S1) is deliberately not here** — see below.
 
+## Configuration precedence
+
+Every `SIZZLECRAFT_*` environment knob resolves through one helper (`resolveKnob` /
+`resolveBooleanKnob` in `src/cli-support.mjs`) under one rule, with no exceptions:
+
+```
+argv  overrides  env  overrides  config  overrides  default
+```
+
+Most specific wins: a flag typed on this invocation beats a variable exported for this
+shell, which beats a value committed to `timing.json`, which beats what the engine assumes
+when nobody said. A configured `0` is a **value**, not an absence — it survives to be
+validated and refused rather than being silently replaced by the default.
+
+| Knob | Config counterpart |
+|---|---|
+| `SIZZLECRAFT_FPS` | `timing.project.fps` |
+| `SIZZLECRAFT_MODE` | `timing.project.mode` (`draft` \| `live` \| `publish`) |
+| `SIZZLECRAFT_FRAME_FORMAT` | `timing.project.frameFormat` (`png` \| `jpeg`) |
+| `SIZZLECRAFT_JPEG_QUALITY` | `timing.project.jpegQuality` |
+| `SIZZLECRAFT_WORKERS` | — (auto-sized from core count) |
+| `SIZZLECRAFT_RESUME` | `--resume` |
+| `SIZZLECRAFT_NO_DEDUP` / `SIZZLECRAFT_DEDUP_HOLDS` | — |
+| `SIZZLECRAFT_OUTRO_MS` | `--ms` |
+| `SIZZLECRAFT_MUSIC_PRESET` | `--preset` (legacy `SIZZLE_MUSIC_PRESET` still read, canonical name wins) |
+
+This is enforced, not merely documented:
+`envKnobs_everyDirectEnvironmentRead_goesThroughTheSharedResolver` in
+`tests/env-precedence.test.mjs` fails if any file under `src/` reads the environment
+directly, **anywhere in the tree**, including inside `cli-support.mjs` outside the
+resolver's own two accesses — which are exempted by character offset, not by line or by
+file. It catches every **textual** form of the read: dotted (`process.env.X`), bracketed
+(`process.env['X']`), computed access to the environment object itself
+(`process['env']['X']`), destructuring, aliasing that object (`const e = process.env`),
+an access split across lines, and any variable prefix — not just `SIZZLECRAFT_`.
+
+**What it does not catch, and why that is the right boundary.** Aliasing the *global*
+first — `const p = process; p.env.X` — defeats any purely textual rule, and closing that
+would need a real parser. This guard exists to stop a knob arriving by **copying a
+neighbour**, which is how all six of the current ones arrived; it is not a sandbox against
+a determined author. The limit is stated in the scanner's own doc comment so the code and
+this page agree.
+
+Before that rule existed, `FPS` and `MODE` read config first while three neighbours read
+env first, so a half-fps draft silently rendered at 30 — and `SIZZLE_MUSIC_PRESET` kept a
+non-conforming prefix unnoticed, because the first scanner only looked for `SIZZLECRAFT_`.
+
 ## Safe defaults and exit codes
 
 **Every script in this engine that writes, deletes or appends plans by default.** A bare
@@ -108,7 +155,7 @@ npm install                 # first time — pulls playwright, msedge-tts, music
 node --test                 # run the tests
 
 # verification
-node src/validate-timing.mjs                      # schema + contiguity + word budget
+node src/validate-timing.mjs                      # schema + contiguity + word rate
 node src/validate-timing.mjs --strict             # also fail on over-budget segments
 node src/check-levels.mjs --file "Part 1=a.mp4" --file "Part 2=b.mp4"
 node src/preview.mjs --apply                      # screenshot every segment + audit layout
@@ -150,7 +197,7 @@ directly by hand. See the skill for the stage ordering.
 
   | Script | Was | Now |
   |---|---|---|
-  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json`, then `intake.wordsPerSecond`, then a default |
+  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json` → `aggregate.observedEffWps` (measured), then `intake.wordsPerSecond` (estimate), then a default. The margin comes from `intake.wpsSafetyMargin` only — it hedges a guess and is not applied to a measurement |
   | `write-storyboard.mjs` | Hardcoded per-video lede string | `project.lede` |
   | `preview.mjs` | Hardcoded list of segment ids | Defaults to all segments; pass ids to narrow |
   | `make-music.mjs` | Forked chord progression | Named presets (`warm`, `bright`), selectable by argv |
@@ -163,6 +210,35 @@ directly by hand. See the skill for the stage ordering.
   fail; path confinement follows links; `--help` touches nothing. Covered by
   `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs` and
   `tests/safe-defaults.test.mjs`.
+- **A verifier must also be able to *pass*.** `validate-timing`'s contiguity check
+  asserted strict adjacency, but `voice.mjs` deliberately inserts a lead-in and
+  inter-segment silence — so every timeline the real pipeline produces failed on every
+  segment. That is the mirror of a check that can never fail, and worse in daily use: a
+  line that is always red trains the reader to stop reading. Overlaps now fail; gaps pass
+  and are reported, with uneven ones called out.
+- **The word budget knows the difference between a guess and a measurement.** Once the
+  windows come from synthesised audio *and* the rate is a measurement of that same audio,
+  `words / window` **is** that rate by construction — so a budget built from it, minus a
+  safety margin, flags every segment above the mean by definition. In that one case the
+  budget is skipped and **rate variance against the measured mean** is reported instead
+  (`hard +4.1%`), which is true and actionable. The budget and its margin still apply
+  wherever the comparison is real: a measured rate against authored windows is a genuine
+  prediction, and an estimate against measured windows says whether the audio came out as
+  planned. Every run states which rate it used and where it came from, so a silent
+  fallback can never again look like a measurement. See `tests/word-rate.test.mjs`.
+- **The suppression requires lineage, not just measured windows.** `endMs - startMs ===
+  audio.durationMs` proves the windows came from *some* audio — not that the calibration
+  measures the text in the file now. Edit a segment's narration without re-running the
+  voice stage and that predicate still holds, which would wave through exactly the case
+  the budget exists to catch. So `voice.mjs` records a **`textHash`** — a sha256 of each
+  segment's exact narration — and `validate-timing` checks it, along with segment order
+  and naming. `{words, chars, clipMs}` are kept only as cheap pre-checks that give better
+  messages: they are a *summary*, and every summary collides — `"word0 word1 word2 word3"`
+  and `"other word1 word2 word3"` agree on all three while being different scripts. A
+  calibration with no fingerprint is **unproven**, not intact, so the budget is evaluated.
+  A mismatch is **not** an error — editing and re-validating before re-synthesising is the
+  normal loop — it reports `calibration lineage: STALE`, names both sides of the
+  divergence, and applies the measured rate as a *prediction* with the margin restored.
 
 **Breaking change for existing build sequences**
 

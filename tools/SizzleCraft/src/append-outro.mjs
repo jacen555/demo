@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, planFooter, resolveKnob } from './cli-support.mjs';
 
 // MPEG Layer III frame tables (kbps). MPEG-1 vs MPEG-2/2.5 differ in bitrate table + samples/frame.
 const BR_V1_L3 = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0];
@@ -50,7 +50,7 @@ await runCli(() => {
     options: { ms: { type: 'string' }, voice: { type: 'string' }, silence: { type: 'string' } },
   });
 
-  const rawTarget = values.ms ?? process.env.SIZZLECRAFT_OUTRO_MS;
+  const rawTarget = resolveKnob('OUTRO_MS', { argv: values.ms }).value;
   const targetMs = parseOutroMs(rawTarget);
 
   // 0 is a legitimate no-op (the schema allows outroMs: 0) and doing nothing IS the job.

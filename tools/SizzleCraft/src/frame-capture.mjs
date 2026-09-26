@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob } from './cli-support.mjs';
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
 // directory wholesale. So the default invocation plans and writes nothing, and the
@@ -71,7 +71,9 @@ const timing = guard(() => {
 // code path, so the guard belongs here rather than at the point of use.
 let fps, width, height;
 try {
-  fps = requirePositiveNumber(timing.project?.fps ?? process.env.SIZZLECRAFT_FPS ?? 30, { name: 'timing.project.fps', max: 240 });
+  // Precedence is the shared rule — argv > env > config > default. See resolveKnob.
+  const fpsKnob = resolveKnob('FPS', { config: timing.project?.fps, fallback: 30 });
+  fps = requirePositiveNumber(fpsKnob.value, { name: `fps (${fpsKnob.variable} / timing.project.fps)`, max: 240 });
   width = requirePositiveNumber(timing.project?.width ?? 3840, { name: 'timing.project.width', max: 16384, integer: true });
   height = requirePositiveNumber(timing.project?.height ?? 2160, { name: 'timing.project.height', max: 16384, integer: true });
 } catch (err) {
@@ -109,14 +111,17 @@ const frameDir = guard(() => resolveWipeTarget(projectDir, 'frames', 'frames dir
 // Only jpeg (jpg) and png are supported (Playwright screenshot type + the WebCodecs encoder path,
 // see references/ffmpeg-free-encoder.md) — validate up front so an unexpected value fails fast here
 // instead of as a confusing per-frame screenshot error deep in the capture loop.
-const fmtRaw = (process.env.SIZZLECRAFT_FRAME_FORMAT || timing.project?.frameFormat || 'png').toLowerCase();
+const fmtRaw = String(
+  resolveKnob('FRAME_FORMAT', { config: timing.project?.frameFormat, fallback: 'png' }).value,
+).toLowerCase();
 const frameFormat = fmtRaw === 'jpg' ? 'jpeg' : fmtRaw;
 if (frameFormat !== 'jpeg' && frameFormat !== 'png') {
   throw new Error(`unsupported frame format "${fmtRaw}" — only "jpeg" (or "jpg") and "png" are supported (see references/ffmpeg-free-encoder.md)`);
 }
+const jpegQualityKnob = resolveKnob('JPEG_QUALITY', { config: timing.project?.jpegQuality, fallback: 88 });
 const jpegQuality = guard(() =>
-  requireFiniteNumber(process.env.SIZZLECRAFT_JPEG_QUALITY ?? timing.project?.jpegQuality ?? 88, {
-    name: 'jpeg quality (SIZZLECRAFT_JPEG_QUALITY / timing.project.jpegQuality)',
+  requireFiniteNumber(jpegQualityKnob.value, {
+    name: `jpeg quality (${jpegQualityKnob.variable} / timing.project.jpegQuality)`,
     min: 1,
     max: 100,
   }));
@@ -130,9 +135,9 @@ const ext = frameFormat === 'jpeg' ? 'jpg' : frameFormat;
 const cpuCount = (os.availableParallelism?.() ?? os.cpus().length) || 4;
 const heavyFrames = width * height > 1920 * 1080;
 const autoWorkers = Math.max(1, Math.min(cpuCount - 1, heavyFrames ? 6 : cpuCount));
-const workersEnv = Number(process.env.SIZZLECRAFT_WORKERS);
+const workersEnv = Number(resolveKnob('WORKERS', { fallback: autoWorkers }).value);
 const workers = Math.max(1, Number.isFinite(workersEnv) && workersEnv > 0 ? workersEnv : autoWorkers);
-const resume = cliArgs.resume === true || /^(1|true|yes)$/i.test(String(process.env.SIZZLECRAFT_RESUME || ''));
+const resume = guard(() => resolveBooleanKnob('RESUME', { argv: cliArgs.resume === true ? true : undefined }).value);
 // dedupHolds (render.capture.dedupHolds, default on): during capture, a fully-settled frame whose
 // deterministic visual signature (window.__frameSig) equals the previous captured frame is not
 // re-screenshotted — it is materialised as a hardlink (copy fallback) to that identical prior frame.
@@ -140,8 +145,8 @@ const resume = cliArgs.resume === true || /^(1|true|yes)$/i.test(String(process.
 // content (active tween / live CSS animation / animated media) is never held (motion guard in
 // __frameSig). SIZZLECRAFT_NO_DEDUP=1 forces a full capture (equivalence mode) — the decoded frame
 // stream MUST be identical to a dedup-on run. dedupHolds is intra-slice only (state resets per worker).
-const dedupHolds = !/^(1|true|yes)$/i.test(String(process.env.SIZZLECRAFT_NO_DEDUP || ''))
-  && (process.env.SIZZLECRAFT_DEDUP_HOLDS === undefined || /^(1|true|yes)$/i.test(String(process.env.SIZZLECRAFT_DEDUP_HOLDS)));
+const dedupHolds = !guard(() => resolveBooleanKnob('NO_DEDUP').value)
+  && guard(() => resolveBooleanKnob('DEDUP_HOLDS', { fallback: true }).value);
 // Sparse layout audit runs only at frame 0 + each segment start (not every frame).
 const auditFrames = new Set([0]);
 let _acc = 0;

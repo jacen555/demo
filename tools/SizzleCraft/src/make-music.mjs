@@ -9,7 +9,7 @@
 //   envelopeJson (optional) = voiceover RMS envelope, used to sidechain-duck the bed under speech.
 //   preset       (optional) = named bed, see BEDS below. Defaults to 'warm'.
 import fs from 'node:fs';
-import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, requirePositiveNumber } from './cli-support.mjs';
+import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
 
 const USAGE = `
 make-music — synthesise the ambient bed (pipeline stage S8). Nothing sampled or licensed.
@@ -56,7 +56,7 @@ try {
   envPath = cli.values.envelope
     ? requireExistingFile(cli.projectDir, cli.values.envelope, 'envelope file')
     : null;
-  presetName = cli.values.preset ?? process.env.SIZZLE_MUSIC_PRESET ?? 'warm';
+  presetName = resolveKnob('MUSIC_PRESET', { argv: cli.values.preset, fallback: 'warm', legacy: ['SIZZLE_MUSIC_PRESET'] }).value;
 } catch (err) {
   console.error(`error: ${err.message}`);
   process.exit(err.exitCode ?? EXIT.FAILED);

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { canonicalBytes } from './canonical-json.mjs';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, narrationFingerprint } from './cli-support.mjs';
 
 const USAGE = `
 voice — synthesise narration per segment and concatenate it (pipeline stage S3).
@@ -287,7 +287,7 @@ const roundedSpeed = 1 + Math.round((speed - 1) * 100) / 100;
 const calSegs = timing.segments.map((s, i) => {
   const words = s.voiceoverText.trim().split(/\s+/).filter(Boolean).length;
   const speechMs = results[i].durationMs - results[i].headMs - results[i].tailMs;
-  return { id: s.id, words, chars: s.voiceoverText.length, clipMs: results[i].durationMs, speechMs, effWps: +(words / (speechMs / 1000)).toFixed(3) };
+  return { id: s.id, words, chars: s.voiceoverText.length, clipMs: results[i].durationMs, speechMs, effWps: +(words / (speechMs / 1000)).toFixed(3), textHash: narrationFingerprint(s.voiceoverText) };
 });
 const totW = calSegs.reduce((a, c) => a + c.words, 0), totMs = calSegs.reduce((a, c) => a + c.speechMs, 0);
 const obsEff = totW / (totMs / 1000);

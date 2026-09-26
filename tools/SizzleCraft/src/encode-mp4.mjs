@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { EXIT, CliError, guard, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, requireExistingFile, describeWrite, readLockOwner, requireFiniteNumber, pathExists, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, guard, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, requireExistingFile, describeWrite, readLockOwner, requireFiniteNumber, requirePositiveNumber, pathExists, planFooter, resolveKnob } from './cli-support.mjs';
 
 const ENCODE_USAGE = `
 encode-mp4 — encode the captured frame sequence to MP4 (pipeline stage S7).
@@ -123,13 +123,27 @@ function mp4HasSoundTrack(file) {
     fs.closeSync(fd);
   }
 }
-const fps = Number(timing.project?.fps || process.env.SIZZLECRAFT_FPS || 30);
-const width = Number(timing.project?.width || 3840);
-const height = Number(timing.project?.height || 2160);
+// Precedence is the shared rule — argv > env > config > default. See resolveKnob.
+// This read used `||`, where frame-capture.mjs used `??`, so one configured `fps: 0` was a
+// hard refusal in the capture stage and a silent 30 in the encode stage — the same knob,
+// the same project, two answers. It was also unvalidated here: `Number('thirty')` is NaN,
+// and a NaN fps reaches the muxer as a frame duration.
+const fpsKnob = resolveKnob('FPS', { config: timing.project?.fps, fallback: 30 });
+const fps = guard(() =>
+  requirePositiveNumber(fpsKnob.value, { name: `fps (${fpsKnob.variable} / timing.project.fps)`, max: 240 }));
+// Dimensions get the same treatment as fps, and for the same reason. These used `||`,
+// so a configured `width: 0` became 3840 and a non-numeric `height` became NaN — and the
+// default plan then REPORTED that value and exited 0 rather than refusing. A plan that
+// prints `1280xNaN` and succeeds is a false success at the boundary, not a cosmetic
+// inconsistency. frame-capture.mjs validates the identical three values; now so does this.
+const width = guard(() =>
+  requirePositiveNumber(timing.project?.width ?? 3840, { name: 'timing.project.width', max: 16384, integer: true }));
+const height = guard(() =>
+  requirePositiveNumber(timing.project?.height ?? 2160, { name: 'timing.project.height', max: 16384, integer: true }));
 // #7 draft-only encode speedup: draft renders may use the fast WebCodecs `realtime` latency mode
 // (higher throughput, ~20% larger file). live/publish stay on `quality` so the deliverable keeps
 // best compression and byte-reproducibility. Default 'live' — never silently degrade a publish.
-const mode = timing.project?.mode ?? process.env.SIZZLECRAFT_MODE ?? 'live';
+const mode = resolveKnob('MODE', { config: timing.project?.mode, fallback: 'live' }).value;
 if (!['draft', 'live', 'publish'].includes(mode)) {
   console.error(`error: unknown mode "${mode}" — expected draft, live or publish. An unrecognised value silently selected the 'quality' encoder path.`);
   process.exit(EXIT.USAGE);

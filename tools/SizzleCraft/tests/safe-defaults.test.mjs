@@ -179,16 +179,65 @@ describe('validate-timing exit contract', () => {
     assert.equal(r.code, EXIT.OK, `a valid timing file must pass, got ${r.code}\n${r.all}`);
   });
 
-  test('validateTiming_segmentGap_exitsFailureNotZero', (t) => {
+  // REPLACES `validateTiming_segmentGap_exitsFailureNotZero`, which asserted that any GAP
+  // must fail. That could never hold against real output: voice.mjs deliberately inserts
+  // inter-segment silence — the perceived pause — plus a lead-in, so every timeline the
+  // real pipeline produces is monotonic but NOT adjacent, and a correct timeline failed on
+  // every segment. A test that pins a defect converts it into a requirement and makes the
+  // correct fix arrive as a regression, so it is replaced rather than relaxed.
+  //
+  // An OVERLAP is the thing that is actually wrong, so that is what is asserted now.
+  test('validateTiming_overlappingSegments_exitsFailureNotZero', (t) => {
+    const overlapped = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
+      { id: 'two', startMs: 1500, endMs: 4000, voiceoverText: 'i start before one ended' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(overlapped) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, `an overlap must fail the build, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /overlap/i);
+  });
+
+  test('validateTiming_uniformInterSegmentGaps_passAndAreReported', (t) => {
     const gapped = [
       { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
-      { id: 'two', startMs: 2500, endMs: 4000, voiceoverText: 'gap before me' },
+      { id: 'two', startMs: 2500, endMs: 4500, voiceoverText: 'gap before me' },
+      { id: 'three', startMs: 5000, endMs: 7000, voiceoverText: 'and before me too' },
     ];
     const dir = makeProject(t, { 'timing.json': timingFixture(gapped) });
     const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
 
-    assert.equal(r.code, EXIT.FAILED, `a contiguity break must fail the build, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /gap|overlap/i);
+    assert.equal(r.code, EXIT.OK, `deliberate perceived gaps must not fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /uniform 500 ms/, 'and the gap must be reported, not silently accepted');
+  });
+
+  // An uneven gap is still worth seeing — it usually means a hand-edited window.
+  test('validateTiming_unevenGaps_passButAreCalledOut', (t) => {
+    const uneven = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
+      { id: 'two', startMs: 2500, endMs: 4500, voiceoverText: 'five hundred after' },
+      { id: 'three', startMs: 5400, endMs: 7000, voiceoverText: 'nine hundred after' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(uneven) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /UNEVEN/, 'an uneven gap must be visible even though it passes');
+  });
+
+  // The lead-in is a gap before the FIRST segment — the same mechanism, and the case the
+  // strict-adjacency check hit first on every real run.
+  test('validateTiming_leadInBeforeFirstSegment_passesAndIsReported', (t) => {
+    const withLeadIn = [
+      { id: 'one', startMs: 2016, endMs: 4016, voiceoverText: 'after the lead in' },
+      { id: 'two', startMs: 4016, endMs: 6016, voiceoverText: 'straight after' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(withLeadIn) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.OK, `a lead-in is not a contiguity break, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /contiguity: OK/);
   });
 
   test('validateTiming_noSchemaFlag_marksShapeAsNotVerified', (t) => {

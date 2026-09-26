@@ -263,22 +263,31 @@ describe('calibration input validation', () => {
     { id: 'one', startMs: 0, endMs: 1000, voiceoverText: 'far too many words for a single second of narration here' },
   ];
 
-  test('validateTiming_calibrationWordsPerSecondNotANumber_failsRatherThanPassing', (t) => {
+  // The fixtures below deliberately match `voice.mjs`'s OWN output shape
+  // (`aggregate.observedEffWps`, nested). They used to hand-write
+  // `{ wordsPerSecond, wpsSafetyMargin }` at the top level — a shape voice.mjs has never
+  // emitted. Those tests passed while the reader they "covered" missed on every real
+  // project, which is precisely how the defect survived: when the red and the green come
+  // from different bodies, the red proves nothing about what ships.
+  // `tests/_realistic-fixture.mjs` builds the real shape; see `tests/word-rate.test.mjs`.
+  test('validateTiming_calibrationRateNotANumber_failsRatherThanPassing', (t) => {
     const dir = makeProject(t, {
       'timing.json': timingFixture(overBudget),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 'oops' }),
+      'calibration-observed.json': JSON.stringify({ aggregate: { observedEffWps: 'oops' } }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema', '--strict'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'a NaN budget must not silently pass --strict: ');
   });
 
-  test('validateTiming_calibrationMarginNotANumber_failsRatherThanPassing', (t) => {
+  test('validateTiming_intakeMarginNotANumber_failsRatherThanPassing', (t) => {
     // Deliberately WITHIN budget and contiguous: the only thing that can fail this run is
     // the margin guard, so a pass cannot be mistaken for the budget check firing.
+    // The margin lives in `intake` — timing-schema.json declares it there and nowhere
+    // else, and it is an authoring hedge rather than something that can be observed.
     const dir = makeProject(t, {
-      'timing.json': timingFixture(contiguousSegments),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 3, wpsSafetyMargin: null }),
+      'timing.json': timingFixture(contiguousSegments, { intake: { wpsSafetyMargin: null } }),
+      'calibration-observed.json': JSON.stringify({ aggregate: { observedEffWps: 3 } }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema', '--strict'], dir);
 
@@ -307,7 +316,12 @@ describe('calibration input validation', () => {
   test('validateTiming_validCalibration_isUsed', (t) => {
     const dir = makeProject(t, {
       'timing.json': timingFixture(contiguousSegments),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 3.43, wpsSafetyMargin: 0.97 }),
+      'calibration-observed.json': JSON.stringify({
+        voiceId: 'en-US-AvaNeural',
+        roundedSpeed: 1.2,
+        aggregate: { words: 370, speechMs: 101236, observedEffWps: 3.655, observedSafeWps: 3.046 },
+        segments: [],
+      }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
 
