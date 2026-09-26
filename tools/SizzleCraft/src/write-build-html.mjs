@@ -337,8 +337,11 @@ function diagram(seg) {
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     return `<text id="${seg.id}-edgelabel-${e.id || j}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label)}</text>`;
   }).join('');
-  // Wider, clearer arrowheads (was markerWidth/Height 7) so direction reads at video scale.
-  const arrowDims = 'refX="8" refY="5" markerWidth="10" markerHeight="10"';
+  // Arrowhead size is per-visual so a dense diagram can shrink it without changing every
+  // other diagram in every project. Default 10 (raised from 7 so direction reads at video
+  // scale); refX tracks the width at the same 0.8 ratio so the head still meets the line.
+  const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 10;
+  const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
     `<marker id="${seg.id}-arr-${e.id || j}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
   return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900')}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;

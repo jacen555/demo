@@ -1,0 +1,76 @@
+{
+  "voiceId": "en-US-AndrewNeural",
+  "roundedSpeed": 1.2,
+  "aggregate": {
+    "words": 950,
+    "speechMs": 269195,
+    "observedEffWps": 3.529,
+    "observedSafeWps": 2.941
+  },
+  "segments": [
+    {
+      "id": "hard",
+      "words": 98,
+      "chars": 509,
+      "clipMs": 25824,
+      "speechMs": 25750,
+      "effWps": 3.806
+    },
+    {
+      "id": "scenario",
+      "words": 184,
+      "chars": 1069,
+      "clipMs": 51768,
+      "speechMs": 51684,
+      "effWps": 3.56
+    },
+    {
+      "id": "freeform",
+      "words": 170,
+      "chars": 925,
+      "clipMs": 46512,
+      "speechMs": 46417,
+      "effWps": 3.662
+    },
+    {
+      "id": "many",
+      "words": 99,
+      "chars": 560,
+      "clipMs": 28656,
+      "speechMs": 28572,
+      "effWps": 3.465
+    },
+    {
+      "id": "dimensions",
+      "words": 118,
+      "chars": 686,
+      "clipMs": 35232,
+      "speechMs": 35148,
+      "effWps": 3.357
+    },
+    {
+      "id": "twotier",
+      "words": 67,
+      "chars": 373,
+      "clipMs": 20352,
+      "speechMs": 20256,
+      "effWps": 3.308
+    },
+    {
+      "id": "blindspot",
+      "words": 75,
+      "chars": 426,
+      "clipMs": 21480,
+      "speechMs": 21396,
+      "effWps": 3.505
+    },
+    {
+      "id": "loop",
+      "words": 139,
+      "chars": 829,
+      "clipMs": 40056,
+      "speechMs": 39972,
+      "effWps": 3.477
+    }
+  ]
+}

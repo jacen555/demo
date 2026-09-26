@@ -128,6 +128,23 @@ to find it.
 - **The scripted-prefix check is wired into the conversation runner only.**
 - **`playwright-ui-capture` spike is `answered` but not graduated** — debt under §XI until
   the sibling capture script is built in `tools/SizzleCraft` under Tier 2 gates.
+- **`eval-loop-demo` is rendered and delivered** — `tools/EvalLoopDemo/EvalLoopDemo-with-music.mp4`,
+  4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
+  **42.4 min** (S6 capture is 84% of it, at 2% dedup); an audio-only change is ~30 s.
+  **Perceived gaps run ~335 ms long and were accepted deliberately** — both sibling videos
+  carry the identical defect, so 1.83 s is continuity-correct. Fixing `voice.mjs` to decode
+  tails would re-pace every future video against the three that exist; that is a series-wide
+  decision, recorded as bug-ledger entry 13, not a silent correctness fix.
+- **Driving the engine to the last stage found 10 defects, 6 of them fatal to any second
+  consumer.** Worst: `validate-timing.mjs` read `ajv.errors` after `ajv.compile(schema)(t)`
+  — always null — so schema validation was silently disabled for every project that ever
+  ran it. Also `remux-music.mjs` and `check-levels.mjs` still had the sibling project's
+  filenames hardcoded, which is exactly the disease the extraction claimed to have cured;
+  they survived because **no second project had reached S8/S9**. Full ledger in
+  `tools/EvalLoopDemo/render-log.md`.
+- **Still open on the engine**: `render.preview` is declared in the template but no script
+  implements it, `evidence-pack/` is resolved unconditionally at module load, and
+  `voice.mjs` reflows segment windows but not segment-relative trigger times.
 
 ## Watch out for
 

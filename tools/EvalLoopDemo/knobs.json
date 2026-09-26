@@ -1,0 +1,204 @@
+{
+  "_readme": [
+    "Every tunable value for the 'How do you test a conversation?' demo video.",
+    "This is the ONLY file to edit for a parameter change — never timing.json,",
+    "which is generated/projected and costs thousands of tokens to read.",
+    "",
+    "Cost routing lives in .github/skills/demo-recording/SKILL.md. Only the",
+    "'audio' block is cheap to change; everything else forces a full re-render.",
+    "",
+    "Continuity values are inherited from the two sibling videos under",
+    "~/SizzleCraft/ (interviewer-qna-dataprep, interviewer-qna-delta) so all",
+    "three sit together if ever played back-to-back."
+  ],
+
+  "project": {
+    "name": "eval-loop-demo",
+    "title": "How do you test a conversation?",
+    "lede": "Hundreds of simulated customers, each with their own knowledge of their own problem, run against a pull-request branch before anyone opens the review.",
+    "objective": "Viewer will be able to explain how we simulate hundreds of customers to evaluate a conversational AI change, and decide to ask for the same evidence on their own AI features.",
+    "audience": "Engineering leadership / partner-level. Assume they know what an LLM and a pull request are. Assume nothing about the support interview.",
+    "callToAction": "Run it against your branch before you open the pull request.",
+    "framing": "celebratory",
+    "emphasis": "mechanics",
+    "noGo": [
+      "Environment or endpoint hostnames of any kind — say 'we deploy the pull-request branch and point the harness at it'",
+      "test1 / test2 / any deployment slot name",
+      "Azure DevOps pull-request numbers, in narration OR on screen",
+      "Verbatim text from the 50 golden-disambiguation scenarios — they derive from real customer queries; reference them, never quote them",
+      "'SAP path' as spoken jargon — say 'support category' or 'the exact category'",
+      "'L5' / 'L4' as spoken jargon — say 'the most specific level' / 'one level up'"
+    ],
+    "platform": "async link",
+    "part": null,
+    "series": "interviewer-qna (loose — standalone, shares house style only)",
+    "seriesNote": "Standalone. Voice/speed/gap/loudness match interviewer-qna-delta so the three can be shown together. Music preset deliberately differs.",
+    "playback": "standalone",
+    "preTraining": null,
+    "_preTrainingNote": "Assumes nothing. Segment 1 establishes what the interview is and what 'getting it right' means before any harness detail."
+  },
+
+  "accessibility": {
+    "_note": "Planning-time constraints. See references/planning.md §3 and the plan's §2.E.",
+    "narrationCoversVisuals": true,
+    "_narrationNote": "Audited at authoring time. Every on-screen figure is spoken with its unit and denominator; every diagram state change is narrated as a transition. No bare 'this' or 'here'. Re-audit if any segment's visual changes.",
+    "colorNotSoleChannel": true,
+    "_colorNote": "Refusal polarity, grades and the regressed-probe row all carry a text label, never colour alone. The two-tier comparison uses labelled lanes, not two colours.",
+    "contrastChecked": null,
+    "_contrastNote": "PENDING — measure at draft render. All text is rendered natively by write-build-html rather than cropped from the report HTML, specifically so contrast is controlled rather than inherited from a 'color-scheme: light dark' page.",
+    "flashingChecked": null,
+    "_flashingNote": "PENDING — verify at draft render. Segment 4 is the only real risk and is deliberately a FILLING progress bar, not a strobing grid. Cap 3 state changes/sec (WCAG 2.3.1).",
+    "captionPlan": "Verbatim from script.md after the locked render."
+  },
+
+  "narration": {
+    "pronunciations": {
+      "API": "ay pee eye",
+      "UI": "you eye — but prefer the word 'interface' in narration",
+      "BDD": "avoid — say 'behaviour-driven'",
+      "SSE": "avoid — say 'the live stream'",
+      "Postman": "as a word",
+      "QnA": "Q and A",
+      "NO_PATH": "avoid — say 'came back with nothing'",
+      "SAP path": "avoid — say 'support category' / 'the exact category'",
+      "L5": "avoid — say 'the most specific level'",
+      "L4": "avoid — say 'one level up'",
+      "L3": "avoid — say 'right support area'",
+      "Windows 11": "Windows eleven",
+      "162": "a hundred and sixty-two",
+      "21.3": "twenty-one point three",
+      "11.7": "eleven point seven"
+    },
+    "numbersConvention": "Spelled out in narration, with unit and — on first use — denominator. Replicate counts as 'three runs', never '3x'. Ratios as 'point'. Every figure that appears on screen is also spoken (WCAG G226).",
+    "_numbersNote": "The report's means carry one decimal (21.3, 11.7, 17.7). Speak the decimal rather than rounding, so narration and the on-screen row agree exactly."
+  },
+
+  "downstream": {
+    "reuse": "Likely one or two slides. Not a documentation source — per Diátaxis a walkthrough is not a lossless reference."
+  },
+
+  "gateDecisions": {
+    "_note": "Answered by the approver at the SKILL.md §4 gate. Recorded so a later session does not re-ask (references/planning.md §1).",
+    "q1_bddComparisonWeight": {
+      "question": "How hard should segment 2 lean on the behaviour-suite comparison?",
+      "answer": "Keep as written — ~20s, complementary framing. Revisit later if it runs long.",
+      "effect": "Segment 2 unchanged at 19.9s."
+    },
+    "q2_playgroundScreenCapture": {
+      "question": "May a 5-8s screen capture of the interface harness driving the real Playground be used?",
+      "answer": "Yes. Redaction is a light pass — the scenarios are authored test data and carry no personal information.",
+      "effect": "Segment 6 SPLIT into `twotier` + `blindspot`, because write-build-html resolves `footage` per segment rather than as a mid-segment overlay. 7 segments became 8. The clip is NOT yet captured; `blindspot` degrades to its stage-trace diagram until one is registered approvedForUse + redaction:'clear' in evidence-pack/footage/clips.json.",
+      "residualCheck": "Account chrome and any hostname must still be off-screen — the harness drives a named host."
+    }
+  },
+
+  "signOff": {
+    "approver": "jonosace",
+    "_note": "Content correctness AND render approval."
+  },
+
+  "output": {
+    "dir": "C:\\dev\\temp",
+    "basename": "eval-loop-demo",
+    "fps": 30,
+    "width": 3840,
+    "height": 2160,
+    "frameFormat": "jpeg",
+    "jpegQuality": 88,
+    "_resolutionNote": "Raised from 1920x1080 to 3840x2160, aspect unchanged at 16:9, so the 0 0 1600 520 diagram viewBoxes remain valid — only pixel dimensions change. write-build-html MUST be re-run after any change here or frame-capture throws 'stage/viewport mismatch'.",
+    "_frameFormatNote": "MEASURED, not assumed. At 3840x2160 with dedup off: PNG 1.00 fps and 2,183 KB/frame; JPEG q88 13.05 fps and 170 KB/frame — 13x faster, 12.8x smaller. Playwright's PNG screenshot losslessly compresses 8.3M pixels per frame, and that dominates capture cost at 4K. Quality checked at 1:1 on small type over flat backgrounds: crisp edges, no ringing or blocking. This makes 4K JPEG capture CHEAPER than the 1080p PNG render previously shipped."
+  },
+
+  "voice": {
+    "engine": "msedge-tts",
+    "name": "en-US-AndrewNeural",
+    "tier": "neural",
+    "speed": 1.2,
+    "_speedNote": "1.2 matches what the sibling video ACTUALLY rendered (calibration-observed.json:roundedSpeed). Its intake-constraints.json says 1.1 — that value never reached a render. Use 1.2."
+  },
+
+  "timing": {
+    "targetDurationMs": 240000,
+    "toleranceMs": 15000,
+    "leadInMs": 2000,
+    "perceivedGapMs": 1500,
+    "perceivedGapOverrides": {},
+    "outroMs": 0,
+    "wordsPerSecond": 3.372,
+    "wpsSafetyMargin": 0.95,
+    "_wpsNote": "3.372 is the sibling video's MEASURED effective rate at 1.2x (calibration-observed.json). Its conservative counterpart, observedSafeWps 2.81, is the pessimistic bound. This script is number-dense, so the true rate likely sits between them — synthesis (S3, ~1 min) settles it before anything expensive runs.",
+    "_note": "perceivedGap is what a viewer HEARS: tail(clip N) + inserted silence + head(clip N+1), not the length of the inserted file. See bug-ledger entry 6."
+  },
+
+  "endCard": {
+    "enabled": false,
+    "_note": "OFF, and it stays off. The canonical disabled form per timing-schema.json: builderVersion, contentMs and outroMs must all be ABSENT, and durationMs must equal the last segment's endMs. Do not add a tagline or builderVersion pad.",
+    "_attributionInvariant": "PROJECT INVARIANT: audio.music.attribution non-null => endCard.enabled MUST be true. The end card is the only credit surface this video has, so a later track swap to a licence that requires attribution cannot be made without also re-enabling the card. Enforced by tests/write-script.test.mjs."
+  },
+
+  "audio": {
+    "_note": "THE CHEAP BLOCK. Changes here swap the audio track and reuse the video stream byte-for-byte.",
+    "music": {
+      "enabled": true,
+      "generated": false,
+      "source": "file",
+      "file": "kulakovka-corporate-ambient-275620.mp3",
+      "title": "Corporate Ambient",
+      "creator": "Kulakovka",
+      "sourceUrl": "https://pixabay.com/music/beats-corporate-ambient-275620/",
+      "licence": "Pixabay Content License",
+      "attribution": null,
+      "durationSeconds": 158.46,
+      "loop": {
+        "required": true,
+        "crossfadeSeconds": 3,
+        "copies": 2,
+        "_note": "The track is 158.46s against a 250.63s video — 92.17s short. amix duration=longest does NOT extend a short input; it leaves the tail with no bed and says nothing (bug-ledger entry 15). remux-music.mjs now loops with a crossfade at each wrap and trims to length, and errors loudly under --no-loop."
+      },
+      "preset": null,
+      "_presetNote": "Only used when generated:true. The generated 'bright' bed was replaced by the licensed track above; the sibling interviewer-qna-delta used generated 'warm'.",
+      "_licenceNote": "Pixabay Content License requires no attribution and permits commercial use without credit. The creator credit was offered and declined, so no credit surface is needed — which is why endCard stays disabled. See the invariant below."
+    },
+    "levels": {
+      "musicUnderSpeechDb": -36,
+      "musicInGapsDb": -30,
+      "targetIntegratedDb": -19.5,
+      "truePeakCeilingDb": -1.0,
+      "musicGain": 0.055,
+      "voiceGain": 1.18,
+      "_musicGainNote": "MEASURED, not inherited. 1.50 was tuned for the GENERATED bed (RMS -43.1 dB); the licensed track is a commercial master at RMS -11.4 dB, peak +0.6 dBFS — 31.7 dB hotter. Shipping 1.50 against it put the mix at -9.8 dB vs the sibling's -19.1. 0.055 lands the bed at -36 dB (= musicUnderSpeechDb) and the mix at -18.6 dB. A SOURCE CHANGE INVALIDATES THE GAIN — recompute as musicUnderSpeechDb minus the new track's measured RMS, and re-run check-levels against a sibling. Bug-ledger entry 16.",
+      "_duckingNote": "A file bed CANNOT duck. make-music.mjs bakes sidechain ducking in from vo-envelope.json; remux-music.mjs has no sidechain path for a file source, so the track plays flat and one gain serves both musicUnderSpeechDb and musicInGapsDb. Under-speech was chosen (-36 measured); gaps therefore sit ~6 dB below target and the lead-in reads quiet.",
+      "_note": "Narration level MUST match interviewer-qna-delta — verify with check-levels.mjs against that file, not against the target."
+    },
+    "fades": {
+      "inMs": 1400,
+      "outMs": 4500,
+      "_note": "fades.inMs MUST stay shorter than timing.leadInMs (2000) or the bed arrives under the narration. Bug-ledger entry 4."
+    },
+    "limiter": {
+      "autoLevel": false,
+      "_note": "MUST stay false. ffmpeg alimiter defaults to level=true and gain-rides the whole mix. Bug-ledger entry 1."
+    }
+  },
+
+  "theme": {
+    "background": "white",
+    "palette": "default",
+    "engagementLevel": "rich"
+  },
+
+  "render": {
+    "captureDedup": true,
+    "previewSegment": null,
+    "preview": {
+      "scale": 0.5,
+      "fps": 15,
+      "preset": "ultrafast",
+      "crf": 28
+    },
+    "estimatedFullRenderMinutes": 38,
+    "estimatedForVideoLength": "4:16",
+    "_note": "38 min is SCALED from the reference implementation's ~9-10x runtime, not measured on this machine. Replace both values from the first real run and record the per-stage split in render-log.md.",
+    "_measureNote": "No render has been run for this project. Nothing below S2 has executed."
+  }
+}

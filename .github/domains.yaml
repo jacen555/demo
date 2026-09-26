@@ -227,4 +227,25 @@ domains:
       Retain until that task lands: this is the executable reference for the three
       determinism controls. Excluded from Forge.sln; nothing outside spike/ references it.
       `build` is a syntax gate (node --check over src), not a compile step.
+  - id: eval-loop-demo
+    kind: tool
+    language: node
+    path: tools/EvalLoopDemo
+    source: tools/EvalLoopDemo/src
+    tests: tools/EvalLoopDemo/tests
+    project: tools/EvalLoopDemo/package.json
+    build: none
+    test_cmd: node --test "tools/EvalLoopDemo/tests/**/*.test.mjs"
+    tier: 2
+    builder: tooling-builder
+    reviewer: tooling-reviewer
+    checklist: .github/checklists/tooling-design-checklist.md
+    status: active
+    notes: >
+      A demo-video PROJECT, not an engine — the first real consumer of tools/SizzleCraft
+      (sizzlecraft). Holds per-video inputs (knobs.json, timing.json) plus
+      src/write-script.mjs, the S1 stage SizzleCraft deliberately does not ship. Paired
+      with the demo-recording skill, which owns the cost routing and the render approval
+      gate. S1/S2 need no dependencies; S3 onward needs npm install in BOTH domains.
+      No render has been run — nothing below S2 has executed.
 

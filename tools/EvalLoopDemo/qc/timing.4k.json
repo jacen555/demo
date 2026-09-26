@@ -1,0 +1,6555 @@
+{
+  "version": "1.0",
+  "durationMs": 285072,
+  "endCard": {
+    "enabled": false
+  },
+  "aspectRatio": "16:9",
+  "theme": "microsoft",
+  "project": {
+    "title": "How do you test a conversation?",
+    "lede": "Hundreds of simulated customers, each with their own knowledge of their own problem, run against a pull-request branch before anyone opens the review.",
+    "width": 3840,
+    "height": 2160,
+    "fps": 30,
+    "mode": "live",
+    "background": "white",
+    "engagementLevel": "rich",
+    "theme": "microsoft",
+    "frameFormat": "jpeg",
+    "jpegQuality": 88
+  },
+  "intake": {
+    "voice": "en-US-AndrewNeural",
+    "speed": 1.2,
+    "leadInMs": 2000,
+    "perceivedGapMs": 1500,
+    "silenceMs": 1500,
+    "toleranceMs": 1500,
+    "perSegmentToleranceMs": 150,
+    "wordsPerSecond": 3.372,
+    "approvalOwner": "jonosace",
+    "_perSegmentToleranceNote": "CALIBRATION-RUN VALUE. voice.mjs gate C-10 rejects any segment whose synthesised clip overruns its authored window by more than this. The authored windows here are ESTIMATES at 3.372 wps, and the whole point of the first S3 run is to discover the real rate — so on a first run the gate has nothing meaningful to compare against. 15000 absorbs the worst case (every segment reading at the pessimistic 2.81 wps). voice.mjs reflows the timeline onto measured audio in the same pass, so AFTER a successful run the windows ARE the measurements and this must drop back to 150 for the gate to mean anything."
+  },
+  "segments": [
+    {
+      "id": "hard",
+      "title": "You can unit-test a function. How do you test a conversation?",
+      "startMs": 1920,
+      "endMs": 27744,
+      "plannedDurationMs": 28064,
+      "voiceoverText": "A unit test is easy. One input, one answer; and the same answer every time. Now try testing a conversation. On the right of the screen, the interview branches for each turn. When you run it again, a different branch occurs. There is no single assert to check. So how did we check it? One case at a time. Type an opening into Postman, read the reply, type the next. Or deploy it all the way to PPE and test the larger interface by hand. It was so slow that customers were finding the regressions before we did.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "The problem",
+        "title": "One assert, or ten branching turns",
+        "subtitle": "Left: a unit test. Right: the interview. Below: how we used to check it.",
+        "note": "**Animated split diagram.** Left column, a three-node unit test revealed and settled instantly. Right, the interview tree branches from the opening turn; the active path pulses once, then pulses again down a DIFFERENT branch to show the same input taking a different route. Below, a two-node loop cycles slowly with low-density particles. No numbers on screen. RE-LAID OUT TWICE: the unit-test column now sits at ~96px vertical gaps (was ~50, originally ~20) and arrowSize drops to 6, because the heads were visually dominating the short edges between tightly-stacked boxes. Verify against a rendered frame at 1:1 — the storyboard letterboxes differently.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "u1",
+            "label": "one input",
+            "x": 40,
+            "y": 26,
+            "w": 250,
+            "h": 74
+          },
+          {
+            "id": "u2",
+            "label": "one assert",
+            "x": 40,
+            "y": 196,
+            "w": 250,
+            "h": 74
+          },
+          {
+            "id": "u3",
+            "label": "the same answer every time",
+            "x": 40,
+            "y": 366,
+            "w": 250,
+            "h": 74
+          },
+          {
+            "id": "c0",
+            "label": "the opening turn",
+            "x": 420,
+            "y": 26,
+            "w": 230,
+            "h": 74
+          },
+          {
+            "id": "c1a",
+            "label": "turn 2",
+            "x": 760,
+            "y": 120,
+            "w": 200,
+            "h": 74
+          },
+          {
+            "id": "c1b",
+            "label": "turn 2",
+            "x": 760,
+            "y": 248,
+            "w": 200,
+            "h": 74
+          },
+          {
+            "id": "c2a",
+            "label": "turn 3",
+            "x": 1090,
+            "y": 40,
+            "w": 230,
+            "h": 74
+          },
+          {
+            "id": "c2b",
+            "label": "turn 3",
+            "x": 1090,
+            "y": 168,
+            "w": 230,
+            "h": 74
+          },
+          {
+            "id": "c2c",
+            "label": "turn 3",
+            "x": 1090,
+            "y": 296,
+            "w": 230,
+            "h": 74
+          },
+          {
+            "id": "s1",
+            "label": "one case at a time",
+            "x": 420,
+            "y": 424,
+            "w": 320,
+            "h": 74
+          },
+          {
+            "id": "s2",
+            "label": "Postman, or by hand",
+            "x": 850,
+            "y": 424,
+            "w": 320,
+            "h": 74
+          }
+        ],
+        "edges": [
+          {
+            "from": "u1",
+            "to": "u2"
+          },
+          {
+            "from": "u2",
+            "to": "u3"
+          },
+          {
+            "from": "c0",
+            "to": "c1a"
+          },
+          {
+            "from": "c0",
+            "to": "c1b"
+          },
+          {
+            "from": "c1a",
+            "to": "c2a"
+          },
+          {
+            "from": "c1a",
+            "to": "c2b"
+          },
+          {
+            "from": "c1b",
+            "to": "c2c"
+          },
+          {
+            "from": "s1",
+            "to": "s2",
+            "id": "slowloop"
+          },
+          {
+            "from": "s2",
+            "to": "s1"
+          }
+        ],
+        "arrowSize": 6
+      },
+      "triggers": [
+        {
+          "id": "hard-t0",
+          "atMs": 469,
+          "semanticClass": "card",
+          "target": "hard-node-u1",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-t1",
+          "atMs": 1251,
+          "semanticClass": "card",
+          "target": "hard-node-u2",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e0",
+          "atMs": 1421,
+          "semanticClass": "chart",
+          "target": "hard-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t2",
+          "atMs": 2033,
+          "semanticClass": "card",
+          "target": "hard-node-u3",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e1",
+          "atMs": 2202,
+          "semanticClass": "chart",
+          "target": "hard-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t3",
+          "atMs": 4848,
+          "semanticClass": "card",
+          "target": "hard-node-c0",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-t4",
+          "atMs": 5787,
+          "semanticClass": "card",
+          "target": "hard-node-c1a",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e2",
+          "atMs": 5956,
+          "semanticClass": "chart",
+          "target": "hard-edge-2",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t5",
+          "atMs": 6255,
+          "semanticClass": "card",
+          "target": "hard-node-c1b",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e3",
+          "atMs": 6425,
+          "semanticClass": "chart",
+          "target": "hard-edge-3",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t6",
+          "atMs": 6726,
+          "semanticClass": "card",
+          "target": "hard-node-c2a",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e4",
+          "atMs": 6895,
+          "semanticClass": "chart",
+          "target": "hard-edge-4",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t7",
+          "atMs": 7195,
+          "semanticClass": "card",
+          "target": "hard-node-c2b",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e5",
+          "atMs": 7364,
+          "semanticClass": "chart",
+          "target": "hard-edge-5",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t8",
+          "atMs": 7664,
+          "semanticClass": "card",
+          "target": "hard-node-c2c",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e6",
+          "atMs": 7834,
+          "semanticClass": "chart",
+          "target": "hard-edge-6",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t9",
+          "atMs": 8290,
+          "semanticClass": "chart",
+          "target": "hard-node-c0",
+          "action": "pulsePath",
+          "payload": {
+            "chain": [
+              "hard-node-c0",
+              "hard-node-c1a",
+              "hard-node-c2a"
+            ]
+          }
+        },
+        {
+          "id": "hard-t10",
+          "atMs": 9853,
+          "semanticClass": "chart",
+          "target": "hard-node-c0",
+          "action": "pulsePath",
+          "payload": {
+            "chain": [
+              "hard-node-c0",
+              "hard-node-c1b",
+              "hard-node-c2c"
+            ]
+          }
+        },
+        {
+          "id": "hard-t11",
+          "atMs": 14389,
+          "semanticClass": "card",
+          "target": "hard-node-s1",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-t12",
+          "atMs": 15327,
+          "semanticClass": "card",
+          "target": "hard-node-s2",
+          "action": "revealNode"
+        },
+        {
+          "id": "hard-e8",
+          "atMs": 15497,
+          "semanticClass": "chart",
+          "target": "hard-edge-8",
+          "action": "drawEdge"
+        },
+        {
+          "id": "hard-t13",
+          "atMs": 16422,
+          "semanticClass": "chart",
+          "target": "hard-edge-slowloop",
+          "action": "flowEdge",
+          "payload": {
+            "particles": 1
+          }
+        },
+        {
+          "id": "hard-t14",
+          "atMs": 18613,
+          "semanticClass": "body",
+          "target": "hard-node-s1",
+          "action": "spotlight"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-before",
+          "type": "direct",
+          "provenanceIds": [
+            "content-owner:stated (jonosace)"
+          ]
+        },
+        {
+          "claimId": "c-flip",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/README.md:One run is not a measurement",
+            "contextlayer-eval/README.md:Replication"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_01.mp3",
+        "durationMs": 25824,
+        "headMs": 74,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "A",
+            "startMs": 1994,
+            "endMs": 2025
+          },
+          {
+            "word": "unit",
+            "startMs": 2036,
+            "endMs": 2268
+          },
+          {
+            "word": "test",
+            "startMs": 2278,
+            "endMs": 2531
+          },
+          {
+            "word": "is",
+            "startMs": 2542,
+            "endMs": 2636
+          },
+          {
+            "word": "easy",
+            "startMs": 2648,
+            "endMs": 2963
+          },
+          {
+            "word": "One",
+            "startMs": 3321,
+            "endMs": 3459
+          },
+          {
+            "word": "input",
+            "startMs": 3469,
+            "endMs": 3817
+          },
+          {
+            "word": "one",
+            "startMs": 4091,
+            "endMs": 4228
+          },
+          {
+            "word": "answer",
+            "startMs": 4239,
+            "endMs": 4566
+          },
+          {
+            "word": "and",
+            "startMs": 4819,
+            "endMs": 4861
+          },
+          {
+            "word": "the",
+            "startMs": 4872,
+            "endMs": 4934
+          },
+          {
+            "word": "same",
+            "startMs": 4945,
+            "endMs": 5209
+          },
+          {
+            "word": "answer",
+            "startMs": 5219,
+            "endMs": 5504
+          },
+          {
+            "word": "every",
+            "startMs": 5641,
+            "endMs": 5799
+          },
+          {
+            "word": "time",
+            "startMs": 5810,
+            "endMs": 6125
+          },
+          {
+            "word": "Now",
+            "startMs": 6473,
+            "endMs": 6610
+          },
+          {
+            "word": "try",
+            "startMs": 6621,
+            "endMs": 6800
+          },
+          {
+            "word": "testing",
+            "startMs": 6810,
+            "endMs": 7127
+          },
+          {
+            "word": "a",
+            "startMs": 7137,
+            "endMs": 7180
+          },
+          {
+            "word": "conversation",
+            "startMs": 7190,
+            "endMs": 7801
+          },
+          {
+            "word": "On",
+            "startMs": 8149,
+            "endMs": 8213
+          },
+          {
+            "word": "the",
+            "startMs": 8223,
+            "endMs": 8276
+          },
+          {
+            "word": "right",
+            "startMs": 8287,
+            "endMs": 8466
+          },
+          {
+            "word": "of",
+            "startMs": 8476,
+            "endMs": 8518
+          },
+          {
+            "word": "the",
+            "startMs": 8529,
+            "endMs": 8581
+          },
+          {
+            "word": "screen",
+            "startMs": 8592,
+            "endMs": 8993
+          },
+          {
+            "word": "the",
+            "startMs": 9246,
+            "endMs": 9309
+          },
+          {
+            "word": "interview",
+            "startMs": 9320,
+            "endMs": 9646
+          },
+          {
+            "word": "branches",
+            "startMs": 9657,
+            "endMs": 10046
+          },
+          {
+            "word": "for",
+            "startMs": 10057,
+            "endMs": 10215
+          },
+          {
+            "word": "each",
+            "startMs": 10225,
+            "endMs": 10394
+          },
+          {
+            "word": "turn",
+            "startMs": 10405,
+            "endMs": 10710
+          },
+          {
+            "word": "When",
+            "startMs": 11058,
+            "endMs": 11132
+          },
+          {
+            "word": "you",
+            "startMs": 11143,
+            "endMs": 11237
+          },
+          {
+            "word": "run",
+            "startMs": 11248,
+            "endMs": 11396
+          },
+          {
+            "word": "it",
+            "startMs": 11406,
+            "endMs": 11470
+          },
+          {
+            "word": "again",
+            "startMs": 11480,
+            "endMs": 11828
+          },
+          {
+            "word": "a",
+            "startMs": 12081,
+            "endMs": 12123
+          },
+          {
+            "word": "different",
+            "startMs": 12134,
+            "endMs": 12408
+          },
+          {
+            "word": "branch",
+            "startMs": 12418,
+            "endMs": 12629
+          },
+          {
+            "word": "occurs",
+            "startMs": 12640,
+            "endMs": 13082
+          },
+          {
+            "word": "There",
+            "startMs": 13440,
+            "endMs": 13514
+          },
+          {
+            "word": "is",
+            "startMs": 13525,
+            "endMs": 13620
+          },
+          {
+            "word": "no",
+            "startMs": 13630,
+            "endMs": 13820
+          },
+          {
+            "word": "single",
+            "startMs": 13831,
+            "endMs": 14158
+          },
+          {
+            "word": "assert",
+            "startMs": 14168,
+            "endMs": 14432
+          },
+          {
+            "word": "to",
+            "startMs": 14442,
+            "endMs": 14506
+          },
+          {
+            "word": "check",
+            "startMs": 14516,
+            "endMs": 14843
+          },
+          {
+            "word": "So",
+            "startMs": 15201,
+            "endMs": 15296
+          },
+          {
+            "word": "how",
+            "startMs": 15306,
+            "endMs": 15380
+          },
+          {
+            "word": "did",
+            "startMs": 15391,
+            "endMs": 15464
+          },
+          {
+            "word": "we",
+            "startMs": 15475,
+            "endMs": 15538
+          },
+          {
+            "word": "check",
+            "startMs": 15549,
+            "endMs": 15759
+          },
+          {
+            "word": "it",
+            "startMs": 15771,
+            "endMs": 15897
+          },
+          {
+            "word": "One",
+            "startMs": 16244,
+            "endMs": 16360
+          },
+          {
+            "word": "case",
+            "startMs": 16371,
+            "endMs": 16592
+          },
+          {
+            "word": "at",
+            "startMs": 16602,
+            "endMs": 16655
+          },
+          {
+            "word": "a",
+            "startMs": 16666,
+            "endMs": 16687
+          },
+          {
+            "word": "time",
+            "startMs": 16697,
+            "endMs": 17003
+          },
+          {
+            "word": "Type",
+            "startMs": 17361,
+            "endMs": 17551
+          },
+          {
+            "word": "an",
+            "startMs": 17562,
+            "endMs": 17688
+          },
+          {
+            "word": "opening",
+            "startMs": 17752,
+            "endMs": 18110
+          },
+          {
+            "word": "into",
+            "startMs": 18120,
+            "endMs": 18268
+          },
+          {
+            "word": "Postman",
+            "startMs": 18279,
+            "endMs": 18732
+          },
+          {
+            "word": "read",
+            "startMs": 19038,
+            "endMs": 19174
+          },
+          {
+            "word": "the",
+            "startMs": 19186,
+            "endMs": 19248
+          },
+          {
+            "word": "reply",
+            "startMs": 19258,
+            "endMs": 19691
+          },
+          {
+            "word": "type",
+            "startMs": 19997,
+            "endMs": 20186
+          },
+          {
+            "word": "the",
+            "startMs": 20197,
+            "endMs": 20260
+          },
+          {
+            "word": "next",
+            "startMs": 20270,
+            "endMs": 20671
+          },
+          {
+            "word": "Or",
+            "startMs": 21019,
+            "endMs": 21103
+          },
+          {
+            "word": "deploy",
+            "startMs": 21114,
+            "endMs": 21462
+          },
+          {
+            "word": "it",
+            "startMs": 21472,
+            "endMs": 21556
+          },
+          {
+            "word": "all",
+            "startMs": 21652,
+            "endMs": 21842
+          },
+          {
+            "word": "the",
+            "startMs": 21852,
+            "endMs": 21915
+          },
+          {
+            "word": "way",
+            "startMs": 21926,
+            "endMs": 22052
+          },
+          {
+            "word": "to",
+            "startMs": 22062,
+            "endMs": 22157
+          },
+          {
+            "word": "PPE",
+            "startMs": 22168,
+            "endMs": 22726
+          },
+          {
+            "word": "and",
+            "startMs": 22790,
+            "endMs": 22885
+          },
+          {
+            "word": "test",
+            "startMs": 22895,
+            "endMs": 23159
+          },
+          {
+            "word": "the",
+            "startMs": 23169,
+            "endMs": 23243
+          },
+          {
+            "word": "larger",
+            "startMs": 23253,
+            "endMs": 23580
+          },
+          {
+            "word": "interface",
+            "startMs": 23591,
+            "endMs": 23991
+          },
+          {
+            "word": "by",
+            "startMs": 24002,
+            "endMs": 24129
+          },
+          {
+            "word": "hand",
+            "startMs": 24139,
+            "endMs": 24477
+          },
+          {
+            "word": "It",
+            "startMs": 24824,
+            "endMs": 24876
+          },
+          {
+            "word": "was",
+            "startMs": 24887,
+            "endMs": 24993
+          },
+          {
+            "word": "so",
+            "startMs": 25004,
+            "endMs": 25193
+          },
+          {
+            "word": "slow",
+            "startMs": 25203,
+            "endMs": 25499
+          },
+          {
+            "word": "that",
+            "startMs": 25510,
+            "endMs": 25625
+          },
+          {
+            "word": "customers",
+            "startMs": 25636,
+            "endMs": 26068
+          },
+          {
+            "word": "were",
+            "startMs": 26078,
+            "endMs": 26184
+          },
+          {
+            "word": "finding",
+            "startMs": 26195,
+            "endMs": 26553
+          },
+          {
+            "word": "the",
+            "startMs": 26563,
+            "endMs": 26627
+          },
+          {
+            "word": "regressions",
+            "startMs": 26637,
+            "endMs": 27122
+          },
+          {
+            "word": "before",
+            "startMs": 27133,
+            "endMs": 27396
+          },
+          {
+            "word": "we",
+            "startMs": 27407,
+            "endMs": 27480
+          },
+          {
+            "word": "did",
+            "startMs": 27491,
+            "endMs": 27744
+          }
+        ]
+      }
+    },
+    {
+      "id": "scenario",
+      "title": "Give every simulated customer their own knowledge bank",
+      "startMs": 29160,
+      "endMs": 80928,
+      "plannedDurationMs": 52692,
+      "voiceoverText": "Let's look at one specific scenario definition. The opening is what the conversation starts with: my email has just stopped working. That is deliberately vague, because that is how people actually write. Underneath it sits the target: Outlook, on iOS, not receiving email. The interview never sees that, we are using it to grade once the conversation ends. Then we have the knowledge bank. Three authored facts this customer knows and will say if asked: that they are using the mail app on an iPhone; that they can still send messages, but nothing new ever arrives; and that they have checked junk, and the mailbox is not full. Notice the second one. Can send, cannot receive — that is the detail separating this from a dozen neighbouring categories, and the interview only learns it if it thinks to ask. Then a pool of alternative phrasings, so the customer can choose different phrasings to not repeat every time. And last, the assertions this scenario has to satisfy. That is what makes it a conversation and not a prompt. We have defined nearly two-hundred of them.",
+      "visual": {
+        "mode": "narrative",
+        "layout": "stat-grid",
+        "kicker": "The hero beat",
+        "title": "One scenario, field by field",
+        "subtitle": "Real object from scenarios.json — id: outlook-ios-not-receiving",
+        "note": "**Field-by-field reveal of one real scenario object**, in the order the narration names the fields. As each field is named the previously-revealed fields dim and the named one highlights, so the eye is on the field being spoken about. The lock is a padlock glyph AND the word \"locked\" — never colour alone. The beat lands on fact 2: at \"notice the second one\" it highlights on its own. Every value on screen is spoken.",
+        "items": [
+          {
+            "label": "opening",
+            "value": "",
+            "text": "\"My email has just stopped working.\""
+          },
+          {
+            "label": "target  🔒 locked",
+            "value": "",
+            "text": "Outlook · iOS · Not receiving email — never shown to the system under test"
+          },
+          {
+            "label": "fact 1",
+            "value": "",
+            "text": "I am using the mail app on my iPhone."
+          },
+          {
+            "label": "fact 2",
+            "value": "",
+            "text": "I can still send messages, nothing new ever arrives."
+          },
+          {
+            "label": "fact 3",
+            "value": "",
+            "text": "I checked junk and the mailbox is not full."
+          },
+          {
+            "label": "phrasings + assertions",
+            "value": "",
+            "text": "alternative wordings, and what this scenario must satisfy"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "scenario-t0",
+          "atMs": 2212,
+          "semanticClass": "quote",
+          "target": "scenario-item-0",
+          "action": "rise"
+        },
+        {
+          "id": "scenario-t1",
+          "atMs": 9121,
+          "semanticClass": "card",
+          "target": "scenario-item-1",
+          "action": "rise"
+        },
+        {
+          "id": "scenario-t2",
+          "atMs": 9950,
+          "semanticClass": "card",
+          "target": "scenario-item-1",
+          "action": "emphasize"
+        },
+        {
+          "id": "scenario-t3",
+          "atMs": 21007,
+          "semanticClass": "card",
+          "target": "scenario-item-2",
+          "action": "rise"
+        },
+        {
+          "id": "scenario-t4",
+          "atMs": 23772,
+          "semanticClass": "card",
+          "target": "scenario-item-3",
+          "action": "rise"
+        },
+        {
+          "id": "scenario-t5",
+          "atMs": 26812,
+          "semanticClass": "card",
+          "target": "scenario-item-4",
+          "action": "rise"
+        },
+        {
+          "id": "scenario-t6",
+          "atMs": 30129,
+          "semanticClass": "card",
+          "target": "scenario-item-3",
+          "action": "spotlight"
+        },
+        {
+          "id": "scenario-t7",
+          "atMs": 37869,
+          "semanticClass": "body",
+          "target": "scenario-item-3",
+          "action": "spotlight",
+          "payload": {
+            "release": true
+          }
+        },
+        {
+          "id": "scenario-t8",
+          "atMs": 38421,
+          "semanticClass": "card",
+          "target": "scenario-item-5",
+          "action": "rise"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-scenario",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/scenarios.json:onedrive-data-loss (opening, targetPath, facts[3], answerPool[11], assertions[3])"
+          ]
+        },
+        {
+          "claimId": "c-suite",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/scenarios.json:162 objects, counted by kind"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_02.mp3",
+        "durationMs": 51768,
+        "headMs": 84,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "Let's",
+            "startMs": 29244,
+            "endMs": 29369
+          },
+          {
+            "word": "look",
+            "startMs": 29380,
+            "endMs": 29516
+          },
+          {
+            "word": "at",
+            "startMs": 29527,
+            "endMs": 29611
+          },
+          {
+            "word": "one",
+            "startMs": 29621,
+            "endMs": 29799
+          },
+          {
+            "word": "specific",
+            "startMs": 29810,
+            "endMs": 30271
+          },
+          {
+            "word": "scenario",
+            "startMs": 30282,
+            "endMs": 30700
+          },
+          {
+            "word": "definition",
+            "startMs": 30711,
+            "endMs": 31203
+          },
+          {
+            "word": "The",
+            "startMs": 31549,
+            "endMs": 31654
+          },
+          {
+            "word": "opening",
+            "startMs": 31665,
+            "endMs": 32021
+          },
+          {
+            "word": "is",
+            "startMs": 32031,
+            "endMs": 32126
+          },
+          {
+            "word": "what",
+            "startMs": 32136,
+            "endMs": 32240
+          },
+          {
+            "word": "the",
+            "startMs": 32252,
+            "endMs": 32314
+          },
+          {
+            "word": "conversation",
+            "startMs": 32325,
+            "endMs": 32880
+          },
+          {
+            "word": "starts",
+            "startMs": 32890,
+            "endMs": 33153
+          },
+          {
+            "word": "with",
+            "startMs": 33163,
+            "endMs": 33362
+          },
+          {
+            "word": "my",
+            "startMs": 33604,
+            "endMs": 33708
+          },
+          {
+            "word": "email",
+            "startMs": 33718,
+            "endMs": 34043
+          },
+          {
+            "word": "has",
+            "startMs": 34054,
+            "endMs": 34211
+          },
+          {
+            "word": "just",
+            "startMs": 34221,
+            "endMs": 34421
+          },
+          {
+            "word": "stopped",
+            "startMs": 34432,
+            "endMs": 34714
+          },
+          {
+            "word": "working",
+            "startMs": 34724,
+            "endMs": 35039
+          },
+          {
+            "word": "That",
+            "startMs": 35385,
+            "endMs": 35469
+          },
+          {
+            "word": "is",
+            "startMs": 35479,
+            "endMs": 35595
+          },
+          {
+            "word": "deliberately",
+            "startMs": 35605,
+            "endMs": 36160
+          },
+          {
+            "word": "vague",
+            "startMs": 36171,
+            "endMs": 36517
+          },
+          {
+            "word": "because",
+            "startMs": 36726,
+            "endMs": 36926
+          },
+          {
+            "word": "that",
+            "startMs": 36936,
+            "endMs": 37061
+          },
+          {
+            "word": "is",
+            "startMs": 37072,
+            "endMs": 37145
+          },
+          {
+            "word": "how",
+            "startMs": 37156,
+            "endMs": 37313
+          },
+          {
+            "word": "people",
+            "startMs": 37324,
+            "endMs": 37638
+          },
+          {
+            "word": "actually",
+            "startMs": 37649,
+            "endMs": 37953
+          },
+          {
+            "word": "write",
+            "startMs": 37963,
+            "endMs": 38267
+          },
+          {
+            "word": "Underneath",
+            "startMs": 38613,
+            "endMs": 38990
+          },
+          {
+            "word": "it",
+            "startMs": 39000,
+            "endMs": 39073
+          },
+          {
+            "word": "sits",
+            "startMs": 39084,
+            "endMs": 39283
+          },
+          {
+            "word": "the",
+            "startMs": 39294,
+            "endMs": 39367
+          },
+          {
+            "word": "target",
+            "startMs": 39377,
+            "endMs": 39744
+          },
+          {
+            "word": "Outlook",
+            "startMs": 40153,
+            "endMs": 40488
+          },
+          {
+            "word": "on",
+            "startMs": 40667,
+            "endMs": 40782
+          },
+          {
+            "word": "iOS",
+            "startMs": 40793,
+            "endMs": 41368
+          },
+          {
+            "word": "not",
+            "startMs": 41557,
+            "endMs": 41735
+          },
+          {
+            "word": "receiving",
+            "startMs": 41745,
+            "endMs": 42144
+          },
+          {
+            "word": "email",
+            "startMs": 42155,
+            "endMs": 42490
+          },
+          {
+            "word": "The",
+            "startMs": 42836,
+            "endMs": 42919
+          },
+          {
+            "word": "interview",
+            "startMs": 42930,
+            "endMs": 43297
+          },
+          {
+            "word": "never",
+            "startMs": 43308,
+            "endMs": 43569
+          },
+          {
+            "word": "sees",
+            "startMs": 43579,
+            "endMs": 43883
+          },
+          {
+            "word": "that",
+            "startMs": 43894,
+            "endMs": 44135
+          },
+          {
+            "word": "we",
+            "startMs": 44492,
+            "endMs": 44585
+          },
+          {
+            "word": "are",
+            "startMs": 44596,
+            "endMs": 44680
+          },
+          {
+            "word": "using",
+            "startMs": 44691,
+            "endMs": 44953
+          },
+          {
+            "word": "it",
+            "startMs": 44963,
+            "endMs": 45026
+          },
+          {
+            "word": "to",
+            "startMs": 45036,
+            "endMs": 45088
+          },
+          {
+            "word": "grade",
+            "startMs": 45099,
+            "endMs": 45446
+          },
+          {
+            "word": "once",
+            "startMs": 45456,
+            "endMs": 45634
+          },
+          {
+            "word": "the",
+            "startMs": 45644,
+            "endMs": 45717
+          },
+          {
+            "word": "conversation",
+            "startMs": 45728,
+            "endMs": 46315
+          },
+          {
+            "word": "ends",
+            "startMs": 46326,
+            "endMs": 46661
+          },
+          {
+            "word": "Then",
+            "startMs": 47017,
+            "endMs": 47090
+          },
+          {
+            "word": "we",
+            "startMs": 47100,
+            "endMs": 47185
+          },
+          {
+            "word": "have",
+            "startMs": 47195,
+            "endMs": 47311
+          },
+          {
+            "word": "the",
+            "startMs": 47321,
+            "endMs": 47373
+          },
+          {
+            "word": "knowledge",
+            "startMs": 47384,
+            "endMs": 47708
+          },
+          {
+            "word": "bank",
+            "startMs": 47719,
+            "endMs": 48033
+          },
+          {
+            "word": "Three",
+            "startMs": 48442,
+            "endMs": 48621
+          },
+          {
+            "word": "authored",
+            "startMs": 48631,
+            "endMs": 48956
+          },
+          {
+            "word": "facts",
+            "startMs": 48967,
+            "endMs": 49323
+          },
+          {
+            "word": "this",
+            "startMs": 49333,
+            "endMs": 49469
+          },
+          {
+            "word": "customer",
+            "startMs": 49480,
+            "endMs": 49857
+          },
+          {
+            "word": "knows",
+            "startMs": 49867,
+            "endMs": 50265
+          },
+          {
+            "word": "and",
+            "startMs": 50391,
+            "endMs": 50475
+          },
+          {
+            "word": "will",
+            "startMs": 50486,
+            "endMs": 50580
+          },
+          {
+            "word": "say",
+            "startMs": 50590,
+            "endMs": 50832
+          },
+          {
+            "word": "if",
+            "startMs": 50842,
+            "endMs": 50946
+          },
+          {
+            "word": "asked",
+            "startMs": 50958,
+            "endMs": 51345
+          },
+          {
+            "word": "that",
+            "startMs": 51607,
+            "endMs": 51722
+          },
+          {
+            "word": "they",
+            "startMs": 51733,
+            "endMs": 51817
+          },
+          {
+            "word": "are",
+            "startMs": 51827,
+            "endMs": 51900
+          },
+          {
+            "word": "using",
+            "startMs": 51911,
+            "endMs": 52194
+          },
+          {
+            "word": "the",
+            "startMs": 52204,
+            "endMs": 52256
+          },
+          {
+            "word": "mail",
+            "startMs": 52267,
+            "endMs": 52529
+          },
+          {
+            "word": "app",
+            "startMs": 52540,
+            "endMs": 52728
+          },
+          {
+            "word": "on",
+            "startMs": 52792,
+            "endMs": 52896
+          },
+          {
+            "word": "an",
+            "startMs": 52906,
+            "endMs": 52970
+          },
+          {
+            "word": "iPhone",
+            "startMs": 52980,
+            "endMs": 53388
+          },
+          {
+            "word": "that",
+            "startMs": 53692,
+            "endMs": 53798
+          },
+          {
+            "word": "they",
+            "startMs": 53808,
+            "endMs": 53912
+          },
+          {
+            "word": "can",
+            "startMs": 53923,
+            "endMs": 54038
+          },
+          {
+            "word": "still",
+            "startMs": 54049,
+            "endMs": 54289
+          },
+          {
+            "word": "send",
+            "startMs": 54301,
+            "endMs": 54510
+          },
+          {
+            "word": "messages",
+            "startMs": 54520,
+            "endMs": 55044
+          },
+          {
+            "word": "but",
+            "startMs": 55222,
+            "endMs": 55359
+          },
+          {
+            "word": "nothing",
+            "startMs": 55369,
+            "endMs": 55704
+          },
+          {
+            "word": "new",
+            "startMs": 55715,
+            "endMs": 55903
+          },
+          {
+            "word": "ever",
+            "startMs": 55955,
+            "endMs": 56176
+          },
+          {
+            "word": "arrives",
+            "startMs": 56187,
+            "endMs": 56731
+          },
+          {
+            "word": "and",
+            "startMs": 56983,
+            "endMs": 57056
+          },
+          {
+            "word": "that",
+            "startMs": 57067,
+            "endMs": 57172
+          },
+          {
+            "word": "they",
+            "startMs": 57182,
+            "endMs": 57265
+          },
+          {
+            "word": "have",
+            "startMs": 57276,
+            "endMs": 57381
+          },
+          {
+            "word": "checked",
+            "startMs": 57392,
+            "endMs": 57664
+          },
+          {
+            "word": "junk",
+            "startMs": 57675,
+            "endMs": 58010
+          },
+          {
+            "word": "and",
+            "startMs": 58261,
+            "endMs": 58304
+          },
+          {
+            "word": "the",
+            "startMs": 58314,
+            "endMs": 58366
+          },
+          {
+            "word": "mailbox",
+            "startMs": 58377,
+            "endMs": 58828
+          },
+          {
+            "word": "is",
+            "startMs": 58838,
+            "endMs": 58911
+          },
+          {
+            "word": "not",
+            "startMs": 58921,
+            "endMs": 59110
+          },
+          {
+            "word": "full",
+            "startMs": 59120,
+            "endMs": 59404
+          },
+          {
+            "word": "Notice",
+            "startMs": 59749,
+            "endMs": 59948
+          },
+          {
+            "word": "the",
+            "startMs": 59959,
+            "endMs": 60032
+          },
+          {
+            "word": "second",
+            "startMs": 60043,
+            "endMs": 60316
+          },
+          {
+            "word": "one",
+            "startMs": 60326,
+            "endMs": 60494
+          },
+          {
+            "word": "Can",
+            "startMs": 60840,
+            "endMs": 60933
+          },
+          {
+            "word": "send",
+            "startMs": 60944,
+            "endMs": 61343
+          },
+          {
+            "word": "cannot",
+            "startMs": 61552,
+            "endMs": 61835
+          },
+          {
+            "word": "receive",
+            "startMs": 61846,
+            "endMs": 62328
+          },
+          {
+            "word": "that",
+            "startMs": 62641,
+            "endMs": 62746
+          },
+          {
+            "word": "is",
+            "startMs": 62757,
+            "endMs": 62831
+          },
+          {
+            "word": "the",
+            "startMs": 62841,
+            "endMs": 62945
+          },
+          {
+            "word": "detail",
+            "startMs": 62956,
+            "endMs": 63365
+          },
+          {
+            "word": "separating",
+            "startMs": 63375,
+            "endMs": 63930
+          },
+          {
+            "word": "this",
+            "startMs": 63941,
+            "endMs": 64088
+          },
+          {
+            "word": "from",
+            "startMs": 64098,
+            "endMs": 64224
+          },
+          {
+            "word": "a",
+            "startMs": 64235,
+            "endMs": 64297
+          },
+          {
+            "word": "dozen",
+            "startMs": 64308,
+            "endMs": 64591
+          },
+          {
+            "word": "neighbouring",
+            "startMs": 64601,
+            "endMs": 64957
+          },
+          {
+            "word": "categories",
+            "startMs": 64968,
+            "endMs": 65566
+          },
+          {
+            "word": "and",
+            "startMs": 65806,
+            "endMs": 65890
+          },
+          {
+            "word": "the",
+            "startMs": 65901,
+            "endMs": 65963
+          },
+          {
+            "word": "interview",
+            "startMs": 65974,
+            "endMs": 66414
+          },
+          {
+            "word": "only",
+            "startMs": 66488,
+            "endMs": 66739
+          },
+          {
+            "word": "learns",
+            "startMs": 66750,
+            "endMs": 67054
+          },
+          {
+            "word": "it",
+            "startMs": 67064,
+            "endMs": 67127
+          },
+          {
+            "word": "if",
+            "startMs": 67137,
+            "endMs": 67232
+          },
+          {
+            "word": "it",
+            "startMs": 67242,
+            "endMs": 67315
+          },
+          {
+            "word": "thinks",
+            "startMs": 67327,
+            "endMs": 67567
+          },
+          {
+            "word": "to",
+            "startMs": 67578,
+            "endMs": 67662
+          },
+          {
+            "word": "ask",
+            "startMs": 67672,
+            "endMs": 68039
+          },
+          {
+            "word": "Then",
+            "startMs": 68385,
+            "endMs": 68468
+          },
+          {
+            "word": "a",
+            "startMs": 68478,
+            "endMs": 68542
+          },
+          {
+            "word": "pool",
+            "startMs": 68552,
+            "endMs": 68867
+          },
+          {
+            "word": "of",
+            "startMs": 68877,
+            "endMs": 68971
+          },
+          {
+            "word": "alternative",
+            "startMs": 68981,
+            "endMs": 69474
+          },
+          {
+            "word": "phrasings",
+            "startMs": 69484,
+            "endMs": 70051
+          },
+          {
+            "word": "so",
+            "startMs": 70260,
+            "endMs": 70355
+          },
+          {
+            "word": "the",
+            "startMs": 70365,
+            "endMs": 70438
+          },
+          {
+            "word": "customer",
+            "startMs": 70449,
+            "endMs": 70847
+          },
+          {
+            "word": "can",
+            "startMs": 70858,
+            "endMs": 70972
+          },
+          {
+            "word": "choose",
+            "startMs": 70983,
+            "endMs": 71235
+          },
+          {
+            "word": "different",
+            "startMs": 71245,
+            "endMs": 71518
+          },
+          {
+            "word": "phrasings",
+            "startMs": 71529,
+            "endMs": 71989
+          },
+          {
+            "word": "to",
+            "startMs": 72000,
+            "endMs": 72084
+          },
+          {
+            "word": "not",
+            "startMs": 72094,
+            "endMs": 72336
+          },
+          {
+            "word": "repeat",
+            "startMs": 72346,
+            "endMs": 72713
+          },
+          {
+            "word": "every",
+            "startMs": 72870,
+            "endMs": 73038
+          },
+          {
+            "word": "time",
+            "startMs": 73048,
+            "endMs": 73331
+          },
+          {
+            "word": "And",
+            "startMs": 73677,
+            "endMs": 73760
+          },
+          {
+            "word": "last",
+            "startMs": 73771,
+            "endMs": 74180
+          },
+          {
+            "word": "the",
+            "startMs": 74369,
+            "endMs": 74441
+          },
+          {
+            "word": "assertions",
+            "startMs": 74452,
+            "endMs": 74913
+          },
+          {
+            "word": "this",
+            "startMs": 74924,
+            "endMs": 75060
+          },
+          {
+            "word": "scenario",
+            "startMs": 75070,
+            "endMs": 75532
+          },
+          {
+            "word": "has",
+            "startMs": 75542,
+            "endMs": 75720
+          },
+          {
+            "word": "to",
+            "startMs": 75731,
+            "endMs": 75804
+          },
+          {
+            "word": "satisfy",
+            "startMs": 75814,
+            "endMs": 76433
+          },
+          {
+            "word": "That",
+            "startMs": 76789,
+            "endMs": 76863
+          },
+          {
+            "word": "is",
+            "startMs": 76873,
+            "endMs": 76946
+          },
+          {
+            "word": "what",
+            "startMs": 76956,
+            "endMs": 77093
+          },
+          {
+            "word": "makes",
+            "startMs": 77103,
+            "endMs": 77345
+          },
+          {
+            "word": "it",
+            "startMs": 77355,
+            "endMs": 77407
+          },
+          {
+            "word": "a",
+            "startMs": 77418,
+            "endMs": 77459
+          },
+          {
+            "word": "conversation",
+            "startMs": 77470,
+            "endMs": 78109
+          },
+          {
+            "word": "and",
+            "startMs": 78225,
+            "endMs": 78319
+          },
+          {
+            "word": "not",
+            "startMs": 78329,
+            "endMs": 78465
+          },
+          {
+            "word": "a",
+            "startMs": 78476,
+            "endMs": 78508
+          },
+          {
+            "word": "prompt",
+            "startMs": 78519,
+            "endMs": 78927
+          },
+          {
+            "word": "We",
+            "startMs": 79273,
+            "endMs": 79357
+          },
+          {
+            "word": "have",
+            "startMs": 79367,
+            "endMs": 79451
+          },
+          {
+            "word": "defined",
+            "startMs": 79461,
+            "endMs": 79943
+          },
+          {
+            "word": "nearly",
+            "startMs": 79954,
+            "endMs": 80237
+          },
+          {
+            "word": "two-hundred",
+            "startMs": 80247,
+            "endMs": 80676
+          },
+          {
+            "word": "of",
+            "startMs": 80688,
+            "endMs": 80771
+          },
+          {
+            "word": "them",
+            "startMs": 80782,
+            "endMs": 80928
+          }
+        ]
+      }
+    },
+    {
+      "id": "freeform",
+      "title": "It writes its own questions. The customer has to cope.",
+      "startMs": 82344,
+      "endMs": 128856,
+      "plannedDurationMs": 48091,
+      "voiceoverText": "But here is the hard part: the thing being tested is a language model. It writes its own questions, and it will ask things nobody anticipated. A script of canned answers can fall apart on the first unexpected turn. So the simulated customer answers by rule, in priority order. If the question offers choices, and those choices carry routing data, it picks the one whose route runs closest to its own target. If the choices are platforms, it answers with the platform it is actually on. If it is any other multiple choice, it scores each option against its own vocabulary. And if the question has no choices at all — free text, invented on the spot — it draws the next unused line from its knowledge bank. One guard matters more than the rest. The customer will never name a platform it is not on. Those phrasings come from real support data. Matching is on word boundaries — which is why Xbox Game Studios is not an iOS case.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "The hard part",
+        "title": "The interview invents the questions. The customer still has to answer.",
+        "subtitle": "A priority ladder, not a script.",
+        "note": "**A priority ladder builds top to bottom**, one rung per rule as the narration names it. The free-text rung is the one the segment is really about. The screen-dimming spotlight was removed at review. Rungs carry numbered step badges rather than connecting arrows — the gaps are too tight for arrowheads to draw cleanly. Then the guard lands underneath as three stacked panels, with the Xbox Game Studios example legible as text — the joke only works if it can be read.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "the interview asks — often something nobody anticipated",
+            "x": 320,
+            "y": 14,
+            "w": 960,
+            "h": 52
+          },
+          {
+            "id": "r1",
+            "label": "choices carry routing → pick the route closest to my target",
+            "x": 120,
+            "y": 82,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "r2",
+            "label": "choices are platforms → answer with the platform I am on",
+            "x": 120,
+            "y": 142,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "r3",
+            "label": "any other multiple choice → score options against my vocabulary",
+            "x": 120,
+            "y": 202,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "r4",
+            "label": "no choices at all → next unused line from my knowledge bank",
+            "x": 120,
+            "y": 262,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "g1",
+            "label": "GUARD · never name a platform I am not on",
+            "x": 120,
+            "y": 336,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "g2",
+            "label": "phrasings come from real support data",
+            "x": 120,
+            "y": 396,
+            "w": 1360,
+            "h": 50
+          },
+          {
+            "id": "g3",
+            "label": "matched on word boundaries — Xbox Game Stud[ios] is not an iOS case",
+            "x": 120,
+            "y": 456,
+            "w": 1360,
+            "h": 50
+          }
+        ],
+        "edges": []
+      },
+      "triggers": [
+        {
+          "id": "freeform-t0",
+          "atMs": 266,
+          "semanticClass": "heading",
+          "target": "freeform-node-q",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-t1",
+          "atMs": 13305,
+          "semanticClass": "list",
+          "target": "freeform-node-r1",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-b1",
+          "atMs": 13450,
+          "semanticClass": "label",
+          "target": "freeform-node-r1",
+          "action": "stepBadge",
+          "payload": {
+            "stepIndex": 1
+          }
+        },
+        {
+          "id": "freeform-t2",
+          "atMs": 19427,
+          "semanticClass": "list",
+          "target": "freeform-node-r2",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-b2",
+          "atMs": 19572,
+          "semanticClass": "label",
+          "target": "freeform-node-r2",
+          "action": "stepBadge",
+          "payload": {
+            "stepIndex": 2
+          }
+        },
+        {
+          "id": "freeform-t3",
+          "atMs": 23151,
+          "semanticClass": "list",
+          "target": "freeform-node-r3",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-b3",
+          "atMs": 23296,
+          "semanticClass": "label",
+          "target": "freeform-node-r3",
+          "action": "stepBadge",
+          "payload": {
+            "stepIndex": 3
+          }
+        },
+        {
+          "id": "freeform-t4",
+          "atMs": 27144,
+          "semanticClass": "list",
+          "target": "freeform-node-r4",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-b4",
+          "atMs": 27289,
+          "semanticClass": "label",
+          "target": "freeform-node-r4",
+          "action": "stepBadge",
+          "payload": {
+            "stepIndex": 4
+          }
+        },
+        {
+          "id": "freeform-t7",
+          "atMs": 35925,
+          "semanticClass": "card",
+          "target": "freeform-node-g1",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-t8",
+          "atMs": 38852,
+          "semanticClass": "card",
+          "target": "freeform-node-g2",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-t9",
+          "atMs": 45912,
+          "semanticClass": "code",
+          "target": "freeform-node-g3",
+          "action": "revealNode"
+        },
+        {
+          "id": "freeform-t10",
+          "atMs": 45912,
+          "semanticClass": "body",
+          "target": "freeform-node-g3",
+          "action": "emphasize"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-strategies",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/README.md:What it does — strategy table (route, family, platform, leafRoute, overlap, freeText)"
+          ]
+        },
+        {
+          "claimId": "c-platformguard",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/README.md:If you regenerate the suite — match on word boundaries, Xbox Game Studios is not an iOS case",
+            "contextlayer-eval/README.md:The scripted customer — one guard carries over verbatim"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_03.mp3",
+        "durationMs": 46512,
+        "headMs": 95,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "But",
+            "startMs": 82439,
+            "endMs": 82512
+          },
+          {
+            "word": "here",
+            "startMs": 82522,
+            "endMs": 82669
+          },
+          {
+            "word": "is",
+            "startMs": 82679,
+            "endMs": 82753
+          },
+          {
+            "word": "the",
+            "startMs": 82764,
+            "endMs": 82826
+          },
+          {
+            "word": "hard",
+            "startMs": 82837,
+            "endMs": 83078
+          },
+          {
+            "word": "part",
+            "startMs": 83089,
+            "endMs": 83360
+          },
+          {
+            "word": "the",
+            "startMs": 83602,
+            "endMs": 83685
+          },
+          {
+            "word": "thing",
+            "startMs": 83697,
+            "endMs": 83896
+          },
+          {
+            "word": "being",
+            "startMs": 83906,
+            "endMs": 84105
+          },
+          {
+            "word": "tested",
+            "startMs": 84115,
+            "endMs": 84535
+          },
+          {
+            "word": "is",
+            "startMs": 84661,
+            "endMs": 84734
+          },
+          {
+            "word": "a",
+            "startMs": 84744,
+            "endMs": 84786
+          },
+          {
+            "word": "language",
+            "startMs": 84797,
+            "endMs": 85185
+          },
+          {
+            "word": "model",
+            "startMs": 85195,
+            "endMs": 85489
+          },
+          {
+            "word": "It",
+            "startMs": 85835,
+            "endMs": 85982
+          },
+          {
+            "word": "writes",
+            "startMs": 85992,
+            "endMs": 86191
+          },
+          {
+            "word": "its",
+            "startMs": 86201,
+            "endMs": 86306
+          },
+          {
+            "word": "own",
+            "startMs": 86317,
+            "endMs": 86443
+          },
+          {
+            "word": "questions",
+            "startMs": 86453,
+            "endMs": 86998
+          },
+          {
+            "word": "and",
+            "startMs": 87188,
+            "endMs": 87271
+          },
+          {
+            "word": "it",
+            "startMs": 87281,
+            "endMs": 87345
+          },
+          {
+            "word": "will",
+            "startMs": 87355,
+            "endMs": 87480
+          },
+          {
+            "word": "ask",
+            "startMs": 87491,
+            "endMs": 87753
+          },
+          {
+            "word": "things",
+            "startMs": 87763,
+            "endMs": 87984
+          },
+          {
+            "word": "nobody",
+            "startMs": 87995,
+            "endMs": 88330
+          },
+          {
+            "word": "anticipated",
+            "startMs": 88340,
+            "endMs": 88938
+          },
+          {
+            "word": "A",
+            "startMs": 89284,
+            "endMs": 89325
+          },
+          {
+            "word": "script",
+            "startMs": 89336,
+            "endMs": 89640
+          },
+          {
+            "word": "of",
+            "startMs": 89650,
+            "endMs": 89735
+          },
+          {
+            "word": "canned",
+            "startMs": 89745,
+            "endMs": 90007
+          },
+          {
+            "word": "answers",
+            "startMs": 90017,
+            "endMs": 90342
+          },
+          {
+            "word": "can",
+            "startMs": 90352,
+            "endMs": 90468
+          },
+          {
+            "word": "fall",
+            "startMs": 90478,
+            "endMs": 90751
+          },
+          {
+            "word": "apart",
+            "startMs": 90762,
+            "endMs": 91086
+          },
+          {
+            "word": "on",
+            "startMs": 91139,
+            "endMs": 91212
+          },
+          {
+            "word": "the",
+            "startMs": 91223,
+            "endMs": 91285
+          },
+          {
+            "word": "first",
+            "startMs": 91296,
+            "endMs": 91663
+          },
+          {
+            "word": "unexpected",
+            "startMs": 91736,
+            "endMs": 92239
+          },
+          {
+            "word": "turn",
+            "startMs": 92250,
+            "endMs": 92512
+          },
+          {
+            "word": "So",
+            "startMs": 92868,
+            "endMs": 92963
+          },
+          {
+            "word": "the",
+            "startMs": 92974,
+            "endMs": 93057
+          },
+          {
+            "word": "simulated",
+            "startMs": 93068,
+            "endMs": 93540
+          },
+          {
+            "word": "customer",
+            "startMs": 93550,
+            "endMs": 93959
+          },
+          {
+            "word": "answers",
+            "startMs": 93969,
+            "endMs": 94263
+          },
+          {
+            "word": "by",
+            "startMs": 94273,
+            "endMs": 94410
+          },
+          {
+            "word": "rule",
+            "startMs": 94420,
+            "endMs": 94766
+          },
+          {
+            "word": "in",
+            "startMs": 95007,
+            "endMs": 95059
+          },
+          {
+            "word": "priority",
+            "startMs": 95070,
+            "endMs": 95552
+          },
+          {
+            "word": "order",
+            "startMs": 95562,
+            "endMs": 95887
+          },
+          {
+            "word": "If",
+            "startMs": 96233,
+            "endMs": 96317
+          },
+          {
+            "word": "the",
+            "startMs": 96328,
+            "endMs": 96390
+          },
+          {
+            "word": "question",
+            "startMs": 96402,
+            "endMs": 96820
+          },
+          {
+            "word": "offers",
+            "startMs": 96831,
+            "endMs": 97114
+          },
+          {
+            "word": "choices",
+            "startMs": 97125,
+            "endMs": 97638
+          },
+          {
+            "word": "and",
+            "startMs": 97827,
+            "endMs": 97952
+          },
+          {
+            "word": "those",
+            "startMs": 97963,
+            "endMs": 98152
+          },
+          {
+            "word": "choices",
+            "startMs": 98163,
+            "endMs": 98561
+          },
+          {
+            "word": "carry",
+            "startMs": 98571,
+            "endMs": 98896
+          },
+          {
+            "word": "routing",
+            "startMs": 98906,
+            "endMs": 99169
+          },
+          {
+            "word": "data",
+            "startMs": 99179,
+            "endMs": 99452
+          },
+          {
+            "word": "it",
+            "startMs": 99767,
+            "endMs": 99881
+          },
+          {
+            "word": "picks",
+            "startMs": 99893,
+            "endMs": 100123
+          },
+          {
+            "word": "the",
+            "startMs": 100133,
+            "endMs": 100228
+          },
+          {
+            "word": "one",
+            "startMs": 100238,
+            "endMs": 100448
+          },
+          {
+            "word": "whose",
+            "startMs": 100458,
+            "endMs": 100647
+          },
+          {
+            "word": "route",
+            "startMs": 100657,
+            "endMs": 100919
+          },
+          {
+            "word": "runs",
+            "startMs": 100930,
+            "endMs": 101161
+          },
+          {
+            "word": "closest",
+            "startMs": 101171,
+            "endMs": 101643
+          },
+          {
+            "word": "to",
+            "startMs": 101654,
+            "endMs": 101747
+          },
+          {
+            "word": "its",
+            "startMs": 101758,
+            "endMs": 101873
+          },
+          {
+            "word": "own",
+            "startMs": 101884,
+            "endMs": 102010
+          },
+          {
+            "word": "target",
+            "startMs": 102020,
+            "endMs": 102387
+          },
+          {
+            "word": "If",
+            "startMs": 102732,
+            "endMs": 102817
+          },
+          {
+            "word": "the",
+            "startMs": 102827,
+            "endMs": 102900
+          },
+          {
+            "word": "choices",
+            "startMs": 102912,
+            "endMs": 103320
+          },
+          {
+            "word": "are",
+            "startMs": 103330,
+            "endMs": 103414
+          },
+          {
+            "word": "platforms",
+            "startMs": 103425,
+            "endMs": 104043
+          },
+          {
+            "word": "it",
+            "startMs": 104232,
+            "endMs": 104337
+          },
+          {
+            "word": "answers",
+            "startMs": 104348,
+            "endMs": 104640
+          },
+          {
+            "word": "with",
+            "startMs": 104652,
+            "endMs": 104756
+          },
+          {
+            "word": "the",
+            "startMs": 104766,
+            "endMs": 104830
+          },
+          {
+            "word": "platform",
+            "startMs": 104840,
+            "endMs": 105259
+          },
+          {
+            "word": "it",
+            "startMs": 105269,
+            "endMs": 105343
+          },
+          {
+            "word": "is",
+            "startMs": 105354,
+            "endMs": 105448
+          },
+          {
+            "word": "actually",
+            "startMs": 105459,
+            "endMs": 105825
+          },
+          {
+            "word": "on",
+            "startMs": 105836,
+            "endMs": 106066
+          },
+          {
+            "word": "If",
+            "startMs": 106413,
+            "endMs": 106506
+          },
+          {
+            "word": "it",
+            "startMs": 106517,
+            "endMs": 106580
+          },
+          {
+            "word": "is",
+            "startMs": 106591,
+            "endMs": 106738
+          },
+          {
+            "word": "any",
+            "startMs": 106863,
+            "endMs": 107052
+          },
+          {
+            "word": "other",
+            "startMs": 107063,
+            "endMs": 107209
+          },
+          {
+            "word": "multiple",
+            "startMs": 107220,
+            "endMs": 107566
+          },
+          {
+            "word": "choice",
+            "startMs": 107576,
+            "endMs": 108016
+          },
+          {
+            "word": "it",
+            "startMs": 108226,
+            "endMs": 108310
+          },
+          {
+            "word": "scores",
+            "startMs": 108321,
+            "endMs": 108677
+          },
+          {
+            "word": "each",
+            "startMs": 108813,
+            "endMs": 108970
+          },
+          {
+            "word": "option",
+            "startMs": 109033,
+            "endMs": 109347
+          },
+          {
+            "word": "against",
+            "startMs": 109358,
+            "endMs": 109641
+          },
+          {
+            "word": "its",
+            "startMs": 109651,
+            "endMs": 109746
+          },
+          {
+            "word": "own",
+            "startMs": 109757,
+            "endMs": 109882
+          },
+          {
+            "word": "vocabulary",
+            "startMs": 109893,
+            "endMs": 110553
+          },
+          {
+            "word": "And",
+            "startMs": 110899,
+            "endMs": 110982
+          },
+          {
+            "word": "if",
+            "startMs": 110993,
+            "endMs": 111077
+          },
+          {
+            "word": "the",
+            "startMs": 111088,
+            "endMs": 111150
+          },
+          {
+            "word": "question",
+            "startMs": 111161,
+            "endMs": 111507
+          },
+          {
+            "word": "has",
+            "startMs": 111518,
+            "endMs": 111696
+          },
+          {
+            "word": "no",
+            "startMs": 111706,
+            "endMs": 111895
+          },
+          {
+            "word": "choices",
+            "startMs": 111905,
+            "endMs": 112335
+          },
+          {
+            "word": "at",
+            "startMs": 112346,
+            "endMs": 112430
+          },
+          {
+            "word": "all",
+            "startMs": 112440,
+            "endMs": 112681
+          },
+          {
+            "word": "free",
+            "startMs": 113016,
+            "endMs": 113258
+          },
+          {
+            "word": "text",
+            "startMs": 113268,
+            "endMs": 113687
+          },
+          {
+            "word": "invented",
+            "startMs": 113844,
+            "endMs": 114201
+          },
+          {
+            "word": "on",
+            "startMs": 114212,
+            "endMs": 114285
+          },
+          {
+            "word": "the",
+            "startMs": 114295,
+            "endMs": 114348
+          },
+          {
+            "word": "spot",
+            "startMs": 114359,
+            "endMs": 114725
+          },
+          {
+            "word": "it",
+            "startMs": 115092,
+            "endMs": 115145
+          },
+          {
+            "word": "draws",
+            "startMs": 115155,
+            "endMs": 115437
+          },
+          {
+            "word": "the",
+            "startMs": 115449,
+            "endMs": 115522
+          },
+          {
+            "word": "next",
+            "startMs": 115532,
+            "endMs": 115857
+          },
+          {
+            "word": "unused",
+            "startMs": 115868,
+            "endMs": 116339
+          },
+          {
+            "word": "line",
+            "startMs": 116350,
+            "endMs": 116685
+          },
+          {
+            "word": "from",
+            "startMs": 116695,
+            "endMs": 116821
+          },
+          {
+            "word": "its",
+            "startMs": 116832,
+            "endMs": 116947
+          },
+          {
+            "word": "knowledge",
+            "startMs": 116958,
+            "endMs": 117262
+          },
+          {
+            "word": "bank",
+            "startMs": 117272,
+            "endMs": 117608
+          },
+          {
+            "word": "One",
+            "startMs": 117964,
+            "endMs": 118111
+          },
+          {
+            "word": "guard",
+            "startMs": 118121,
+            "endMs": 118352
+          },
+          {
+            "word": "matters",
+            "startMs": 118363,
+            "endMs": 118667
+          },
+          {
+            "word": "more",
+            "startMs": 118677,
+            "endMs": 118876
+          },
+          {
+            "word": "than",
+            "startMs": 118887,
+            "endMs": 118981
+          },
+          {
+            "word": "the",
+            "startMs": 118992,
+            "endMs": 119044
+          },
+          {
+            "word": "rest",
+            "startMs": 119054,
+            "endMs": 119463
+          },
+          {
+            "word": "The",
+            "startMs": 119820,
+            "endMs": 119861
+          },
+          {
+            "word": "customer",
+            "startMs": 119872,
+            "endMs": 120260
+          },
+          {
+            "word": "will",
+            "startMs": 120271,
+            "endMs": 120386
+          },
+          {
+            "word": "never",
+            "startMs": 120397,
+            "endMs": 120658
+          },
+          {
+            "word": "name",
+            "startMs": 120668,
+            "endMs": 120805
+          },
+          {
+            "word": "a",
+            "startMs": 120815,
+            "endMs": 120858
+          },
+          {
+            "word": "platform",
+            "startMs": 120868,
+            "endMs": 121319
+          },
+          {
+            "word": "it",
+            "startMs": 121330,
+            "endMs": 121382
+          },
+          {
+            "word": "is",
+            "startMs": 121392,
+            "endMs": 121465
+          },
+          {
+            "word": "not",
+            "startMs": 121476,
+            "endMs": 121665
+          },
+          {
+            "word": "on",
+            "startMs": 121675,
+            "endMs": 121916
+          },
+          {
+            "word": "Those",
+            "startMs": 122262,
+            "endMs": 122430
+          },
+          {
+            "word": "phrasings",
+            "startMs": 122441,
+            "endMs": 122839
+          },
+          {
+            "word": "come",
+            "startMs": 122849,
+            "endMs": 123058
+          },
+          {
+            "word": "from",
+            "startMs": 123070,
+            "endMs": 123269
+          },
+          {
+            "word": "real",
+            "startMs": 123279,
+            "endMs": 123468
+          },
+          {
+            "word": "support",
+            "startMs": 123478,
+            "endMs": 123834
+          },
+          {
+            "word": "data",
+            "startMs": 123845,
+            "endMs": 124117
+          },
+          {
+            "word": "Matching",
+            "startMs": 124463,
+            "endMs": 124841
+          },
+          {
+            "word": "is",
+            "startMs": 124852,
+            "endMs": 124956
+          },
+          {
+            "word": "on",
+            "startMs": 124966,
+            "endMs": 125092
+          },
+          {
+            "word": "word",
+            "startMs": 125103,
+            "endMs": 125313
+          },
+          {
+            "word": "boundaries",
+            "startMs": 125323,
+            "endMs": 125878
+          },
+          {
+            "word": "which",
+            "startMs": 126057,
+            "endMs": 126183
+          },
+          {
+            "word": "is",
+            "startMs": 126193,
+            "endMs": 126267
+          },
+          {
+            "word": "why",
+            "startMs": 126277,
+            "endMs": 126435
+          },
+          {
+            "word": "Xbox",
+            "startMs": 126445,
+            "endMs": 126822
+          },
+          {
+            "word": "Game",
+            "startMs": 126832,
+            "endMs": 127000
+          },
+          {
+            "word": "Studios",
+            "startMs": 127010,
+            "endMs": 127493
+          },
+          {
+            "word": "is",
+            "startMs": 127577,
+            "endMs": 127660
+          },
+          {
+            "word": "not",
+            "startMs": 127672,
+            "endMs": 127923
+          },
+          {
+            "word": "an",
+            "startMs": 127933,
+            "endMs": 128028
+          },
+          {
+            "word": "iOS",
+            "startMs": 128038,
+            "endMs": 128426
+          },
+          {
+            "word": "case",
+            "startMs": 128436,
+            "endMs": 128856
+          }
+        ]
+      }
+    },
+    {
+      "id": "many",
+      "title": "Hundreds of customers, three times over",
+      "startMs": 130272,
+      "endMs": 158928,
+      "plannedDurationMs": 28006,
+      "voiceoverText": "Each of the hundreds of scenarios opens its own conversation and shares no state with any other, so they can go out in parallel. And we run every scenario three times, because the same input doesn't give the same answer twice. On screen, three result strips for one scenario land on three different outputs, and an average line resolves between them. Replication across this suite showed the same scenario changing grade from one run to the next, for no reason at all. So we average across three runs, and a real change is separated from the model's own noise.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "Scale, and noise",
+        "title": "Independent scenarios run in parallel — three times each",
+        "subtitle": "A filling bar, not a strobing grid.",
+        "note": "**Three run strips for ONE scenario reveal early**, landing with the narration's second sentence, labelled output A / output A / output B so the divergence is carried by a letter rather than a colour. An average node resolves beneath them. The progress bar was removed at review — it was not earning its place. Run bubbles sit high to give the edges room.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "suite",
+            "label": "162 scenarios · running in parallel",
+            "x": 480,
+            "y": 30,
+            "w": 640,
+            "h": 84
+          },
+          {
+            "id": "r1",
+            "label": "run 1 · output A",
+            "x": 140,
+            "y": 170,
+            "w": 340,
+            "h": 84
+          },
+          {
+            "id": "r2",
+            "label": "run 2 · output A",
+            "x": 630,
+            "y": 170,
+            "w": 340,
+            "h": 84
+          },
+          {
+            "id": "r3",
+            "label": "run 3 · output B",
+            "x": 1120,
+            "y": 170,
+            "w": 340,
+            "h": 84
+          },
+          {
+            "id": "avg",
+            "label": "averaged across three runs",
+            "x": 480,
+            "y": 380,
+            "w": 640,
+            "h": 84
+          }
+        ],
+        "edges": [
+          {
+            "from": "r1",
+            "to": "avg"
+          },
+          {
+            "from": "r2",
+            "to": "avg"
+          },
+          {
+            "from": "r3",
+            "to": "avg"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "many-t0",
+          "atMs": 400,
+          "semanticClass": "card",
+          "target": "many-node-suite",
+          "action": "revealNode"
+        },
+        {
+          "id": "many-t4",
+          "atMs": 6344,
+          "semanticClass": "card",
+          "target": "many-node-r1",
+          "action": "revealNode"
+        },
+        {
+          "id": "many-t5",
+          "atMs": 7162,
+          "semanticClass": "card",
+          "target": "many-node-r2",
+          "action": "revealNode"
+        },
+        {
+          "id": "many-t6",
+          "atMs": 7981,
+          "semanticClass": "card",
+          "target": "many-node-r3",
+          "action": "revealNode"
+        },
+        {
+          "id": "many-t7",
+          "atMs": 10437,
+          "semanticClass": "card",
+          "target": "many-node-avg",
+          "action": "revealNode"
+        },
+        {
+          "id": "many-e0",
+          "atMs": 21037,
+          "semanticClass": "chart",
+          "target": "many-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "id": "many-e1",
+          "atMs": 21037,
+          "semanticClass": "chart",
+          "target": "many-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "id": "many-e2",
+          "atMs": 21037,
+          "semanticClass": "chart",
+          "target": "many-edge-2",
+          "action": "drawEdge"
+        },
+        {
+          "id": "many-t8",
+          "atMs": 28042,
+          "semanticClass": "body",
+          "target": "many-node-avg",
+          "action": "emphasize"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-parallel",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/README.md:Parallelism — full 75-scenario suite at ~74 s with 10 workers"
+          ]
+        },
+        {
+          "claimId": "c-suite",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/scenarios.json:162 objects, counted"
+          ]
+        },
+        {
+          "claimId": "c-flip",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/README.md:~20% per-scenario grade-flip rate",
+            "contextlayer-eval/README.md:Replication"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_04.mp3",
+        "durationMs": 28656,
+        "headMs": 84,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "Each",
+            "startMs": 130356,
+            "endMs": 130515
+          },
+          {
+            "word": "of",
+            "startMs": 130525,
+            "endMs": 130588
+          },
+          {
+            "word": "the",
+            "startMs": 130599,
+            "endMs": 130651
+          },
+          {
+            "word": "hundreds",
+            "startMs": 130661,
+            "endMs": 131062
+          },
+          {
+            "word": "of",
+            "startMs": 131073,
+            "endMs": 131135
+          },
+          {
+            "word": "scenarios",
+            "startMs": 131147,
+            "endMs": 131746
+          },
+          {
+            "word": "opens",
+            "startMs": 131831,
+            "endMs": 132136
+          },
+          {
+            "word": "its",
+            "startMs": 132146,
+            "endMs": 132263
+          },
+          {
+            "word": "own",
+            "startMs": 132273,
+            "endMs": 132463
+          },
+          {
+            "word": "conversation",
+            "startMs": 132473,
+            "endMs": 133136
+          },
+          {
+            "word": "and",
+            "startMs": 133326,
+            "endMs": 133400
+          },
+          {
+            "word": "shares",
+            "startMs": 133410,
+            "endMs": 133705
+          },
+          {
+            "word": "no",
+            "startMs": 133715,
+            "endMs": 133884
+          },
+          {
+            "word": "state",
+            "startMs": 133894,
+            "endMs": 134242
+          },
+          {
+            "word": "with",
+            "startMs": 134253,
+            "endMs": 134400
+          },
+          {
+            "word": "any",
+            "startMs": 134526,
+            "endMs": 134726
+          },
+          {
+            "word": "other",
+            "startMs": 134738,
+            "endMs": 134969
+          },
+          {
+            "word": "so",
+            "startMs": 135306,
+            "endMs": 135370
+          },
+          {
+            "word": "they",
+            "startMs": 135380,
+            "endMs": 135475
+          },
+          {
+            "word": "can",
+            "startMs": 135485,
+            "endMs": 135601
+          },
+          {
+            "word": "go",
+            "startMs": 135611,
+            "endMs": 135780
+          },
+          {
+            "word": "out",
+            "startMs": 135790,
+            "endMs": 135938
+          },
+          {
+            "word": "in",
+            "startMs": 135949,
+            "endMs": 136022
+          },
+          {
+            "word": "parallel",
+            "startMs": 136033,
+            "endMs": 136507
+          },
+          {
+            "word": "And",
+            "startMs": 136865,
+            "endMs": 136960
+          },
+          {
+            "word": "we",
+            "startMs": 136970,
+            "endMs": 137086
+          },
+          {
+            "word": "run",
+            "startMs": 137096,
+            "endMs": 137370
+          },
+          {
+            "word": "every",
+            "startMs": 137507,
+            "endMs": 137738
+          },
+          {
+            "word": "scenario",
+            "startMs": 137749,
+            "endMs": 138255
+          },
+          {
+            "word": "three",
+            "startMs": 138265,
+            "endMs": 138529
+          },
+          {
+            "word": "times",
+            "startMs": 138539,
+            "endMs": 139023
+          },
+          {
+            "word": "because",
+            "startMs": 139192,
+            "endMs": 139434
+          },
+          {
+            "word": "the",
+            "startMs": 139445,
+            "endMs": 139529
+          },
+          {
+            "word": "same",
+            "startMs": 139540,
+            "endMs": 139803
+          },
+          {
+            "word": "input",
+            "startMs": 139814,
+            "endMs": 140213
+          },
+          {
+            "word": "doesn't",
+            "startMs": 140256,
+            "endMs": 140530
+          },
+          {
+            "word": "give",
+            "startMs": 140540,
+            "endMs": 140687
+          },
+          {
+            "word": "the",
+            "startMs": 140699,
+            "endMs": 140761
+          },
+          {
+            "word": "same",
+            "startMs": 140771,
+            "endMs": 141056
+          },
+          {
+            "word": "answer",
+            "startMs": 141067,
+            "endMs": 141298
+          },
+          {
+            "word": "twice",
+            "startMs": 141309,
+            "endMs": 141804
+          },
+          {
+            "word": "On",
+            "startMs": 142151,
+            "endMs": 142256
+          },
+          {
+            "word": "screen",
+            "startMs": 142268,
+            "endMs": 142657
+          },
+          {
+            "word": "three",
+            "startMs": 142888,
+            "endMs": 143078
+          },
+          {
+            "word": "result",
+            "startMs": 143089,
+            "endMs": 143373
+          },
+          {
+            "word": "strips",
+            "startMs": 143384,
+            "endMs": 143742
+          },
+          {
+            "word": "for",
+            "startMs": 143752,
+            "endMs": 143921
+          },
+          {
+            "word": "one",
+            "startMs": 143931,
+            "endMs": 144121
+          },
+          {
+            "word": "scenario",
+            "startMs": 144131,
+            "endMs": 144615
+          },
+          {
+            "word": "land",
+            "startMs": 144626,
+            "endMs": 144910
+          },
+          {
+            "word": "on",
+            "startMs": 144922,
+            "endMs": 145058
+          },
+          {
+            "word": "three",
+            "startMs": 145068,
+            "endMs": 145342
+          },
+          {
+            "word": "different",
+            "startMs": 145353,
+            "endMs": 145616
+          },
+          {
+            "word": "outputs",
+            "startMs": 145627,
+            "endMs": 146090
+          },
+          {
+            "word": "and",
+            "startMs": 146332,
+            "endMs": 146427
+          },
+          {
+            "word": "an",
+            "startMs": 146438,
+            "endMs": 146511
+          },
+          {
+            "word": "average",
+            "startMs": 146522,
+            "endMs": 146859
+          },
+          {
+            "word": "line",
+            "startMs": 146870,
+            "endMs": 147090
+          },
+          {
+            "word": "resolves",
+            "startMs": 147101,
+            "endMs": 147480
+          },
+          {
+            "word": "between",
+            "startMs": 147490,
+            "endMs": 147828
+          },
+          {
+            "word": "them",
+            "startMs": 147838,
+            "endMs": 147965
+          },
+          {
+            "word": "Replication",
+            "startMs": 148312,
+            "endMs": 148828
+          },
+          {
+            "word": "across",
+            "startMs": 148839,
+            "endMs": 149218
+          },
+          {
+            "word": "this",
+            "startMs": 149228,
+            "endMs": 149376
+          },
+          {
+            "word": "suite",
+            "startMs": 149386,
+            "endMs": 149691
+          },
+          {
+            "word": "showed",
+            "startMs": 149882,
+            "endMs": 150092
+          },
+          {
+            "word": "the",
+            "startMs": 150103,
+            "endMs": 150166
+          },
+          {
+            "word": "same",
+            "startMs": 150177,
+            "endMs": 150440
+          },
+          {
+            "word": "scenario",
+            "startMs": 150450,
+            "endMs": 150976
+          },
+          {
+            "word": "changing",
+            "startMs": 151071,
+            "endMs": 151461
+          },
+          {
+            "word": "grade",
+            "startMs": 151472,
+            "endMs": 151808
+          },
+          {
+            "word": "from",
+            "startMs": 151820,
+            "endMs": 152019
+          },
+          {
+            "word": "one",
+            "startMs": 152030,
+            "endMs": 152283
+          },
+          {
+            "word": "run",
+            "startMs": 152293,
+            "endMs": 152493
+          },
+          {
+            "word": "to",
+            "startMs": 152504,
+            "endMs": 152588
+          },
+          {
+            "word": "the",
+            "startMs": 152598,
+            "endMs": 152662
+          },
+          {
+            "word": "next",
+            "startMs": 152672,
+            "endMs": 153115
+          },
+          {
+            "word": "for",
+            "startMs": 153336,
+            "endMs": 153451
+          },
+          {
+            "word": "no",
+            "startMs": 153462,
+            "endMs": 153652
+          },
+          {
+            "word": "reason",
+            "startMs": 153662,
+            "endMs": 153904
+          },
+          {
+            "word": "at",
+            "startMs": 153914,
+            "endMs": 153999
+          },
+          {
+            "word": "all",
+            "startMs": 154009,
+            "endMs": 154231
+          },
+          {
+            "word": "So",
+            "startMs": 154579,
+            "endMs": 154705
+          },
+          {
+            "word": "we",
+            "startMs": 154715,
+            "endMs": 154852
+          },
+          {
+            "word": "average",
+            "startMs": 154863,
+            "endMs": 155158
+          },
+          {
+            "word": "across",
+            "startMs": 155168,
+            "endMs": 155557
+          },
+          {
+            "word": "three",
+            "startMs": 155568,
+            "endMs": 155810
+          },
+          {
+            "word": "runs",
+            "startMs": 155821,
+            "endMs": 156232
+          },
+          {
+            "word": "and",
+            "startMs": 156422,
+            "endMs": 156527
+          },
+          {
+            "word": "a",
+            "startMs": 156537,
+            "endMs": 156579
+          },
+          {
+            "word": "real",
+            "startMs": 156590,
+            "endMs": 156832
+          },
+          {
+            "word": "change",
+            "startMs": 156842,
+            "endMs": 157180
+          },
+          {
+            "word": "is",
+            "startMs": 157190,
+            "endMs": 157264
+          },
+          {
+            "word": "separated",
+            "startMs": 157274,
+            "endMs": 157738
+          },
+          {
+            "word": "from",
+            "startMs": 157748,
+            "endMs": 157864
+          },
+          {
+            "word": "the",
+            "startMs": 157875,
+            "endMs": 157927
+          },
+          {
+            "word": "model's",
+            "startMs": 157938,
+            "endMs": 158317
+          },
+          {
+            "word": "own",
+            "startMs": 158327,
+            "endMs": 158496
+          },
+          {
+            "word": "noise",
+            "startMs": 158506,
+            "endMs": 158928
+          }
+        ]
+      }
+    },
+    {
+      "id": "dimensions",
+      "title": "Not one question — a dozen",
+      "startMs": 160344,
+      "endMs": 197160,
+      "plannedDurationMs": 34795,
+      "voiceoverText": "And it is not grading one thing. Did the interview reach the right category — sixty-seven scenarios on that. Did it ask for the context it needed — fifty more, drawn from real customer queries. Does it repeat itself or leak across products — forty-five. And the sharpest one: does it refuse what it should, without refusing what it shouldn't? A customer opens about Outlook, then asks how to order a pizza. The interview must notice and clarify scope. But it must not refuse ordinary requests that merely sound odd — someone overriding an inbox rule. Across all hundred and sixty-two scenarios: seven must refuse, a hundred and thirty-four must not, twenty-one where the question does not apply, and zero counted in both.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "Breadth",
+        "title": "Several different questions, graded separately",
+        "subtitle": "Including the two that pull in opposite directions.",
+        "note": "**Three dimension rows build down the left**, each with its scenario count, as the narration names them. Then the two-turn exchange builds on the right — the customer's opening, the off-topic follow-up, and the interview stopping to ask. Then the false-positive guard line appears beneath it. Finally four counters land across the bottom. The counters are labelled in words, never by colour. The guard example is authored BDD test data, not real customer text.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "d1",
+            "label": "reached the right category — 67",
+            "x": 30,
+            "y": 25,
+            "w": 540,
+            "h": 72
+          },
+          {
+            "id": "d2",
+            "label": "asked for the context it needed — 50",
+            "x": 30,
+            "y": 110,
+            "w": 540,
+            "h": 72
+          },
+          {
+            "id": "d3",
+            "label": "repeats itself, or leaks across products — 45",
+            "x": 30,
+            "y": 195,
+            "w": 540,
+            "h": 72
+          },
+          {
+            "id": "e1",
+            "label": "customer: “issue with outlook”",
+            "x": 620,
+            "y": 25,
+            "w": 680,
+            "h": 72
+          },
+          {
+            "id": "e2",
+            "label": "customer: “how can I order pizza”",
+            "x": 620,
+            "y": 110,
+            "w": 680,
+            "h": 72
+          },
+          {
+            "id": "e3",
+            "label": "interview: clarifies scope",
+            "x": 620,
+            "y": 195,
+            "w": 680,
+            "h": 72
+          },
+          {
+            "id": "g1",
+            "label": "“How do I override the rule in my inbox…” — NOT refused",
+            "x": 400,
+            "y": 290,
+            "w": 900,
+            "h": 72
+          },
+          {
+            "id": "k1",
+            "label": "7 must refuse",
+            "x": 80,
+            "y": 400,
+            "w": 330,
+            "h": 76
+          },
+          {
+            "id": "k2",
+            "label": "134 must not refuse",
+            "x": 430,
+            "y": 400,
+            "w": 360,
+            "h": 76
+          },
+          {
+            "id": "k3",
+            "label": "21 not applicable",
+            "x": 810,
+            "y": 400,
+            "w": 320,
+            "h": 76
+          },
+          {
+            "id": "k4",
+            "label": "0 counted in both",
+            "x": 1150,
+            "y": 400,
+            "w": 330,
+            "h": 76
+          }
+        ],
+        "edges": [
+          {
+            "from": "e1",
+            "to": "e2"
+          },
+          {
+            "from": "e2",
+            "to": "e3"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "dimensions-t0",
+          "atMs": 2738,
+          "semanticClass": "list",
+          "target": "dimensions-node-d1",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t1",
+          "atMs": 6390,
+          "semanticClass": "list",
+          "target": "dimensions-node-d2",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t2",
+          "atMs": 10953,
+          "semanticClass": "list",
+          "target": "dimensions-node-d3",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t3",
+          "atMs": 18712,
+          "semanticClass": "quote",
+          "target": "dimensions-node-e1",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t4",
+          "atMs": 20537,
+          "semanticClass": "quote",
+          "target": "dimensions-node-e2",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-e0",
+          "atMs": 20757,
+          "semanticClass": "chart",
+          "target": "dimensions-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "id": "dimensions-t5",
+          "atMs": 22820,
+          "semanticClass": "card",
+          "target": "dimensions-node-e3",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-e1",
+          "atMs": 23040,
+          "semanticClass": "chart",
+          "target": "dimensions-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "id": "dimensions-t6",
+          "atMs": 27839,
+          "semanticClass": "quote",
+          "target": "dimensions-node-g1",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t7",
+          "atMs": 32860,
+          "semanticClass": "stat",
+          "target": "dimensions-node-k1",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t8",
+          "atMs": 34456,
+          "semanticClass": "stat",
+          "target": "dimensions-node-k2",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t9",
+          "atMs": 36181,
+          "semanticClass": "stat",
+          "target": "dimensions-node-k3",
+          "action": "revealNode"
+        },
+        {
+          "id": "dimensions-t10",
+          "atMs": 36181,
+          "semanticClass": "stat",
+          "target": "dimensions-node-k4",
+          "action": "revealNode"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-suite",
+          "type": "direct",
+          "provenanceIds": [
+            "interview-eval/scenarios.json:67 l5-descent + 50 golden-disambiguation + 45 review-repro, counted"
+          ]
+        },
+        {
+          "claimId": "c-pizza",
+          "type": "direct",
+          "provenanceIds": [
+            "out_of_scope_interview.feature:An off-topic follow-up is questioned, not routed",
+            "out_of_scope_interview.feature:Ordinary support text is never refused"
+          ]
+        },
+        {
+          "claimId": "c-polarity",
+          "type": "direct",
+          "provenanceIds": [
+            "contextlayer-eval/README.md:Validated across all 162 scenarios — 0 conflicts, 7 / 134 / 21"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_05.mp3",
+        "durationMs": 36816,
+        "headMs": 84,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "And",
+            "startMs": 160428,
+            "endMs": 160480
+          },
+          {
+            "word": "it",
+            "startMs": 160491,
+            "endMs": 160544
+          },
+          {
+            "word": "is",
+            "startMs": 160554,
+            "endMs": 160639
+          },
+          {
+            "word": "not",
+            "startMs": 160649,
+            "endMs": 160838
+          },
+          {
+            "word": "grading",
+            "startMs": 160848,
+            "endMs": 161122
+          },
+          {
+            "word": "one",
+            "startMs": 161132,
+            "endMs": 161269
+          },
+          {
+            "word": "thing",
+            "startMs": 161279,
+            "endMs": 161562
+          },
+          {
+            "word": "Did",
+            "startMs": 161909,
+            "endMs": 162014
+          },
+          {
+            "word": "the",
+            "startMs": 162025,
+            "endMs": 162099
+          },
+          {
+            "word": "interview",
+            "startMs": 162109,
+            "endMs": 162540
+          },
+          {
+            "word": "reach",
+            "startMs": 162551,
+            "endMs": 162844
+          },
+          {
+            "word": "the",
+            "startMs": 162856,
+            "endMs": 162949
+          },
+          {
+            "word": "right",
+            "startMs": 162960,
+            "endMs": 163202
+          },
+          {
+            "word": "category",
+            "startMs": 163213,
+            "endMs": 163717
+          },
+          {
+            "word": "sixty-seven",
+            "startMs": 163938,
+            "endMs": 164568
+          },
+          {
+            "word": "scenarios",
+            "startMs": 164578,
+            "endMs": 165093
+          },
+          {
+            "word": "on",
+            "startMs": 165104,
+            "endMs": 165230
+          },
+          {
+            "word": "that",
+            "startMs": 165240,
+            "endMs": 165503
+          },
+          {
+            "word": "Did",
+            "startMs": 165849,
+            "endMs": 165934
+          },
+          {
+            "word": "it",
+            "startMs": 165944,
+            "endMs": 166018
+          },
+          {
+            "word": "ask",
+            "startMs": 166028,
+            "endMs": 166270
+          },
+          {
+            "word": "for",
+            "startMs": 166280,
+            "endMs": 166354
+          },
+          {
+            "word": "the",
+            "startMs": 166365,
+            "endMs": 166427
+          },
+          {
+            "word": "context",
+            "startMs": 166438,
+            "endMs": 166900
+          },
+          {
+            "word": "it",
+            "startMs": 166910,
+            "endMs": 166984
+          },
+          {
+            "word": "needed",
+            "startMs": 166995,
+            "endMs": 167300
+          },
+          {
+            "word": "fifty",
+            "startMs": 167562,
+            "endMs": 167846
+          },
+          {
+            "word": "more",
+            "startMs": 167856,
+            "endMs": 168161
+          },
+          {
+            "word": "drawn",
+            "startMs": 168403,
+            "endMs": 168687
+          },
+          {
+            "word": "from",
+            "startMs": 168697,
+            "endMs": 168886
+          },
+          {
+            "word": "real",
+            "startMs": 168896,
+            "endMs": 169086
+          },
+          {
+            "word": "customer",
+            "startMs": 169096,
+            "endMs": 169432
+          },
+          {
+            "word": "queries",
+            "startMs": 169443,
+            "endMs": 169936
+          },
+          {
+            "word": "Does",
+            "startMs": 170283,
+            "endMs": 170399
+          },
+          {
+            "word": "it",
+            "startMs": 170409,
+            "endMs": 170483
+          },
+          {
+            "word": "repeat",
+            "startMs": 170494,
+            "endMs": 170778
+          },
+          {
+            "word": "itself",
+            "startMs": 170788,
+            "endMs": 171218
+          },
+          {
+            "word": "or",
+            "startMs": 171344,
+            "endMs": 171449
+          },
+          {
+            "word": "leak",
+            "startMs": 171460,
+            "endMs": 171639
+          },
+          {
+            "word": "across",
+            "startMs": 171649,
+            "endMs": 171975
+          },
+          {
+            "word": "products",
+            "startMs": 171986,
+            "endMs": 172490
+          },
+          {
+            "word": "forty-five",
+            "startMs": 172679,
+            "endMs": 173226
+          },
+          {
+            "word": "And",
+            "startMs": 173573,
+            "endMs": 173625
+          },
+          {
+            "word": "the",
+            "startMs": 173635,
+            "endMs": 173688
+          },
+          {
+            "word": "sharpest",
+            "startMs": 173699,
+            "endMs": 174087
+          },
+          {
+            "word": "one",
+            "startMs": 174097,
+            "endMs": 174276
+          },
+          {
+            "word": "does",
+            "startMs": 174601,
+            "endMs": 174717
+          },
+          {
+            "word": "it",
+            "startMs": 174727,
+            "endMs": 174812
+          },
+          {
+            "word": "refuse",
+            "startMs": 174822,
+            "endMs": 175317
+          },
+          {
+            "word": "what",
+            "startMs": 175327,
+            "endMs": 175443
+          },
+          {
+            "word": "it",
+            "startMs": 175453,
+            "endMs": 175526
+          },
+          {
+            "word": "should",
+            "startMs": 175537,
+            "endMs": 175926
+          },
+          {
+            "word": "without",
+            "startMs": 176168,
+            "endMs": 176451
+          },
+          {
+            "word": "refusing",
+            "startMs": 176461,
+            "endMs": 176882
+          },
+          {
+            "word": "what",
+            "startMs": 176892,
+            "endMs": 176987
+          },
+          {
+            "word": "it",
+            "startMs": 176997,
+            "endMs": 177049
+          },
+          {
+            "word": "shouldn't",
+            "startMs": 177060,
+            "endMs": 177418
+          },
+          {
+            "word": "A",
+            "startMs": 177765,
+            "endMs": 177817
+          },
+          {
+            "word": "customer",
+            "startMs": 177827,
+            "endMs": 178238
+          },
+          {
+            "word": "opens",
+            "startMs": 178248,
+            "endMs": 178490
+          },
+          {
+            "word": "about",
+            "startMs": 178500,
+            "endMs": 178710
+          },
+          {
+            "word": "Outlook",
+            "startMs": 178721,
+            "endMs": 179088
+          },
+          {
+            "word": "then",
+            "startMs": 179320,
+            "endMs": 179498
+          },
+          {
+            "word": "asks",
+            "startMs": 179551,
+            "endMs": 179813
+          },
+          {
+            "word": "how",
+            "startMs": 179824,
+            "endMs": 179918
+          },
+          {
+            "word": "to",
+            "startMs": 179929,
+            "endMs": 180003
+          },
+          {
+            "word": "order",
+            "startMs": 180013,
+            "endMs": 180223
+          },
+          {
+            "word": "a",
+            "startMs": 180234,
+            "endMs": 180275
+          },
+          {
+            "word": "pizza",
+            "startMs": 180286,
+            "endMs": 180696
+          },
+          {
+            "word": "The",
+            "startMs": 181053,
+            "endMs": 181126
+          },
+          {
+            "word": "interview",
+            "startMs": 181137,
+            "endMs": 181452
+          },
+          {
+            "word": "must",
+            "startMs": 181463,
+            "endMs": 181704
+          },
+          {
+            "word": "notice",
+            "startMs": 181715,
+            "endMs": 182104
+          },
+          {
+            "word": "and",
+            "startMs": 182114,
+            "endMs": 182209
+          },
+          {
+            "word": "clarify",
+            "startMs": 182220,
+            "endMs": 182639
+          },
+          {
+            "word": "scope",
+            "startMs": 182650,
+            "endMs": 183008
+          },
+          {
+            "word": "But",
+            "startMs": 183365,
+            "endMs": 183427
+          },
+          {
+            "word": "it",
+            "startMs": 183438,
+            "endMs": 183501
+          },
+          {
+            "word": "must",
+            "startMs": 183512,
+            "endMs": 183700
+          },
+          {
+            "word": "not",
+            "startMs": 183712,
+            "endMs": 183900
+          },
+          {
+            "word": "refuse",
+            "startMs": 183911,
+            "endMs": 184331
+          },
+          {
+            "word": "ordinary",
+            "startMs": 184342,
+            "endMs": 184783
+          },
+          {
+            "word": "requests",
+            "startMs": 184794,
+            "endMs": 185266
+          },
+          {
+            "word": "that",
+            "startMs": 185277,
+            "endMs": 185444
+          },
+          {
+            "word": "merely",
+            "startMs": 185456,
+            "endMs": 185781
+          },
+          {
+            "word": "sound",
+            "startMs": 185791,
+            "endMs": 186107
+          },
+          {
+            "word": "odd",
+            "startMs": 186117,
+            "endMs": 186422
+          },
+          {
+            "word": "someone",
+            "startMs": 186695,
+            "endMs": 186990
+          },
+          {
+            "word": "overriding",
+            "startMs": 187000,
+            "endMs": 187473
+          },
+          {
+            "word": "an",
+            "startMs": 187483,
+            "endMs": 187546
+          },
+          {
+            "word": "inbox",
+            "startMs": 187557,
+            "endMs": 187977
+          },
+          {
+            "word": "rule",
+            "startMs": 187987,
+            "endMs": 188229
+          },
+          {
+            "word": "Across",
+            "startMs": 188576,
+            "endMs": 188922
+          },
+          {
+            "word": "all",
+            "startMs": 189007,
+            "endMs": 189238
+          },
+          {
+            "word": "hundred",
+            "startMs": 189248,
+            "endMs": 189479
+          },
+          {
+            "word": "and",
+            "startMs": 189490,
+            "endMs": 189553
+          },
+          {
+            "word": "sixty-two",
+            "startMs": 189564,
+            "endMs": 190078
+          },
+          {
+            "word": "scenarios",
+            "startMs": 190089,
+            "endMs": 190730
+          },
+          {
+            "word": "seven",
+            "startMs": 190919,
+            "endMs": 191234
+          },
+          {
+            "word": "must",
+            "startMs": 191244,
+            "endMs": 191476
+          },
+          {
+            "word": "refuse",
+            "startMs": 191486,
+            "endMs": 191969
+          },
+          {
+            "word": "a",
+            "startMs": 192148,
+            "endMs": 192180
+          },
+          {
+            "word": "hundred",
+            "startMs": 192190,
+            "endMs": 192453
+          },
+          {
+            "word": "and",
+            "startMs": 192464,
+            "endMs": 192537
+          },
+          {
+            "word": "thirty-four",
+            "startMs": 192547,
+            "endMs": 193052
+          },
+          {
+            "word": "must",
+            "startMs": 193063,
+            "endMs": 193315
+          },
+          {
+            "word": "not",
+            "startMs": 193325,
+            "endMs": 193598
+          },
+          {
+            "word": "twenty-one",
+            "startMs": 193924,
+            "endMs": 194334
+          },
+          {
+            "word": "where",
+            "startMs": 194344,
+            "endMs": 194449
+          },
+          {
+            "word": "the",
+            "startMs": 194460,
+            "endMs": 194522
+          },
+          {
+            "word": "question",
+            "startMs": 194533,
+            "endMs": 194943
+          },
+          {
+            "word": "does",
+            "startMs": 194954,
+            "endMs": 195090
+          },
+          {
+            "word": "not",
+            "startMs": 195100,
+            "endMs": 195300
+          },
+          {
+            "word": "apply",
+            "startMs": 195311,
+            "endMs": 195742
+          },
+          {
+            "word": "and",
+            "startMs": 195983,
+            "endMs": 196088
+          },
+          {
+            "word": "zero",
+            "startMs": 196099,
+            "endMs": 196404
+          },
+          {
+            "word": "counted",
+            "startMs": 196414,
+            "endMs": 196708
+          },
+          {
+            "word": "in",
+            "startMs": 196719,
+            "endMs": 196792
+          },
+          {
+            "word": "both",
+            "startMs": 196803,
+            "endMs": 197160
+          }
+        ]
+      }
+    },
+    {
+      "id": "twotier",
+      "title": "Fast and shallow, slow and deep — we run both",
+      "startMs": 198576,
+      "endMs": 218928,
+      "plannedDurationMs": 19187,
+      "voiceoverText": "Two harnesses, and the lanes on screen fill against the same clock. The upper lane, labelled U I, clears thirteen scenarios in three runs each — about three and a half minutes. The lower lane, labelled A P I, clears all hundred and sixty-two in less time than that. So the fast tier is the pull-request gate; the interface harness cannot target a pull-request build at all.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "Two tiers",
+        "title": "The fast tier gates the branch",
+        "subtitle": "Labelled lanes, not two colours.",
+        "note": "**Two labelled lanes fill against a shared clock** — the interface lane slowly, the API lane densely. Each lane carries its own text label, so the comparison never depends on colour, and both labels are spoken. No numeric clock appears on screen: the only time figure shown is the interface lane's '~3.5 min', which the narration states.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "lane_ui",
+            "label": "U I · 13 scenarios × 3 runs · ~3.5 min",
+            "x": 60,
+            "y": 60,
+            "w": 680,
+            "h": 96
+          },
+          {
+            "id": "ui_end",
+            "label": "▶",
+            "x": 1380,
+            "y": 60,
+            "w": 150,
+            "h": 96
+          },
+          {
+            "id": "lane_api",
+            "label": "A P I · 162 scenarios · less time than that",
+            "x": 60,
+            "y": 210,
+            "w": 680,
+            "h": 96
+          },
+          {
+            "id": "api_end",
+            "label": "▶",
+            "x": 1380,
+            "y": 210,
+            "w": 150,
+            "h": 96
+          },
+          {
+            "id": "gate",
+            "label": "the fast tier is the pull-request gate",
+            "x": 420,
+            "y": 380,
+            "w": 760,
+            "h": 90
+          }
+        ],
+        "edges": [
+          {
+            "from": "lane_ui",
+            "to": "ui_end",
+            "id": "uilane"
+          },
+          {
+            "from": "lane_api",
+            "to": "api_end",
+            "id": "apilane"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "twotier-t0",
+          "atMs": 1673,
+          "semanticClass": "label",
+          "target": "twotier-node-lane_ui",
+          "action": "revealNode"
+        },
+        {
+          "id": "twotier-t0b",
+          "atMs": 2390,
+          "semanticClass": "label",
+          "target": "twotier-node-ui_end",
+          "action": "revealNode"
+        },
+        {
+          "id": "twotier-t1",
+          "atMs": 5258,
+          "semanticClass": "chart",
+          "target": "twotier-edge-uilane",
+          "action": "flowEdge",
+          "payload": {
+            "particles": 2
+          }
+        },
+        {
+          "id": "twotier-t2",
+          "atMs": 12188,
+          "semanticClass": "label",
+          "target": "twotier-node-lane_api",
+          "action": "revealNode"
+        },
+        {
+          "id": "twotier-t2b",
+          "atMs": 12904,
+          "semanticClass": "label",
+          "target": "twotier-node-api_end",
+          "action": "revealNode"
+        },
+        {
+          "id": "twotier-t3",
+          "atMs": 13860,
+          "semanticClass": "chart",
+          "target": "twotier-edge-apilane",
+          "action": "flowEdge",
+          "payload": {
+            "particles": 9
+          }
+        },
+        {
+          "id": "twotier-t4",
+          "atMs": 18640,
+          "semanticClass": "card",
+          "target": "twotier-node-gate",
+          "action": "revealNode"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-tiers",
+          "type": "derived",
+          "provenanceIds": [
+            "contextlayer-eval/README.md:Usage — 13-scenario subset, 3 replicates, 4 workers (~3.5 min)",
+            "interview-eval/README.md:Parallelism — 74 s at 10 workers for 75 scenarios, scaled to 162"
+          ]
+        },
+        {
+          "claimId": "c-nopr",
+          "type": "direct",
+          "provenanceIds": [
+            "contextlayer-eval/README.md:What this harness cannot do — evaluate a pull request"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_06.mp3",
+        "durationMs": 20352,
+        "headMs": 96,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "Two",
+            "startMs": 198672,
+            "endMs": 198799
+          },
+          {
+            "word": "harnesses",
+            "startMs": 198809,
+            "endMs": 199348
+          },
+          {
+            "word": "and",
+            "startMs": 199539,
+            "endMs": 199613
+          },
+          {
+            "word": "the",
+            "startMs": 199624,
+            "endMs": 199698
+          },
+          {
+            "word": "lanes",
+            "startMs": 199709,
+            "endMs": 200005
+          },
+          {
+            "word": "on",
+            "startMs": 200016,
+            "endMs": 200110
+          },
+          {
+            "word": "screen",
+            "startMs": 200121,
+            "endMs": 200491
+          },
+          {
+            "word": "fill",
+            "startMs": 200502,
+            "endMs": 200894
+          },
+          {
+            "word": "against",
+            "startMs": 200936,
+            "endMs": 201190
+          },
+          {
+            "word": "the",
+            "startMs": 201200,
+            "endMs": 201275
+          },
+          {
+            "word": "same",
+            "startMs": 201286,
+            "endMs": 201540
+          },
+          {
+            "word": "clock",
+            "startMs": 201550,
+            "endMs": 201974
+          },
+          {
+            "word": "The",
+            "startMs": 202333,
+            "endMs": 202418
+          },
+          {
+            "word": "upper",
+            "startMs": 202429,
+            "endMs": 202630
+          },
+          {
+            "word": "lane",
+            "startMs": 202640,
+            "endMs": 202915
+          },
+          {
+            "word": "labelled",
+            "startMs": 203169,
+            "endMs": 203412
+          },
+          {
+            "word": "U",
+            "startMs": 203423,
+            "endMs": 203572
+          },
+          {
+            "word": "I",
+            "startMs": 203582,
+            "endMs": 203826
+          },
+          {
+            "word": "clears",
+            "startMs": 204027,
+            "endMs": 204344
+          },
+          {
+            "word": "thirteen",
+            "startMs": 204355,
+            "endMs": 204799
+          },
+          {
+            "word": "scenarios",
+            "startMs": 204809,
+            "endMs": 205370
+          },
+          {
+            "word": "in",
+            "startMs": 205381,
+            "endMs": 205497
+          },
+          {
+            "word": "three",
+            "startMs": 205508,
+            "endMs": 205794
+          },
+          {
+            "word": "runs",
+            "startMs": 205805,
+            "endMs": 206091
+          },
+          {
+            "word": "each",
+            "startMs": 206101,
+            "endMs": 206387
+          },
+          {
+            "word": "about",
+            "startMs": 206651,
+            "endMs": 206874
+          },
+          {
+            "word": "three",
+            "startMs": 206884,
+            "endMs": 207318
+          },
+          {
+            "word": "and",
+            "startMs": 207392,
+            "endMs": 207476
+          },
+          {
+            "word": "a",
+            "startMs": 207488,
+            "endMs": 207519
+          },
+          {
+            "word": "half",
+            "startMs": 207530,
+            "endMs": 207773
+          },
+          {
+            "word": "minutes",
+            "startMs": 207784,
+            "endMs": 208207
+          },
+          {
+            "word": "The",
+            "startMs": 208556,
+            "endMs": 208652
+          },
+          {
+            "word": "lower",
+            "startMs": 208662,
+            "endMs": 208885
+          },
+          {
+            "word": "lane",
+            "startMs": 208895,
+            "endMs": 209170
+          },
+          {
+            "word": "labelled",
+            "startMs": 209403,
+            "endMs": 209731
+          },
+          {
+            "word": "A",
+            "startMs": 209858,
+            "endMs": 209953
+          },
+          {
+            "word": "P",
+            "startMs": 209964,
+            "endMs": 210282
+          },
+          {
+            "word": "I",
+            "startMs": 210292,
+            "endMs": 210546
+          },
+          {
+            "word": "clears",
+            "startMs": 210790,
+            "endMs": 211096
+          },
+          {
+            "word": "all",
+            "startMs": 211223,
+            "endMs": 211425
+          },
+          {
+            "word": "hundred",
+            "startMs": 211435,
+            "endMs": 211667
+          },
+          {
+            "word": "and",
+            "startMs": 211679,
+            "endMs": 211742
+          },
+          {
+            "word": "sixty-two",
+            "startMs": 211753,
+            "endMs": 212367
+          },
+          {
+            "word": "in",
+            "startMs": 212536,
+            "endMs": 212684
+          },
+          {
+            "word": "less",
+            "startMs": 212695,
+            "endMs": 212875
+          },
+          {
+            "word": "time",
+            "startMs": 212885,
+            "endMs": 213097
+          },
+          {
+            "word": "than",
+            "startMs": 213107,
+            "endMs": 213213
+          },
+          {
+            "word": "that",
+            "startMs": 213224,
+            "endMs": 213488
+          },
+          {
+            "word": "So",
+            "startMs": 213848,
+            "endMs": 213933
+          },
+          {
+            "word": "the",
+            "startMs": 213943,
+            "endMs": 214018
+          },
+          {
+            "word": "fast",
+            "startMs": 214028,
+            "endMs": 214367
+          },
+          {
+            "word": "tier",
+            "startMs": 214377,
+            "endMs": 214705
+          },
+          {
+            "word": "is",
+            "startMs": 214769,
+            "endMs": 214864
+          },
+          {
+            "word": "the",
+            "startMs": 214875,
+            "endMs": 214959
+          },
+          {
+            "word": "pull-request",
+            "startMs": 214970,
+            "endMs": 215605
+          },
+          {
+            "word": "gate",
+            "startMs": 215616,
+            "endMs": 215859
+          },
+          {
+            "word": "the",
+            "startMs": 216113,
+            "endMs": 216208
+          },
+          {
+            "word": "interface",
+            "startMs": 216219,
+            "endMs": 216653
+          },
+          {
+            "word": "harness",
+            "startMs": 216663,
+            "endMs": 217002
+          },
+          {
+            "word": "cannot",
+            "startMs": 217013,
+            "endMs": 217362
+          },
+          {
+            "word": "target",
+            "startMs": 217372,
+            "endMs": 217690
+          },
+          {
+            "word": "a",
+            "startMs": 217701,
+            "endMs": 217743
+          },
+          {
+            "word": "pull-request",
+            "startMs": 217753,
+            "endMs": 218388
+          },
+          {
+            "word": "build",
+            "startMs": 218399,
+            "endMs": 218600
+          },
+          {
+            "word": "at",
+            "startMs": 218611,
+            "endMs": 218685
+          },
+          {
+            "word": "all",
+            "startMs": 218695,
+            "endMs": 218928
+          }
+        ]
+      }
+    },
+    {
+      "id": "blindspot",
+      "title": "The slow tier sees what the fast tier cannot",
+      "startMs": 220344,
+      "endMs": 241824,
+      "plannedDurationMs": 21478,
+      "voiceoverText": "But the slow tier sees something the fast one is structurally blind to. Watch it drive the real U I, and a stage trace surfaces: running Outlook Q and A agent, agent completed, workflow failed. The interview got the category right, the right agent was picked, and resolution failed anyway. The customer got a canned refusal. The fast tier stops at the category and cannot say any of that. Different data, not just slower data.",
+      "visual": {
+        "mode": "footage",
+        "kicker": "The blind spot",
+        "title": "Correct category, right agent — and resolution failed anyway",
+        "subtitle": "The fast tier stops before this is expressible.",
+        "note": "**APPROVED AT THE GATE (Q2): a 5-8s screen capture of the interface harness driving the real Playground**, then the stage trace. Split out of `twotier` because write-build-html resolves `footage` per SEGMENT, not as a mid-segment overlay — a 7-segment cut could not carry it. The clip has NOT been captured. Until one is registered `approvedForUse: true` + `redaction: \"clear\"` in `evidence-pack/footage/clips.json`, this segment degrades safely to the four-node stage-trace diagram below, which is why the nodes are authored. Redaction is a light pass — the scenarios are authored test data with no personal information — but account chrome and any hostname must still be off-screen.",
+        "footage": {
+          "clipId": "ui-harness-headed",
+          "fit": "contain",
+          "startAtMs": 0
+        },
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "t0",
+            "label": "correct category — intact",
+            "x": 400,
+            "y": 20,
+            "w": 800,
+            "h": 80
+          },
+          {
+            "id": "t1",
+            "label": "Running: Outlook QnA Agent",
+            "x": 230,
+            "y": 130,
+            "w": 450,
+            "h": 80
+          },
+          {
+            "id": "t2",
+            "label": "agent completed",
+            "x": 720,
+            "y": 130,
+            "w": 320,
+            "h": 80
+          },
+          {
+            "id": "t3",
+            "label": "Workflow failed",
+            "x": 1080,
+            "y": 130,
+            "w": 320,
+            "h": 80
+          },
+          {
+            "id": "t4",
+            "label": "customer sees a canned refusal",
+            "x": 400,
+            "y": 245,
+            "w": 800,
+            "h": 80
+          },
+          {
+            "id": "t5",
+            "label": "the fast tier stops at the category",
+            "x": 400,
+            "y": 360,
+            "w": 800,
+            "h": 80
+          }
+        ],
+        "edges": [
+          {
+            "from": "t1",
+            "to": "t2"
+          },
+          {
+            "from": "t2",
+            "to": "t3"
+          },
+          {
+            "from": "t3",
+            "to": "t4"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "blindspot-t0",
+          "atMs": 5302,
+          "semanticClass": "card",
+          "target": "blindspot-node-t0",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-t1",
+          "atMs": 6875,
+          "semanticClass": "code",
+          "target": "blindspot-node-t1",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-t2",
+          "atMs": 8249,
+          "semanticClass": "code",
+          "target": "blindspot-node-t2",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-e0",
+          "atMs": 8449,
+          "semanticClass": "chart",
+          "target": "blindspot-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "id": "blindspot-t3",
+          "atMs": 9427,
+          "semanticClass": "code",
+          "target": "blindspot-node-t3",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-e1",
+          "atMs": 9627,
+          "semanticClass": "chart",
+          "target": "blindspot-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "id": "blindspot-t4",
+          "atMs": 14533,
+          "semanticClass": "card",
+          "target": "blindspot-node-t4",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-e2",
+          "atMs": 14733,
+          "semanticClass": "chart",
+          "target": "blindspot-edge-2",
+          "action": "drawEdge"
+        },
+        {
+          "id": "blindspot-t5",
+          "atMs": 17088,
+          "semanticClass": "card",
+          "target": "blindspot-node-t5",
+          "action": "revealNode"
+        },
+        {
+          "id": "blindspot-t6",
+          "atMs": 18266,
+          "semanticClass": "body",
+          "target": "blindspot-node-t3",
+          "action": "spotlight"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-uiblind",
+          "type": "direct",
+          "provenanceIds": [
+            "contextlayer-eval/README.md:Why a second harness — Running: Outlook QnA Agent -> completed -> Workflow failed, reproducing 3/3"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_07.mp3",
+        "durationMs": 21480,
+        "headMs": 84,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "But",
+            "startMs": 220428,
+            "endMs": 220492
+          },
+          {
+            "word": "the",
+            "startMs": 220502,
+            "endMs": 220566
+          },
+          {
+            "word": "slow",
+            "startMs": 220576,
+            "endMs": 220841
+          },
+          {
+            "word": "tier",
+            "startMs": 220851,
+            "endMs": 221084
+          },
+          {
+            "word": "sees",
+            "startMs": 221095,
+            "endMs": 221349
+          },
+          {
+            "word": "something",
+            "startMs": 221359,
+            "endMs": 221612
+          },
+          {
+            "word": "the",
+            "startMs": 221623,
+            "endMs": 221687
+          },
+          {
+            "word": "fast",
+            "startMs": 221697,
+            "endMs": 222024
+          },
+          {
+            "word": "one",
+            "startMs": 222036,
+            "endMs": 222278
+          },
+          {
+            "word": "is",
+            "startMs": 222384,
+            "endMs": 222469
+          },
+          {
+            "word": "structurally",
+            "startMs": 222479,
+            "endMs": 222955
+          },
+          {
+            "word": "blind",
+            "startMs": 222965,
+            "endMs": 223283
+          },
+          {
+            "word": "to",
+            "startMs": 223293,
+            "endMs": 223462
+          },
+          {
+            "word": "Watch",
+            "startMs": 223822,
+            "endMs": 224012
+          },
+          {
+            "word": "it",
+            "startMs": 224023,
+            "endMs": 224087
+          },
+          {
+            "word": "drive",
+            "startMs": 224097,
+            "endMs": 224361
+          },
+          {
+            "word": "the",
+            "startMs": 224372,
+            "endMs": 224435
+          },
+          {
+            "word": "real",
+            "startMs": 224446,
+            "endMs": 224667
+          },
+          {
+            "word": "U",
+            "startMs": 224678,
+            "endMs": 224826
+          },
+          {
+            "word": "I",
+            "startMs": 224836,
+            "endMs": 225059
+          },
+          {
+            "word": "and",
+            "startMs": 225260,
+            "endMs": 225365
+          },
+          {
+            "word": "a",
+            "startMs": 225375,
+            "endMs": 225418
+          },
+          {
+            "word": "stage",
+            "startMs": 225428,
+            "endMs": 225777
+          },
+          {
+            "word": "trace",
+            "startMs": 225788,
+            "endMs": 226031
+          },
+          {
+            "word": "surfaces",
+            "startMs": 226042,
+            "endMs": 226570
+          },
+          {
+            "word": "running",
+            "startMs": 226813,
+            "endMs": 227024
+          },
+          {
+            "word": "Outlook",
+            "startMs": 227036,
+            "endMs": 227352
+          },
+          {
+            "word": "Q",
+            "startMs": 227363,
+            "endMs": 227711
+          },
+          {
+            "word": "and",
+            "startMs": 227775,
+            "endMs": 227912
+          },
+          {
+            "word": "A",
+            "startMs": 227923,
+            "endMs": 228050
+          },
+          {
+            "word": "agent",
+            "startMs": 228060,
+            "endMs": 228410
+          },
+          {
+            "word": "agent",
+            "startMs": 228737,
+            "endMs": 228948
+          },
+          {
+            "word": "completed",
+            "startMs": 228960,
+            "endMs": 229382
+          },
+          {
+            "word": "workflow",
+            "startMs": 229647,
+            "endMs": 229984
+          },
+          {
+            "word": "failed",
+            "startMs": 229995,
+            "endMs": 230355
+          },
+          {
+            "word": "The",
+            "startMs": 230714,
+            "endMs": 230767
+          },
+          {
+            "word": "interview",
+            "startMs": 230777,
+            "endMs": 231126
+          },
+          {
+            "word": "got",
+            "startMs": 231136,
+            "endMs": 231284
+          },
+          {
+            "word": "the",
+            "startMs": 231296,
+            "endMs": 231358
+          },
+          {
+            "word": "category",
+            "startMs": 231370,
+            "endMs": 231856
+          },
+          {
+            "word": "right",
+            "startMs": 231866,
+            "endMs": 232162
+          },
+          {
+            "word": "the",
+            "startMs": 232395,
+            "endMs": 232469
+          },
+          {
+            "word": "right",
+            "startMs": 232479,
+            "endMs": 232680
+          },
+          {
+            "word": "agent",
+            "startMs": 232691,
+            "endMs": 232945
+          },
+          {
+            "word": "was",
+            "startMs": 232955,
+            "endMs": 233103
+          },
+          {
+            "word": "picked",
+            "startMs": 233113,
+            "endMs": 233483
+          },
+          {
+            "word": "and",
+            "startMs": 233737,
+            "endMs": 233821
+          },
+          {
+            "word": "resolution",
+            "startMs": 233833,
+            "endMs": 234329
+          },
+          {
+            "word": "failed",
+            "startMs": 234340,
+            "endMs": 234635
+          },
+          {
+            "word": "anyway",
+            "startMs": 234646,
+            "endMs": 235016
+          },
+          {
+            "word": "The",
+            "startMs": 235376,
+            "endMs": 235418
+          },
+          {
+            "word": "customer",
+            "startMs": 235429,
+            "endMs": 235788
+          },
+          {
+            "word": "got",
+            "startMs": 235798,
+            "endMs": 235925
+          },
+          {
+            "word": "a",
+            "startMs": 235936,
+            "endMs": 235968
+          },
+          {
+            "word": "canned",
+            "startMs": 235978,
+            "endMs": 236210
+          },
+          {
+            "word": "refusal",
+            "startMs": 236221,
+            "endMs": 236676
+          },
+          {
+            "word": "The",
+            "startMs": 237035,
+            "endMs": 237078
+          },
+          {
+            "word": "fast",
+            "startMs": 237088,
+            "endMs": 237426
+          },
+          {
+            "word": "tier",
+            "startMs": 237437,
+            "endMs": 237595
+          },
+          {
+            "word": "stops",
+            "startMs": 237606,
+            "endMs": 237902
+          },
+          {
+            "word": "at",
+            "startMs": 237913,
+            "endMs": 237966
+          },
+          {
+            "word": "the",
+            "startMs": 237976,
+            "endMs": 238040
+          },
+          {
+            "word": "category",
+            "startMs": 238050,
+            "endMs": 238579
+          },
+          {
+            "word": "and",
+            "startMs": 238768,
+            "endMs": 238854
+          },
+          {
+            "word": "cannot",
+            "startMs": 238864,
+            "endMs": 239118
+          },
+          {
+            "word": "say",
+            "startMs": 239128,
+            "endMs": 239329
+          },
+          {
+            "word": "any",
+            "startMs": 239340,
+            "endMs": 239508
+          },
+          {
+            "word": "of",
+            "startMs": 239519,
+            "endMs": 239572
+          },
+          {
+            "word": "that",
+            "startMs": 239582,
+            "endMs": 239836
+          },
+          {
+            "word": "Different",
+            "startMs": 240185,
+            "endMs": 240396
+          },
+          {
+            "word": "data",
+            "startMs": 240407,
+            "endMs": 240671
+          },
+          {
+            "word": "not",
+            "startMs": 240936,
+            "endMs": 241073
+          },
+          {
+            "word": "just",
+            "startMs": 241084,
+            "endMs": 241253
+          },
+          {
+            "word": "slower",
+            "startMs": 241264,
+            "endMs": 241518
+          },
+          {
+            "word": "data",
+            "startMs": 241528,
+            "endMs": 241824
+          }
+        ]
+      }
+    },
+    {
+      "id": "loop",
+      "title": "Measure the branch, not the merge — and read what the number hides",
+      "startMs": 243240,
+      "endMs": 285072,
+      "plannedDurationMs": 42096,
+      "voiceoverText": "We deploy the pull-request branch and point the harness at it. Three runs. Then the same suite against main, and we diff the two. On the loop diagram, the marker reading open the pull request attaches on the way out — the comparison exists before the review does. On one real change: right support area, twenty-seven of sixty-seven up to thirty-five. Came back with nothing, twenty-one point three down to eleven point seven. Twenty-six fewer failed assertions. Three runs per arm. Then the panel below the totals slides in. A prompt-injection probe that exists to be refused had been refused three times out of three. On the new build, once. A build that routes better and behaves worse — so it gets its own line, not a place in the totals. That is what we bought. Run it against your branch before you open the pull request.",
+      "visual": {
+        "mode": "diagram",
+        "kicker": "The payoff",
+        "title": "The comparison exists before the pull request does",
+        "subtitle": "And the number it flags separately is the one that matters.",
+        "note": "**The loop builds first** — deploy the branch, run the suite three times, read the delta, fix, re-run — and completes one revolution. The 'open the pull request' marker attaches on the way OUT of the loop, not before it. Then three metric rows animate up in sequence and the replicate count lands. Beat. Then the separately-flagged panel slides in on the right and the highlight moves there and stays through the closing line. NO END CARD. IMPORTANT: these rows are rendered natively, NOT cropped from report-1602086-vs-1601897.html — that file names a deployment endpoint and carries pull-request ids in its heading, both of which are hard no-gos.",
+        "viewBox": "0 0 1600 520",
+        "nodes": [
+          {
+            "id": "n1",
+            "label": "deploy the branch",
+            "x": 60,
+            "y": 25,
+            "w": 270,
+            "h": 78
+          },
+          {
+            "id": "n2",
+            "label": "run the suite × 3",
+            "x": 390,
+            "y": 25,
+            "w": 270,
+            "h": 78
+          },
+          {
+            "id": "n3",
+            "label": "read the delta",
+            "x": 720,
+            "y": 25,
+            "w": 270,
+            "h": 78
+          },
+          {
+            "id": "n4",
+            "label": "fix",
+            "x": 1050,
+            "y": 25,
+            "w": 200,
+            "h": 78
+          },
+          {
+            "id": "n5",
+            "label": "re-run",
+            "x": 1050,
+            "y": 120,
+            "w": 200,
+            "h": 78
+          },
+          {
+            "id": "marker",
+            "label": "→ open the pull request",
+            "x": 700,
+            "y": 120,
+            "w": 290,
+            "h": 78
+          },
+          {
+            "id": "m1",
+            "label": "right support area   27.0 → 35.0  of 67",
+            "x": 60,
+            "y": 240,
+            "w": 620,
+            "h": 66
+          },
+          {
+            "id": "m2",
+            "label": "came back with nothing   21.3 → 11.7  of 67",
+            "x": 60,
+            "y": 315,
+            "w": 620,
+            "h": 66
+          },
+          {
+            "id": "m3",
+            "label": "assertions failed   − 26.0",
+            "x": 60,
+            "y": 390,
+            "w": 620,
+            "h": 66
+          },
+          {
+            "id": "m4",
+            "label": "3 runs per arm",
+            "x": 60,
+            "y": 455,
+            "w": 620,
+            "h": 58
+          },
+          {
+            "id": "c1",
+            "label": "FLAGGED SEPARATELY — not folded into the totals",
+            "x": 760,
+            "y": 260,
+            "w": 780,
+            "h": 66
+          },
+          {
+            "id": "c2",
+            "label": "prompt-injection probe (must be refused)   3 of 3  →  1 of 3",
+            "x": 760,
+            "y": 340,
+            "w": 780,
+            "h": 90
+          }
+        ],
+        "edges": [
+          {
+            "from": "n1",
+            "to": "n2"
+          },
+          {
+            "from": "n2",
+            "to": "n3"
+          },
+          {
+            "from": "n3",
+            "to": "n4"
+          },
+          {
+            "from": "n4",
+            "to": "n5"
+          },
+          {
+            "from": "n5",
+            "to": "n2"
+          },
+          {
+            "from": "n3",
+            "to": "marker"
+          }
+        ]
+      },
+      "triggers": [
+        {
+          "id": "loop-t0",
+          "atMs": 576,
+          "semanticClass": "card",
+          "target": "loop-node-n1",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-t1",
+          "atMs": 3074,
+          "semanticClass": "card",
+          "target": "loop-node-n2",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-e0",
+          "atMs": 3271,
+          "semanticClass": "chart",
+          "target": "loop-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-t2",
+          "atMs": 4419,
+          "semanticClass": "card",
+          "target": "loop-node-n3",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-e1",
+          "atMs": 4617,
+          "semanticClass": "chart",
+          "target": "loop-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-t3",
+          "atMs": 5572,
+          "semanticClass": "card",
+          "target": "loop-node-n4",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-e2",
+          "atMs": 5769,
+          "semanticClass": "chart",
+          "target": "loop-edge-2",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-t4",
+          "atMs": 6341,
+          "semanticClass": "card",
+          "target": "loop-node-n5",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-e3",
+          "atMs": 6538,
+          "semanticClass": "chart",
+          "target": "loop-edge-3",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-e4",
+          "atMs": 6538,
+          "semanticClass": "chart",
+          "target": "loop-edge-4",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-t5",
+          "atMs": 7302,
+          "semanticClass": "chart",
+          "target": "loop-node-n2",
+          "action": "pulsePath",
+          "payload": {
+            "chain": [
+              "loop-node-n1",
+              "loop-node-n2",
+              "loop-node-n3",
+              "loop-node-n4",
+              "loop-node-n5"
+            ]
+          }
+        },
+        {
+          "id": "loop-t6",
+          "atMs": 9031,
+          "semanticClass": "label",
+          "target": "loop-node-marker",
+          "action": "revealNode"
+        },
+        {
+          "id": "loop-e5",
+          "atMs": 9228,
+          "semanticClass": "chart",
+          "target": "loop-edge-5",
+          "action": "drawEdge"
+        },
+        {
+          "id": "loop-t7",
+          "atMs": 14410,
+          "semanticClass": "stat",
+          "target": "loop-node-m1",
+          "action": "rise"
+        },
+        {
+          "id": "loop-t8",
+          "atMs": 18637,
+          "semanticClass": "stat",
+          "target": "loop-node-m2",
+          "action": "rise"
+        },
+        {
+          "id": "loop-t9",
+          "atMs": 22479,
+          "semanticClass": "stat",
+          "target": "loop-node-m3",
+          "action": "rise"
+        },
+        {
+          "id": "loop-t10",
+          "atMs": 24401,
+          "semanticClass": "label",
+          "target": "loop-node-m4",
+          "action": "rise"
+        },
+        {
+          "id": "loop-t11",
+          "atMs": 26515,
+          "semanticClass": "card",
+          "target": "loop-node-c1",
+          "action": "left"
+        },
+        {
+          "id": "loop-t12",
+          "atMs": 28052,
+          "semanticClass": "stat",
+          "target": "loop-node-c2",
+          "action": "left"
+        },
+        {
+          "id": "loop-t13",
+          "atMs": 33239,
+          "semanticClass": "body",
+          "target": "loop-node-c2",
+          "action": "spotlight"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "c-win",
+          "type": "direct",
+          "provenanceIds": [
+            "report-1602086-vs-1601897.html:L3 or better 27.0->35.0/67 (ranges 24-29 vs 34-37)",
+            "report-1602086-vs-1601897.html:Returned NO path 21.3->11.7/67 (ranges 19-24 vs 11-12)",
+            "report-1602086-vs-1601897.html:Assertions failed delta -26.0",
+            "report-1602086-vs-1601897.html:3 runs per arm"
+          ]
+        },
+        {
+          "claimId": "c-caveat",
+          "type": "direct",
+          "provenanceIds": [
+            "report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -> 1/3"
+          ]
+        }
+      ],
+      "audio": {
+        "file": "segment_08.mp3",
+        "durationMs": 41832,
+        "headMs": 84,
+        "tailMs": 0,
+        "words": [
+          {
+            "word": "We",
+            "startMs": 243324,
+            "endMs": 243397
+          },
+          {
+            "word": "deploy",
+            "startMs": 243408,
+            "endMs": 243691
+          },
+          {
+            "word": "the",
+            "startMs": 243701,
+            "endMs": 243796
+          },
+          {
+            "word": "pull-request",
+            "startMs": 243807,
+            "endMs": 244373
+          },
+          {
+            "word": "branch",
+            "startMs": 244384,
+            "endMs": 244751
+          },
+          {
+            "word": "and",
+            "startMs": 244867,
+            "endMs": 244951
+          },
+          {
+            "word": "point",
+            "startMs": 244961,
+            "endMs": 245192
+          },
+          {
+            "word": "the",
+            "startMs": 245203,
+            "endMs": 245255
+          },
+          {
+            "word": "harness",
+            "startMs": 245265,
+            "endMs": 245580
+          },
+          {
+            "word": "at",
+            "startMs": 245590,
+            "endMs": 245716
+          },
+          {
+            "word": "it",
+            "startMs": 245727,
+            "endMs": 245853
+          },
+          {
+            "word": "Three",
+            "startMs": 246210,
+            "endMs": 246346
+          },
+          {
+            "word": "runs",
+            "startMs": 246357,
+            "endMs": 246745
+          },
+          {
+            "word": "Then",
+            "startMs": 247102,
+            "endMs": 247175
+          },
+          {
+            "word": "the",
+            "startMs": 247186,
+            "endMs": 247249
+          },
+          {
+            "word": "same",
+            "startMs": 247260,
+            "endMs": 247491
+          },
+          {
+            "word": "suite",
+            "startMs": 247501,
+            "endMs": 247784
+          },
+          {
+            "word": "against",
+            "startMs": 247795,
+            "endMs": 248068
+          },
+          {
+            "word": "main",
+            "startMs": 248078,
+            "endMs": 248361
+          },
+          {
+            "word": "and",
+            "startMs": 248624,
+            "endMs": 248686
+          },
+          {
+            "word": "we",
+            "startMs": 248698,
+            "endMs": 248824
+          },
+          {
+            "word": "diff",
+            "startMs": 248834,
+            "endMs": 249002
+          },
+          {
+            "word": "the",
+            "startMs": 249012,
+            "endMs": 249085
+          },
+          {
+            "word": "two",
+            "startMs": 249097,
+            "endMs": 249358
+          },
+          {
+            "word": "On",
+            "startMs": 249705,
+            "endMs": 249779
+          },
+          {
+            "word": "the",
+            "startMs": 249789,
+            "endMs": 249862
+          },
+          {
+            "word": "loop",
+            "startMs": 249872,
+            "endMs": 250072
+          },
+          {
+            "word": "diagram",
+            "startMs": 250083,
+            "endMs": 250576
+          },
+          {
+            "word": "the",
+            "startMs": 250806,
+            "endMs": 250870
+          },
+          {
+            "word": "marker",
+            "startMs": 250880,
+            "endMs": 251205
+          },
+          {
+            "word": "reading",
+            "startMs": 251216,
+            "endMs": 251509
+          },
+          {
+            "word": "open",
+            "startMs": 251521,
+            "endMs": 251772
+          },
+          {
+            "word": "the",
+            "startMs": 251783,
+            "endMs": 251887
+          },
+          {
+            "word": "pull",
+            "startMs": 251898,
+            "endMs": 252203
+          },
+          {
+            "word": "request",
+            "startMs": 252213,
+            "endMs": 252612
+          },
+          {
+            "word": "attaches",
+            "startMs": 252623,
+            "endMs": 253137
+          },
+          {
+            "word": "on",
+            "startMs": 253147,
+            "endMs": 253231
+          },
+          {
+            "word": "the",
+            "startMs": 253241,
+            "endMs": 253305
+          },
+          {
+            "word": "way",
+            "startMs": 253315,
+            "endMs": 253504
+          },
+          {
+            "word": "out",
+            "startMs": 253514,
+            "endMs": 253745
+          },
+          {
+            "word": "the",
+            "startMs": 253987,
+            "endMs": 254071
+          },
+          {
+            "word": "comparison",
+            "startMs": 254081,
+            "endMs": 254584
+          },
+          {
+            "word": "exists",
+            "startMs": 254595,
+            "endMs": 255026
+          },
+          {
+            "word": "before",
+            "startMs": 255036,
+            "endMs": 255340
+          },
+          {
+            "word": "the",
+            "startMs": 255351,
+            "endMs": 255414
+          },
+          {
+            "word": "review",
+            "startMs": 255425,
+            "endMs": 255676
+          },
+          {
+            "word": "does",
+            "startMs": 255687,
+            "endMs": 256064
+          },
+          {
+            "word": "On",
+            "startMs": 256411,
+            "endMs": 256568
+          },
+          {
+            "word": "one",
+            "startMs": 256579,
+            "endMs": 256799
+          },
+          {
+            "word": "real",
+            "startMs": 256810,
+            "endMs": 257009
+          },
+          {
+            "word": "change",
+            "startMs": 257019,
+            "endMs": 257471
+          },
+          {
+            "word": "right",
+            "startMs": 257796,
+            "endMs": 257943
+          },
+          {
+            "word": "support",
+            "startMs": 257953,
+            "endMs": 258279
+          },
+          {
+            "word": "area",
+            "startMs": 258290,
+            "endMs": 258594
+          },
+          {
+            "word": "twenty-seven",
+            "startMs": 258898,
+            "endMs": 259370
+          },
+          {
+            "word": "of",
+            "startMs": 259381,
+            "endMs": 259455
+          },
+          {
+            "word": "sixty-seven",
+            "startMs": 259465,
+            "endMs": 260094
+          },
+          {
+            "word": "up",
+            "startMs": 260179,
+            "endMs": 260346
+          },
+          {
+            "word": "to",
+            "startMs": 260420,
+            "endMs": 260503
+          },
+          {
+            "word": "thirty-five",
+            "startMs": 260514,
+            "endMs": 261144
+          },
+          {
+            "word": "Came",
+            "startMs": 261491,
+            "endMs": 261658
+          },
+          {
+            "word": "back",
+            "startMs": 261669,
+            "endMs": 261910
+          },
+          {
+            "word": "with",
+            "startMs": 261921,
+            "endMs": 262047
+          },
+          {
+            "word": "nothing",
+            "startMs": 262057,
+            "endMs": 262382
+          },
+          {
+            "word": "twenty-one",
+            "startMs": 262634,
+            "endMs": 262950
+          },
+          {
+            "word": "point",
+            "startMs": 262960,
+            "endMs": 263190
+          },
+          {
+            "word": "three",
+            "startMs": 263201,
+            "endMs": 263400
+          },
+          {
+            "word": "down",
+            "startMs": 263411,
+            "endMs": 263704
+          },
+          {
+            "word": "to",
+            "startMs": 263715,
+            "endMs": 263841
+          },
+          {
+            "word": "eleven",
+            "startMs": 263851,
+            "endMs": 264145
+          },
+          {
+            "word": "point",
+            "startMs": 264155,
+            "endMs": 264366
+          },
+          {
+            "word": "seven",
+            "startMs": 264376,
+            "endMs": 264659
+          },
+          {
+            "word": "Twenty-six",
+            "startMs": 265006,
+            "endMs": 265521
+          },
+          {
+            "word": "fewer",
+            "startMs": 265531,
+            "endMs": 265909
+          },
+          {
+            "word": "failed",
+            "startMs": 265919,
+            "endMs": 266170
+          },
+          {
+            "word": "assertions",
+            "startMs": 266182,
+            "endMs": 266769
+          },
+          {
+            "word": "Three",
+            "startMs": 267137,
+            "endMs": 267273
+          },
+          {
+            "word": "runs",
+            "startMs": 267284,
+            "endMs": 267462
+          },
+          {
+            "word": "per",
+            "startMs": 267472,
+            "endMs": 267608
+          },
+          {
+            "word": "arm",
+            "startMs": 267619,
+            "endMs": 267840
+          },
+          {
+            "word": "Then",
+            "startMs": 268185,
+            "endMs": 268259
+          },
+          {
+            "word": "the",
+            "startMs": 268270,
+            "endMs": 268333
+          },
+          {
+            "word": "panel",
+            "startMs": 268344,
+            "endMs": 268658
+          },
+          {
+            "word": "below",
+            "startMs": 268669,
+            "endMs": 268983
+          },
+          {
+            "word": "the",
+            "startMs": 268994,
+            "endMs": 269078
+          },
+          {
+            "word": "totals",
+            "startMs": 269088,
+            "endMs": 269498
+          },
+          {
+            "word": "slides",
+            "startMs": 269508,
+            "endMs": 269886
+          },
+          {
+            "word": "in",
+            "startMs": 269896,
+            "endMs": 270075
+          },
+          {
+            "word": "A",
+            "startMs": 270421,
+            "endMs": 270463
+          },
+          {
+            "word": "prompt-injection",
+            "startMs": 270473,
+            "endMs": 271135
+          },
+          {
+            "word": "probe",
+            "startMs": 271145,
+            "endMs": 271397
+          },
+          {
+            "word": "that",
+            "startMs": 271407,
+            "endMs": 271502
+          },
+          {
+            "word": "exists",
+            "startMs": 271513,
+            "endMs": 271870
+          },
+          {
+            "word": "to",
+            "startMs": 271880,
+            "endMs": 271964
+          },
+          {
+            "word": "be",
+            "startMs": 271975,
+            "endMs": 272089
+          },
+          {
+            "word": "refused",
+            "startMs": 272101,
+            "endMs": 272562
+          },
+          {
+            "word": "had",
+            "startMs": 272667,
+            "endMs": 272772
+          },
+          {
+            "word": "been",
+            "startMs": 272783,
+            "endMs": 272919
+          },
+          {
+            "word": "refused",
+            "startMs": 272930,
+            "endMs": 273391
+          },
+          {
+            "word": "three",
+            "startMs": 273465,
+            "endMs": 273748
+          },
+          {
+            "word": "times",
+            "startMs": 273759,
+            "endMs": 274084
+          },
+          {
+            "word": "out",
+            "startMs": 274094,
+            "endMs": 274199
+          },
+          {
+            "word": "of",
+            "startMs": 274210,
+            "endMs": 274273
+          },
+          {
+            "word": "three",
+            "startMs": 274284,
+            "endMs": 274598
+          },
+          {
+            "word": "On",
+            "startMs": 274945,
+            "endMs": 275018
+          },
+          {
+            "word": "the",
+            "startMs": 275028,
+            "endMs": 275081
+          },
+          {
+            "word": "new",
+            "startMs": 275092,
+            "endMs": 275228
+          },
+          {
+            "word": "build",
+            "startMs": 275238,
+            "endMs": 275542
+          },
+          {
+            "word": "once",
+            "startMs": 275836,
+            "endMs": 276225
+          },
+          {
+            "word": "A",
+            "startMs": 276571,
+            "endMs": 276634
+          },
+          {
+            "word": "build",
+            "startMs": 276644,
+            "endMs": 276917
+          },
+          {
+            "word": "that",
+            "startMs": 276928,
+            "endMs": 277086
+          },
+          {
+            "word": "routes",
+            "startMs": 277096,
+            "endMs": 277359
+          },
+          {
+            "word": "better",
+            "startMs": 277369,
+            "endMs": 277757
+          },
+          {
+            "word": "and",
+            "startMs": 277830,
+            "endMs": 277894
+          },
+          {
+            "word": "behaves",
+            "startMs": 277904,
+            "endMs": 278260
+          },
+          {
+            "word": "worse",
+            "startMs": 278271,
+            "endMs": 278691
+          },
+          {
+            "word": "so",
+            "startMs": 278922,
+            "endMs": 279058
+          },
+          {
+            "word": "it",
+            "startMs": 279069,
+            "endMs": 279132
+          },
+          {
+            "word": "gets",
+            "startMs": 279142,
+            "endMs": 279300
+          },
+          {
+            "word": "its",
+            "startMs": 279310,
+            "endMs": 279426
+          },
+          {
+            "word": "own",
+            "startMs": 279436,
+            "endMs": 279583
+          },
+          {
+            "word": "line",
+            "startMs": 279593,
+            "endMs": 279887
+          },
+          {
+            "word": "not",
+            "startMs": 280203,
+            "endMs": 280296
+          },
+          {
+            "word": "a",
+            "startMs": 280308,
+            "endMs": 280339
+          },
+          {
+            "word": "place",
+            "startMs": 280349,
+            "endMs": 280591
+          },
+          {
+            "word": "in",
+            "startMs": 280601,
+            "endMs": 280653
+          },
+          {
+            "word": "the",
+            "startMs": 280664,
+            "endMs": 280727
+          },
+          {
+            "word": "totals",
+            "startMs": 280738,
+            "endMs": 281178
+          },
+          {
+            "word": "That",
+            "startMs": 281535,
+            "endMs": 281598
+          },
+          {
+            "word": "is",
+            "startMs": 281608,
+            "endMs": 281682
+          },
+          {
+            "word": "what",
+            "startMs": 281693,
+            "endMs": 281787
+          },
+          {
+            "word": "we",
+            "startMs": 281798,
+            "endMs": 281892
+          },
+          {
+            "word": "bought",
+            "startMs": 281902,
+            "endMs": 282228
+          },
+          {
+            "word": "Run",
+            "startMs": 282574,
+            "endMs": 282710
+          },
+          {
+            "word": "it",
+            "startMs": 282722,
+            "endMs": 282784
+          },
+          {
+            "word": "against",
+            "startMs": 282794,
+            "endMs": 283078
+          },
+          {
+            "word": "your",
+            "startMs": 283088,
+            "endMs": 283193
+          },
+          {
+            "word": "branch",
+            "startMs": 283204,
+            "endMs": 283540
+          },
+          {
+            "word": "before",
+            "startMs": 283550,
+            "endMs": 283865
+          },
+          {
+            "word": "you",
+            "startMs": 283875,
+            "endMs": 284012
+          },
+          {
+            "word": "open",
+            "startMs": 284022,
+            "endMs": 284243
+          },
+          {
+            "word": "the",
+            "startMs": 284253,
+            "endMs": 284326
+          },
+          {
+            "word": "pull",
+            "startMs": 284338,
+            "endMs": 284557
+          },
+          {
+            "word": "request",
+            "startMs": 284568,
+            "endMs": 285072
+          }
+        ]
+      }
+    }
+  ],
+  "leadInMs": 1920
+}

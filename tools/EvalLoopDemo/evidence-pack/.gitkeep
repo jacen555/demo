@@ -1,0 +1,2 @@
+# Required by write-build-html.mjs, which resolves evidence-pack/ unconditionally at module
+# load even when a project references no evidence images. This project references none.

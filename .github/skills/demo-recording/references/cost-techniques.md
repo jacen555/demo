@@ -212,6 +212,26 @@ than only its first seconds. That promotes bounded probing from a guess to a
 defensible technique, and is worth knowing before anyone discards a probe result
 as unrepresentative.
 
+Three rules make it trustworthy, each learned by getting it wrong:
+
+1. **Time-box, don't frame-box.** Truncating `durationMs` to bound a run confines
+   capture to the *first* N frames, which on most videos is the static opening —
+   the cheapest content there is. Let it run and count frames against the clock.
+2. **Discard the warm-up.** Take two samples and measure the delta, so browser
+   launch and first paint do not land in the rate.
+3. **Turn dedup off for a rate measurement** (`SIZZLECRAFT_NO_DEDUP=1`). Held frames
+   are nearly free, so a run including the static lead-in reports a rate the body
+   never achieves. Measured both ways on the same 4K content: **1.09 fps** with
+   dedup on and the lead-in included, **1.00 fps** with it off.
+
+### Headless-Chrome GPU flags are a non-lever without a GPU `[MEASURED]`
+
+Recorded so it is not re-investigated. With no GPU, Chrome falls back to
+**SwiftShader** — software rasterisation on the same cores capture already
+saturates, which is also why raising the worker cap does nothing (below). GPU
+flags change neither. Capture speed there is a CPU and frame-encoding problem,
+which is why frame format is the lever that actually moved.
+
 ### Raising the worker cap does not help `[MEASURED]`
 
 `frame-capture.mjs` caps at **6 workers above 1080p** versus `cores - 1` below it,

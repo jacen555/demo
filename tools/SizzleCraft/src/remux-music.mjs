@@ -28,6 +28,24 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, runCli, requireExistingFile, resolveOutput, parseBoundedNumber } from './cli-support.mjs';
 import { videoStreamVerdict } from './remux-verify.mjs';
+import { probeDurationSeconds } from './audio-probe.mjs';
+
+// Video length from frame-capture's own frame formula, so this agrees with the encoded
+// stream exactly rather than depending on a container probe. Falls back to the timeline
+// duration when timing.json is unreadable — the loop only needs a target to cover.
+function resolveVideoSeconds(projectDir, values) {
+  if (values['video-seconds']) {
+    return parseBoundedNumber(values['video-seconds'], { name: '--video-seconds', min: 0.1, max: 36000 });
+  }
+  const timingPath = path.join(projectDir, 'timing.json');
+  const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+  const fps = Number(timing.project?.fps || 30);
+  const durationMs = Number(timing.durationMs);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new CliError(`invalid timing.durationMs (${durationMs}) in ${timingPath}`);
+  }
+  return Math.ceil(((durationMs + 1000) / 1000) * fps) / fps;
+}
 
 // Linear volume multipliers. 8.0 is about +18 dB — far past anything useful here, and
 // well short of a value that would produce a nonsense filter graph.
@@ -50,6 +68,9 @@ Options
   --music <file>        music bed (default: music.wav)
   --voice-gain <n>      linear voice gain, ${GAIN_MIN}..${GAIN_MAX} (default: 1.14)
   --music-gain <n>      linear music gain, ${GAIN_MIN}..${GAIN_MAX} (default: 1.50)
+  --crossfade <sec>     crossfade at each loop wrap, 0.1..30 (default: 3)
+  --no-loop             refuse rather than loop a music bed shorter than the video
+  --video-seconds <n>   override the video length used to size the loop
   --project <dir>       project root; no path may escape it (default: current directory)
   --ffmpeg <path>       ffmpeg binary (default: read from ffmpeg-path.txt in the project)
   --apply               actually remux. Without it nothing is written.
@@ -59,7 +80,7 @@ Options
 Exit codes: 0 success/plan · 1 ffmpeg failed or the video stream was NOT preserved · 2 bad usage
 `.trimStart();
 
-await runCli(() => {
+await runCli(async () => {
   let values;
   try {
     ({ values } = parseArgs({
@@ -70,6 +91,8 @@ await runCli(() => {
         music: { type: 'string' },
         'voice-gain': { type: 'string' },
         'music-gain': { type: 'string' },
+        crossfade: { type: 'string' },
+        'no-loop': { type: 'boolean' },
         project: { type: 'string' },
         ffmpeg: { type: 'string' },
         apply: { type: 'boolean', default: false },
@@ -112,16 +135,59 @@ await runCli(() => {
     name: '--music-gain', min: GAIN_MIN, max: GAIN_MAX,
   });
 
+  // SHORT MUSIC IS LOOPED, NOT TRUNCATED (bug-ledger entry 15).
+  // `amix duration=longest` describes how long the OUTPUT runs — it takes the longest
+  // input. It does not loop or pad a short one, so a bed that ends early simply stops
+  // contributing and the rest of the video plays with no bed at all. Nothing reports it.
+  // Every earlier video was immune only because make-music.mjs generates the bed TO
+  // LENGTH; the first file-sourced track hit this immediately, leaving 92 s bedless.
+  const musicSeconds = await probeDurationSeconds(music);
+  const videoSeconds = resolveVideoSeconds(projectDir, values);
+  const short = musicSeconds < videoSeconds;
+  const xfade = parseBoundedNumber(values.crossfade ?? '3', {
+    name: '--crossfade', min: 0.1, max: 30,
+  });
+
+  if (short && values['no-loop'] === true) {
+    throw new CliError(
+      `music is ${musicSeconds.toFixed(2)}s but the video is ${videoSeconds.toFixed(2)}s — ` +
+      `the last ${(videoSeconds - musicSeconds).toFixed(2)}s would have NO bed at all. ` +
+      `Drop --no-loop to loop it with a crossfade, or supply a longer track.`);
+  }
+  if (short && musicSeconds <= xfade) {
+    throw new CliError(
+      `music (${musicSeconds.toFixed(2)}s) must be longer than the ${xfade}s crossfade to loop`);
+  }
+
+  // n copies crossfaded end-to-end yield n*D - (n-1)*X seconds. Smallest covering n.
+  const copies = short ? Math.max(2, Math.ceil((videoSeconds - xfade) / (musicSeconds - xfade))) : 1;
+
+  let musicFilter;
+  if (copies === 1) {
+    musicFilter = `[2:a]atrim=0:${videoSeconds},asetpts=N/SR/TB,volume=${musicGain}[mu];`;
+  } else {
+    let prev = '2:a';
+    musicFilter = '';
+    for (let i = 1; i < copies; i += 1) {
+      const label = `ml${i}`;
+      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${xfade}:c1=tri:c2=tri[${label}];`;
+      prev = label;
+    }
+    musicFilter += `[${prev}]atrim=0:${videoSeconds},asetpts=N/SR/TB,volume=${musicGain}[mu];`;
+  }
+
   const filter =
     `[1:a]volume=${voiceGain},pan=stereo|c0=c0|c1=c0[vo];` +
-    `[2:a]volume=${musicGain}[mu];` +
+    musicFilter +
     `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
     `[mx]alimiter=limit=0.891:level=disabled[out]`;
+
+  const musicInputs = Array.from({ length: copies }, () => ['-i', music]).flat();
 
   const FF = resolveFfmpeg(projectDir, values.ffmpeg);
   const ffArgs = [
     values.replace ? '-y' : '-n', '-hide_banner', '-loglevel', 'error',
-    '-i', video, '-i', voice, '-i', music,
+    '-i', video, '-i', voice, ...musicInputs,
     '-filter_complex', filter,
     '-map', '0:v', '-c:v', 'copy',
     '-map', '[out]', '-c:a', 'aac', '-b:a', '160k', '-ar', '24000', '-ac', '2',
