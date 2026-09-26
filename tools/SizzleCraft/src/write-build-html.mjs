@@ -435,8 +435,15 @@ function codeBlock(seg) {
       throw new CliError(`segment "${seg.id}": visual.jsonFile is not valid JSON (${v.jsonFile})`);
     }
     if (v.pick) {
+      // `k in data` walks the prototype chain and does not check the container's type, so
+      // `__proto__` resolves without existing in the JSON, and descending into a STRING
+      // throws a native error that can quote that string — before the no-go guard has run.
+      // Own properties of objects and arrays only, and a content-free refusal.
       for (const k of String(v.pick).split('.')) {
-        if (data == null || !(k in data)) throw new CliError(`segment "${seg.id}": visual.pick path "${v.pick}" not found in ${v.jsonFile}`);
+        const isContainer = data !== null && typeof data === 'object';
+        if (!isContainer || !Object.prototype.hasOwnProperty.call(data, k)) {
+          throw new CliError(`segment "${seg.id}": visual.pick path "${v.pick}" does not resolve in ${v.jsonFile} (stopped at "${k}")`);
+        }
         data = data[k];
       }
     }
@@ -446,18 +453,52 @@ function codeBlock(seg) {
   // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
   // This is the only mode that renders data nobody wrote for the screen, so the patterns
   // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
-  const patterns = timing.project?.noGoPatterns || [];
+  //
+  // The refusal names the PATTERN and the JSON PATH, never the matched value. An earlier
+  // version printed 80 characters of it "so the author could see what tripped" — which
+  // moves the very content the pattern exists to contain into the console and the render
+  // log. A guard that discloses what it refuses has done the damage it was preventing.
+  // The author can look up the path in their own source; the log should not carry it.
+  const patterns = timing.project?.noGoPatterns;
+  if (!Array.isArray(patterns)) {
+    // ABSENT IS NOT PERMISSION. Defaulting to "no patterns" makes the frame-boundary
+    // guarantee inert exactly where it matters — a project that never configured it is
+    // the one least likely to have reviewed its source data. Opting out has to be said
+    // out loud, so an empty array is accepted and a missing key is refused.
+    throw new CliError(
+      `segment "${seg.id}": code mode requires timing.project.noGoPatterns.\n` +
+      'This mode renders source data straight into the frame, and unlike authored copy it\n' +
+      'gets no human review, so the no-go list is mandatory rather than optional.\n' +
+      'Set it to [] to state explicitly that this object needs no redaction.');
+  }
   if (patterns.length) {
-    const flat = JSON.stringify(data);
+    const hits = [];
     for (const src of patterns) {
-      const re = new RegExp(src, 'i');
-      const hit = flat.match(re);
-      if (hit) {
-        throw new CliError(
-          `segment "${seg.id}": code mode refused — the JSON matches no-go pattern /${src}/i ` +
-          `at ${JSON.stringify(hit[0]).slice(0, 80)}.\n` +
-          'Redact the source object or narrow the pick; do not render it and rely on it being small on screen.');
-      }
+      let re;
+      try { re = new RegExp(src, 'i'); }
+      catch { throw new CliError(`timing.project.noGoPatterns contains an invalid regular expression: ${JSON.stringify(src)}`); }
+      // Walk values rather than the serialised blob, so a hit can be reported by path.
+      const walk = (val, at) => {
+        if (typeof val === 'string' || typeof val === 'number') {
+          if (re.test(String(val))) hits.push({ src, at: at || '(root)' });
+        } else if (Array.isArray(val)) {
+          val.forEach((v, i) => walk(v, `${at}[${i}]`));
+        } else if (val && typeof val === 'object') {
+          for (const k of Object.keys(val)) {
+            if (re.test(k)) hits.push({ src, at: at ? `${at}.${k}` : k });
+            walk(val[k], at ? `${at}.${k}` : k);
+          }
+        }
+      };
+      walk(data, '');
+    }
+    if (hits.length) {
+      throw new CliError(
+        `segment "${seg.id}": code mode refused — ${hits.length} no-go match(es).\n` +
+        hits.slice(0, 10).map(h => `  /${h.src}/i matched at ${h.at}`).join('\n') +
+        (hits.length > 10 ? `\n  …and ${hits.length - 10} more` : '') +
+        '\n\nThe matched values are deliberately not printed. Redact the source object or\n' +
+        'narrow visual.pick; do not render it and rely on it being small on screen.');
     }
   }
 

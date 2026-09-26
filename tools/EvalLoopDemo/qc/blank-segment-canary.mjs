@@ -59,9 +59,19 @@ if (!Number.isInteger(samples) || samples < 1 || samples > 20) {
   console.error(`error: --samples must be an integer 1..20, got ${values.samples}`);
   process.exit(2);
 }
+// Confine both reads. A planted link named timing.json or frames/ would otherwise have this
+// script parse and hash files outside the project, and the parser error quotes what it read.
 for (const [label, p] of [['timing.json', path.join(dir, 'timing.json')], ['frames directory', framesDir]]) {
-  if (!fs.existsSync(p)) {
+  let real;
+  try { real = fs.realpathSync(p); }
+  catch {
     console.error(`error: ${label} not found at ${p}`);
+    process.exit(2);
+  }
+  const root = fs.realpathSync(dir);
+  const rel = path.relative(root, real);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    console.error(`error: ${label} resolves outside the project root once links are followed — refusing`);
     process.exit(2);
   }
 }
@@ -129,11 +139,47 @@ for (const s of segs) {
 }
 
 if (staticSegs.length > 0) {
-  console.log(`\nINFO: identical at every sampled point — ${staticSegs.join(', ')}`);
-  console.log('      Expected for a static card; investigate if it should be animating.');
+  // A SEGMENT THAT NEVER MOVES WHILE ITS TRIGGERS FIRE IS A FAILURE, NOT A NOTE.
+  //
+  // The cross-segment check compares WHOLE frames, and every segment carries a distinct
+  // title — so hiding only the body still produces frames that differ from every other
+  // segment and the collision alarm stays silent. That is the exact failure this script
+  // exists to catch, reachable through `code` mode, which was added after it was written.
+  //
+  // Scheduled triggers are the discriminator: a static title card legitimately never
+  // moves, but a segment with content triggers spread across its window and zero pixel
+  // change has had those triggers resolve against something invisible.
+  const contentless = [];
+  for (const id of staticSegs) {
+    const s = segs.find(x => x.id === id);
+    const trig = (s?.triggers ?? []).filter(t => t.atMs > 0);
+    if (trig.length >= 2) contentless.push({ id, count: trig.length });
+  }
+  const benign = staticSegs.filter(id => !contentless.some(c => c.id === id));
+
+  if (benign.length) {
+    console.log(`\nINFO: identical at every sampled point — ${benign.join(', ')}`);
+    console.log('      No content triggers scheduled, so a static card is expected here.');
+  }
+  if (contentless.length) {
+    for (const c of contentless) {
+      collisions.push({
+        a: { segId: c.id, atMs: segs.find(x => x.id === c.id).startMs, frame: 0 },
+        b: { segId: c.id, atMs: segs.find(x => x.id === c.id).endMs, frame: 0 },
+        reason: `${c.count} content triggers fired but nothing on screen changed`,
+      });
+    }
+  }
 }
 
-if (missing > 0) console.log(`\nWARNING: ${missing} sample(s) had no frame on disk — capture may be incomplete.`);
+// AN INCOMPLETE RUN CANNOT CERTIFY ANYTHING. Missing frames used to be a warning followed
+// by exit 0, so a capture that died halfway reported "no two segments render identically"
+// — true, and meaningless, because most of them were never compared.
+if (missing > 0) {
+  console.error(`\nFAILED: ${missing} sample(s) had no frame on disk — the capture is incomplete,`);
+  console.error('so this run proves nothing about the segments it could not read.');
+  process.exit(1);
+}
 
 // DEAD AIR. A separate question from "did it render": a segment can render perfectly and
 // still sit motionless for most of its narration, which reads as a stalled video. Measured
@@ -170,13 +216,25 @@ if (collisions.length === 0) {
   process.exit(0);
 }
 
-console.error(`\nFAILED: ${collisions.length} cross-segment frame collision(s) — at least one segment is not rendering.\n`);
+console.error(`\nFAILED: ${collisions.length} finding(s) — at least one segment is not rendering.\n`);
 for (const c of collisions) {
+  if (c.reason) {
+    console.error(`  "${c.b.segId}" never changed between ${ts(c.a.atMs)} and ${ts(c.b.atMs)}`);
+    console.error(`  — ${c.reason}\n`);
+    continue;
+  }
   console.error(`  "${c.b.segId}" at ${ts(c.b.atMs)} (frame ${c.b.frame}) is byte-identical to`);
   console.error(`  "${c.a.segId}" at ${ts(c.a.atMs)} (frame ${c.a.frame})\n`);
 }
-console.error('Two different segments cannot legitimately produce the same pixels. The usual cause');
-console.error('is an element that never became visible: a trigger whose target resolves and animates');
-console.error('happily against a hidden ancestor reports success and renders nothing.');
-console.error(`Open ${path.basename(framesDir)}/frame_${String(collisions[0].b.frame).padStart(5, '0')} to see what was actually captured.`);
+const crossSegment = collisions.filter(c => !c.reason);
+if (crossSegment.length) {
+  console.error('Two different segments cannot legitimately produce the same pixels. The usual cause');
+  console.error('is an element that never became visible: a trigger whose target resolves and animates');
+  console.error('happily against a hidden ancestor reports success and renders nothing.');
+  console.error(`Open ${path.basename(framesDir)}/frame_${String(crossSegment[0].b.frame).padStart(5, '0')} to see what was actually captured.`);
+} else {
+  console.error('A segment whose triggers all fired while nothing changed on screen has had those');
+  console.error('triggers resolve against something invisible. Note that a distinct title keeps the');
+  console.error('cross-segment check quiet, so a hidden BODY only shows up as this.');
+}
 process.exit(1);

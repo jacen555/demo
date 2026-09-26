@@ -87,13 +87,15 @@ describe('write-build-html code mode', () => {
     assertions: ['l5Exact', 'slotAbsent:scope/confirm'],
   };
 
-  const codeProject = (t, { highlights, json = OBJ, extra = {}, noGoPatterns } = {}) => {
+  const codeProject = (t, { highlights, json = OBJ, extra = {}, noGoPatterns, omitNoGo = false } = {}) => {
     const seg = {
       id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
       visual: { mode: 'code', title: 'One scenario', json, ...(highlights ? { highlights } : {}), ...extra },
     };
     const timing = JSON.parse(timingFixture([seg]));
-    if (noGoPatterns) timing.project.noGoPatterns = noGoPatterns;
+    // code mode requires the key to be present; `[]` is the explicit opt-out. Tests that
+    // are not about redaction supply it so they exercise what they actually name.
+    if (!omitNoGo) timing.project.noGoPatterns = noGoPatterns ?? [];
     // gsap is resolved from the PROJECT, not the engine — a local-first render refuses a
     // CDN. Without this stub every case below exits non-zero on the missing dependency,
     // which silently turns the "must refuse" tests into false passes.
@@ -155,8 +157,59 @@ describe('write-build-html code mode', () => {
     const r = build(dir);
 
     assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /no-go pattern/, 'and name the pattern that matched');
+    assert.match(r.all, /no-go match/, 'and name the pattern that matched');
     assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  // A GUARD MUST NOT DISCLOSE WHAT IT REFUSES. An earlier version printed 80 characters of
+  // the matched value "so the author could see what tripped", which moves the very content
+  // the pattern exists to contain into the console and the render log.
+  test('codeMode_noGoRefusal_namesThePathButNeverTheMatchedValue', (t) => {
+    const SECRET = 'https://sentinel-host-9f2c.example.com/api';
+    const dir = codeProject(t, {
+      json: { ...OBJ, endpoint: SECRET },
+      noGoPatterns: ['https?://'],
+    });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /endpoint/, 'the JSON path is what the author needs, and it is not sensitive');
+    assert.ok(!r.all.includes('sentinel-host-9f2c'), 'the matched value must never be echoed');
+    assert.ok(!r.all.includes(SECRET), 'nor any part of it');
+  });
+
+  // ABSENT IS NOT PERMISSION. Defaulting a missing list to "no patterns" made the
+  // frame-boundary guarantee inert in exactly the project least likely to have reviewed
+  // its source data — which is how the real consumer shipped with it switched off while
+  // every test passed on its own fixture.
+  test('codeMode_noGoPatternsMissingEntirely_refusesRatherThanAllowingEverything', (t) => {
+    const dir = codeProject(t, { omitNoGo: true });   // no noGoPatterns key at all
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a missing no-go list must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /requires timing\.project\.noGoPatterns/);
+    assert.match(r.all, /\[\]/, 'and say how to opt out explicitly');
+  });
+
+  test('codeMode_noGoPatternsEmptyArray_isAnExplicitOptOutAndBuilds', (t) => {
+    const dir = codeProject(t, { noGoPatterns: [] });
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, `an explicit empty list must be accepted, got ${r.code}\n${r.all}`);
+  });
+
+  // `k in data` walks the prototype chain, so `__proto__` resolves without existing in the
+  // JSON; and descending into a string throws a native error that can quote that string,
+  // before the no-go guard has run.
+  test('codeMode_pickTraversingPrototypeOrString_refusesWithoutEchoingContent', (t) => {
+    for (const pick of ['__proto__', 'opening.length']) {
+      const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'data.json', pick } });
+      fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ opening: 'SENTINEL-PICK-4a1b' }));
+      const r = build(dir);
+
+      assert.notEqual(r.code, EXIT.OK, `pick "${pick}" must not resolve, got ${r.code}\n${r.all}`);
+      assert.ok(!r.all.includes('SENTINEL-PICK-4a1b'), `pick "${pick}" must not echo file contents`);
+    }
   });
 
   test('codeMode_jsonFileEscapingTheProject_refuses', (t) => {

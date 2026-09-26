@@ -17,7 +17,18 @@
     "engagementLevel": "rich",
     "theme": "microsoft",
     "frameFormat": "jpeg",
-    "jpegQuality": 88
+    "jpegQuality": 88,
+    "noGoPatterns": [
+      "cortex-supportgraph",
+      "[-.]ppe\\b",
+      "\\bppe[-.]",
+      "\\btest[12]\\b",
+      "microsoft-ppe\\.com",
+      "frontieragentcatalog",
+      "https?://",
+      "\\b[a-z0-9-]+\\.(com|net|io|azure|microsoft)\\b",
+      "\\b!?16\\d{5}\\b"
+    ]
   },
   "intake": {
     "voice": "en-US-AndrewNeural",
