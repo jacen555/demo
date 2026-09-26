@@ -156,6 +156,33 @@ internal sealed record ArtifactWrite
     public required string DurableNote { get; init; }
 
     /// <summary>
+    /// Re-establishes, at the moment of the write, whatever the caller established about this
+    /// destination while the arguments were validated.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Inside the writer rather than before it, so the refusal is reported in this write's
+    /// vocabulary and earns this write's exit code.</b> A caller that re-checked beforehand would
+    /// raise an argument-stage usage error for something that is not an argument problem at all:
+    /// the invocation was well formed, and what changed was the file system underneath it while
+    /// the suite was being conducted. That translation already exists here, once.
+    /// </para>
+    /// <para>
+    /// <b>Run after containment, not instead of it.</b> The writer's own re-assertion answers
+    /// "does this path still lead where it led"; this answers whatever the <i>command</i> knows
+    /// and the writer cannot — for <c>run</c>, whether the destination has become one of the
+    /// files this same invocation reads.
+    /// </para>
+    /// <para>
+    /// Required rather than optional, so a write path added later has to answer the question
+    /// rather than inherit a default of "nothing to re-establish". Null is a real answer — see
+    /// <c>TrendCommand</c>, which re-checks before this call because its refusal is a documented
+    /// usage error.
+    /// </para>
+    /// </remarks>
+    public required Action? Recheck { get; init; }
+
+    /// <summary>
     /// Runs after the staged file is written and closed, and before its identity is checked.
     /// </summary>
     /// <remarks>
@@ -306,6 +333,12 @@ internal static class ArtifactWriter
             guard = PathGuard.ForRoot(PathValue.Derived(write.RootDirectory), "--root");
 
             guard.VerifyWritePath(destination, write.OptionName);
+
+            // Whatever the command knows about this destination and the writer cannot: for `run`,
+            // that it has not become one of the files the same invocation reads. Asked after
+            // containment, because "where does this path lead now" has to be settled before
+            // "and is that one of our inputs" means anything.
+            write.Recheck?.Invoke();
 
             var file = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 

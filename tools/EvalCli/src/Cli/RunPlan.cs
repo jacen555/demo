@@ -34,14 +34,19 @@ internal enum ExchangeAdapter
 /// from which fields happen to be set.
 /// </para>
 /// <para>
-/// <b>The destructive command is a separate command, and stays one.</b> Nothing a
-/// <see cref="Run"/> invocation can be given makes it replace a committed baseline, so no
-/// invocation that is safe today becomes destructive by a later option being added here.
+/// <b>The verified replacement route is a separate command, and stays one.</b> Nothing a
+/// <see cref="Run"/> invocation can be given makes it reach the code that checks a baseline's
+/// suite, its errored runs, and its byte identity before replacing it. What <see cref="Run"/>
+/// <i>can</i> do with <c>--overwrite</c> is replace an existing file at a destination it was
+/// given; what it can never do is replace a file the same invocation reads.
 /// </para>
 /// </remarks>
 internal enum CliOperation
 {
-    /// <summary>Evaluate a suite. Writes only where <c>--out</c> names a destination.</summary>
+    /// <summary>
+    /// Evaluate a suite. Writes where <c>--out</c> and <c>--report-markdown</c> name destinations,
+    /// and nowhere else.
+    /// </summary>
     Run,
 
     /// <summary>Replace a committed baseline. Previews by default; writes only with <c>--apply</c>.</summary>
@@ -121,6 +126,11 @@ internal sealed record RunRequest
     public bool Json { get; init; }
 
     /// <summary>Gets whether the caller asked for the not-yet-implemented gate.</summary>
+    /// <remarks>
+    /// Kept on the request, not carried into the plan: the only thing this value can produce is a
+    /// refusal, so a validated plan that could report it would be reporting a state it cannot be
+    /// in.
+    /// </remarks>
     public bool FailOnRegression { get; init; }
 
     /// <summary>Gets whether the caller asked for verbose diagnostics.</summary>
@@ -236,11 +246,6 @@ internal sealed record RunPlan
     /// <summary>Gets whether output should be machine-readable.</summary>
     public bool Json { get; init; }
 
-    /// <summary>
-    /// Gets whether the caller asked for the gate. Parsed and reported; it changes nothing yet.
-    /// </summary>
-    public bool FailOnRegression { get; init; }
-
     /// <summary>Gets whether diagnostics should be verbose.</summary>
     public bool Verbose { get; init; }
 
@@ -322,6 +327,8 @@ internal sealed record RunPlan
         var suite = guard.ResolveExistingFile(request.Suite, "--suite");
         var updating = operation is CliOperation.BaselineUpdate;
 
+        RefuseTheUnimplementedGate(request);
+
         var baseline =
             request.Baseline is null ? RequireBaselineFor(operation)
             : updating ? ResolveBaselineDestination(guard, request.Baseline)
@@ -392,8 +399,14 @@ internal sealed record RunPlan
             );
         }
 
-        RefuseUnpairableBaselines(guard.Root, baseline, artifact, endpoint, baselineEndpoint, requiresEndpoint);
+        RefuseWritingOverAnInput(
+            guard.Root,
+            Inputs(suite, updating ? null : baseline),
+            Destinations(operation, baseline, artifact, markdown)
+        );
+        RefuseUnpairableBaselines(baseline, endpoint, baselineEndpoint, requiresEndpoint);
         RefuseUnreportableComparisons(guard.Root, markdown, baseline, baselineEndpoint, artifact);
+        RefuseAnOptInThatCannotAct(request, artifact, markdown);
 
         return new RunPlan
         {
@@ -415,12 +428,285 @@ internal sealed record RunPlan
             LlmExchange = llmExchange,
             DryRun = request.DryRun,
             Json = request.Json,
-            FailOnRegression = request.FailOnRegression,
             Verbose = request.Verbose,
             Operation = operation,
             ApplyBaselineUpdate = updating && request.Apply,
         };
     }
+
+    /// <summary>
+    /// Re-establishes, at the moment of the write, that a destination is still not one of this
+    /// invocation's own inputs.
+    /// </summary>
+    /// <param name="destination">The canonical destination about to be written.</param>
+    /// <param name="optionName">The option that named it, for the refusal message.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The argument-time answer has expired by the time it matters.</b> A run takes as long as
+    /// the system under test does, and whether two paths are the same file is a property of the
+    /// file system rather than of the arguments — a directory swapped for a link in between
+    /// redirects a destination onto the suite this run was conducted from. No file mode defends
+    /// against that: the mode governs the leaf while what moved was the path to it. Asking again
+    /// narrows the window; what closes what is left of it is that
+    /// <see cref="ArtifactWriter"/> never truncates.
+    /// </para>
+    /// <para>
+    /// <b>On the plan rather than on a command, because two commands share it.</b> <c>run</c> and
+    /// <c>baseline update</c> validate through this one type precisely so that "resolve the root,
+    /// then contain every path against it" exists once; a re-check written twice would be the
+    /// same pair of readings that eventually disagree, and the direction they would disagree in
+    /// is writing over something.
+    /// </para>
+    /// <para>
+    /// <b>A named step rather than four lines inline</b>, for the reason
+    /// <c>TrendCommand.RecheckDestination</c> is one: both paths here were produced by this tool
+    /// rather than typed by the caller, so a refusal out of them must not echo its subject, and
+    /// "which <see cref="PathValue"/> factory did this call site use" is a question a test should
+    /// be able to ask without the root having to vanish between conducting a suite and writing
+    /// beside it, which neither command exposes a seam for.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="EvalCliException">
+    /// The root, an input, or the destination stopped being what this plan recorded.
+    /// </exception>
+    internal void RecheckDestination(string destination, string optionName)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(optionName);
+
+        var guard = PathGuard.ForRoot(PathValue.Derived(RootDirectory), "--root");
+
+        // Under `baseline update` the baseline is the destination rather than an input, so it is
+        // excluded here for the same reason Destinations excludes it from the other command: the
+        // matrix is asymmetric and the asymmetry is stated, not inferred from which fields are set.
+        var baseline = Operation is CliOperation.BaselineUpdate ? null : BaselinePath;
+
+        RefuseWritingOverAnInput(
+            guard.Root,
+            Inputs(
+                guard.ResolveExistingFile(SuitePath, "--suite"),
+                baseline is null ? null : guard.ResolveExistingFile(baseline, "--baseline")
+            ),
+            [(optionName, guard.VerifyWritePath(destination, optionName))]
+        );
+    }
+
+    /// <summary>Refuses an opt-in that has nothing it could act on.</summary>
+    /// <remarks>
+    /// <b><c>trend</c> already refuses exactly this, and <c>run</c> did not.</b> The flag names
+    /// the only irreversible thing this command can do, so accepted with no destination to govern
+    /// it reads as one that might act — the same shape as a gate flag that parses and never gates,
+    /// at a smaller scale. Refused after the collision checks, so an invocation that is wrong in
+    /// both ways is told about the destructive mistake first.
+    /// </remarks>
+    private static void RefuseAnOptInThatCannotAct(RunRequest request, string? artifact, string? markdown)
+    {
+        if (!request.Overwrite || artifact is not null || markdown is not null)
+        {
+            return;
+        }
+
+        throw new EvalCliException(
+            ExitCode.UsageError,
+            "--overwrite was given but neither --out nor --report-markdown was, so there is nothing it could "
+                + "replace.",
+            "Nothing was executed. The opt-in governs replacing an existing file at a destination you named; with "
+                + "no destination it governs nothing, and a flag that is accepted and does nothing reads as one "
+                + "that might act. Drop it, or name the destination you meant."
+        );
+    }
+
+    /// <summary>Refuses the gate flag, because this build has no gate to put behind it.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Leaving the gate unimplemented is a decision and it stands (ADR 0004): gating before
+    /// the reports are trusted teaches people to bypass the harness.</b> What does not stand is
+    /// <i>accepting the flag</i>. Somebody wires <c>--fail-on-regression</c> into CI, watches the
+    /// step go green, and concludes that a regression would have stopped them. A documented
+    /// reservation never reaches that person — they read the flag name, not the README — so the
+    /// only statement that does reach them is the invocation refusing to run.
+    /// </para>
+    /// <para>
+    /// <b>The tool already knew this rule and applied it one command over.</b> <c>trend</c>
+    /// declines <c>--verbose</c> on the grounds that "a flag that is accepted and does nothing is
+    /// a smaller version of the same lie", and declines <c>--fail-on-regression</c> outright. The
+    /// command that most needed the rule was the one that did not get it.
+    /// </para>
+    /// <para>
+    /// <b><see cref="ExitCode.NotImplemented"/> rather than <see cref="ExitCode.UsageError"/>.</b>
+    /// Nothing typed here is malformed — the invocation is well formed and asks for an operation
+    /// this build does not have, which is that code's documented meaning and, until now, nothing
+    /// produced it. It also stays distinguishable from a typo, which matters most to exactly the
+    /// caller this refusal is for: a CI author reading an exit code, who needs "this gate does not
+    /// exist yet" to look different from "you misspelled an argument".
+    /// </para>
+    /// <para>
+    /// <b>The reserved block is not released.</b> 10-19 still belongs to the gate, and the remedy
+    /// says so, because the next person to reach for it needs to know the range is spoken for
+    /// rather than free.
+    /// </para>
+    /// </remarks>
+    private static void RefuseTheUnimplementedGate(RunRequest request)
+    {
+        if (!request.FailOnRegression)
+        {
+            return;
+        }
+
+        throw new EvalCliException(
+            ExitCode.NotImplemented,
+            "--fail-on-regression is not available in this build, so it is refused rather than accepted and "
+                + "ignored.",
+            "Nothing was executed. Implemented, it will exit in the reserved "
+                + $"{ExitCodes.GateRangeStart}-{ExitCodes.GateRangeEnd} range when the comparison finds a "
+                + "regression; that range stays held for it. Until then this build is report-only: drop the flag "
+                + "and read the comparison on stdout, in the artifact at --out, or in the report at "
+                + "--report-markdown. A gate that was accepted and did nothing would have told a CI step it was "
+                + "guarded when nothing was guarding it."
+        );
+    }
+
+    /// <summary>
+    /// Refuses any destination this invocation would write that is also a file it reads.
+    /// </summary>
+    /// <param name="root">The canonical root, so a refusal can state a path the way it may be carried.</param>
+    /// <param name="inputs">Every file this invocation reads, with the option that named it.</param>
+    /// <param name="destinations">Every file it would write, with the option that named it.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>One rule over the whole matrix, because the per-pair form grew a hole every time a path
+    /// was added.</b> <c>--out</c> was held against <c>--baseline</c> and <c>--report-markdown</c>
+    /// was held against <c>--baseline</c>; neither was ever held against <c>--suite</c>. So
+    /// <c>run --out &lt;suite&gt; --overwrite</c> replaced the suite with an artifact and reported
+    /// success, and the suite it was conducted from could not be re-read to find out what it had
+    /// said. Enumerating inputs against destinations has no cell to forget.
+    /// </para>
+    /// <para>
+    /// <b>Refused regardless of <c>--overwrite</c>.</b> That opt-in says "replace the file I
+    /// named"; every cell here is a file the same invocation <i>also</i> named as something to
+    /// read, which is the one thing the caller cannot have meant. It is the rule
+    /// <see cref="TrendPlan.RequireDestinationOutsideInput"/> applies to a directory input,
+    /// applied to the command people invoke constantly.
+    /// </para>
+    /// <para>
+    /// <b>Which option is an input is a property of the command, not of the path.</b> Under
+    /// <c>run</c> the baseline is read and <c>--out</c> is written; under <c>baseline update</c>
+    /// the baseline is the destination and the suite is the only input. Both are passed in rather
+    /// than inferred here, so the asymmetry is visible at the call site.
+    /// </para>
+    /// <para>
+    /// <b>No sentence here claims anything about process state.</b> These refusals are raised
+    /// while the arguments are validated <i>and</i> again at the moment of the write, where
+    /// "nothing was executed" would be false — and a remedy that is wrong about what already
+    /// happened is this whole finding in miniature.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="EvalCliException">A destination names one of the inputs.</exception>
+    internal static void RefuseWritingOverAnInput(
+        string root,
+        IReadOnlyList<(string Option, string Path)> inputs,
+        IReadOnlyList<(string Option, string? Path)> destinations
+    )
+    {
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(destinations);
+
+        // A guard whose strictness is a parameter the caller supplies is only as strong as the
+        // weakest call site, and an empty input set disables the whole matrix silently. No
+        // invocation of this tool reads nothing — there is always a suite — so an empty set is a
+        // caller defect rather than a legitimate "check nothing".
+        if (inputs.Count == 0)
+        {
+            throw new ArgumentException(
+                "No inputs were supplied, so this would check every destination against nothing and refuse none of "
+                    + "them. Every invocation reads at least a suite.",
+                nameof(inputs)
+            );
+        }
+
+        foreach (var destination in destinations)
+        {
+            if (destination.Path is not { } written)
+            {
+                continue;
+            }
+
+            foreach (var input in inputs)
+            {
+                if (string.Equals(written, input.Path, PathComparison))
+                {
+                    throw Collision(root, destination.Option, written, input.Option);
+                }
+            }
+        }
+    }
+
+    /// <summary>The files a validated invocation reads, in the order a refusal should mention them.</summary>
+    private static IReadOnlyList<(string Option, string Path)> Inputs(string suite, string? baseline) =>
+        baseline is null ? [("--suite", suite)] : [("--suite", suite), ("--baseline", baseline)];
+
+    /// <summary>
+    /// The files a validated invocation would write.
+    /// </summary>
+    /// <remarks>
+    /// <c>baseline update</c> writes exactly one file and it is <c>--baseline</c>;
+    /// <see cref="RefuseRunOnlyOptions"/> has already refused the other two by the time this is
+    /// asked, so they are stated as absent rather than filtered.
+    /// </remarks>
+    private static IReadOnlyList<(string Option, string? Path)> Destinations(
+        CliOperation operation,
+        string? baseline,
+        string? artifact,
+        string? markdown
+    ) =>
+        operation is CliOperation.BaselineUpdate
+            ? [("--baseline", baseline)]
+            : [("--out", artifact), ("--report-markdown", markdown)];
+
+    /// <summary>Composes the refusal for one collision, in the vocabulary of the input that was hit.</summary>
+    /// <remarks>
+    /// The opt-in named is the one the <i>destination</i> has, not a fixed string: under
+    /// <c>baseline update</c> the destination is <c>--baseline</c> and its opt-in is
+    /// <c>--apply</c>. Naming <c>--overwrite</c> there would send a reader looking for a flag that
+    /// command does not have, which is its own smaller version of a message that is not true.
+    /// </remarks>
+    private static EvalCliException Collision(
+        string root,
+        string destinationOption,
+        string destination,
+        string inputOption
+    ) =>
+        new(
+            ExitCode.UsageError,
+            $"{destinationOption} and {inputOption} name the same file: {MarkdownReport.Display(root, destination)}",
+            $"{WhyItIsRefused(destinationOption, inputOption)} {OptInFor(destinationOption)} does not lift this: "
+                + "that opt-in is about replacing a file you chose, not about destroying one this invocation "
+                + $"reads. Give {destinationOption} a different destination."
+        );
+
+    /// <summary>The opt-in that governs replacing a file at each destination.</summary>
+    private static string OptInFor(string destinationOption) =>
+        destinationOption == "--baseline" ? "--apply" : "--overwrite";
+
+    /// <summary>What is actually lost in each cell of the matrix.</summary>
+    /// <remarks>
+    /// Stated per cell rather than generically, because the remedy differs: a suite collision is a
+    /// mistyped path, while a baseline collision under <c>--out</c> is somebody reaching for the
+    /// destructive command without knowing it exists.
+    /// </remarks>
+    private static string WhyItIsRefused(string destinationOption, string inputOption) =>
+        (destinationOption, inputOption) switch
+        {
+            (_, "--suite") =>
+                "The suite is what this invocation is conducted from, and one destroyed by its own run cannot be "
+                    + "re-read to find out what it asked.",
+            ("--out", _) =>
+                "Writing this run over the baseline it was compared against is a baseline update, and that has its "
+                    + "own command and its own opt-in: `eval-cli baseline update --apply`.",
+            _ => "Writing the report over the baseline would destroy the artifact this run was compared against, and "
+                + "the next run would have nothing to compare to.",
+        };
 
     /// <summary>
     /// Refuses two references that would not be a baseline and a candidate.
@@ -442,9 +728,7 @@ internal sealed record RunPlan
     /// </para>
     /// </remarks>
     private static void RefuseUnpairableBaselines(
-        string root,
         string? baseline,
-        string? artifact,
         Uri? endpoint,
         Uri? baselineEndpoint,
         bool requiresEndpoint
@@ -458,17 +742,6 @@ internal sealed record RunPlan
                     + "choose between them.",
                 "Pass one. --baseline compares against a committed artifact; --baseline-endpoint conducts the "
                     + "suite against a running system and compares against that."
-            );
-        }
-
-        if (baseline is not null && artifact is not null && string.Equals(baseline, artifact, PathComparison))
-        {
-            throw new EvalCliException(
-                ExitCode.UsageError,
-                $"--baseline and --out name the same file: {MarkdownReport.Display(root, artifact)}",
-                "Nothing was executed. Writing this run over the baseline it was compared against is a baseline "
-                    + "update, and that has its own command and its own opt-in: `eval-cli baseline update "
-                    + "--apply`. Give --out a different destination."
             );
         }
 
@@ -522,12 +795,13 @@ internal sealed record RunPlan
     /// so the invocation stops here instead.
     /// </para>
     /// <para>
-    /// <b>The report may never be the artifact, and may never be the baseline.</b> The JSON is the
-    /// durable evidence and the only thing a later comparison is made against; the Markdown is a
-    /// rendering of it that nothing reads back. Writing one over the other would replace evidence
-    /// with a view of it, and in the baseline's case the next run would refuse to compare at all
-    /// — with the original gone. Refused even under <c>--overwrite</c>, because that opt-in is
-    /// about replacing a stale report, not about destroying the record.
+    /// <b>The report may never be the artifact.</b> The JSON is the durable evidence and the only
+    /// thing a later comparison is made against; the Markdown is a rendering of it that nothing
+    /// reads back. Writing one over the other would replace evidence with a view of it. Refused
+    /// even under <c>--overwrite</c>, because that opt-in is about replacing a stale report, not
+    /// about destroying the record. The report landing on an <i>input</i> — the suite or the
+    /// baseline — is the same property one level up, and belongs to
+    /// <see cref="RefuseWritingOverAnInput"/>.
     /// </para>
     /// </remarks>
     private static void RefuseUnreportableComparisons(
@@ -563,17 +837,6 @@ internal sealed record RunPlan
                 "Nothing was executed. The JSON artifact is the durable evidence a later comparison is made "
                     + "against; the Markdown is a rendering of it that nothing reads back. Give --report-markdown a "
                     + "different destination."
-            );
-        }
-
-        if (baseline is not null && string.Equals(markdown, baseline, PathComparison))
-        {
-            throw new EvalCliException(
-                ExitCode.UsageError,
-                $"--report-markdown and --baseline name the same file: {MarkdownReport.Display(root, baseline)}",
-                "Nothing was executed. Writing the report over the baseline would destroy the artifact this run was "
-                    + "compared against, and the next run would have nothing to compare to. Give --report-markdown "
-                    + "a different destination."
             );
         }
     }

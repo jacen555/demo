@@ -121,7 +121,7 @@ internal sealed class PathGuard
     /// <returns>The guard.</returns>
     /// <remarks>
     /// <b>Takes a <see cref="PathValue"/> rather than a string so every call site declares
-    /// provenance.</b> Two of the four call sites re-resolve a root this tool had already
+    /// provenance.</b> Three of the five call sites re-resolve a root this tool had already
     /// canonicalised, because the file system may have moved since the arguments were validated —
     /// and a refusal from one of those must not echo its subject. That distinction is about the
     /// value, so it travels with the value.
@@ -434,10 +434,10 @@ internal sealed class PathGuard
     /// <b>Reached only from <see cref="ForRoot"/>, and it branches on the value rather than on
     /// that fact.</b> <see cref="ForRoot"/> refuses before a boundary exists, so there is nothing
     /// to relativise against and the published net is all that is left — but "this is
-    /// <c>ForRoot</c>" is not the same claim as "this text is the caller's". Two of the four call
-    /// sites re-resolve a root this tool canonicalised, and for those the net's published holes
-    /// are the only thing between a machine path and the build log: an absolute path under an
-    /// unlisted root such as <c>/data/ci-user/runs</c> passes straight through it.
+    /// <c>ForRoot</c>" is not the same claim as "this text is the caller's". Three of the five
+    /// call sites re-resolve a root this tool canonicalised, and for those the net's published
+    /// holes are the only thing between a machine path and the build log: an absolute path under
+    /// an unlisted root such as <c>/data/ci-user/runs</c> passes straight through it.
     /// </para>
     /// <para>
     /// <b>That is the third depth at which this rule needed stating.</b> First it was applied

@@ -36,16 +36,68 @@ public class RunPlanTests
     }
 
     [Fact]
-    public void Create_ForEveryPlan_ReportsOnlyRatherThanGating()
+    public void Create_WhenTheGateFlagIsPassed_RefusesRatherThanAcceptingAGateNothingEnforces()
     {
         using var workspace = new TempWorkspace();
 
-        var gated = RunPlan.Create(Minimal(workspace) with { FailOnRegression = true });
-        var ungated = RunPlan.Create(Minimal(workspace));
+        var refusal = Assert.Throws<EvalCliException>(() =>
+            RunPlan.Create(Minimal(workspace) with { FailOnRegression = true })
+        );
 
-        gated.GateMode.Should().Be(RunPlan.ReportOnlyGate);
-        ungated.GateMode.Should().Be(RunPlan.ReportOnlyGate);
-        gated.GateMode.Should().Be(ungated.GateMode, "the reserved flag must not change behaviour yet");
+        // Accepting the flag is the defect, not failing to implement it. A CI step that passes it
+        // and goes green teaches its author that a regression would have stopped the build.
+        refusal.ExitCode.Should().Be(ExitCode.NotImplemented);
+        refusal.ExitCode.Should().NotBe(ExitCode.Success);
+        refusal.Message.Should().Contain("--fail-on-regression");
+    }
+
+    [Fact]
+    public void Create_WhenTheGateFlagIsPassed_KeepsTheReservedExitsHeldForIt()
+    {
+        using var workspace = new TempWorkspace();
+
+        var refusal = Assert.Throws<EvalCliException>(() =>
+            RunPlan.Create(Minimal(workspace) with { FailOnRegression = true })
+        );
+
+        // The refusal is not a retraction of the reservation: the block still belongs to the gate,
+        // and the message is where a caller learns that rather than from an ADR they will not read.
+        ExitCodes.IsGateCode(refusal.ExitCode).Should().BeFalse();
+        refusal.Remedy.Should().Contain($"{ExitCodes.GateRangeStart}-{ExitCodes.GateRangeEnd}");
+    }
+
+    [Fact]
+    public void Create_WithoutTheGateFlag_StillReportsOnlyRatherThanGating()
+    {
+        using var workspace = new TempWorkspace();
+
+        RunPlan.Create(Minimal(workspace)).GateMode.Should().Be(RunPlan.ReportOnlyGate);
+    }
+
+    [Fact]
+    public void Create_WhenTheOptInIsGivenWithNoDestinationToOptInTo_Refuses()
+    {
+        // `trend` already refuses exactly this. An opt-in with nothing to opt in to names the only
+        // irreversible thing the command can do and then does not govern anything, which reads as
+        // one that might act.
+        using var workspace = new TempWorkspace();
+
+        var refusal = Assert.Throws<EvalCliException>(() =>
+            RunPlan.Create(Minimal(workspace) with { Overwrite = true })
+        );
+
+        refusal.ExitCode.Should().Be(ExitCode.UsageError);
+        refusal.Message.Should().Contain("--overwrite");
+    }
+
+    [Fact]
+    public void Create_WhenTheOptInAccompaniesADestination_IsAccepted()
+    {
+        using var workspace = new TempWorkspace();
+
+        var plan = RunPlan.Create(Minimal(workspace) with { Out = "artifacts/eval.json", Overwrite = true });
+
+        plan.OverwriteArtifact.Should().BeTrue();
     }
 
     [Fact]

@@ -39,8 +39,15 @@ internal enum ExitCode
     SuiteError = 2,
 
     /// <summary>
-    /// The run itself could not complete. The artifact, if any, does not describe a whole run.
+    /// The run could not complete, or what it produced could not be published. The artifact, if
+    /// any, does not describe a whole run.
     /// </summary>
+    /// <remarks>
+    /// <b>Deliberately coarse.</b> A run that errored and a completed run whose artifact could not
+    /// be written or could not be published both leave the caller without usable evidence, and the
+    /// message says which. Splitting them would add a code for a distinction no caller has asked
+    /// to branch on, and exit codes are additive only — a code spent is spent.
+    /// </remarks>
     RunFailed = 3,
 
     /// <summary>
@@ -106,7 +113,7 @@ internal static class ExitCodes
         new(ExitCode.Success, "the run completed and nothing asked for a non-zero exit"),
         new(ExitCode.UsageError, "the invocation was refused - bad argument, value, or path"),
         new(ExitCode.SuiteError, "the suite could not be loaded or did not validate"),
-        new(ExitCode.RunFailed, "the run could not complete"),
+        new(ExitCode.RunFailed, "the run could not complete, or its artifact could not be published"),
         new(ExitCode.ComparisonRefused, "baseline and candidate were not conducted alike"),
         new(ExitCode.BaselineMissing, "a baseline was required and none was found"),
         new(ExitCode.RegressionsFound, "reserved for the gate (10-19); nothing produces it yet"),

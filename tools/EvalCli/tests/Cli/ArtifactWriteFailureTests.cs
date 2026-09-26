@@ -677,6 +677,7 @@ public class ArtifactWriteFailureTests
             OptionName = "--report-markdown",
             ReplaceOptionName = "--overwrite",
             Publication = ArtifactPublication.CreateOnly,
+            Recheck = null,
             Contents = Contents,
             FailureContext = "The trend was produced but its report could not be written",
             LossNote = "The artifacts it was read from are untouched",

@@ -15,13 +15,19 @@ namespace Forge.EvalCli.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The shape here is chosen so the destructive operation stays in its own command.</b>
-/// Everything a run does lives under <c>run</c>, and replacing a committed baseline — the one
-/// genuinely destructive thing this tool does — lives under <c>baseline update</c> with its own
-/// explicit opt-in. No invocation that is safe today can become destructive by a later change,
-/// because no option added to <c>run</c> reaches the code that replaces a baseline. The only
-/// write <c>run</c>'s arguments can cause is <c>--out</c>, and an existing file there is refused
-/// unless <c>--overwrite</c> is passed as well.
+/// <b>The shape here is chosen so the <i>verified</i> replacement route stays in its own
+/// command.</b> Everything a run does lives under <c>run</c>; replacing a committed baseline with
+/// knowledge of what is being replaced lives under <c>baseline update</c> with its own explicit
+/// opt-in. No option added to <c>run</c> reaches the code that verifies and replaces a baseline.
+/// </para>
+/// <para>
+/// <b><c>run</c> is not non-destructive, and saying so would be the more useful accuracy.</b> It
+/// has two destinations — <c>--out</c> and <c>--report-markdown</c> — and with <c>--overwrite</c>
+/// either will replace an existing file at the path it was given, including a committed baseline
+/// the invocation did not name. The guarantee it does hold is narrower and worth stating exactly:
+/// <b>no <c>run</c> invocation replaces a file that same invocation reads.</b> <c>--suite</c> and
+/// <c>--baseline</c> are refused as destinations regardless of the opt-in, and that refusal is
+/// re-established at the moment of each write rather than only when the arguments were checked.
 /// </para>
 /// <para>
 /// Parsing is delegated to <c>System.CommandLine</c> rather than hand-rolled. Validation is not
@@ -56,17 +62,40 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "dir",
     };
 
+    /// <summary>
+    /// The committed baseline, shared by <c>run</c> and <c>baseline update</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>The sentence has to be true in both renderings, because one string is rendered by two
+    /// commands that do opposite things to the file.</b> Written against <c>run</c> alone it said
+    /// "read only; never modified" — correct there, and false in <c>baseline update --help</c>,
+    /// where it appears directly above <c>--apply</c>. The text never changed; the set of commands
+    /// rendering it did, which is the same shape as a trade-off scoped to the surfaces that
+    /// existed when it was made.
+    /// </remarks>
     private readonly Option<string?> _baseline = new(
         "--baseline",
-        "Path to a committed baseline artifact to compare against. Read only; never modified."
+        "Path to a committed baseline artifact. `run` compares against it and never modifies it; "
+            + "`baseline update --apply` replaces it."
     )
     {
         ArgumentHelpName = "path",
     };
 
+    /// <summary>
+    /// The run artifact destination. <c>run</c> only.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not a sharing defect — a description that was wrong about its own command.</b> "Omit it
+    /// and nothing is written at all" was true when <c>--out</c> was the only destination
+    /// <c>run</c> had; <c>--report-markdown</c> arrived later and writes a file with no
+    /// <c>--out</c> given. The claim it can honestly make is about the artifact, not about the
+    /// command.
+    /// </remarks>
     private readonly Option<string?> _out = new(
         "--out",
-        "Where the run artifact would be written. Omit it and nothing is written at all."
+        "Where the run artifact would be written. Omit it and no artifact is written. Does not govern "
+            + "--report-markdown, which writes its own file."
     )
     {
         ArgumentHelpName = "path",
@@ -81,9 +110,29 @@ internal sealed class EvalCommandLine
         ArgumentHelpName = "path",
     };
 
+    /// <summary>
+    /// The replace opt-in for <c>run</c>. <c>trend</c> has <see cref="_trendOverwrite"/> instead.
+    /// </summary>
+    /// <remarks>
+    /// <b>Two instances sharing a name, not one sentence covering two commands.</b> This is the
+    /// shape <see cref="_reportMarkdown"/> and <see cref="_trendReport"/> already use, and the
+    /// reason they are the only options in this file that never drifted: text written against one
+    /// command cannot be wrong for a command that does not render it. The single-instance form
+    /// described "--out and --report-markdown" and was rendered verbatim under
+    /// <c>trend --help</c>, which declares no <c>--out</c>. A two-clause sentence would have
+    /// fixed that reading and left the next option set to be remembered; this cannot go wrong
+    /// again without someone deleting a field.
+    /// <para>
+    /// <see cref="_baseline"/> is deliberately <i>not</i> split: both commands take the same file
+    /// and mean the same thing by it, so two instances would say one thing twice and drift apart
+    /// on their own.
+    /// </para>
+    /// </remarks>
     private readonly Option<bool> _overwrite = new(
         "--overwrite",
-        "Allow --out and --report-markdown to replace a file that already exists. Refused without this."
+        "Allow --out and --report-markdown to replace a file that already exists. Refused without this, and "
+            + "refused if neither is named. Never lifts a collision with an input: the file replaced is never a "
+            + "file this invocation reads."
     );
 
     private readonly Option<long> _seed = new(
@@ -166,7 +215,8 @@ internal sealed class EvalCommandLine
 
     private readonly Option<bool> _failOnRegression = new(
         "--fail-on-regression",
-        "RESERVED. Accepted and reported, but this build is report-only and the flag changes nothing."
+        "Not yet available. Will exit in the reserved 10-19 range when the comparison finds a regression; until "
+            + "then this invocation is refused rather than passing an unenforced gate."
     );
 
     private readonly Option<bool> _verbose = new(new[] { "--verbose", "-v" }, "Write debug diagnostics to stderr.");
@@ -188,6 +238,17 @@ internal sealed class EvalCommandLine
     {
         ArgumentHelpName = "path",
     };
+
+    /// <summary>
+    /// The replace opt-in for <c>trend</c>. See <see cref="_overwrite"/> for why this is a second
+    /// instance rather than a second clause.
+    /// </summary>
+    private readonly Option<bool> _trendOverwrite = new(
+        "--overwrite",
+        "Allow --report-markdown to replace an existing trend report. Refused without this, and refused if "
+            + "--report-markdown was not given. Never lifts a collision with the --artifacts directory: nothing "
+            + "this command reads can be written over."
+    );
 
     /// <summary>Builds the parser for this tool.</summary>
     /// <returns>The configured parser.</returns>
@@ -238,7 +299,7 @@ internal sealed class EvalCommandLine
             Artifacts = parseResult.GetValueForOption(_artifacts) ?? string.Empty,
             Root = parseResult.GetValueForOption(_root),
             ReportMarkdown = parseResult.GetValueForOption(_trendReport),
-            Overwrite = parseResult.GetValueForOption(_overwrite),
+            Overwrite = parseResult.GetValueForOption(_trendOverwrite),
         };
     }
 
@@ -364,14 +425,22 @@ internal sealed class EvalCommandLine
     }
 
     /// <summary>
-    /// Builds the <c>baseline</c> command group, which owns the one destructive operation.
+    /// Builds the <c>baseline</c> command group, which owns the verified replacement route.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>Separate from <c>run</c> on purpose, and that separation is the safety property.</b>
-    /// Nothing a <c>run</c> invocation can be given replaces a committed baseline, so no
-    /// invocation that is safe today becomes destructive because an option was added later. The
+    /// Nothing a <c>run</c> invocation can be given replaces a file that same invocation reads, so
+    /// no invocation that is safe today becomes destructive because an option was added later. The
     /// shape was chosen in the previous build for exactly this arrival.
+    /// </para>
+    /// <para>
+    /// <b>This is not the only way a file gets replaced — it is the only way one gets
+    /// <i>verified</i> before it is replaced.</b> <c>run --out --overwrite</c> will replace
+    /// whatever sits at the path it was given, including a baseline it was not handed as
+    /// <c>--baseline</c>; what it cannot do is reach a file this invocation also reads. What this
+    /// command adds on top is knowledge of the thing being replaced: it never creates, it refuses
+    /// a foreign suite, it refuses an errored run, and it replaces only the bytes it read.
     /// </para>
     /// <para>
     /// <c>--apply</c> is the opt-in and it is the only thing that writes. A bare
@@ -453,7 +522,7 @@ internal sealed class EvalCommandLine
             _artifacts,
             _root,
             _trendReport,
-            _overwrite,
+            _trendOverwrite,
         };
 
         trend.SetHandler(HandleTrendAsync);
@@ -536,8 +605,14 @@ internal sealed class EvalCommandLine
         output.WriteLine("destination for the run artifact, and a file that already exists there is");
         output.WriteLine("refused unless --overwrite is passed as well.");
         output.WriteLine();
-        output.WriteLine("Replacing a committed baseline is the one destructive thing this tool does,");
-        output.WriteLine("and it lives in its own command. It previews by default:");
+        output.WriteLine("run never replaces a file it was also asked to read: --out and");
+        output.WriteLine("--report-markdown may not be --suite or --baseline, and --overwrite does not");
+        output.WriteLine("lift that. With --overwrite it will replace any other existing file at the");
+        output.WriteLine("path you name, including a committed baseline you did not pass as --baseline.");
+        output.WriteLine();
+        output.WriteLine("Replacing a committed baseline has its own command, which previews by default");
+        output.WriteLine("and verifies what it replaces - it refuses a foreign suite, refuses a run with");
+        output.WriteLine("errored scenarios, and replaces only the bytes it read:");
         output.WriteLine();
         output.WriteLine("  eval-cli baseline update --suite eval-suites/regression.json \\");
         output.WriteLine("      --baseline artifacts/baseline.json --endpoint <url> --rest-exchange json");

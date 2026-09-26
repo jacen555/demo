@@ -8,7 +8,6 @@ using Forge.EvalEngine.Impact;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Scenarios;
-using Forge.EvalEngine.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Forge.EvalCli.Cli;
@@ -32,9 +31,10 @@ namespace Forge.EvalCli.Cli;
 /// <para>
 /// <b>The comparison is report-only.</b> It changes what is printed and, when it is refused, the
 /// exit code — but a regression it found does not, because the gate is reserved
-/// (<see cref="ExitCode.RegressionsFound"/>) and <c>--fail-on-regression</c> is parsed and
-/// deliberately inert. A refused comparison is a different thing from a comparison that found
-/// nothing, and only the first of those is non-zero.
+/// (<see cref="ExitCode.RegressionsFound"/>) and not implemented. <c>--fail-on-regression</c> is
+/// <i>refused</i> rather than accepted and ignored, so no caller can be told a gate passed that
+/// never ran — see <c>RunPlan.RefuseTheUnimplementedGate</c>. A refused comparison is a different
+/// thing from a comparison that found nothing, and only the first of those is non-zero.
 /// </para>
 /// </remarks>
 internal static class RunCommand
@@ -192,7 +192,7 @@ internal static class RunCommand
     /// <para>
     /// <b>The bytes are redacted first.</b> A transcript records the address a run was actually
     /// directed at, path included, and this artifact is committed and read by people — see
-    /// <see cref="ArtifactRedaction"/> for why that rule belongs at the write rather than at the
+    /// <see cref="ArtifactBudget"/> for why that rule belongs at the write rather than at the
     /// run.
     /// </para>
     /// </remarks>
@@ -219,7 +219,8 @@ internal static class RunCommand
                     Publication = plan.OverwriteArtifact
                         ? ArtifactPublication.CreateOrReplace
                         : ArtifactPublication.CreateOnly,
-                    Contents = CanonicalJson.Serialize(ArtifactRedaction.Redact(result)),
+                    Recheck = () => plan.RecheckDestination(destination, "--out"),
+                    Contents = ArtifactBudget.Publishable(result),
                     FailureContext = "The run completed but its artifact could not be written",
                     LossNote = "The evidence the run produced was not recorded",
                     DurableNote = "the run artifact",
@@ -283,6 +284,8 @@ internal static class RunCommand
             }
         );
 
+        // As above, and later still: a live-baseline comparison conducts a whole second suite
+        // between the artifact write and this one.
         _ = await ArtifactWriter
             .WriteAsync(
                 new ArtifactWrite
@@ -294,6 +297,7 @@ internal static class RunCommand
                     Publication = plan.OverwriteArtifact
                         ? ArtifactPublication.CreateOrReplace
                         : ArtifactPublication.CreateOnly,
+                    Recheck = () => plan.RecheckDestination(destination, "--report-markdown"),
                     Contents = rendering.Text,
                     FailureContext = "The run and its comparison completed but the report could not be written",
                     LossNote =

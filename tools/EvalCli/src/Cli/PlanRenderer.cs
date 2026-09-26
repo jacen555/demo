@@ -90,11 +90,13 @@ internal sealed record DryRunReport
     [JsonPropertyName("gateMode")]
     public required string GateMode { get; init; }
 
-    /// <summary>Gets whether the reserved gate flag was passed.</summary>
-    [JsonPropertyName("failOnRegressionRequested")]
-    public required bool FailOnRegressionRequested { get; init; }
-
     /// <summary>Gets whether the gate is implemented. False in this build.</summary>
+    /// <remarks>
+    /// <c>failOnRegressionRequested</c> used to sit beside this and is gone: the flag is now
+    /// refused, so the only value that field could carry is <see langword="false"/>, and a
+    /// document field whose one possible answer is the answer to a question nobody can ask is
+    /// noise a consumer has to interpret.
+    /// </remarks>
     [JsonPropertyName("failOnRegressionImplemented")]
     public required bool FailOnRegressionImplemented { get; init; }
 
@@ -151,7 +153,6 @@ internal static class PlanRenderer
             RestExchange = plan.RestExchange.ToString().ToLowerInvariant(),
             LlmExchange = plan.LlmExchange.ToString().ToLowerInvariant(),
             GateMode = plan.GateMode,
-            FailOnRegressionRequested = plan.FailOnRegression,
             FailOnRegressionImplemented = false,
             Harness = harness,
         };
@@ -205,7 +206,7 @@ internal static class PlanRenderer
         Row(text, "endpoint", plan.EndpointDisplay ?? NoneMarker);
         Row(text, "comparison", ComparisonLine(plan));
         Row(text, "selection", SelectionLine(plan));
-        Row(text, "gate", GateLine(plan));
+        Row(text, "gate", $"{plan.GateMode} - regressions are reported, not enforced");
 
         text.AppendLine();
         text.AppendLine("  runners");
@@ -227,11 +228,6 @@ internal static class PlanRenderer
 
         return text.ToString();
     }
-
-    private static string GateLine(RunPlan plan) =>
-        plan.FailOnRegression
-            ? $"{plan.GateMode} - --fail-on-regression is reserved and does not change this build's behaviour"
-            : $"{plan.GateMode} - regressions are reported, not enforced";
 
     /// <summary>Which mechanism would supply the baseline this run compares against.</summary>
     private static BaselineMechanism Mechanism(RunPlan plan) =>
