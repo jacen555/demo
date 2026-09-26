@@ -8,6 +8,14 @@ namespace Forge.EvalCli.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <b>Private to <see cref="ArtifactBudget"/>, so it cannot be reached around.</b> Redaction and
+/// the read-back budget are both conditions on the same bytes, and a call site that could reach
+/// one without the other is a call site that will eventually publish an artifact meeting only
+/// half of them. Both publication paths therefore go through
+/// <see cref="ArtifactBudget.Publishable(SuiteResult)"/>, and there is no other way to obtain
+/// redacted artifact bytes — the alternative does not compile rather than merely failing review.
+/// </para>
+/// <para>
 /// <b>A report and an artifact are different objects, and only one of them was covered.</b> Every
 /// rendered report names <see cref="RunPlan.EndpointDisplay"/>, which was redacted at argument
 /// time. A transcript is not built from that: the engine records where a run actually went, from
@@ -30,59 +38,62 @@ namespace Forge.EvalCli.Cli;
 /// the artifact it was made from would have.
 /// </para>
 /// </remarks>
-internal static class ArtifactRedaction
+internal static partial class ArtifactBudget
 {
-    /// <summary>Returns the artifact as it may be written down.</summary>
-    /// <param name="result">The artifact the run produced.</param>
-    /// <returns>The same artifact with every recorded address reduced to scheme, host, and port.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="result"/> is null.</exception>
-    public static SuiteResult Redact(SuiteResult result)
+    private static class ArtifactRedaction
     {
-        ArgumentNullException.ThrowIfNull(result);
-
-        return result with
+        /// <summary>Returns the artifact as it may be written down.</summary>
+        /// <param name="result">The artifact the run produced.</param>
+        /// <returns>The same artifact with every recorded address reduced to scheme, host, and port.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="result"/> is null.</exception>
+        public static SuiteResult Redact(SuiteResult result)
         {
-            Environment = result.Environment with { Endpoint = Address(result.Environment.Endpoint) },
-            ScenarioResults =
-            [
-                .. result.ScenarioResults.Select(scenario =>
-                    scenario with
-                    {
-                        Runs = [.. scenario.Runs.Select(Redact)],
-                    }
-                ),
-            ],
-        };
-    }
+            ArgumentNullException.ThrowIfNull(result);
 
-    private static RunResult Redact(RunResult run) =>
-        run with
-        {
-            Transcript = run.Transcript with
+            return result with
             {
-                Transport = run.Transcript.Transport with { Endpoint = Address(run.Transcript.Transport.Endpoint) },
-            },
-        };
-
-    /// <summary>
-    /// One recorded address, reduced to what identifies the environment and nothing more.
-    /// </summary>
-    /// <remarks>
-    /// Through <see cref="EndpointGuard.Redact(Uri)"/>, which is the same routine the printable
-    /// form of <c>--endpoint</c> comes from, rather than a second reading of the same rule. A
-    /// value that does not parse as an address is not a value this can take apart component by
-    /// component, so it is replaced wholesale — the conservative direction, because an opaque
-    /// label is a convenience and a committed credential is not recoverable (§V).
-    /// </remarks>
-    private static string? Address(string? recorded)
-    {
-        if (string.IsNullOrWhiteSpace(recorded))
-        {
-            return recorded;
+                Environment = result.Environment with { Endpoint = Address(result.Environment.Endpoint) },
+                ScenarioResults =
+                [
+                    .. result.ScenarioResults.Select(scenario =>
+                        scenario with
+                        {
+                            Runs = [.. scenario.Runs.Select(Redact)],
+                        }
+                    ),
+                ],
+            };
         }
 
-        return Uri.TryCreate(recorded.Trim(), UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Authority)
-            ? EndpointGuard.Redact(uri)
-            : EndpointGuard.RedactionMarker;
+        private static RunResult Redact(RunResult run) =>
+            run with
+            {
+                Transcript = run.Transcript with
+                {
+                    Transport = run.Transcript.Transport with { Endpoint = Address(run.Transcript.Transport.Endpoint) },
+                },
+            };
+
+        /// <summary>
+        /// One recorded address, reduced to what identifies the environment and nothing more.
+        /// </summary>
+        /// <remarks>
+        /// Through <see cref="EndpointGuard.Redact(Uri)"/>, which is the same routine the printable
+        /// form of <c>--endpoint</c> comes from, rather than a second reading of the same rule. A
+        /// value that does not parse as an address is not a value this can take apart component by
+        /// component, so it is replaced wholesale — the conservative direction, because an opaque
+        /// label is a convenience and a committed credential is not recoverable (§V).
+        /// </remarks>
+        private static string? Address(string? recorded)
+        {
+            if (string.IsNullOrWhiteSpace(recorded))
+            {
+                return recorded;
+            }
+
+            return Uri.TryCreate(recorded.Trim(), UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Authority)
+                ? EndpointGuard.Redact(uri)
+                : EndpointGuard.RedactionMarker;
+        }
     }
 }

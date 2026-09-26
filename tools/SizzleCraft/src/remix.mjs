@@ -9,23 +9,84 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chromium } from 'playwright';
+import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { canonicalBytes } from './canonical-json.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
 
-const dir = process.cwd();
-const timingPath = path.join(dir, 'timing.json');
+const USAGE = `
+remix — re-solve inserted silences from REAL measured audio and reflow the timeline
+(pipeline stage S4). Does not re-synthesise; the segment clips on disk are reused.
+
+  node remix.mjs                       plan only (default)
+  node remix.mjs --apply --replace     re-solve, rewrite voiceover.mp3 and timing.json
+
+Options
+  --project <dir>   project root; no path may escape it (default: current directory)
+  --apply           actually write. Without it nothing is written.
+  --replace         permit overwriting voiceover.mp3, timing.json and the gap assets
+  --help            show this message
+
+This stage rewrites the approved timeline and the concatenated narration, and regenerates
+the gap assets, so it writes nothing without both flags.
+
+Exit codes: 0 success/plan · 1 remix failed (e.g. voice drift) · 2 bad usage or refused overwrite
+`.trimStart();
+
+const cli = (() => {
+  try {
+    return parseCli({ usage: USAGE });
+  } catch (err) {
+    if (err.name === 'HelpRequested') { console.log(err.usage); process.exit(EXIT.OK); }
+    console.error(`error: ${err.message}`);
+    process.exit(err.exitCode ?? EXIT.FAILED);
+  }
+})();
+
+const dir = cli.projectDir;
+const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
 const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
-const stable = timing.intake;
+const stable = timing.intake ?? {};
 
-const LEAD_IN_MS = Number(stable.leadInMs ?? 2000);
-const GAP_DEFAULT_MS = Number(stable.perceivedGapMs ?? 2000);
+// Validated, not coerced — see voice.mjs for why. `Number(stable.toleranceMs)` reaching
+// the C-6 drift comparison as NaN makes `driftMs > Math.max(NaN, 1500)` always false,
+// removing the only check that the remixed narration still matches the timeline.
+const TOLERANCE_MS = guard(() =>
+  requireFiniteNumber(stable.toleranceMs ?? 750, { name: 'intake.toleranceMs', min: 0, max: 600_000 }));
+const LEAD_IN_MS = guard(() =>
+  requireFiniteNumber(stable.leadInMs ?? 2000, { name: 'intake.leadInMs', min: 0, max: 600_000 }));
+const GAP_DEFAULT_MS = guard(() =>
+  requireFiniteNumber(stable.perceivedGapMs ?? 2000, { name: 'intake.perceivedGapMs', min: 0, max: 600_000 }));
 const GAP_OVERRIDES = stable.perceivedGapOverrides || {};
 const FRAME_MS = 24;
 const alignUp = ms => Math.max(0, Math.round(ms / FRAME_MS) * FRAME_MS);
 const probeMs = async f => Math.round(((await parseFile(f, { duration: true })).format.duration ?? 0) * 1000);
 
+// ---- 0. the safe default ---------------------------------------------------------------------
+// Nothing above this point has written anything. A bare run stops here rather than
+// launching a browser, regenerating the gap assets and rewriting the timeline.
+const voicePath = path.join(dir, 'voiceover.mp3');
+if (!cli.apply) {
+  console.log(`plan: re-solve inserted silences for ${timing.segments?.length ?? 0} segment(s)`);
+  console.log(`  would rewrite ${voicePath} — ${describeWrite(voicePath, cli.replace)}`);
+  console.log(`  would rewrite ${timingPath} — ${describeWrite(timingPath, cli.replace)}`);
+  console.log(`  would regenerate lead.mp3, gap_NN.mp3 and outro.mp3 in ${dir}`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
+// Both writes are guarded before any work starts, so the run cannot get halfway through
+// and then refuse.
+// The complete write set, compared as canonical paths before anything starts. voiceover
+// and timing resolving to one file (an in-root link) passes both individual guards.
+const voiceOutPath = guard(() => resolveEngineOutput(dir, 'voiceover.mp3', { apply: true, replace: cli.replace, label: 'voiceover.mp3' }));
+const timingOutPath = guard(() => resolveEngineOutput(dir, 'timing.json', { apply: true, replace: cli.replace, label: 'timing.json' }));
+guard(() => assertDistinctDestinations(
+  [{ key: 'voiceover.mp3', path: voiceOutPath }, { key: 'timing.json', path: timingOutPath }],
+  'output',
+));
+
 // ---- 1. measure REAL head/tail silence by decoding each clip --------------------------------
+const { chromium } = await import('playwright');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 await page.goto('about:blank');
@@ -56,7 +117,9 @@ const segs = timing.segments;
 const measured = [];
 console.log('measured clip edges (decoded):');
 for (let i = 0; i < segs.length; i++) {
-  const file = path.join(dir, segs[i].audio.file);
+  // segs[i].audio.file comes from timing.json and is opened directly — authored input is
+  // not trusted input, so it is confined to the project root before it is read.
+  const file = requireExistingFile(dir, segs[i].audio.file, `segment ${segs[i].id} audio`);
   const e = await edges(file);
   measured.push({ file, ...e });
   console.log(`  ${segs[i].id.padEnd(11)} ${String(e.totalMs).padStart(6)}ms  head ${String(e.headMs).padStart(4)}ms  tail ${String(e.tailMs).padStart(4)}ms`);
@@ -76,7 +139,17 @@ for (let i = 0; i < segs.length - 1; i++) {
   console.log(`  after ${segs[i].id.padEnd(10)} target ${String(target).padStart(4)} - tail ${String(tail).padStart(4)} - head ${String(head).padStart(4)} -> insert ${String(inserted).padStart(4)}ms  (predict ${tail + inserted + head}ms)`);
 }
 
-const gen = (ms, name) => { if (ms <= 0) return null; execFileSync(process.execPath, ['silence-gen.mjs', name, String(ms)], { cwd: dir, stdio: 'pipe' }); return path.join(dir, name); };
+// Resolve the generator next to THIS script rather than relative to the project dir.
+// The write flags are FORWARDED from this stage's own opt-in, never hardcoded: a parent
+// that was not asked to write must not hand a child the flags that make it write. This
+// line is only reachable under --apply, and the flags it passes say so explicitly.
+const SILENCE_GEN = fileURLToPath(new URL('./silence-gen.mjs', import.meta.url));
+const childWriteFlags = [...(cli.apply ? ['--apply'] : []), ...(cli.replace ? ['--replace'] : [])];
+const gen = (ms, name) => {
+  if (ms <= 0) return null;
+  execFileSync(process.execPath, [SILENCE_GEN, '--project', dir, '--out', name, '--ms', String(ms), ...childWriteFlags], { cwd: dir, stdio: 'pipe' });
+  return path.join(dir, name);
+};
 const leadFile = gen(leadInserted, 'lead.mp3');
 const gapFiles = gapsInserted.map((ms, i) => gen(ms, `gap_${String(i + 1).padStart(2, '0')}.mp3`));
 const outroFile = timing.endCard.enabled ? gen(Number(timing.outroMs), 'outro.mp3') : null;
@@ -107,7 +180,7 @@ const parts = [];
 if (leadFile) parts.push(leadFile);
 for (let i = 0; i < segs.length; i++) { parts.push(measured[i].file); if (i < segs.length - 1 && gapFiles[i]) parts.push(gapFiles[i]); }
 if (outroFile) parts.push(outroFile);
-fs.writeFileSync(path.join(dir, 'voiceover.mp3'),
+fs.writeFileSync(voiceOutPath,
   Buffer.concat(parts.map((p, i) => { const b = fs.readFileSync(p); return i === 0 ? b : b.subarray(audioStart(b)); })));
 
 timing.contentMs = contentMs;
@@ -117,11 +190,11 @@ timing.leadInMs = leadRealMs;
 
 const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));
 const driftMs = Math.abs(voiceMs - timing.durationMs);
-if (driftMs > Math.max(Number(stable.toleranceMs), 1500)) throw new Error(`C-6 voice drift ${driftMs}ms`);
+if (driftMs > Math.max(TOLERANCE_MS, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms`);
 
 delete timing.timingHash;
 timing.timingHash = crypto.createHash('sha256').update(canonicalBytes(timing)).digest('hex');
-fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2));
+fs.writeFileSync(timingOutPath, JSON.stringify(timing, null, 2));
 
 const mm = ms => `${Math.floor(ms / 60000)}:${String(Math.round(ms % 60000 / 1000)).padStart(2, '0')}`;
 console.log(`\nvoiceover ${voiceMs}ms | timeline ${timing.durationMs}ms | drift ${driftMs}ms`);

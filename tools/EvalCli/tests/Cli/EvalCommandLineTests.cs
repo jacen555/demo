@@ -63,13 +63,65 @@ public class EvalCommandLineTests
     }
 
     [Fact]
-    public async Task Invoke_WithDryRunAndTheReservedGateFlag_StillExitsSuccess()
+    public async Task Invoke_WithTheGateFlag_RefusesRatherThanPassingAGateThatNeverRan()
     {
         using var workspace = new TempWorkspace();
 
-        var (exitCode, standardOut, _) = await InvokeAsync(DryRunArgs(workspace, "--fail-on-regression"));
+        var (exitCode, standardOut, standardError) = await InvokeAsync(DryRunArgs(workspace, "--fail-on-regression"));
 
-        // Reserved means parsed and reported, not acted on.
+        // The defect: someone wires --fail-on-regression into CI, watches it go green, and
+        // believes a regression would have stopped them. A documented reservation does not reach
+        // that person; a non-zero exit on the invocation that asked for it does.
+        exitCode.Should().NotBe((int)ExitCode.Success);
+        exitCode.Should().Be((int)ExitCode.NotImplemented);
+        standardOut.Should().BeEmpty();
+        standardError.Should().Contain("--fail-on-regression");
+    }
+
+    [Fact]
+    public async Task Invoke_WithTheGateFlag_NamesWhatTheGateWillDoAndThatItIsNotHereYet()
+    {
+        using var workspace = new TempWorkspace();
+
+        var (_, _, standardError) = await InvokeAsync(DryRunArgs(workspace, "--fail-on-regression"));
+
+        // A refusal that only says "no" sends the reader looking for a typo. This one has to say
+        // what the flag will do, and that the exits it will use are held for it.
+        standardError.Should().Contain("regression");
+        standardError.Should().Contain($"{ExitCodes.GateRangeStart}-{ExitCodes.GateRangeEnd}");
+    }
+
+    [Fact]
+    public async Task Invoke_WithTheGateFlagAndNoDryRun_RefusesBeforeConductingAnything()
+    {
+        using var workspace = new TempWorkspace();
+
+        var before = Directory.GetFiles(workspace.Root, "*", SearchOption.AllDirectories);
+
+        var (exitCode, _, _) = await InvokeAsync(
+            "run",
+            "--suite",
+            "eval-suites/regression.json",
+            "--root",
+            workspace.Root,
+            "--fail-on-regression"
+        );
+
+        // Refused while the arguments are validated, so the cost of asking for a gate that is not
+        // here is nothing at all.
+        exitCode.Should().Be((int)ExitCode.NotImplemented);
+        Directory.GetFiles(workspace.Root, "*", SearchOption.AllDirectories).Should().BeEquivalentTo(before);
+    }
+
+    [Fact]
+    public async Task Invoke_WithoutTheGateFlag_StillReportsTheReportOnlyMode()
+    {
+        using var workspace = new TempWorkspace();
+
+        var (exitCode, standardOut, _) = await InvokeAsync(DryRunArgs(workspace));
+
+        // Refusing the flag must not remove the statement that this build does not gate. The
+        // mode is what a reader of a plan needs; the flag is what a CI author wires.
         exitCode.Should().Be((int)ExitCode.Success);
         standardOut.Should().Contain("report-only");
     }
@@ -376,6 +428,168 @@ public class EvalCommandLineTests
     }
 
     [Fact]
+    public async Task Invoke_WithHelp_DoesNotCallBaselineUpdateTheOnlyDestructiveRoute()
+    {
+        // `run --out <path> --overwrite` replaces an existing file, and that file may be a
+        // baseline the invocation did not name. Calling `baseline update` the only destructive
+        // thing the tool does is the documentation not having caught up with that.
+        var (_, standardOut, _) = await InvokeAsync("--help");
+
+        standardOut.Should().NotContain("the one destructive thing this tool does");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelp_SaysWhatBaselineUpdateAddsOverAPlainOverwrite()
+    {
+        var (_, standardOut, _) = await InvokeAsync("--help");
+
+        // What the command actually is: the previewed, verified route, not the only one.
+        standardOut.Should().Contain("previews");
+        standardOut.Should().Contain("verifies");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelp_StatesTheNarrowerGuaranteeRunActuallyHolds()
+    {
+        var (_, standardOut, _) = await InvokeAsync("--help");
+
+        // The guarantee `run` can hold is about its own inputs, not about baselines in general.
+        standardOut.Should().Contain("--suite");
+        standardOut.Should().Contain("never replaces");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelp_DocumentsThreeAsARunOrPublicationFailure()
+    {
+        var (_, standardOut, _) = await InvokeAsync("--help");
+
+        // A completed run can earn 3 when publication fails, so the description may not say only
+        // that the run could not complete.
+        standardOut.Should().Contain("could not be published");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForBaselineUpdate_DoesNotClaimTheBaselineIsNeverModified()
+    {
+        // The description is shared with `run`, where it is true. Rendered here it sits beside
+        // --apply, which replaces exactly that file.
+        var (exitCode, standardOut, _) = await InvokeAsync("baseline", "update", "--help");
+
+        exitCode.Should().Be((int)ExitCode.Success);
+        standardOut.Should().Contain("--baseline");
+        standardOut.Should().NotContain("never modified");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForBaselineUpdate_SaysWhichCommandReplacesTheBaselineAndWhichDoesNot()
+    {
+        var (_, standardOut, _) = await InvokeAsync("baseline", "update", "--help");
+
+        // One sentence that is true in both renderings: it has to name the asymmetry rather than
+        // pick whichever command it was written against.
+        standardOut.Should().Contain("replaces it");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTheRunCommand_StillSaysRunDoesNotModifyTheBaseline()
+    {
+        // The correction must not cost `run` the guarantee it genuinely holds.
+        var (_, standardOut, _) = await InvokeAsync("run", "--help");
+
+        standardOut.Should().Contain("never modifies it");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTheRunCommand_DoesNotClaimOmittingOutWritesNothingAtAll()
+    {
+        // `run --baseline ... --report-markdown <path>` writes a file with no --out at all.
+        var (_, standardOut, _) = await InvokeAsync("run", "--help");
+
+        standardOut.Should().Contain("--out");
+        standardOut.Should().NotContain("nothing is written at all");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTheRunCommand_SaysOutDoesNotGovernTheReport()
+    {
+        var (_, standardOut, _) = await InvokeAsync("run", "--help");
+
+        standardOut.Should().Contain("no artifact is written");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTrend_DoesNotDescribeTheOptInWithAnOptionTrendDoesNotHave()
+    {
+        // The whole point of splitting the instance: `trend` declares no --out, so its help must
+        // not name one. Asserted on the phrase from `run`'s description rather than on "--out"
+        // alone, because the safe-path preamble legitimately mentions --out while describing
+        // `run` — a bare NotContain would pass or fail for the wrong reason.
+        var (exitCode, standardOut, _) = await InvokeAsync("trend", "--help");
+
+        exitCode.Should().Be((int)ExitCode.Success);
+        standardOut.Should().Contain("--overwrite");
+        standardOut.Should().NotContain("Allow --out and --report-markdown");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTrend_DescribesTheOptInAgainstTheOneDestinationTrendHas()
+    {
+        var (_, standardOut, _) = await InvokeAsync("trend", "--help");
+
+        // A phrase that can only come from the opt-in's own description. Asserting "trend report"
+        // alone would pass on --report-markdown's text and prove nothing about --overwrite.
+        standardOut.Should().Contain("replace an existing trend report");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTheRunCommand_SaysTheOptInIsRefusedWithNoDestination()
+    {
+        // This group made --overwrite refuse an invocation that names neither destination. The
+        // help did not say so.
+        var (_, standardOut, _) = await InvokeAsync("run", "--help");
+
+        standardOut.Should().Contain("refused if neither is named");
+    }
+
+    [Fact]
+    public async Task Invoke_WithHelpForTheRunCommand_SaysTheOptInNeverLiftsAnInputCollision()
+    {
+        var (_, standardOut, _) = await InvokeAsync("run", "--help");
+
+        standardOut.Should().Contain("never a file this invocation reads");
+    }
+
+    [Fact]
+    public void BindTrendRequest_WhenTheOptInIsGiven_ReadsTheInstanceTrendActuallyDeclares()
+    {
+        // **The hazard the split creates, pinned.** Options are instance fields: if `trend` is
+        // built with one instance and bound from another, every value comes back as its default
+        // — false here — which is indistinguishable from the caller not passing the flag. The
+        // failure mode is a report that silently refuses to replace, or worse, one that does.
+        var cli = new EvalCommandLine();
+
+        cli.BindTrendRequest(Parse(cli, "trend", "--artifacts", "trend", "--overwrite")).Overwrite.Should().BeTrue();
+    }
+
+    [Fact]
+    public void BindTrendRequest_WhenTheOptInIsOmitted_StillReadsFalseRatherThanNothing()
+    {
+        var cli = new EvalCommandLine();
+
+        cli.BindTrendRequest(Parse(cli, "trend", "--artifacts", "trend")).Overwrite.Should().BeFalse();
+    }
+
+    [Fact]
+    public void BindRequest_WhenTheOptInIsGiven_ReadsTheInstanceRunActuallyDeclares()
+    {
+        var cli = new EvalCommandLine();
+
+        cli.BindRequest(Parse(cli, "run", "--suite", "s.json", "--overwrite")).Overwrite.Should().BeTrue();
+    }
+
+    private static ParseResult Parse(EvalCommandLine cli, params string[] args) => cli.BuildParser().Parse(args);
+
+    [Fact]
     public async Task Invoke_WithHelp_SaysTheGateRangeIsReserved()
     {
         var (_, standardOut, _) = await InvokeAsync("--help");
@@ -385,13 +599,16 @@ public class EvalCommandLineTests
     }
 
     [Fact]
-    public async Task Invoke_WithHelpForTheRunCommand_DocumentsTheReservedGateFlagAsNotImplemented()
+    public async Task Invoke_WithHelpForTheRunCommand_SaysTheGateFlagIsNotAvailableYet()
     {
         var (exitCode, standardOut, _) = await InvokeAsync("run", "--help");
 
         exitCode.Should().Be((int)ExitCode.Success);
         standardOut.Should().Contain("--fail-on-regression");
-        standardOut.Should().Contain("RESERVED");
+
+        // "RESERVED" read as "accepted, does nothing yet". The help has to say the invocation is
+        // refused, because that is what the caller will actually meet.
+        standardOut.Should().Contain("Not yet available");
     }
 
     [Fact]

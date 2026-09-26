@@ -10,7 +10,6 @@ using Forge.EvalEngine.Comparison;
 using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
-using Forge.EvalEngine.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Forge.EvalCli.Cli;
@@ -109,7 +108,7 @@ internal sealed record BaselineUpdateDocument
 }
 
 /// <summary>
-/// Carries out <c>baseline update</c> — the one genuinely destructive thing this tool does.
+/// Carries out <c>baseline update</c> — the verified route to replacing a committed baseline.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -119,8 +118,16 @@ internal sealed record BaselineUpdateDocument
 /// staged over, and not touched.
 /// </para>
 /// <para>
+/// <b>Not the only command that can replace a file — the only one that checks what it is
+/// replacing first.</b> <c>run --out --overwrite</c> replaces whatever occupies the path it was
+/// given, including a baseline it was not handed as <c>--baseline</c>; what no <c>run</c>
+/// invocation can do is write over a file that same invocation reads. The guards below are what
+/// this command adds on top of that, and they are about the <i>identity and contents</i> of the
+/// destination rather than about its path.
+/// </para>
+/// <para>
 /// <b>A committed baseline is a tracked source file, so the guards are stricter than
-/// <c>--out</c>'s.</b> Four of them, and each closes a way this command could destroy something
+/// <c>--out</c>'s.</b> Six of them, and each closes a way this command could destroy something
 /// the caller did not mean to replace:
 /// </para>
 /// <list type="number">
@@ -144,6 +151,18 @@ internal sealed record BaselineUpdateDocument
 /// <b>It writes through the same path <c>--out</c> does</b> — see <see cref="ArtifactWriter"/> —
 /// so containment, the link refusal, staging, re-verification, and the atomic rename are the
 /// same code rather than a second, weaker copy.
+/// </description></item>
+/// <item><description>
+/// <b>It refuses to publish an artifact the reader would decline</b> — one above the byte budget,
+/// or carrying a shape or an identifier the artifact reader rejects. Replacing a readable
+/// baseline with an unreadable one and reporting a successful update is the whole safety story
+/// failing quietly. Applied in the <i>preview</i> too, so this command never advises
+/// <c>--apply</c> for a candidate <c>--apply</c> would refuse.
+/// </description></item>
+/// <item><description>
+/// <b>It re-establishes at the moment of the write that the destination is not an input.</b> The
+/// argument-time answer expires while the suite is conducted, and a directory swapped for a link
+/// in between would point <c>--baseline</c> at the suite this run was read from.
 /// </description></item>
 /// </list>
 /// <para>
@@ -171,13 +190,38 @@ internal static class BaselineCommand
     /// <exception cref="EvalCliException">The invocation was refused at one of its stages.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public static Task<ExitCode> ExecuteAsync(RunPlan plan, IConsole console, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, console, ArtifactBudget.Bytes, cancellationToken);
+
+    /// <summary>Executes one invocation against a stated publication ceiling.</summary>
+    /// <param name="plan">The validated plan.</param>
+    /// <param name="console">Where results (stdout) and diagnostics (stderr) go.</param>
+    /// <param name="maxBytes">
+    /// The publication ceiling. <see cref="ArtifactBudget.Publishable(SuiteResult, int)"/> refuses
+    /// anything above <see cref="ArtifactBudget.Bytes"/>, so this seam can only ever be made
+    /// stricter than production — which is what makes it safe to expose.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the invocation.</param>
+    /// <returns>The exit code.</returns>
+    /// <remarks>
+    /// A seam, and it exists because the alternative is a guard nothing demonstrates: the real
+    /// ceiling is sixteen mebibytes and no test can conduct a suite that large without becoming
+    /// the slowest thing in the repository. This is the same trade <c>ArtifactWrite.AfterStaging</c>
+    /// makes for the staged-file window.
+    /// </remarks>
+    internal static Task<ExitCode> ExecuteAsync(
+        RunPlan plan,
+        IConsole console,
+        int maxBytes,
+        CancellationToken cancellationToken
+    ) =>
         // An expression body on purpose: there is no statement position after the guard for a
         // later step to be added in. See DurableWrites for the property and its residual hole.
-        DurableWrites.GuardAsync(written => RunAsync(plan, console, written, cancellationToken));
+        DurableWrites.GuardAsync(written => RunAsync(plan, console, maxBytes, written, cancellationToken));
 
     private static async Task<ExitCode> RunAsync(
         RunPlan plan,
         IConsole console,
+        int maxBytes,
         DurableWrites written,
         CancellationToken cancellationToken
     )
@@ -225,11 +269,18 @@ internal static class BaselineCommand
 
         var (comparison, noDiffReason) = Diff(provider, plan, committed, candidate);
 
+        // **Before the branch, so the preview is held to what --apply is held to.** The preview's
+        // whole job is to say what the destructive step would do; a budget enforced only at
+        // --apply lets it report a clean replacement for a candidate --apply must refuse, which
+        // is advising the irreversible step on the strength of a check nobody made. One call, one
+        // answer, and no second path that could disagree with it.
+        var publishable = ArtifactBudget.Publishable(candidate, maxBytes);
+
         var applied = plan.ApplyBaselineUpdate;
 
         if (applied)
         {
-            await ApplyAsync(plan, candidate, target, written, cancellationToken).ConfigureAwait(false);
+            await ApplyAsync(plan, publishable, target, written, cancellationToken).ConfigureAwait(false);
         }
 
         var document = Document(plan, committed, candidate, comparison, noDiffReason, applied);
@@ -402,14 +453,27 @@ internal static class BaselineCommand
     /// what <paramref name="target"/> does, and the two are not the same guarantee.
     /// </para>
     /// <para>
-    /// The bytes go through <see cref="ArtifactRedaction"/> first. A committed baseline is a
-    /// tracked source file, and an address recorded in one is in the repository's history from
-    /// that commit onwards (§V).
+    /// The bytes come from <see cref="ArtifactBudget"/>, which is the same step <c>run --out</c>
+    /// uses and which applies both rules the way out needs. It redacts, because a committed
+    /// baseline is a tracked source file and an address recorded in one is in the repository's
+    /// history from that commit onwards (§V). And it refuses an artifact above the budget the
+    /// reader accepts, because <i>this</i> command's whole safety story is that it replaces
+    /// something valid with something valid — a replacement no later comparison can read is the
+    /// one outcome its guards exist to prevent, arriving through size rather than through content.
     /// </para>
     /// </remarks>
+    /// <param name="plan">The validated plan.</param>
+    /// <param name="publishable">
+    /// The redacted, budgeted, shape-checked bytes. Produced before the <c>--apply</c> branch so
+    /// the preview is held to the same conditions, and passed in rather than re-derived here so
+    /// the file that lands is byte-for-byte the one the preview vouched for.
+    /// </param>
+    /// <param name="target">The destination the replacement is conditioned on still being.</param>
+    /// <param name="written">The ledger this write records itself in.</param>
+    /// <param name="cancellationToken">Cancels the write.</param>
     private static async Task ApplyAsync(
         RunPlan plan,
-        SuiteResult candidate,
+        string publishable,
         ArtifactTarget target,
         DurableWrites written,
         CancellationToken cancellationToken
@@ -424,7 +488,8 @@ internal static class BaselineCommand
                     ReplaceOptionName = "--apply",
                     Publication = ArtifactPublication.ReplaceVerified,
                     RequiredTarget = target,
-                    Contents = CanonicalJson.Serialize(ArtifactRedaction.Redact(candidate)),
+                    Recheck = () => plan.RecheckDestination(plan.BaselinePath!, "--baseline"),
+                    Contents = publishable,
                     FailureContext = "The suite was conducted but the baseline could not be replaced",
                     LossNote = "The baseline was not updated",
                     DurableNote = "the committed baseline",

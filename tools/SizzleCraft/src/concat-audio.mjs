@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import path from 'node:path';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
 
 function audioStart(buffer) {
   let offset = 0;
@@ -24,21 +24,56 @@ function clean(buffer, keepLeadingTag) {
   return stripId3v1(keepLeadingTag ? buffer : buffer.subarray(audioStart(buffer)));
 }
 
-const projectDir = process.cwd();
-const silencePath = path.join(projectDir, 'silence.mp3');
-const outPath = path.join(projectDir, 'voiceover.mp3');
-const segmentPaths = fs.readdirSync(projectDir)
-  .filter((name) => /^segment_\d+\.mp3$/i.test(name))
-  .sort()
-  .map((name) => path.join(projectDir, name));
-if (!segmentPaths.length) throw new Error('no segment_000.mp3 files found');
-if (!fs.existsSync(silencePath)) throw new Error(`missing ${silencePath}`);
+const USAGE = `
+concat-audio — concatenate segment_*.mp3 into voiceover.mp3, inserting silence between
+segments (pipeline stage S4).
 
-const silence = clean(fs.readFileSync(silencePath), false);
-const buffers = [];
-for (let i = 0; i < segmentPaths.length; i++) {
-  buffers.push(clean(fs.readFileSync(segmentPaths[i]), i === 0));
-  if (i < segmentPaths.length - 1) buffers.push(silence);
-}
-fs.writeFileSync(outPath, Buffer.concat(buffers));
-console.log(`wrote ${outPath}`);
+  node concat-audio.mjs                  plan only (default)
+  node concat-audio.mjs --apply          write voiceover.mp3
+  node concat-audio.mjs --apply --replace  overwrite an existing voiceover.mp3
+
+Options
+  --out <file>      output path (default: voiceover.mp3)
+  --project <dir>   project root; no path may escape it (default: current directory)
+  --apply           actually write. Without it nothing is written.
+  --replace         permit overwriting an existing --out
+  --help            show this message
+
+Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
+`.trimStart();
+
+await runCli(() => {
+  const { values, projectDir, apply, replace } = parseCli({
+    usage: USAGE,
+    options: { out: { type: 'string' } },
+  });
+
+  const silencePath = requireExistingFile(projectDir, 'silence.mp3', 'silence asset');
+  const segmentNames = fs
+    .readdirSync(projectDir)
+    .filter((name) => /^segment_\d+\.mp3$/i.test(name))
+    .sort();
+  if (!segmentNames.length) {
+    throw new CliError('no segment_000.mp3 files found', EXIT.FAILED);
+  }
+  const segmentPaths = segmentNames.map((name) => requireExistingFile(projectDir, name, `segment ${name}`));
+  const outPath = resolveOutput(projectDir, values.out ?? 'voiceover.mp3', { apply, replace, label: 'output' });
+
+  if (!apply) {
+    console.log(`plan: concatenate ${segmentPaths.length} segment(s) with silence between them`);
+    for (const name of segmentNames) console.log(`  + ${name}`);
+    console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
+    planFooter();
+    return EXIT.OK;
+  }
+
+  const silence = clean(fs.readFileSync(silencePath), false);
+  const buffers = [];
+  for (let i = 0; i < segmentPaths.length; i++) {
+    buffers.push(clean(fs.readFileSync(segmentPaths[i]), i === 0));
+    if (i < segmentPaths.length - 1) buffers.push(silence);
+  }
+  fs.writeFileSync(outPath, Buffer.concat(buffers));
+  console.log(`wrote ${outPath}`);
+  return EXIT.OK;
+});

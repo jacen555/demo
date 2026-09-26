@@ -98,6 +98,20 @@ public class EvalCliServicesTests
     }
 
     [Fact]
+    public void Build_ForTheArtifactReader_AcceptsExactlyWhatThePublishingBudgetAllows()
+    {
+        // The correspondence this tool's honesty rests on: an artifact it agrees to publish must
+        // be one the reader it configures agrees to read. Two numbers that drifted apart would
+        // let `baseline update --apply` report a successful update after replacing a readable
+        // baseline with one no later comparison could load.
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+        using var provider = EvalCliServices.Build(Plan(workspace), diagnostics);
+
+        provider.GetRequiredService<ArtifactBaseline>().MaxBytes.Should().Be(ArtifactBudget.Bytes);
+    }
+
+    [Fact]
     public void Build_ForTheCoordinator_GivesEveryCoordinatorItsOwnInstance()
     {
         using var workspace = new TempWorkspace();

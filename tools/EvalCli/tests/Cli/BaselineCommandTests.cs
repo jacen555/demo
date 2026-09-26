@@ -55,6 +55,95 @@ public class BaselineCommandTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithoutTheOptIn_RefusesACandidateThatApplyWouldRefuse()
+    {
+        // The preview's job is to say what --apply would do. If the budget is only enforced at
+        // --apply, a preview can read as ready for a candidate --apply must refuse — advising the
+        // destructive step on the strength of a check that had not been made.
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var original = ComparisonWorkspace.Endpoint();
+
+        var path = await SeedBaselineAsync(workspace, original);
+        var before = await File.ReadAllBytesAsync(path, CancellationToken.None);
+
+        await using var changed = ComparisonWorkspace.Endpoint(ComparisonWorkspace.Checkout);
+        using var console = new RecordingConsole();
+
+        var refusal = await Assert.ThrowsAsync<EvalCliException>(() =>
+            BaselineCommand.ExecuteAsync(Plan(workspace, changed, apply: false), console, 1, CancellationToken.None)
+        );
+
+        refusal.ExitCode.Should().Be(ExitCode.RunFailed);
+        refusal.ExitCode.Should().NotBe(ExitCode.Success);
+
+        (await File.ReadAllBytesAsync(path, CancellationToken.None)).Should().Equal(before);
+        console.StandardOut.Should().NotContain("--apply", "a preview must not advise a step it knows would fail");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithTheOptIn_RefusesAnUnpublishableCandidateAndLeavesTheBaseline()
+    {
+        // And the apply path refuses identically — one check, before the branch, so the two
+        // cannot disagree about what is publishable.
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var original = ComparisonWorkspace.Endpoint();
+
+        var path = await SeedBaselineAsync(workspace, original);
+        var before = await File.ReadAllBytesAsync(path, CancellationToken.None);
+
+        await using var changed = ComparisonWorkspace.Endpoint(ComparisonWorkspace.Checkout);
+        using var console = new RecordingConsole();
+
+        var refusal = await Assert.ThrowsAsync<EvalCliException>(() =>
+            BaselineCommand.ExecuteAsync(Plan(workspace, changed, apply: true), console, 1, CancellationToken.None)
+        );
+
+        refusal.ExitCode.Should().Be(ExitCode.RunFailed);
+
+        (await File.ReadAllBytesAsync(path, CancellationToken.None))
+            .Should()
+            .Equal(before, "a baseline must survive a replacement that could not be published");
+
+        Directory
+            .EnumerateFiles(Path.Combine(workspace.Root, "artifacts"))
+            .Should()
+            .ContainSingle("a refused publication must not leave a staged file behind");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheCandidateFitsTheBudget_StillApplies()
+    {
+        // The positive half: the preflight must not refuse the ordinary case.
+        using var workspace = new TempWorkspace();
+
+        ComparisonWorkspace.WriteSuite(workspace);
+
+        await using var original = ComparisonWorkspace.Endpoint();
+
+        var path = await SeedBaselineAsync(workspace, original);
+        var before = await File.ReadAllBytesAsync(path, CancellationToken.None);
+
+        await using var changed = ComparisonWorkspace.Endpoint(ComparisonWorkspace.Checkout);
+        using var console = new RecordingConsole();
+
+        var code = await BaselineCommand.ExecuteAsync(
+            Plan(workspace, changed, apply: true),
+            console,
+            ArtifactBudget.Bytes,
+            CancellationToken.None
+        );
+
+        code.Should().Be(ExitCode.Success, console.StandardError);
+        (await File.ReadAllBytesAsync(path, CancellationToken.None)).Should().NotEqual(before);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithoutTheOptIn_WritesNothingAndLeavesTheBaselineByteForByte()
     {
         using var workspace = new TempWorkspace();

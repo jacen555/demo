@@ -285,6 +285,10 @@ internal static class TrendCommand
                     Publication = plan.OverwriteReport
                         ? ArtifactPublication.CreateOrReplace
                         : ArtifactPublication.CreateOnly,
+                    // Null, not an oversight: this command re-checks just above, before the
+                    // writer, because its refusal is a documented usage error (exit 1) rather
+                    // than a write-stage failure — see RecheckDestination.
+                    Recheck = null,
                     Contents = rendering.Text,
                     FailureContext = "The trend was produced but its report could not be written",
                     LossNote =

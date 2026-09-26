@@ -79,8 +79,10 @@ public class PlanRendererTests
     }
 
     [Fact]
-    public void RenderText_WhenTheGateFlagWasPassed_SaysItChangesNothing()
+    public void RenderText_ForEveryPlan_SaysRegressionsAreReportedRatherThanEnforced()
     {
+        // The plan can no longer be built with the gate flag — it is refused — so the one
+        // remaining honest gate line is the one every plan carries.
         using var workspace = new TempWorkspace();
 
         var plan = RunPlan.Create(
@@ -89,14 +91,13 @@ public class PlanRendererTests
                 Suite = "eval-suites/regression.json",
                 Root = workspace.Root,
                 DryRun = true,
-                FailOnRegression = true,
             }
         );
 
         var rendered = PlanRenderer.RenderText(plan, Harness(plan));
 
         rendered.Should().Contain("report-only");
-        rendered.Should().Contain("does not change this build's behaviour");
+        rendered.Should().Contain("reported, not enforced");
     }
 
     [Fact]

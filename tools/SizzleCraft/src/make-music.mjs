@@ -9,14 +9,67 @@
 //   envelopeJson (optional) = voiceover RMS envelope, used to sidechain-duck the bed under speech.
 //   preset       (optional) = named bed, see BEDS below. Defaults to 'warm'.
 import fs from 'node:fs';
+import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, requirePositiveNumber } from './cli-support.mjs';
 
-const out = process.argv[2] || 'music.wav';
-const DUR = Number(process.argv[3] || 251.2);
-const envPath = process.argv[4] || null;
-const presetName = process.argv[5] || process.env.SIZZLE_MUSIC_PRESET || 'warm';
+const USAGE = `
+make-music — synthesise the ambient bed (pipeline stage S8). Nothing sampled or licensed.
+
+  node make-music.mjs --out music.wav --seconds 240                    plan only (default)
+  node make-music.mjs --out music.wav --seconds 240 --apply            write the bed
+  node make-music.mjs --out music.wav --seconds 240 --apply --replace  overwrite it
+
+Options
+  --out <file>        output WAV (default: music.wav)
+  --seconds <number>  duration in seconds, 0..7200 (default: 251.2)
+  --envelope <file>   voiceover RMS envelope, used to sidechain-duck the bed under speech
+  --preset <name>     named bed: warm (I-V-ii-IV in F) or bright (vi-IV-I-V in G)
+  --project <dir>     project root; no path may escape it (default: current directory)
+  --apply             actually write. Without it nothing is written.
+  --replace           permit overwriting an existing --out
+  --help              show this message
+
+Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage or refused overwrite
+`.trimStart();
+
+const cli = (() => {
+  try {
+    return parseCli({
+      usage: USAGE,
+      options: {
+        out: { type: 'string' },
+        seconds: { type: 'string' },
+        envelope: { type: 'string' },
+        preset: { type: 'string' },
+      },
+    });
+  } catch (err) {
+    if (err.name === 'HelpRequested') { console.log(err.usage); process.exit(EXIT.OK); }
+    console.error(`error: ${err.message}`);
+    process.exit(err.exitCode ?? EXIT.FAILED);
+  }
+})();
+
+let out, DUR, envPath, presetName;
+try {
+  out = resolveOutput(cli.projectDir, cli.values.out ?? 'music.wav', { apply: cli.apply, replace: cli.replace, label: 'output' });
+  DUR = requirePositiveNumber(cli.values.seconds ?? 251.2, { name: '--seconds', max: 7200 });
+  envPath = cli.values.envelope
+    ? requireExistingFile(cli.projectDir, cli.values.envelope, 'envelope file')
+    : null;
+  presetName = cli.values.preset ?? process.env.SIZZLE_MUSIC_PRESET ?? 'warm';
+} catch (err) {
+  console.error(`error: ${err.message}`);
+  process.exit(err.exitCode ?? EXIT.FAILED);
+}
 
 const SR = 48000;
 const N = Math.round(DUR * SR);
+// A positive duration shorter than half a sample rounds to zero, which produced a
+// header-only WAV and reported a completed bed.
+if (!Number.isSafeInteger(N) || N < 1) {
+  console.error(`error: --seconds ${DUR} yields ${N} samples at ${SR} Hz — refusing to write an empty bed`);
+  process.exit(EXIT.USAGE);
+}
 
 // ---- composition -----------------------------------------------------------------------------
 // Named beds. Each is a complete voicing; add a new entry rather than editing one in place, so
@@ -60,11 +113,20 @@ const BEDS = {
 
 const bed = BEDS[presetName];
 if (!bed) {
-  console.error(`unknown music preset '${presetName}'. available: ${Object.keys(BEDS).join(', ')}`);
-  process.exitCode = 1;
-  process.exit();
+  console.error(`error: unknown music preset '${presetName}'. available: ${Object.keys(BEDS).join(', ')}`);
+  process.exit(EXIT.USAGE);
 }
 console.log(`music preset: ${presetName} (${bed.chords.map(c => c.name).join(' - ')})`);
+
+// Synthesis of a multi-minute bed is not free, so the plan stops here rather than
+// generating a buffer it would then discard.
+if (!cli.apply) {
+  console.log(`plan: synthesise ${DUR}s of the '${presetName}' bed`);
+  console.log(`  ducking ${envPath ? `sidechained to ${envPath}` : 'none (no --envelope given)'}`);
+  console.log(`  output  ${out} — ${describeWrite(out, cli.replace)}`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
 
 const CHORDS = bed.chords;
 const CHORD_SEC = bed.chordSec;
@@ -256,8 +318,35 @@ console.log(`raw peak ${peak.toFixed(3)} -> normalising x${norm.toFixed(4)} (tar
 const DUCK = 0.42;          // ≈ -7.5 dB under speech
 const HOP_MS = 20;
 let duckGain = null;
-if (envPath && fs.existsSync(envPath)) {
-  const env = JSON.parse(fs.readFileSync(envPath, 'utf8'));
+if (envPath) {
+  // No existsSync pre-check: an envelope that was ASKED for and cannot be read must fail,
+  // not silently select flat music and report success. Reading once and handling the
+  // failure also closes the window between the check and the read.
+  const env = guard(() => {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(envPath, 'utf8'));
+    } catch (err) {
+      throw new CliError(`${envPath} is not valid JSON — ${err.message}`);
+    }
+    // An empty or non-numeric envelope produced an empty gain array, which indexed to
+    // `undefined`, multiplied every sample to NaN, and wrote a WAV of NaN floats while
+    // reporting success — replacing a good bed with garbage. The ducking curve is the
+    // value the whole gain path depends on, so it is validated before synthesis.
+    if (!Array.isArray(parsed?.rms)) {
+      throw new CliError(`${envPath} must contain an "rms" array of envelope samples`);
+    }
+    if (parsed.rms.length === 0) {
+      throw new CliError(`${envPath} has an empty "rms" array — there is no envelope to duck against`);
+    }
+    const bad = parsed.rms.findIndex((v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0);
+    if (bad !== -1) {
+      throw new CliError(
+        `${envPath} "rms"[${bad}] is ${JSON.stringify(parsed.rms[bad])} — every envelope sample must be a finite non-negative number`,
+      );
+    }
+    return parsed;
+  });
   const rms = env.rms, thresh = 0.004;
   // one-pole smoothing: duck fast, recover gently, so it never pumps
   const atk = Math.exp(-HOP_MS / 150), rel = Math.exp(-HOP_MS / 800);
@@ -309,10 +398,22 @@ buf.writeUInt32LE(SR * 2 * 4, 28); buf.writeUInt16LE(8, 32); buf.writeUInt16LE(3
 buf.write('data', 36); buf.writeUInt32LE(bytes, 40);
 let o = 44;
 let outPeak = 0;
+let nonFinite = -1;
 for (let i = 0; i < N; i++) {
+  if (nonFinite === -1 && (!Number.isFinite(left[i]) || !Number.isFinite(right[i]))) nonFinite = i;
   buf.writeFloatLE(left[i], o); o += 4;
   buf.writeFloatLE(right[i], o); o += 4;
   outPeak = Math.max(outPeak, Math.abs(left[i]), Math.abs(right[i]));
+}
+// Belt and braces on the "claims to have done the job" half: whatever produced them, a
+// buffer of NaN samples is not a music bed, and writing one over a good file while
+// printing "wrote ..." is the failure mode this engine exists to stop.
+if (nonFinite !== -1) {
+  console.error(
+    `error: synthesis produced a non-finite sample at index ${nonFinite} — refusing to write ${out}. ` +
+      `This is a bug in the generator or its inputs; the existing file has not been touched.`,
+  );
+  process.exit(EXIT.FAILED);
 }
 fs.writeFileSync(out, buf);
 const db = v => (20 * Math.log10(v || 1e-9)).toFixed(1);

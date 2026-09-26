@@ -157,10 +157,91 @@ Motion Canvas makes this first-class:
 **Carry `preview.scale` / `preview.fps` alongside `render.*` in `knobs.json`**, so
 draft settings are declared rather than invented per session.
 
-### Resolution scale is the biggest lever `[VERIFIED]`
+### Frame format is the biggest lever at 4K — not resolution `[MEASURED]`
 
-> *"setting the scale to 0.5 made our renders twice as fast as with the default
-> of 1.0."* — Revideo, `slow-rendering.mdx`
+**Superseded 2026-09-25.** This section previously said *"resolution scale is the
+biggest lever"*, citing Revideo's `slow-rendering.mdx`:
+
+> *"setting the scale to 0.5 made our renders twice as fast as with the default of 1.0."*
+
+That citation is real and the conclusion drawn from it was wrong twice over. The
+first end-to-end run of this engine by a second project measured both claims:
+
+| Previous claim | Measured |
+|---|---|
+| Halving resolution roughly halves render time | **~8×** — 5.5 min against 42.4 min, S5–S7 at half scale and half fps |
+| Resolution scale is the biggest single lever | At 4K, **frame format is bigger** — JPEG q88 against PNG is **13×** (13.05 fps vs 1.00 fps; 2,183 → 170 KB/frame) |
+| Capture is ~84% of a render | True at **1080p with PNG only.** With JPEG, 4K capture projects to ~9.6 min and **encode becomes the long pole** |
+
+The practical consequence inverts the old advice: **4K JPEG capture (~9.6 min) is
+cheaper than the 1080p PNG render this skill was written against (35.4 min).**
+Reach for the frame format before reaching for resolution.
+
+**These numbers are a machine profile, not a constant.** All of the above were
+measured on an **Azure VM — Xeon Platinum 8370C, 8 physical / 16 logical cores,
+64 GB RAM, no GPU passthrough.** On a workstation with a real GPU, `h264_nvenc`
+would likely be the largest S7 win and the encode advice inverts again.
+
+**So probe the machine rather than quoting this table.**
+`tools/SizzleCraft/src/probe-render-capability.mjs` **runtime-tests each encoder**
+rather than reading `ffmpeg -encoders` — that list advertises everything compiled
+into the binary regardless of hardware, and the VM above cheerfully lists NVENC,
+QSV *and* AMF while all three fail. Record the result in the project's
+`render-log.md`, not here.
+
+### Dedup measures holds, not byte-identity `[MEASURED]`
+
+A first attempt to measure frame dedup compared consecutive frame **lengths** and
+reported 74% deduped. That is wrong: a deterministic renderer produces
+byte-identical output at full cost, so identical bytes prove nothing about whether
+a frame was written once.
+
+`fsutil hardlink list` is the real measurement — it showed one frame with **58
+paths** beside byte-identical frames carrying **1 each**. True figures: lead-in
+57% held, **body 0%**.
+
+**Dedup cannot rescue an animated render.** It is also a useful canary in the
+other direction: a suspiciously *high* ratio on content that should be moving
+means nothing is animating.
+
+### Bounded probes are representative, not just the opening `[MEASURED]`
+
+`frame-capture.mjs` splits the timeline into **one contiguous slice per worker**,
+run in parallel — so a timed bounded probe samples across the whole video rather
+than only its first seconds. That promotes bounded probing from a guess to a
+defensible technique, and is worth knowing before anyone discards a probe result
+as unrepresentative.
+
+### Raising the worker cap does not help `[MEASURED]`
+
+`frame-capture.mjs` caps at **6 workers above 1080p** versus `cores - 1` below it,
+and on a 16-core box with 64 GB that looks obviously over-conservative. It was
+measured, and it is not:
+
+| Workers | Rate |
+|---|---|
+| 6 | 9.77 fps |
+| 10 | 9.87 fps |
+| 14 | 9.53 fps |
+
+**Flat.** Something saturates before the core count does — most likely SwiftShader,
+the software rasteriser. Peak RAM was 2.2–2.3 GB against 64 GB, so memory was never
+the constraint either.
+
+Leave the cap alone. This is recorded because "16 cores, why only 6 workers" is an
+obvious question that will be asked again, and the answer is that someone checked.
+
+*(Process-count confirmation is inconclusive — Chromium shares renderer processes —
+so the mechanism is inferred while the rate is measured.)*
+
+### Proposed but unmeasured — do not quote alongside the above
+
+- **A RAM disk for the frame store**, now viable *because* of the JPEG finding: PNG
+  frames were 14.5 GB, JPEG at 4K is **~1.25 GB** for a whole video. Would take
+  disk I/O out of capture and encode. Only helps with headroom; never a default.
+- **x264 preset and thread count.** With no hardware encode available, S7 is
+  CPU-bound and these are the only remaining encode levers. Untested on this
+  pipeline.
 
 ### Encode settings `[VERIFIED]`
 
@@ -333,7 +414,7 @@ fast-moving or unofficial surfaces. **Re-verify before relying on any of it.**
 | **Chrome `--headless=old`** | Split from `--headless=new` in Chrome 123; `old` is *"ideal for screenshotting"* but **will stop working in a future Chrome version**. If the capture harness passes it, it is on a deprecation path. |
 | **Revideo docs location** | Project moved: `docs.re.video` now redirects and returns empty; repo is `midrender/revideo` (was `redotvideo/revideo`). Cite the repo, not the docs site. |
 | **Remotion `frameRange` multi-range** | Added in 4.0.502; `[number, null]` in 4.0.421; `gopSize` 4.0.466; NVENC 4.0.484. Version-gate any use. |
-| **TTS determinism** | **Undocumented by both client libraries.** See bug ledger entry 7 — treat the cache as authoritative rather than asserting determinism. |
+| **TTS determinism** | **Measured stable 2026-09-25** — three runs of the same script produced identical durations every time. Still undocumented by both client libraries, so this is observed behaviour on one engine version, not a guarantee. Keep the cache authoritative (bug ledger entry 7); treat this as "the cache is not papering over drift", not as licence to skip it. |
 
 ---
 

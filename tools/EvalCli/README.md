@@ -195,8 +195,16 @@ is decided before anything runs:
   against itself reports that nothing changed whatever the change did. The comparison is on
   scheme, host, port, and path — everything that identifies a system and survives redaction. Two
   addresses differing *only* by query string are not treated as distinct, for the reason below.
-- **`--baseline` and `--out` may not name the same file.** Writing a run over the baseline it was
-  compared against is a baseline update, and that has its own command and its own opt-in.
+- **No destination may be one of this invocation's own inputs.** `--out` and `--report-markdown`
+  are each held against `--suite` and against `--baseline`, and **`--overwrite` does not lift it**:
+  that opt-in is about replacing a file you chose, not about destroying one the same command reads.
+  Writing a run over the baseline it was compared against is a baseline update, and that has its
+  own command and its own opt-in. Writing either over the suite would destroy the definitions the
+  run was conducted from, leaving nothing to re-read. The rule is enumerated over inputs × 
+  destinations rather than written per pair, because the per-pair form is what left `--suite`
+  unguarded while both baseline cells were covered — and it is **asked again immediately before
+  each write**, because whether two paths are the same file is a property of the file system and a
+  directory swapped for a link mid-run redirects a destination onto an input.
 - **A scenario this run did not conduct is withheld from the baseline, not compared.** A narrowed
   run produces a candidate carrying only the selected scenarios; handing the comparator the whole
   baseline would classify every skipped scenario as `removed` — a confident claim about a change
@@ -624,8 +632,9 @@ refuse exactly the series worth trending.
 ### What it will not do
 
 - **No chart and no image.** Text and tables only.
-- **No gate.** `--fail-on-regression` is not accepted by this command at all; exit codes `10`–`19`
-  stay unallocated. An option accepted here would read as one that might act.
+- **No gate.** `--fail-on-regression` is not declared by this command at all; exit codes `10`–`19`
+  stay unallocated. An option accepted here would read as one that might act — which is the same
+  rule `run` now applies by refusing the flag outright rather than parsing and ignoring it.
 - **No posting.** Same as the comparison report: the tool writes a file, CI attaches it.
 - **It conducts nothing.** There is no `--suite` and no `--endpoint`; this command runs no scenario
   and dials nothing.
@@ -644,9 +653,27 @@ being read as a flat line.
 
 ## Updating a committed baseline
 
-This is the one genuinely destructive thing this tool does, and it lives in its own command.
-**Nothing under `run` replaces a baseline**, so no invocation that is safe today becomes
+This is the destructive command, and it is the **previewed, verified** route to replacing a
+committed baseline: it previews by default, never creates, refuses a baseline belonging to another
+suite, refuses a run with errored scenarios, and replaces only the bytes it read and made those
+refusals against. **No `run` invocation replaces a file that same invocation reads** — not the
+suite, and not a baseline it was pointed at — so no invocation that is safe today becomes
 destructive because an option was added later.
+
+> **What this does *not* claim.** `run --out <path> --overwrite` will replace an existing file at
+> `<path>`, and that file may happen to be a baseline somebody committed. The tool cannot tell:
+> a baseline and a run artifact are the same document, so "is this a baseline" is not a property
+> of a file this or any other check could read. What `run` can tell — and now does — is when a
+> destination is a file **this same invocation was also asked to read**, which is the case where
+> the caller demonstrably cannot have meant it. Everywhere else, `--overwrite` on a path you typed
+> means what it says. Making `--out` create-only instead was considered and rejected: it would
+> push the ordinary re-run-into-the-same-artifact loop out of a guarded tool and into an
+> unguarded `rm`, which has no containment, no link refusal, and no staging.
+>
+> So the division is not "`run` cannot replace a baseline and `baseline update` can". It is that
+> **`baseline update` is the only route that checks what it is replacing before it replaces it.**
+> `run --out --overwrite` gets containment, link refusal, staging and an atomic rename — and none
+> of the foreign-suite, errored-run, or byte-identity verification above.
 
 **The default invocation is a preview. Start there — it writes nothing.**
 
@@ -757,9 +784,9 @@ other interruption, but it does **not** claim nothing was written — it names t
 | `--root <dir>` | working directory | The boundary. Every other path must resolve inside it or it is refused. |
 | `--baseline <path>` | none | A committed baseline artifact to compare against. Read only; never modified. Also tells [selection](#selection-is-opt-in) which scenarios there is evidence to skip. |
 | `--baseline-endpoint <url>` | none | Conduct the suite against this address and compare the candidate to that run. Must differ from `--endpoint`, may not carry a query string or a fragment, needs an exchange, and conducts the suite twice. Mutually exclusive with `--baseline`. |
-| `--out <path>` | none | Where the run artifact would be written. **Omit it and nothing is written at all.** May not be the same file as `--baseline`. |
-| `--report-markdown <path>` | none | Where to write the [Markdown comparison report](#the-pull-request-report) for a pull request. Needs a baseline; refused without one. May not be the same file as `--out` or `--baseline`. This tool writes the file and never posts it. |
-| `--overwrite` | off | Opt in to replacing an existing file at `--out` or `--report-markdown`. Without it, an existing file stops the run. Never permits replacing `--baseline`. |
+| `--out <path>` | none | Where the run artifact would be written. **Omit it and no artifact is written** — this does not govern `--report-markdown`, which writes its own file whether or not `--out` was given. May never be the same file as `--suite` or `--baseline`, with or without `--overwrite`. |
+| `--report-markdown <path>` | none | Where to write the [Markdown comparison report](#the-pull-request-report) for a pull request. Needs a baseline; refused without one. May never be the same file as `--out`, `--suite`, or `--baseline`. This tool writes the file and never posts it. |
+| `--overwrite` | off | Opt in to replacing an existing file at `--out` or `--report-markdown`. Without it, an existing file stops the run. Never permits replacing `--suite` or `--baseline`, and is refused outright if neither destination is named. **Does** permit replacing any other existing file at the path you name, including a baseline not passed as `--baseline`. |
 | `--seed <n>` | `0` | The root seed. Fixed, not random: a baseline and a candidate must share it for the comparison to be paired. |
 | `--max-concurrency <n>` | `1` | Hard ceiling on runs in flight. Load on somebody else's system is opted into. |
 | `--max-total-runs <n>` | `100000` | Ceiling on the runs a suite may plan, so a mistyped repetition count is refused rather than executed. |
@@ -769,7 +796,7 @@ other interruption, but it does **not** claim nothing was written — it names t
 | `--llm-exchange <name>` | `none` | Which adapter describes the conversational system under test: `none` or `json`. Needs `--endpoint`. |
 | `--dry-run` | off | Print the planned run and execute nothing. |
 | `--json` | off | Emit the result as JSON on stdout. |
-| `--fail-on-regression` | off | **Reserved.** Parsed and reported; this build is report-only and the flag changes nothing. |
+| `--fail-on-regression` | off | **Not available.** The invocation is refused with exit `70` rather than accepted and ignored — a flag that goes green without gating tells a CI step it is guarded when nothing is. Exits `10`–`19` stay reserved for it. |
 | `--verbose`, `-v` | off | Debug diagnostics on stderr. |
 
 ### Selection is opt-in
@@ -872,7 +899,11 @@ its own adapter.
   this build that deletes anything.
 - The only writes `run` performs are `--out` and `--report-markdown`, and an existing file at
   either is refused unless `--overwrite` is passed as well. The refusal happens before anything
-  runs, so it costs nothing and leaves the file exactly as it was.
+  runs, so it costs nothing and leaves the file exactly as it was. **`--overwrite` never reaches a
+  file this same invocation reads** — the suite or a named baseline — and that refusal is
+  re-established at the moment of each write rather than only when the arguments were checked.
+  `--overwrite` with neither destination named is refused outright, as it is on `trend`: an opt-in
+  with nothing to opt in to reads as one that might act.
 - **Nothing is written through a truncating open, by either command.** A run takes as long as the
   system under test does, so a destination validated before it started is evidence about a
   directory tree that has had minutes to change — a directory swapped for a link in between would
@@ -898,15 +929,36 @@ its own adapter.
   rule on top of it and is refused when *any* segment below the root is a link, because nothing
   downstream re-checks where a write lands. The root itself may be a link: it is the boundary you
   declared, and the resolved location is what gets reported.
-- **Updating a committed baseline is its own command with its own opt-in.** Nothing under `run`
-  replaces a baseline, so no invocation that is safe today becomes destructive because an option
-  was added later. Its default is a preview that writes nothing, it never *creates* a baseline, it
-  refuses one belonging to another suite, and it refuses to commit a run with errored scenarios.
+- **`baseline update` is the *verified* route to replacing a baseline, not the only one.** No
+  `run` invocation replaces a file it reads, so no invocation that is safe today becomes
+  destructive because an option was added later — but `run --out --overwrite` will replace any
+  other existing file at the path you name, including a baseline it was not given as `--baseline`.
+  What `baseline update` adds is verification of the thing being replaced: its default is a
+  preview that writes nothing, it never *creates* a baseline, it refuses one belonging to another
+  suite, it refuses to commit a run with errored scenarios, it refuses to publish an artifact the
+  reader would decline, and it replaces only the bytes it read.
   See [Updating a committed baseline](#updating-a-committed-baseline).
+- **Nothing is published that cannot be read back — in size *and* in shape.** The artifact reader
+  refuses a file above a fixed byte budget (before allocating, so a reference to something
+  enormous is a refusal rather than an exhausted host) and refuses what is inside it if the schema
+  version is unsupported, a null sits where the shape forbids one, or an identifier carries a
+  machine path. Both publication paths, `run --out` and `baseline update --apply`, are held to
+  **both** checks before anything is staged: the size against the engine's own budget, read rather
+  than restated so the two cannot drift, and the shape by putting the serialized bytes through the
+  reader's own deserializer. Checking size alone and claiming read-back whole is the same class of
+  defect as a gate that is accepted and never runs. `baseline update` applies both in its
+  **preview** as well, so it never advises `--apply` for a candidate `--apply` would refuse.
+- **The publishing budget cannot be widened.** Redaction is private to the budget so publishable
+  bytes cannot be obtained around it, and the ceiling the budget takes is refused above the
+  engine's value — a barrier with a parameter that reopens it is not a barrier.
 - **A comparison cannot be made against the wrong pair.** `--endpoint` and `--baseline-endpoint`
-  may not name the same address, `--baseline` and `--out` may not name the same file, scenarios
-  this run did not conduct are withheld rather than reported as removed, and a pair that could not
-  be compared exits non-zero instead of printing "0 regressed".
+  may not name the same address, no destination may be one of the files the same invocation reads,
+  scenarios this run did not conduct are withheld rather than reported as removed, and a pair that
+  could not be compared exits non-zero instead of printing "0 regressed".
+- **A gate that is not implemented is not accepted.** `--fail-on-regression` refuses the
+  invocation with exit `70` rather than parsing and ignoring it. The reservation of `10`–`19` is
+  documentation, and documentation does not reach the person who wired the flag into CI and saw
+  the step go green.
 - **`trend` cannot destroy the evidence it was asked to read.** `--report-markdown` is refused when
   it resolves inside the directory `--artifacts` names, and **`--overwrite` does not lift that**:
   the opt-in is about replacing a file you chose, not about writing Markdown over one of the run
@@ -1114,11 +1166,11 @@ only and are never renumbered.
 | `0` | The run completed and nothing asked for a non-zero exit. |
 | `1` | The invocation was refused — bad argument, value, or path. This includes a `--baseline` that exists but is not a readable run artifact: the invocation named it, and a baseline that cannot be read is not the same as no baseline. It also includes a `--baseline` that reads cleanly but carries a **machine path in one of its identifiers** — the engine refuses those on read-back, and this tool reports the field and the scenario position so the author can rename it, never the offending value itself (that message goes to the build log). |
 | `2` | The suite could not be loaded or did not validate — including a suite that declares no scenarios, which is refused before anything runs rather than reported as `0 of 0`, and a suite name, scenario id, or slicing tag carrying a machine path (`suite.name.machinePath`, `scenario.id.machinePath`), which the engine refuses at load so the author can rename it. |
-| `3` | The run could not complete — at least one run was recorded as an error (including an address that answered with a redirect), or the artifact could not be written, or the destination stopped being the file the command read. |
+| `3` | The run could not complete, **or what it produced could not be published** — at least one run was recorded as an error (including an address that answered with a redirect), or the artifact could not be written, or the destination stopped being the file the command read, or the artifact was one the reader would refuse (too large, or carrying a shape or an identifier it declines). Deliberately coarse: every one of these leaves the caller without usable evidence, and the message says which. |
 | `4` | Baseline and candidate were not conducted alike, so the comparison was refused. Also produced when *any* available pair could not be compared — reported as a refusal rather than as "no regressions found", because those scenarios were not examined. **`trend` uses the same code for every refusal it makes**: fewer than two readable artifacts, two artifacts stamped with the same instant, runs of two suites, a scenario redefined mid-series, disagreeing interval settings, or a file in `--artifacts` that will not read. The meaning is the same in both commands — two or more runs could not be set against each other, and the analysis did not happen. The message says which. |
 | `5` | A baseline was required and none was found — including one that goes away between being read and being replaced. *(No baseline is not the same as no regression.)* |
-| `10`–`19` | **Reserved for the gate.** `10` is "regressions found"; nothing produces it yet. |
-| `70` | The requested operation is not wired up in this build. |
+| `10`–`19` | **Reserved for the gate.** `10` is "regressions found"; nothing produces it yet, and the range stays held rather than released. |
+| `70` | The requested operation is not wired up in this build. **Produced by `--fail-on-regression`**, which is refused rather than accepted and ignored. |
 | `71` | An unhandled internal failure — a defect in this tool. **The only code that prints a stack trace**: frames carry the checkout directory and the source layout of the machine that built the tool, so a deliberate refusal never reaches this branch. |
 | `130` | Interrupted (Ctrl+C). Partial state. Nothing was written **unless the message says otherwise** — `baseline update --apply` interrupted after the replacement names the file that changed. |
 
@@ -1157,11 +1209,16 @@ run itself, artifact writing, both baseline mechanisms, the comparison and its r
 [Markdown pull-request report](#the-pull-request-report), the [trend report](#the-trend-report),
 and `baseline update` are complete and tested. Deliberately not here yet:
 
-- **No gate.** `--fail-on-regression` is parsed by `run`, documented, and reported, and changes
-  nothing: a regression is reported, not enforced. `trend` does not accept it at all. Exit codes
-  `10`–`19` are reserved so the gate can be added without renumbering. A *refused* comparison or a
-  refused trend is a different thing and is already non-zero (`4`) — that is not the gate, it is
-  the refusal to pretend an analysis happened.
+- **No gate, and the flag for it is refused rather than accepted.** Passing
+  `--fail-on-regression` to `run` exits `70` and says what the gate will do and that it is not
+  here; `trend` does not declare the option at all. A regression is reported, not enforced. Exit
+  codes `10`–`19` stay reserved so the gate can be added without renumbering. **Leaving the gate
+  unimplemented is the deliberate decision (ADR 0004) — gating before the reports are trusted
+  teaches people to bypass the harness. Accepting the flag was the defect**: a CI step that passes
+  it and goes green teaches its author that a regression would have stopped the build, and a
+  reservation written in a README never reaches that person. A *refused* comparison or a refused
+  trend is a different thing and is already non-zero (`4`) — that is not the gate, it is the
+  refusal to pretend an analysis happened.
 - **No selection record in the artifact.** The engine's `SuiteResult` can now carry one —
   `selectionDecisions`, optional and absent when unset — but **this tool does not write it yet**,
   so every artifact it produces still carries the scenarios that ran and nothing about the ones

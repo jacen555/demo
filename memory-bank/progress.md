@@ -22,9 +22,9 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 13 passing | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. |
-| `eval-engine` | lib | 1 | `working` | 1724 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load and artifact read-back. **`SuiteLoader` path confinement has 3 open findings — see below.** `Mcp` and `Ui` scenario kinds are declared stubs. |
-| `eval-cli` | tool | 2 | `working` | 442 passing | `run` and `baseline update`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports. Trend report is T15b. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 152 (151 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 1 of the audit closed** — safe defaults, exit contract, path confinement, engine-vs-user-named write classification across 49 sinks. **Group 3 (operability) not started; see the blocking preconditions below.** |
+| `eval-engine` | lib | 1 | `working` | 1779 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load and artifact read-back. **Group 2 of the audit (comparison correctness) is not started — 4 open findings.** `Mcp` and `Ui` scenario kinds are declared stubs. |
+| `eval-cli` | tool | 2 | `working` | 760 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Group 1 of the audit closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, artifact shape checked before publication. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -122,13 +122,28 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    end". This closes the previous gap #1.
 3. **The SizzleCraft extraction is not yet banked.** The two original projects under
    `~/SizzleCraft/` still hold their own copies of the scripts. Until they point at
-   `tools/SizzleCraft`, the duplication is *recorded*, not *removed*.
-4. **`write-script.mjs` (S1) is still unextracted.** It diverged ~120% between projects —
+   `tools/SizzleCraft`, the duplication is *recorded*, not *removed*. **This turned out to
+   be load-bearing**: the first project to consume the extracted engine end to end
+   (`tools/EvalLoopDemo`) hit 10 defects, 6 of them fatal to any second consumer — scripts
+   spawned by bare filename, files that ship nowhere, sibling names hardcoded. None of it
+   is visible from reading; all of it is unavoidable from running.
+4. **`encode-mp4` link guards are a blocking precondition for group 3, not a follow-up.**
+   Four engine-chosen paths are unconfined: `copyFileSync` into `encoder/` (`:223`),
+   `openSync(partPath, 'w+')` (`:280`), `mkdirSync(encoderDir)` (`:211`), and a guard at
+   `:173` that resolves the canonical target while `renameSync` at `:333` replaces the
+   lexical entry. All four are unreachable **only** because `encoder-page.html` was never
+   extracted — and extracting it is the first thing group 3 does. The guards and the
+   exclusive part-file creation must land in the *same* change that makes encode operable,
+   with the outside-link victim tests written first. Making it work before confining its
+   writes would ship a reachable path.
+5. **`write-script.mjs` (S1) is still unextracted.** It diverged ~120% between projects —
    genuinely rewritten rather than drifted — and needs a review to separate shared logic
    from per-video content. The other four "diverged" scripts turned out to be hardcoded
-   config and are now parameterized.
-5. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
-6. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
+   config and are now parameterized. `materialize-footage.mjs`, `clip-video.mjs` and
+   `grab-crops.mjs` are also unextracted, which makes `footage` mode unusable by any
+   project.
+6. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
+7. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
    has never actually been executed.
 7. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
    cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only

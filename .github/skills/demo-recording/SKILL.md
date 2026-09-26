@@ -30,14 +30,33 @@ description: >
 | Gaps, silence, lead-in | Re-solve timing → rebuild → capture → encode | **full render** |
 | Visuals, scenes, on-screen text | Rebuild → capture → encode | **full render** |
 
-**What "full render" costs.** In the reference implementation, roughly **9–10×
-the runtime of the finished video** — measured at ~40 minutes for a ~4:20 video
-(capture alone was 22 minutes for a 3:07 cut at 25% dedup). An audio-only swap was
-~4 minutes regardless of length.
+**What "full render" costs.** It depends on the **frame format and the machine**
+far more than on the video's length, and the numbers below were the first ones
+actually measured end to end rather than scaled from a reference:
 
-Scale that to the video in front of you, and quote the estimate in minutes when you
-ask for approval. Record the real number in `render-log.md` on first run so later
-sessions stop guessing.
+| Configuration | Cost |
+|---|---|
+| 1080p, PNG | **~35–42 min** for a ~4:10 video — capture ~84% of it |
+| Half-scale draft (half scale, half fps) | **~5.5 min** — roughly **8× cheaper**, not 2× |
+| 4K, JPEG q88 | **~9.6 min capture** — cheaper than the 1080p PNG render above |
+| Audio-only swap (remux) | **~30 s**, regardless of length |
+
+**Frame format is a bigger lever than resolution.** JPEG q88 against PNG measured
+**13×** at 4K, which is why the 4K row beats the 1080p one. See
+`references/cost-techniques.md` for the measurements and the caveats.
+
+**These are one machine's numbers** — an Azure VM, Xeon Platinum 8370C, 16 logical
+cores, 64 GB, **no GPU**. On a box with a real GPU the encode advice inverts. Run
+`tools/SizzleCraft/src/probe-render-capability.mjs` against the machine in front of
+you rather than quoting this table; it runtime-tests each encoder instead of
+trusting `ffmpeg -encoders`, which advertises hardware that is not there.
+
+Quote the estimate in minutes when you ask for approval, and record the real number
+in `render-log.md` on first run so later sessions stop guessing.
+
+**The draft gate is an easier sell than it used to look.** At ~8× cheaper rather
+than ~2×, a half-scale draft costs minutes against tens of minutes — cheap enough
+that skipping it to "save time" is usually the expensive choice.
 
 Everything except the first row changes the **video timeline**, which forces a
 re-capture. So:
