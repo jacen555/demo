@@ -86,6 +86,18 @@ lacked them — and it could not verify a claim asserted in place of evidence.
 The rule the whole repo runs on is that **a claim is not evidence until something can fail
 on it.** An orchestrator's summary of a gate is a claim. The block is the evidence.
 
+**Verbatim is necessary and not sufficient — check the block is *there*.** After the two
+paraphrase failures above, the orchestrator forwarded verbatim every time and was failed a
+third time anyway: it forwarded, unaltered, a builder report that contained **no
+`BUILDER-MODEL` and no `TEST-FIRST-EVIDENCE` at all**. The prose carried the substance —
+pre-fix counts, observed exit codes, a discrimination proof — but §VIII fails on the
+missing field, not on missing substance, and the reviewer was right to refuse.
+
+The fix for fidelity did nothing about omission, and nobody looked again. This is the
+under-application pattern above, in the orchestrator's own seat: a mechanism introduced,
+applied to one half of the problem, and trusted thereafter. **Gate on presence before
+sending, not on the intention to forward.**
+
 ## Pattern: no finding without a citation
 
 Every review finding cites a `file:line` **and** a constitution section. A finding that
@@ -135,6 +147,53 @@ And a caution on fixes: `required`, a name, and a convention all look structural
 and are not. Four "structural" guarantees in this work still compiled with a wrong value.
 The ones that held were enforced by the compiler — a count derived from an immutable
 snapshot, a type with no display-string constructor, a method with no string overload.
+
+## Pattern: sweep from the sinks, not from the sources
+
+A sweep driven by *"where did I use this?"* does not terminate. A sweep driven by *"what
+is the complete set of things that must be covered?"* does.
+
+Measured, repeatedly, in this repo:
+
+- Path disclosures: three source-first passes found 16, then 22, then 25 sites and kept
+  missing by scope. One sink-first pass over six sinks terminated immediately.
+- Weak assertions in SizzleCraft: two source-first sweeps, both claimed complete, both
+  incomplete — the second failed because a regex was keyed to one indentation and the
+  count was never re-checked. A by-hand count closed it.
+- Path resolvers: `assertDistinctDestinations` and `resolveInternalArtifact` were each
+  introduced and then applied to one collection, leaving the rest reachable from the
+  moment the first half was written.
+
+The builder's own diagnosis, which a reviewer then confirmed from the diff, is the best
+statement of it: *"some of these layers were visible earlier than I saw them."* The
+sequencing was not inherent to the defect; it was an artifact of sweeping by recall.
+
+**So: enumerate the sinks.** Every path written, every option rendered, every message
+emitted. That set is finite and readable. The set of places you remember touching is
+neither.
+
+**Corollary — the newest mechanism is the least applied.** The thing introduced this round
+is the thing most likely to be sitting at one call site. Check it before the older ones.
+
+## Pattern: a deferral's grade is a claim
+
+When a report says *"found, not fixed — safe direction"*, the severity is doing as much
+work as the finding, and it needs the same evidence.
+
+A `validate-timing` type gap was reported as safe because a bad value produced a spurious
+failure. True for a segment in the middle of a list. For the **final** segment there is
+nothing after it to compare against, so the contiguity check could not fire, the budget
+went `NaN`, and the verifier **exited 0 on malformed input** — a verifier that passes
+garbage, reported as harmless.
+
+The reasoning was sound about the case in view and silent about the boundary. Deferrals
+get graded from the middle of a set; the ends behave differently.
+
+Also worth separating honestly: *a test I could not write* and *a test I wrote that does
+not discriminate* are different admissions. An envelope test that substituted a directory
+could not distinguish the new behaviour from the old, because the check it replaced also
+returned true for a directory — offered as covering the neighbour, when it was the same
+square.
 
 
 Agent memory resets. The repo's memory does not. So:
