@@ -2996,65 +2996,72 @@
       },
       "triggers": [
         {
-          "id": "many-t0",
           "atMs": 409,
-          "semanticClass": "card",
           "target": "many-node-suite",
           "action": "revealNode"
         },
         {
-          "id": "many-t4",
-          "atMs": 6491,
-          "semanticClass": "card",
+          "atMs": 5761,
+          "target": "many-node-suite",
+          "action": "emphasize"
+        },
+        {
+          "atMs": 8113,
           "target": "many-node-r1",
           "action": "revealNode"
         },
         {
-          "id": "many-t5",
-          "atMs": 7328,
-          "semanticClass": "card",
+          "atMs": 8893,
           "target": "many-node-r2",
           "action": "revealNode"
         },
         {
-          "id": "many-t6",
-          "atMs": 8166,
-          "semanticClass": "card",
+          "atMs": 9673,
           "target": "many-node-r3",
           "action": "revealNode"
         },
         {
-          "id": "many-t7",
-          "atMs": 10679,
-          "semanticClass": "card",
+          "atMs": 15081,
+          "target": "many-node-r3",
+          "action": "emphasize"
+        },
+        {
+          "atMs": 16250,
           "target": "many-node-avg",
           "action": "revealNode"
         },
         {
-          "id": "many-e0",
-          "atMs": 10929,
-          "semanticClass": "chart",
+          "atMs": 16598,
           "target": "many-edge-0",
           "action": "drawEdge"
         },
         {
-          "id": "many-e1",
-          "atMs": 10929,
-          "semanticClass": "chart",
+          "atMs": 16918,
           "target": "many-edge-1",
           "action": "drawEdge"
         },
         {
-          "id": "many-e2",
-          "atMs": 10929,
-          "semanticClass": "chart",
+          "atMs": 17238,
           "target": "many-edge-2",
           "action": "drawEdge"
         },
         {
-          "id": "many-t8",
-          "atMs": 28056,
-          "semanticClass": "body",
+          "atMs": 20799,
+          "target": "many-node-r1",
+          "action": "emphasize"
+        },
+        {
+          "atMs": 22400,
+          "target": "many-node-r3",
+          "action": "emphasize"
+        },
+        {
+          "atMs": 24591,
+          "target": "many-node-avg",
+          "action": "emphasize"
+        },
+        {
+          "atMs": 27002,
           "target": "many-node-avg",
           "action": "emphasize"
         }
