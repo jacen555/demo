@@ -357,7 +357,129 @@ function live(seg) {
   return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url)}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc)}" alt=""/>` : ''}${fields}${hotspots}<div id="${seg.id}-cursor" class="cursor"></div></div></div>`;
 }
 
-function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
+// ---- code mode: a real JSON object on screen, addressable field by field ----
+// Shows configuration as it actually is rather than as a summary. That is the point —
+// and the risk, because it is the only mode that puts SOURCE DATA on the screen instead
+// of authored copy. Two guards below exist only because of that.
+
+const codePathId = (segId, p) =>
+  `${segId}-path-${String(p).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
+
+/** Renders one JSON value, recording every addressable path it emits. */
+function jsonHtml(value, segId, at, depth, paths) {
+  const pad = n => '  '.repeat(n);
+  const entry = (p, inner, block) => {
+    paths.push(p);
+    return `<span class="j-entry${block ? ' j-block' : ''}" id="${codePathId(segId, p)}" data-path="${esc(p)}">${inner}</span>`;
+  };
+
+  if (Array.isArray(value)) {
+    if (!value.length) return '<span class="j-punc">[]</span>';
+    const items = value
+      .map((v, i) => {
+        const p = `${at}[${i}]`;
+        // The separator lives INSIDE the entry. A block-level container would otherwise
+        // orphan the comma onto its own line once the highlight makes it display:block.
+        const inner = jsonHtml(v, segId, p, depth + 1, paths) +
+          (i < value.length - 1 ? '<span class="j-punc">,</span>' : '');
+        return `${pad(depth + 1)}${entry(p, inner, v !== null && typeof v === 'object')}`;
+      })
+      .join('\n');
+    return `<span class="j-punc">[</span>\n${items}\n${pad(depth)}<span class="j-punc">]</span>`;
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (!keys.length) return '<span class="j-punc">{}</span>';
+    const items = keys
+      .map((k, i) => {
+        const p = at ? `${at}.${k}` : k;
+        const inner = `<span class="j-key">"${esc(k)}"</span><span class="j-punc">: </span>` +
+          jsonHtml(value[k], segId, p, depth + 1, paths) +
+          (i < keys.length - 1 ? '<span class="j-punc">,</span>' : '');
+        return `${pad(depth + 1)}${entry(p, inner, value[k] !== null && typeof value[k] === 'object')}`;
+      })
+      .join('\n');
+    return `<span class="j-punc">{</span>\n${items}\n${pad(depth)}<span class="j-punc">}</span>`;
+  }
+  if (typeof value === 'string') return `<span class="j-str">"${esc(value)}"</span>`;
+  if (typeof value === 'number') return `<span class="j-num">${esc(value)}</span>`;
+  if (typeof value === 'boolean') return `<span class="j-bool">${esc(value)}</span>`;
+  return '<span class="j-null">null</span>';
+}
+
+function codeBlock(seg) {
+  const v = seg.visual || {};
+  let data = v.json;
+
+  if (data === undefined && v.jsonFile) {
+    // Confined exactly like every other on-screen asset: a path that escapes the project
+    // would put arbitrary disk contents on screen.
+    const abs = path.resolve(dir, v.jsonFile);
+    if (path.relative(dir, abs).startsWith('..')) {
+      throw new Error(`segment "${seg.id}": visual.jsonFile escapes the project directory (${v.jsonFile})`);
+    }
+    if (!fs.existsSync(abs)) throw new Error(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
+    try { data = JSON.parse(fs.readFileSync(abs, 'utf8')); }
+    catch (e) { throw new Error(`segment "${seg.id}": visual.jsonFile is not valid JSON — ${e.message}`); }
+    if (v.pick) {
+      for (const k of String(v.pick).split('.')) {
+        if (data == null || !(k in data)) throw new Error(`segment "${seg.id}": visual.pick path "${v.pick}" not found in ${v.jsonFile}`);
+        data = data[k];
+      }
+    }
+  }
+  if (data === undefined) throw new Error(`segment "${seg.id}": code mode needs visual.json or visual.jsonFile`);
+
+  // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
+  // This is the only mode that renders data nobody wrote for the screen, so the patterns
+  // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
+  const patterns = timing.project?.noGoPatterns || [];
+  if (patterns.length) {
+    const flat = JSON.stringify(data);
+    for (const src of patterns) {
+      const re = new RegExp(src, 'i');
+      const hit = flat.match(re);
+      if (hit) {
+        throw new Error(
+          `segment "${seg.id}": code mode refused — the JSON matches no-go pattern /${src}/i ` +
+          `at ${JSON.stringify(hit[0]).slice(0, 80)}.\n` +
+          'Redact the source object or narrow the pick; do not render it and rely on it being small on screen.');
+      }
+    }
+  }
+
+  const paths = [];
+  const html = jsonHtml(data, seg.id, '', 0, paths);
+  const emitted = new Set(paths);
+
+  // GUARD 2 — a highlight that addresses a path which does not exist must FAIL THE BUILD.
+  // Rendering nothing is indistinguishable from a highlight the viewer simply missed, and
+  // that failure mode has already cost this pipeline a card: a trigger whose target did not
+  // resolve returned null, animated nothing, and reported success. A check that cannot fire
+  // looks exactly like a check that passed.
+  const near = p => {
+    const want = String(p).toLowerCase();
+    const best = paths.filter(c => c.toLowerCase().includes(want.split(/[.[]/)[0])).slice(0, 6);
+    return best.length ? `\n  did you mean: ${best.join(', ')}` : `\n  available: ${paths.slice(0, 12).join(', ')}${paths.length > 12 ? ', …' : ''}`;
+  };
+  for (const h of v.highlights || []) {
+    if (!emitted.has(h.path)) {
+      throw new Error(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
+    }
+  }
+  const prefix = `${seg.id}-path-`;
+  for (const t of seg.triggers || []) {
+    if (typeof t.target === 'string' && t.target.startsWith(prefix)) {
+      const ok = paths.some(p => codePathId(seg.id, p) === t.target);
+      if (!ok) throw new Error(`segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`);
+    }
+  }
+
+  const cap = v.caption ? `<figcaption class="codecap">${esc(v.caption)}</figcaption>` : '';
+  return `<figure class="codewrap el" id="${seg.id}-code"><pre class="codeblock" data-seg="${esc(seg.id)}">${html}</pre>${cap}</figure>`;
+}
+
+function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'code' ? codeBlock(seg) : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
 
 function slide(seg, i) {
   const v = seg.visual || {}, m = mode(seg);
@@ -394,6 +516,24 @@ function autoTriggers(seg) {
       (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: `${seg.id}-edge-${e.id || j}`, action: 'flowEdge', payload: { particles } }));
       (v.edges || []).forEach((e, j) => { const eid = `${seg.id}-edge-${e.id || j}`; out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
     }
+  } else if (m === 'code') {
+    // The block carries `.el`, so like every other element it stays hidden until something
+    // reveals it. Nothing else will: codeFocus targets a FIELD, and showing a field does not
+    // show its hidden ancestor. Reveal the block itself first or the whole segment renders
+    // blank — with no error, because a trigger that resolves and animates an invisible
+    // element reports success exactly like one that worked.
+    out.push({ atMs: 300, target: `${seg.id}-code`, action: 'rise' });
+    // Walk the authored highlights in order. Each focus releases the previous one, so
+    // exactly one field is ever emphasised — the viewer is never asked which box to read.
+    const hs = v.highlights || [];
+    const step = Math.min(2600, (dur * 0.8) / (hs.length || 1));
+    hs.forEach((h, k) => out.push({
+      atMs: Math.round(h.atMs ?? (900 + k * step)),
+      target: codePathId(seg.id, h.path),
+      action: 'codeFocus',
+      payload: { label: h.label || '' },
+    }));
+    if (hs.length) out.push({ atMs: Math.round((hs[hs.length - 1].atMs ?? (900 + (hs.length - 1) * step)) + Math.min(2200, step)), target: `${seg.id}-code`, action: 'codeFocus', payload: { release: true } });
   } else if (m === 'live') {
     let at = 600;
     (v.hotspots || []).forEach(hp => { out.push({ atMs: at, target: `${seg.id}-cursor`, action: 'moveCursor', payload: { toId: `${seg.id}-hotspot-${hp.id}` } }); at += 650; out.push({ atMs: at, target: `${seg.id}-hotspot-${hp.id}`, action: 'click' }); at += 500; });
@@ -476,6 +616,29 @@ ${bg ? '' : theme.anim}
 .shot{margin:0;max-width:100%}.shot img{display:block;max-width:100%;max-height:calc(var(--fit) * 52vh);width:auto;height:auto;object-fit:contain;border-radius:.6vw;border:1px solid var(--color-card-border)}
 .shot figcaption{margin-top:.6vh;font-size:calc(var(--fit) * clamp(16px,.9vw,32px));color:var(--color-text-secondary)}
 .diagram-svg{width:100%;max-height:calc(var(--fit) * 58vh)}
+/* code mode. Highlight is outline + weight + dimming of the rest, never colour alone
+   (WCAG 1.4.1) — a viewer who cannot separate the syntax hues still sees which field
+   is being discussed, because the box and the contrast difference carry it. */
+.codewrap{width:100%;max-width:92%;margin:0}
+.codeblock{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;white-space:pre;
+  overflow:hidden;max-height:calc(var(--fit) * 62vh);margin:0;padding:calc(var(--fit) * 2.2vh);
+  border-radius:calc(var(--fit) * 1vh);background:var(--code-bg,#f6f7f9);
+  border:1px solid var(--code-br,#d6dae0);color:var(--code-fg,#1b1f24)}
+.j-key{color:var(--code-key,#8250df);font-weight:600}
+.j-str{color:var(--code-str,#0a6b40)}
+.j-num{color:var(--code-num,#0550ae)}
+.j-bool,.j-null{color:var(--code-num,#0550ae);font-style:italic}
+.j-punc{color:var(--code-punc,#6a737d)}
+.j-entry{display:inline;border-radius:3px;transition:opacity .35s ease,background .35s ease}
+/* a multi-line array/object cannot carry a clean outline as an inline box — it steps
+   around the text flow. Block-level containers give the highlight a real rectangle. */
+.j-entry.j-block{display:block}
+.codeblock.is-dim .j-entry.is-off{opacity:.28}
+.j-entry.is-focus{outline:calc(var(--fit) * 0.34vh) solid var(--code-focus,#1b1f24);
+  outline-offset:calc(var(--fit) * 0.5vh);background:var(--code-focus-bg,#fff3c4);
+  font-weight:700;opacity:1}
+.codecap{margin-top:calc(var(--fit) * 1.4vh);font-size:calc(var(--fit) * 1.7vh);opacity:.75;text-align:left}
 .dnode rect{fill:var(--color-card-bg);stroke:var(--ca,var(--color-accent-1));stroke-width:3}
 .dnode foreignObject{overflow:hidden}
 .nodelabel{width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 14px;color:var(--color-text-primary);font-family:var(--font-display);font-weight:700;font-size:22px;line-height:1.12;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
@@ -570,6 +733,18 @@ const fxDone=new Set();function once(tr){const k=tr.kind+'|'+tr.a+'|'+tr.t;if(fx
 function fxHost(tr,id){const el=id&&document.getElementById(id);return (el&&el.closest('.sl'))||document.getElementById('seg-'+((tr.s||1)-1));}
 function fxRect(id){const el=document.getElementById(id);if(!el)return null;const host=el.closest('.sl');if(!host)return null;const hb=host.getBoundingClientRect(),r=el.getBoundingClientRect();return{el,host,hb,x:r.left-hb.left,y:r.top-hb.top,w:r.width,h:r.height};}
 function spotlight(id,tr){const host=fxHost(tr,id);if(!host)return;if(tr.payload&&tr.payload.release){host.querySelectorAll('.fx-spot').forEach(n=>n.remove());return;}const r=fxRect(id);if(!r)return;show(r.el);const pad=Math.min(r.w,r.h)*0.25+14,d=document.createElement('div');d.className='fx-spot';d.style.left=(r.x-pad)+'px';d.style.top=(r.y-pad)+'px';d.style.width=(r.w+2*pad)+'px';d.style.height=(r.h+2*pad)+'px';host.appendChild(d);__sch(gsap.fromTo(d,{opacity:0},{opacity:1,duration:.4}));}
+function codeFocus(id,tr){const p=tr.payload||{};if(p.release){document.querySelectorAll('.codeblock.is-dim').forEach(b=>{b.classList.remove('is-dim');b.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off','is-focus'));});return;}
+const el=document.getElementById(id);if(!el)return;const blk=el.closest('.codeblock');if(!blk)return;show(blk);
+/* showing a field cannot show its hidden .el ancestor, so walk up */
+for(let a=blk;a;a=a.parentElement){if(a.classList&&a.classList.contains('el'))show(a);if(a.classList&&a.classList.contains('sl'))break;}
+blk.classList.add('is-dim');
+blk.querySelectorAll('.j-entry').forEach(n=>{n.classList.remove('is-focus');n.classList.add('is-off');});
+// the focused field and everything inside it stay lit; so do its ancestors, or a nested
+// field would sit inside a dimmed parent and read as disabled rather than as context.
+el.classList.remove('is-off');el.classList.add('is-focus');
+el.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off'));
+for(let a=el.parentElement;a&&a!==blk;a=a.parentElement){if(a.classList.contains('j-entry'))a.classList.remove('is-off');}
+__sch(gsap.fromTo(el,{opacity:.55},{opacity:1,duration:.45,ease:'power2.out'}));}
 function emphasize(id,tr){const el=document.getElementById(id);if(!el)return;show(el);const sc=(tr.payload&&tr.payload.scale)||1.12;__sch(gsap.fromTo(el,{scale:1},{scale:sc,duration:.5,yoyo:true,repeat:1,ease:'power2.inOut',transformOrigin:'center center'}));}
 function zoomFocus(id,tr){const p=tr.payload||{},host=fxHost(tr,id),surf=host&&(host.querySelector('.viewport')||host.querySelector('.diagram-svg')||host.querySelector('.stage-body'));if(!surf)return;if(p.release){__sch(gsap.to(surf,{scale:1,x:0,y:0,duration:.6,ease:'power2.inOut'}));return;}const sc=p.scale||1.4;let ox=0,oy=0;const r=fxRect(id);if(r){const cb=surf.getBoundingClientRect(),cx=cb.left-r.hb.left+cb.width/2,cy=cb.top-r.hb.top+cb.height/2;ox=(cx-(r.x+r.w/2))*sc;oy=(cy-(r.y+r.h/2))*sc;}__sch(gsap.to(surf,{scale:sc,x:ox,y:oy,duration:.7,ease:'power2.inOut',transformOrigin:'center center'}));}
 function callout(id,tr){const r=fxRect(id);if(!r)return;show(r.el);const c=document.createElement('div');c.className='callout';c.textContent=(tr.payload&&tr.payload.text)?String(tr.payload.text):'';c.style.left=Math.max(0,r.x)+'px';c.style.top=Math.max(0,r.y-16)+'px';c.style.transform='translateY(-100%)';r.host.appendChild(c);__sch(gsap.fromTo(c,{opacity:0,y:12},{opacity:1,y:0,duration:.45,ease:'power3.out'}));}
@@ -578,7 +753,7 @@ function flowEdge(id,tr){const path=document.getElementById(id);if(!path)return;
 function pulsePath(tr){const chain=(tr.payload&&tr.payload.chain&&tr.payload.chain.length)?tr.payload.chain:[tr.a];const first=document.getElementById(chain[0]);const scope=(first&&first.closest('.sl'))||document;scope.querySelectorAll('.pulsing').forEach(el=>el.classList.remove('pulsing'));chain.forEach(id=>{const el=document.getElementById(id);if(el){show(el);el.classList.add('pulsing');}});if(window.__sizzleAnim&&window.__sizzleAnim.scan)window.__sizzleAnim.scan();}
 function stepBadge(id,tr){const r=fxRect(id);if(!r)return;show(r.el);const b=document.createElement('div');b.className='stepbadge';b.textContent=String((tr.payload&&tr.payload.stepIndex)||'');b.style.left=r.x+'px';b.style.top=r.y+'px';r.host.appendChild(b);__sch(gsap.fromTo(b,{scale:0},{scale:1,duration:.4,ease:'back.out(2)'}));}
 function progressBar(tr){const host=fxHost(tr,null);if(!host)return;let bar=host.querySelector('.progress');if(!bar){bar=document.createElement('div');bar.className='progress';const i=document.createElement('i');bar.appendChild(i);host.appendChild(bar);}const v=Math.max(0,Math.min(1,(tr.payload&&tr.payload.value!=null)?tr.payload.value:1));__sch(gsap.to(bar.querySelector('i'),{width:(v*100)+'%',duration:.5,ease:'power2.out'}));}
-function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
+function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'codeFocus':return void(once(tr)&&codeFocus(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
 const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:segments[i].audioEnd+LINGER});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ''}
 // --- footage frame injection (real user clip). Maps absolute time -> extracted frame file and swaps
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.

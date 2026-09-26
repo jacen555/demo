@@ -68,6 +68,132 @@ const contiguousSegments = [
 ];
 
 // ---------------------------------------------------------------------------
+// write-build-html.mjs, `code` visual mode.
+//
+// This is the only mode that renders SOURCE DATA rather than authored copy, so it carries
+// two refusals nothing else needs: no-go patterns are enforced where the data reaches a
+// frame, and a highlight addressing a field that does not exist fails the BUILD.
+//
+// The second one exists because of a defect this pipeline actually shipped: a trigger whose
+// target did not resolve returned null, animated nothing, and reported success. A highlight
+// that never fires is indistinguishable from one the viewer missed, so it must not degrade
+// to a warning in a 25-minute render log — it has to stop the build.
+// ---------------------------------------------------------------------------
+describe('write-build-html code mode', () => {
+  const OBJ = {
+    id: 'demo-scenario',
+    opening: 'My email has just stopped working.',
+    facts: ['first fact', 'second fact', 'third fact'],
+    assertions: ['l5Exact', 'slotAbsent:scope/confirm'],
+  };
+
+  const codeProject = (t, { highlights, json = OBJ, extra = {}, noGoPatterns } = {}) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json, ...(highlights ? { highlights } : {}), ...extra },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    if (noGoPatterns) timing.project.noGoPatterns = noGoPatterns;
+    // gsap is resolved from the PROJECT, not the engine — a local-first render refuses a
+    // CDN. Without this stub every case below exits non-zero on the missing dependency,
+    // which silently turns the "must refuse" tests into false passes.
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  const build = (dir) => runScript('write-build-html.mjs', ['--apply'], dir);
+  const html = (dir) => fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+
+  test('codeMode_rendersEachFieldWithAnAddressableId', (t) => {
+    const dir = codeProject(t);
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    const out = html(dir);
+    assert.match(out, /id="scenario-path-opening"/, 'a top-level field must be addressable');
+    assert.match(out, /id="scenario-path-facts-1"/, 'an array element must be addressable by index');
+    assert.match(out, /class="j-key"/, 'keys must be marked up for highlighting, not rendered as flat text');
+  });
+
+  test('codeMode_highlightAddressingAMissingPath_failsTheBuildAndSuggestsRealOnes', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'factz', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a bad highlight path must fail the build, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /does not exist/, 'and say so plainly');
+    assert.match(r.all, /facts/, 'and name the paths that do exist, so the author can fix it now');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false, 'nothing is written on refusal');
+  });
+
+  // THE END OF A LIST BEHAVES DIFFERENTLY FROM THE MIDDLE. An off-by-one in the path walk
+  // shows up only on the final element, where there is no following sibling to mask it.
+  test('codeMode_highlightOnTheLastElementOfTheLastArray_resolves', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'assertions[1]', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, `the last element of the last array must resolve, got ${r.code}\n${r.all}`);
+    assert.match(html(dir), /id="scenario-path-assertions-1"/);
+  });
+
+  test('codeMode_highlightPastTheEndOfAnArray_failsRatherThanRenderingNothing', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'assertions[2]', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `index past the end must fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /does not exist/, 'and fail for THAT reason, not an unrelated one');
+  });
+
+  test('codeMode_jsonMatchingANoGoPattern_refusesBeforeItReachesAFrame', (t) => {
+    const dir = codeProject(t, {
+      json: { ...OBJ, endpoint: 'https://test1.internal.example.com/api' },
+      noGoPatterns: ['https?://', '\\btest1\\b'],
+    });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /no-go pattern/, 'and name the pattern that matched');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('codeMode_jsonFileEscapingTheProject_refuses', (t) => {
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: '../../../etc/passwd' } });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a path escape must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /escapes the project directory/);
+  });
+
+  // WCAG 1.4.1: the focused field must be distinguishable without relying on hue.
+  // THE BLANK-SEGMENT CANARY. `.codewrap` carries `.el`, so it is hidden until revealed —
+  // and codeFocus targets a FIELD, which cannot reveal its hidden ancestor. Without an
+  // explicit reveal of the block the entire segment renders blank, with every trigger
+  // resolving and "succeeding" against an invisible element. Frames came back
+  // byte-identical across four different timestamps, which is the only way this shows up.
+  test('codeMode_emitsAnExplicitRevealOfTheBlock_notOnlyFieldFocuses', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'opening', atMs: 100 }] });
+    assert.equal(build(dir).code, EXIT.OK);
+
+    const out = html(dir);
+    const reveals = out.match(/"scenario-code"/g) || [];
+    assert.ok(reveals.length >= 2,
+      'the block needs its own reveal as well as the focus release — otherwise the segment is blank');
+    assert.match(out, /codeFocus/, 'and the field focuses must still be emitted');
+  });
+
+  test('codeMode_focusStyling_usesOutlineAndDimmingNotColourAlone', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'opening', atMs: 100 }] });
+    assert.equal(build(dir).code, EXIT.OK);
+
+    const out = html(dir);
+    assert.match(out, /\.j-entry\.is-focus\{[^}]*outline:/, 'focus must carry an outline');
+    assert.match(out, /\.codeblock\.is-dim\s+\.j-entry\.is-off\{[^}]*opacity:/, 'and dim the rest');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // frame-capture.mjs — the highest-value guard in this suite.
 // A no-flag run used to recursively delete the project's frames/ directory before
 // it had done a single useful thing.

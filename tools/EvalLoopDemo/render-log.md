@@ -56,8 +56,81 @@ node ..\SizzleCraft\src\write-subtitles.mjs                # sidecars
 node ..\SizzleCraft\src\write-chapters.mjs                 # chapter metadata
 ```
 
-### Plan-by-default: what changed at the boundary, and what it cost
+### `code` visual mode — segment 2, built this round
 
+The review asked twice for the **actual scenario object** on screen instead of the card
+grid, with fields highlighted as they are narrated, explicitly accepting that it reads
+noisier because the noise is the message: it shows how much of the conversation is
+configurable. There was no code/monospace/JSON rendering in `write-build-html.mjs` — every
+`json` hit in that file was parsing, not display — so this was engine work, not a
+parameter. It is now a fifth `visual.mode` behind the existing dispatch.
+
+```jsonc
+"visual": {
+  "mode": "code",
+  "json": { /* inline */ },          // or "jsonFile": "…", confined to the project
+  "caption": "scenarios.json — phrasings elided; internal ids removed",
+  "highlights": [ { "path": "facts[1]", "atMs": 30589 } ]
+}
+```
+
+Fields are addressable by JSON path, emitted as DOM ids (`scenario-path-facts-1`) the same
+way diagram nodes are, and driven by a `codeFocus` trigger on the existing trigger switch.
+
+**Highlight times come from the measured word boundaries in `timing.json`, not estimates.**
+That is an accessibility requirement, not polish: narration is the only audio track
+(WCAG G226), so a field that changes on screen without being spoken is a state change no
+listener can follow. Each of the six highlights fires on the word that names it.
+
+**Three guards, each earned:**
+
+1. **A highlight addressing a path that does not exist fails the build**, naming the paths
+   that do exist. Rendering nothing is indistinguishable from a highlight the viewer
+   missed — this pipeline has already lost a card to exactly that. It is a hard failure,
+   not a warning, because a warning scrolls past in a 25-minute render log.
+2. **No-go patterns are enforced where the data reaches a frame.** This is the only mode
+   that renders source data rather than authored copy, and authored copy is what gets
+   human review. `timing.project.noGoPatterns` is checked against the serialised object
+   and refuses the build on a match.
+3. **`jsonFile` is confined to the project**, like every other on-screen asset.
+
+**Redactions applied to the on-screen object**, and none of them are cosmetic:
+`targetSapId` (internal GUID), `reviewItems` (internal finding ids), `description`
+(~50 words of taxonomy prose that would dominate the frame), and `answerPool` — 13 real
+phrasings elided to a count, because the constraint is *reference the real support data,
+never quote it*, and a count references where a list quotes. The caption says so on
+screen rather than letting the field look short.
+
+**Two defects found by rendering it, not by reading it.** Both are recorded because both
+are the same shape as failures this project has already paid for:
+
+- **The segment rendered blank.** `.codewrap` carries `.el`, so it is hidden until
+  revealed, and `codeFocus` targets a *field* — which cannot reveal its hidden ancestor.
+  Every trigger resolved and "succeeded" against an invisible element. It surfaced only
+  because four preview frames sampled at four different timestamps came back
+  **byte-identical**. That check is now a test.
+- **The client-side block is emitted as one line inside a template literal**, so a `//`
+  comment swallows the rest of the file and a backtick in a comment is parsed as a nested
+  template. Both produced runtime errors far from the edit.
+
+### `validate-timing` contiguity — a check that could never pass
+
+Running the merged verifier against this project failed all 8 segments. The check asserted
+strict adjacency (`startMs === previous endMs`), but **`voice.mjs` deliberately inserts
+inter-segment silence** — the perceived gap — so every timeline the real pipeline produces
+is monotonic but *not* adjacent. Measured here: a uniform 1,416 ms between segments and
+1,920 ms of lead-in.
+
+This is the exact mirror of the `ajv.errors` defect on the other side of the same file: one
+check could never fail, this one could never pass. The second is worse in day-to-day use,
+because it trains the reader to ignore a red line.
+
+Now: **an overlap fails** (that is the thing actually wrong), a gap passes and is reported,
+and an **uneven** gap is called out while still passing, since unevenness usually means a
+hand-edited window. Contiguity now reads
+`OK (8 inter-segment gap(s), UNEVEN: 1416, 1920 ms)` — true, and useful.
+
+### Plan-by-default: what changed at the boundary, and what it cost
 The engine audit made every **user-named write** plan by default. Four of the stages this
 project drives are affected — `voice`, `write-build-html`, `make-music` and `remux-music`
 — and all four now need `--apply`, with `--replace` on top when the output already exists.

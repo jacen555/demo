@@ -881,113 +881,59 @@
       "plannedDurationMs": 52692,
       "voiceoverText": "Let's look at one specific scenario definition. The opening is what the conversation starts with: my email has just stopped working. That is deliberately vague, because that is how people actually write. Underneath it sits the target: Outlook, on iOS, not receiving email. The interview never sees that, we are using it to grade once the conversation ends. Then we have the knowledge bank. Three authored facts this customer knows and will say if asked: that they are using the mail app on an iPhone; that they can still send messages, but nothing new ever arrives; and that they have checked junk, and the mailbox is not full. Notice the second one. Can send, cannot receive — that is the detail separating this from a dozen neighbouring categories, and the interview only learns it if it thinks to ask. Then a pool of alternative phrasings, so the customer can choose different phrasings to not repeat every time. And last, the assertions this scenario has to satisfy. That is what makes it a conversation and not a prompt. We have defined nearly two-hundred of them.",
       "visual": {
-        "mode": "narrative",
-        "layout": "stat-grid",
+        "mode": "code",
         "kicker": "The hero beat",
         "title": "One scenario, field by field",
         "subtitle": "Real object from scenarios.json — id: outlook-ios-not-receiving",
-        "note": "**Field-by-field reveal of one real scenario object**, in the order the narration names the fields. As each field is named the previously-revealed fields dim and the named one highlights, so the eye is on the field being spoken about. The lock is a padlock glyph AND the word \"locked\" — never colour alone. The beat lands on fact 2: at \"notice the second one\" it highlights on its own. Every value on screen is spoken.",
-        "items": [
+        "caption": "scenarios.json — phrasings elided; internal ids removed",
+        "json": {
+          "id": "outlook-ios-not-receiving",
+          "kind": "l5-descent",
+          "mode": "caller",
+          "opening": "My email has just stopped working.",
+          "targetPath": "Outlook/Outlook for iOS Consumer/Technical Support (iOS)/Mail/Not receiving email",
+          "terminalDepth": 5,
+          "bankDensity": "dense",
+          "openingStyle": "generic",
+          "facts": [
+            "I am using the mail app on my iPhone.",
+            "I can still send messages, nothing new ever arrives.",
+            "I checked junk and the mailbox is not full."
+          ],
+          "answerPool": "13 alternative phrasings (elided)",
+          "assertions": [
+            "l5Exact",
+            "structureLevelsPopulated",
+            "slotAbsent:scope/confirm"
+          ]
+        },
+        "highlights": [
           {
-            "label": "opening",
-            "value": "",
-            "text": "\"My email has just stopped working.\""
+            "path": "opening",
+            "atMs": 2505
           },
           {
-            "label": "target  🔒 locked",
-            "value": "",
-            "text": "Outlook · iOS · Not receiving email — never shown to the system under test"
+            "path": "targetPath",
+            "atMs": 10217
           },
           {
-            "label": "fact 1",
-            "value": "",
-            "text": "I am using the mail app on my iPhone."
+            "path": "facts",
+            "atMs": 19807
           },
           {
-            "label": "fact 2",
-            "value": "",
-            "text": "I can still send messages, nothing new ever arrives."
+            "path": "facts[1]",
+            "atMs": 30589
           },
           {
-            "label": "fact 3",
-            "value": "",
-            "text": "I checked junk and the mailbox is not full."
+            "path": "answerPool",
+            "atMs": 39392
           },
           {
-            "label": "phrasings + assertions",
-            "value": "",
-            "text": "alternative wordings, and what this scenario must satisfy"
+            "path": "assertions",
+            "atMs": 44611
           }
         ]
       },
-      "triggers": [
-        {
-          "id": "scenario-t0",
-          "atMs": 2173,
-          "semanticClass": "quote",
-          "target": "scenario-item-0",
-          "action": "rise"
-        },
-        {
-          "id": "scenario-t1",
-          "atMs": 8961,
-          "semanticClass": "card",
-          "target": "scenario-item-1",
-          "action": "rise"
-        },
-        {
-          "id": "scenario-t2",
-          "atMs": 9776,
-          "semanticClass": "card",
-          "target": "scenario-item-1",
-          "action": "emphasize"
-        },
-        {
-          "id": "scenario-t3",
-          "atMs": 20639,
-          "semanticClass": "card",
-          "target": "scenario-item-2",
-          "action": "rise"
-        },
-        {
-          "id": "scenario-t4",
-          "atMs": 23355,
-          "semanticClass": "card",
-          "target": "scenario-item-3",
-          "action": "rise"
-        },
-        {
-          "id": "scenario-t5",
-          "atMs": 26342,
-          "semanticClass": "card",
-          "target": "scenario-item-4",
-          "action": "rise"
-        },
-        {
-          "id": "scenario-t6",
-          "atMs": 29601,
-          "semanticClass": "card",
-          "target": "scenario-item-3",
-          "action": "spotlight"
-        },
-        {
-          "id": "scenario-t7",
-          "atMs": 37205,
-          "semanticClass": "body",
-          "target": "scenario-item-3",
-          "action": "spotlight",
-          "payload": {
-            "release": true
-          }
-        },
-        {
-          "id": "scenario-t8",
-          "atMs": 37747,
-          "semanticClass": "card",
-          "target": "scenario-item-5",
-          "action": "rise"
-        }
-      ],
       "claims": [
         {
           "claimId": "c-scenario",
