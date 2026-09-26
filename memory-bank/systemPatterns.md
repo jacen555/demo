@@ -218,6 +218,150 @@ shared name, a matching comment. The test is not whether the guarantee is stated
 whether violating it fails to compile, or fails a test that cannot pass for another reason.
 
 
+## Pattern: compare the strength of the evidence against the strength of the claim
+
+The single check that would have prevented most of this repo's audit. A property you can
+*verify* is not automatically the property you are *asserting*, and the gap is invisible
+because the two are correlated in the ordinary case.
+
+One feature produced five levels of it before the answer became "don't build this":
+
+| Evidence | Actually proves | Claim it was carrying |
+|---|---|---|
+| `endMs - startMs === audio.durationMs` | the windows came from *some* audio | this calibration measures *this* text |
+| `{words, chars, clipMs}` match | a summary matched | the narration is unchanged |
+| `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
+| normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
+| `evidence` field written | the distinction was recorded | the distinction was *checked* |
+
+Each gate was real. Each was one inferential step short. The last is the sharpest: the
+field whose entire purpose was recording whether a human confirmed was written correctly
+and **never read by the predicate** — the distinction lived in the artifact and not in the
+decision.
+
+**And the impossibility argument overreached too.** The conclusion "no artefact retains the
+exact narration" was drawn from an enumeration of what *one stage* writes, and stated about
+*every artefact in the project*. A different stage did embed it. The conclusion survived
+only because it was over-determined. The builder's own diagnosis is the general form:
+
+> The scope of the evidence was six files; the scope of the claim was the whole domain.
+
+**When the evidence cannot reach the claim, the honest output is to refuse rather than
+certify.** A tool was built to promote "unproven" lineage to "proven", found to mint false
+proof on a punctuation edit, and **withdrawn** — with the impossibility written into the
+message that would otherwise prompt someone to rebuild it. Refusing to certify is always
+available and always honest.
+
+## Technique: a red that is *impossible* is a stronger signal than a red that is absent
+
+A builder was dispatched to fix five audited defects and could not write a failing test for
+any of them. The defects were real — on a **different branch**. The file it had been given
+did not contain the feature under repair.
+
+It stopped rather than authoring the feature in order to fix it, and the reasoning is worth
+keeping: a pre-fix red would have been red against code written minutes earlier, and a
+builder that wrote its test *after* its fix would have shipped a confident, green, entirely
+fictional repair.
+
+This is not what failing-test-first is usually argued for, and it is a better argument than
+the usual one. **The test's inability to fail was the signal.**
+
+**Corollary — the danger of a semantic merge.** Two differently-shaped implementations of the
+same safety mechanism do not conflict loudly; git resolves by text and neither side is wrong
+at any line. One side silently wins, and in a guard that is how the guarded defect returns.
+A semantic conflict in a safety mechanism is worse than a textual one, because *the merge
+succeeding* is what causes the harm.
+
+## Pattern: recognition is not coverage
+
+A builder found a vacuous assertion in its own test — one that could never reach the code it
+claimed to check — reported it unprompted, and in the same round left its exact twin two
+files away, in a test it was actively editing. Its own formulation:
+
+> **Catching a pattern once does not mean I swept for it.**
+
+The same round it named that, it wrote an over-broad assertion in the very test fixing the
+finding about over-claiming. Scoping a check to the nearest available thing rather than the
+thing the property is about is the same error whether it passes or fails — *"an over-broad
+assertion that happens to fail is luckier than one that happens to pass."*
+
+So naming a defect class does not close it. Only a sweep does, and the sweep has to be
+mechanical: enumerate the sinks, not the places you remember touching.
+
+
+## Pattern: a permissive default is worse than no guard
+
+`code` mode refuses to render source data matching a project's `noGoPatterns`. A missing keywas treated as "no patterns" — and the only real consuming project had never set one. So for
+the only consumer that existed, a documented, named, tested frame-boundary guarantee
+**guaranteed nothing**.
+
+Its author's formulation is the durable one: **a default that makes a guard permissive is
+worse than no guard, because it produces the *evidence* of protection — a named config key,
+a passing test, a documented guarantee — with none of the protection.** No guard at all is
+at least honest about its absence.
+
+**Fail closed on absence for anything whose job is refusing.** Here: a missing key is
+refused, and `[]` is the explicit opt-out. The project least likely to have reviewed its
+source data is exactly the one that never configured the guard, so absence must not read as
+permission.
+
+**And the test could never have caught it, because the test supplied its own patterns.**
+That is the sharper half:
+
+> A test with its own fixture proves the mechanism works; it says nothing about whether it
+> is switched on.
+
+Every guard with configurable strictness needs a test for the **unconfigured** case — the
+one a real project will actually be in. Otherwise the suite proves the guard functions and
+is silent about whether it runs.
+
+
+## Property: a fingerprint over the input is separable; over the output it is not
+
+Slice 2 made budget suppression require proof of lineage — a hash recorded when the audiowas measured. The consuming project flagged the hazard before running it: **the stage that
+records the proof also regenerates the inputs.** Re-running `voice` to satisfy a checker
+rewrites the audio a 25-minute render was already encoded from.
+
+It resolved without a re-render for one reason: **`textHash` hashes the narration text, not
+the audio.** That makes the proof separable from the artifact, so the re-run calibration and
+timeline could be kept while the original audio files were restored. Lineage proven,
+deliverable bit-reproducible.
+
+Had it hashed the audio, there would have been no such move — the choice would have been
+between proven lineage and a reproducible deliverable, and the render cost would have
+decided it.
+
+So, when adding a provenance check: **hash the input that determines the output, not the
+output.** The input is usually stable, cheap, and already in hand; the output is the
+expensive thing you are trying to protect.
+
+**Related caution:** a command that records proof is rarely read-only. *"Re-run voice to
+record a fingerprint"* reads like a verification step and is a regeneration. Say so where
+the instruction appears.
+
+## Pattern: a measurement generalised one step past what it supports
+
+The same project made this error twice, in opposite directions, and named it better than
+anyone reviewing it could have:
+
+- **Identity read as meaning.** "74% deduplicated" came from comparing consecutive frame
+  byte-lengths. A deterministic renderer produces byte-identical frames at full cost; the
+  true hold rate was 0% in the body. Byte-identity is not dedup.
+- **Meaning read as identity.** "TTS determinism confirmed across 3+ runs" was measured on
+  **timings** and stated about **bytes**. Re-running unchanged narration produced identical
+  `durationMs`, identical clip durations, identical byte *lengths* — and **different content
+  hashes for 5 of 8 segments**. Neural synthesis varies sub-perceptually between runs while
+  landing on the same frame count.
+
+Both were real measurements. Both were reported one inferential step further than the
+evidence reached, and the step was invisible because the measured thing and the claimed
+thing are correlated in the ordinary case.
+
+**So state what was measured, not what it implies.** "Identical durations across 3 runs" is
+a finding. "TTS is deterministic" is a theory about why, and it was wrong in a way that
+would have silently broken any cache keyed on audio content.
+
+
 ## Pattern: the fix for a defect class is where the next instance appears
 
 Three states — **absent**, **unreadable**, **malformed** — were collapsed into one, and the
