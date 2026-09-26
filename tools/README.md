@@ -61,3 +61,4 @@ and fails.
 | Domain | Language | Purpose |
 |---|---|---|
 | [`SizzleCraft`](SizzleCraft/) | `node` | Shared engine for narrated demo/educational videos. Paired with the [`demo-recording` skill](../.github/skills/demo-recording/SKILL.md). |
+| [`EvalLoopDemo`](EvalLoopDemo/) | `node` | One demo-video project — *"How do you test a conversation?"*. The first real consumer of `SizzleCraft`. |

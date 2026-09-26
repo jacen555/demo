@@ -32,8 +32,14 @@ public class SuiteMachinePathGuardTests
     private const string ScenarioCode = "scenario.id.machinePath";
     private const string SuiteCode = "suite.name.machinePath";
     private const string TagCode = "scenario.tag.machinePath";
+    private const string CarveOutCode = "scenario.expectedFailure.machinePath";
 
-    private static string SuiteWith(string scenarioId, string name = "regression", string? tags = null) =>
+    private static string SuiteWith(
+        string scenarioId,
+        string name = "regression",
+        string? tags = null,
+        string? expectedFailureReason = null
+    ) =>
         $$"""
             {
               "name": {{JsonSerializer.Serialize(name)}},
@@ -42,6 +48,11 @@ public class SuiteMachinePathGuardTests
                   "identity": { "id": {{JsonSerializer.Serialize(scenarioId)}}, "kind": "rest" },
                   "execution": { "mode": "live" },
                   "simulation": { "opening": "GET /health" },
+                  "grading": {{(
+                      expectedFailureReason is null
+                          ? "{}"
+                          : $$"""{ "expectedFailure": { "reason": {{JsonSerializer.Serialize(expectedFailureReason)}} } }"""
+                  )}},
                   "slicing": { "tags": {{tags ?? "{}"}} }
                 }
               ]
@@ -658,6 +669,46 @@ public class SuiteMachinePathGuardTests
         finding.Severity.Should().Be(ValidationSeverity.Error);
         finding.Message.Should().NotContain("/home/ci-user").And.Contain("#1").And.Contain("rename");
         finding.ToString().Should().NotContain("/home/ci-user");
+    }
+
+    /// <summary>
+    /// The carve-out reason is a new artifact surface, so it is a new load-time surface too.
+    /// </summary>
+    /// <remarks>
+    /// The reason is copied verbatim into <c>ScenarioResult.ExpectedFailure</c> and therefore
+    /// into the committed artifact. Caught here as well as on read-back, because catching it only
+    /// on read-back means the run happens, writes an artifact this engine then refuses, and
+    /// destroys every other scenario's evidence with it.
+    /// </remarks>
+    [Theory]
+    [InlineData("/home/ci-user/repo")]
+    [InlineData("blocked on the fixture at /home/ci-user/repo/fixtures")]
+    [InlineData(@"C:\Users\ci-user\repo")]
+    public void LoadFromJson_ExpectedFailureReasonIsAMachinePath_IsRefusedWithoutRepeatingTheValue(string reason)
+    {
+        var result = SuiteLoader.LoadFromJson(
+            SuiteWith("refund-flow", "regression", expectedFailureReason: reason),
+            "regression.json"
+        );
+
+        result.Succeeded.Should().BeFalse();
+
+        var finding = result.Messages.Should().ContainSingle(message => message.Code == CarveOutCode).Subject;
+        finding.Severity.Should().Be(ValidationSeverity.Error);
+        finding.Message.Should().NotContain("/home/ci-user").And.NotContain("Users").And.Contain("#1");
+        finding.ToString().Should().NotContain("/home/ci-user").And.NotContain(@"C:\Users");
+    }
+
+    [Fact]
+    public void LoadFromJson_OrdinaryExpectedFailureReason_Loads()
+    {
+        var result = SuiteLoader.LoadFromJson(
+            SuiteWith("refund-flow", "regression", expectedFailureReason: "known gap, tracked as FORGE-214"),
+            "regression.json"
+        );
+
+        result.Succeeded.Should().BeTrue(because: string.Join("; ", result.Messages));
+        result.Suite!.Scenarios[0].Grading.ExpectedFailure!.Reason.Should().Be("known gap, tracked as FORGE-214");
     }
 
     [Fact]

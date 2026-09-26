@@ -103,6 +103,21 @@ public sealed class RestRunner : IScenarioRunner
     /// <inheritdoc/>
     public ScenarioKind Kind => ScenarioKind.Rest;
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The transport timeout is read from the injected <see cref="HttpClient"/> rather than from
+    /// this runner's own options, because that is the figure actually in force — a run against a
+    /// slow system returns a response under one timeout and
+    /// <see cref="ExchangeState.TimedOut"/> under another, which is a different verdict from the
+    /// same system.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings =>
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["timeoutSeconds"] = _client.Timeout.TotalSeconds.ToString(CultureInfo.InvariantCulture),
+            ["retainUnredactedEvidence"] = _options.RetainUnredactedEvidence ? "true" : "false",
+        };
+
     /// <summary>Runs the scenario once.</summary>
     /// <param name="scenario">The scenario to run. Must declare <see cref="ScenarioKind.Rest"/>.</param>
     /// <param name="context">The participant, seed, and repetition number for this run.</param>

@@ -174,8 +174,9 @@ Load these **only when the task needs them**:
 | File | Read it when |
 |---|---|
 | `references/planning.md` | **Authoring a new video, or when the subject changes.** Intake checklist, accessibility constraints, claims/provenance, narration craft, length evidence |
-| `references/cost-techniques.md` | Making an expensive stage cheaper, or needing a cheap way to check "did anything change?" Covers `framemd5`, `ffprobe` probes, null-muxer gates, segment concat, draft settings, TTS metadata, deterministic capture |
+| `references/cost-techniques.md` | Making an expensive stage cheaper, or needing a cheap way to check "did anything change?" Covers `framemd5`, `ffprobe` probes, null-muxer gates, segment concat, draft settings, TTS metadata, deterministic capture. **Start with the capability probe in §3 on an unfamiliar machine** |
 | `references/pipeline-contract.md` | Setting up a new pipeline, or adapting a renderer that isn't the reference one |
+| `references/footage-and-broll.md` | **Before planning stock video, screen captures, or any interspliced footage.** What `footage` mode already does, the two unextracted producer stages, why footage is the most expensive frame you can add, licensing, and when B-roll helps rather than hurts |
 | `references/bug-ledger.md` | **Before any audio mix, remux, or timing solve.** Cheap to read, expensive to rediscover |
 | `templates/knobs.json` | Starting a new project |
 | `templates/render-log.md` | Starting a new project |

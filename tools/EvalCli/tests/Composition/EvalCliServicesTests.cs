@@ -98,6 +98,48 @@ public class EvalCliServicesTests
     }
 
     [Fact]
+    public void Build_ForTheSeedSource_RegistersTheEnginesIdentityDerivedSourceItself()
+    {
+        // The registration the coordinator actually draws through, and the one nothing else here
+        // pins. RunCoordinator asks for a run's seed by identity through ISeedSource.SeedFor and
+        // never calls NextSeed, so every sibling test above — all of which assert on the sequence
+        // — would go on passing against a registration the engine refuses at plan time. That is
+        // not hypothetical: the interface's default SeedFor throws NotSupportedException, and a
+        // wrapper registered here that implemented only NextSeed is exactly what took this suite
+        // to 106 failures.
+        using var workspace = new TempWorkspace();
+        using var diagnostics = new StringWriter();
+        using var provider = EvalCliServices.Build(Plan(workspace, seed: 4242), diagnostics);
+
+        var source = provider.GetRequiredService<ISeedSource>();
+
+        // The engine's own implementation, resolved directly rather than through anything that
+        // wraps or replays it. A wrapper is free to delegate SeedFor today and stop tomorrow.
+        source.Should().BeOfType<DeterministicSeedSource>();
+        source.RootSeed.Should().Be(4242);
+
+        // And it answers from the configured root by identity, so the seed a scenario is driven
+        // with survives the suite being narrowed or reordered — the property the README states and
+        // the one a baseline comparison is paired on.
+        source.SeedFor("checkout", 1).Should().Be(new DeterministicSeedSource(4242).SeedFor("checkout", 1));
+
+        // **This assembly contributes no seed source of its own, and that is what the assertions
+        // above cannot establish by themselves.** The scheduler this replaced handed out a plain
+        // DeterministicSeedSource until something pinned it, so a provider built and resolved
+        // without a pinning step — which is every provider this test file builds — got the right
+        // type out of the wrong wiring. Resolving therefore cannot tell the two apart, and a test
+        // that only resolves would go green against the very thing it was written to forbid.
+        //
+        // Asserted on the deletion instead of on the wiring, so no fallback can satisfy it, and by
+        // shape rather than by name, so a wrapper reintroduced under any other name is caught too.
+        typeof(EvalCliServices)
+            .Assembly.GetTypes()
+            .Where(type => typeof(ISeedSource).IsAssignableFrom(type))
+            .Should()
+            .BeEmpty("seeds are the engine's to derive; this assembly registers its type and adds none");
+    }
+
+    [Fact]
     public void Build_ForTheArtifactReader_AcceptsExactlyWhatThePublishingBudgetAllows()
     {
         // The correspondence this tool's honesty rests on: an artifact it agrees to publish must

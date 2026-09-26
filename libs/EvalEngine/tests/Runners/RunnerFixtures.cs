@@ -189,6 +189,11 @@ internal static class RunnerFixtures
                     StopOnParticipantCompletion = stopOnParticipantCompletion,
                 },
             },
+
+            // Deterministic execution replays scripted material, so a scenario with nothing to
+            // send is one the loader refuses. Stated here rather than left empty, so a runner
+            // test drives a scenario a suite could actually contain.
+            Simulation = new Simulation { Opening = "opening stimulus" },
         };
 
     public static RunContext Context(IParticipant participant, long seed = 4242, int repetition = 1) =>

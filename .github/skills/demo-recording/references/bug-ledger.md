@@ -19,10 +19,13 @@ Format: **Symptom → Cause → Fix**, with the measurement that exposes it.
 2. [`-shortest` truncates the end card](#2--shortest-truncates-the-end-card)
 3. [Mono→stereo upmix costs 3 dB](#3-monostereo-upmix-costs-3-db)
 4. [Fade-in longer than the lead-in](#4-fade-in-longer-than-the-lead-in)
+15. [`amix duration=longest` does not extend a short music track](#15-amix-durationlongest-does-not-extend-a-short-music-track)
+16. [Changing the music source invalidates the mix gain](#16-changing-the-music-source-invalidates-the-mix-gain)
 
 **Timing**
 5. [TTS tail silence cannot be derived from word-boundary metadata](#5-tts-tail-silence-cannot-be-derived-from-word-boundary-metadata)
 6. [Perceived gap ≠ inserted silence](#6-perceived-gap--inserted-silence)
+13. [The reference `voice.mjs` still derives tails from metadata — and three videos shipped with it](#13-the-reference-voicemjs-still-derives-tails-from-metadata--and-three-videos-shipped-with-it)
 
 **TTS**
 7. [Re-synthesis appears safe — but is not guaranteed](#7-re-synthesis-appears-safe--but-do-not-depend-on-it-being-guaranteed)
@@ -35,6 +38,9 @@ Format: **Symptom → Cause → Fix**, with the measurement that exposes it.
 **Tooling hygiene**
 8. [Hard-referenced optional config keys](#8-hard-referenced-optional-config-keys)
 9. [Measure the output, not the input](#9-measure-the-output-not-the-input)
+
+**Scene authoring**
+14. [A trigger that resolves to nothing renders a blank segment, silently](#14-a-trigger-that-resolves-to-nothing-renders-a-blank-segment-silently)
 
 ---
 
@@ -107,6 +113,137 @@ dB of the intended bed level by the time speech starts.
 
 ---
 
+### 15. `amix duration=longest` does not extend a short music track
+
+**Symptom.** The music bed simply stops partway through the video and the rest
+plays with narration only. No error, no warning, and the mix command looks
+correct. In the case that exposed it, a 2:38 track under a 4:10 video left
+**the final 92 seconds with no bed at all**.
+
+**Cause.** `duration=longest` describes how long the *output* runs — it takes the
+longest input. It does **not** loop, pad, or stretch a shorter input. A music
+input that ends early just stops contributing, and `amix` is perfectly happy:
+
+```
+[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx]
+```
+
+This is easy to miss because it only bites when the bed is *generated* to length
+for every earlier video — `make-music.mjs` takes a duration argument, so every
+project that used a generated bed was immune. The first file-sourced track hit it
+immediately.
+
+**Fix.** Loop the music to cover the video, with a **crossfade at each wrap**, and
+trim to the exact video length. A hard loop point in an ambient bed is audible.
+`n` copies crossfaded end-to-end yield `n*D - (n-1)*X` seconds, so the smallest
+covering `n` is `ceil((video - X) / (D - X))`:
+
+```
+[2:a][3:a]acrossfade=d=3:c1=tri:c2=tri[ml1];
+[ml1]atrim=0:<videoSeconds>,asetpts=N/SR/TB,volume=<gain>[mu]
+```
+
+Pass the music file once per copy (`-i track.mp3 -i track.mp3`). Derive
+`videoSeconds` from the capture stage's own frame formula
+(`ceil(((durationMs + 1000)/1000) * fps) / fps`) rather than probing the
+container, so it agrees with the encoded stream exactly.
+
+**And refuse to do nothing silently.** If the track is shorter than the video and
+looping is disabled, that must be a loud error naming the shortfall — never a
+quiet stretch of missing bed:
+
+```
+music is 158.46s but the video is 250.63s — the last 92.17s would have NO bed at all.
+```
+
+**Detect.** Measure RMS in a **narration-silent gap past the music's end** and
+compare it with a gap before the end. They should match within a dB or so. On the
+verified fix: −9.8 / −9.3 / −8.8 dB at 184 s, 207 s and 250 s against −9.2 dB at
+49 s. Measuring the whole file will *not* reveal this — narration dominates the
+average and hides a missing bed entirely.
+
+---
+
+### 16. Changing the music source invalidates the mix gain
+
+**Symptom.** A music-bed swap that should be a cheap audio-only remux ships a mix
+**~10 dB too loud**. Whole-file RMS measured **−9.8 dB** against a sibling video's
+−19.1 dB, with true peak at −0.2 dBFS instead of −1.0. Nothing in the remux
+reports a problem, the loop and crossfade are correct, and the bed is audibly
+present throughout.
+
+**Cause.** The music gain is tuned against whatever the bed *was*. Measured RMS of
+the two sources in one project:
+
+| Source | RMS | Peak |
+|---|---|---|
+| Generated bed (`make-music.mjs`) | **−43.1 dB** | −25.2 dBFS |
+| Licensed track (commercial master) | **−11.4 dB** | **+0.6 dBFS** |
+
+**31.7 dB apart.** A commercial master is loudness-normalised and peak-limited —
+often clipping slightly — while a generated ambient bed is quiet by construction.
+A gain of `1.50` that was correct for the second is catastrophic for the first.
+
+**Fix.** Recompute the gain whenever the source changes. Target the bed level the
+knobs ask for (`musicUnderSpeechDb`), not the previous gain number:
+
+```
+gain_dB = musicUnderSpeechDb − measured_RMS_of_the_new_track
+```
+
+In the reference case that gave `0.055` (≈ −25 dB) against the previous `1.50`.
+
+**Detect — and this is the part that bites.** The loop fix in entry 15 had already
+been verified by measuring RMS in narration-silent windows, and those measurements
+were *correct*: the bed was present, at consistent level, across the whole video.
+**Window measurements show presence, not absolute correctness.** They cannot
+reveal that the level is uniformly wrong.
+
+> **The rule: a source change invalidates the gain, and only a whole-file
+> comparison catches it.** Re-run `check-levels.mjs` against a reference video
+> after ANY change to the bed — new track, different preset, regenerated bed.
+> Presence checks and level checks answer different questions, and this project
+> ran the first while skipping the second.
+
+**Now enforced, and the placement is the point.** `remux-music.mjs` pins the gain
+to a SHA-256 of the music source in `music-gain.lock.json`, and refuses when the
+source changes while the gain does not:
+
+```
+error: the music source CHANGED but --music-gain did not.
+  calibrated against  music.wav (1b37457d10c6) at gain 1.5
+  now supplied        licensed-master.mp3 (52188cb00ad4) at gain 0.48
+```
+
+`--confirm-gain` re-pins after the level has actually been re-measured. The pin is
+committed with the project, so it travels rather than living in one machine's head.
+
+> **Why the check lives where the SOURCE changes, not where the gain is parsed.**
+> Validating the gain *value* bounds it to a sane range — and 1.50 is in range for
+> both a generated bed at −43.1 dB RMS and a licensed master at −11.4 dB. The two
+> are 31.7 dB apart and the same in-range number is right for one and 10 dB hot for
+> the other. **Range validation and calibration validation are different checks**,
+> and only the second one could ever have caught this. Bounding an argument protects
+> against a bad value; pinning it to its input protects against a stale one.
+
+### ⚠️ Related: a file bed cannot duck
+
+`knobs.audio.levels` asks for two different bed levels — typically −36 dB under
+speech and −30 dB in gaps — and the 6 dB lift is what makes tuned silence feel
+deliberate rather than empty.
+
+A **generated** bed achieves that because `make-music.mjs` consumes
+`vo-envelope.json` and bakes sidechain ducking in. **A file bed played through
+`remux-music.mjs` has no sidechain path**, so it plays flat and one gain must
+serve both targets.
+
+Pick the under-speech target — an intrusive bed is worse than a quiet gap — and
+expect the lead-in to read quiet, because the same flat gain applies there and
+most tracks open softly. Building a real sidechain from `vo-envelope.json` would
+remove the compromise.
+
+---
+
 ## Timing
 
 ### 5. TTS tail silence cannot be derived from word-boundary metadata
@@ -145,6 +282,65 @@ silence yields a ~2.6 s perceived gap.
 gap corresponds to a ~1.08 s inserted file.
 
 **Detect.** Measure gaps on the finished mix, not on the inserted assets.
+
+---
+
+### 13. The reference `voice.mjs` still derives tails from metadata — and three videos shipped with it
+
+**Symptom.** Every perceived gap lands **~340 ms long**. The solve reports
+`perceived ~1500ms` for each gap and the arithmetic in the log is internally
+consistent, so nothing looks wrong at any point in the run.
+
+**Cause.** Entry 5 says never derive head/tail from synthesis metadata. The
+reference implementation (`tools/SizzleCraft/src/voice.mjs`) **still does**:
+
+```js
+const tailMs = Math.max(0, durationMs - Math.round(words.at(-1).localEndMs * scale));
+```
+
+Because `scale = durationMs / lastWordEnd` pins the last word to the end of the
+clip by construction, `tailMs` is **structurally always 0**. Measured on 8 clips
+of `en-US-AndrewNeural` at `rate=+20%`: tail reported `0 ms` every time. The
+solver therefore under-subtracts and **over-inserts** by the size of the real
+tail.
+
+Decoding with `silence-scan.mjs` puts the real tail at **~335 ms**, consistent
+with the 276–312 ms entry 5 already recorded.
+
+> **Direction note.** Entry 5 describes the symptom as gaps landing *short*. The
+> mechanism as implemented here makes them land *long* — a zero tail means the
+> solver inserts `target − head` instead of `target − tail − head`, so the
+> surplus is the tail. Expect **long** when auditing a gap solve built this way.
+
+**Fix.** Not applied, deliberately — see below. The code fix is to decode each
+clip and measure the tail, rather than computing it from word boundaries.
+
+**Detect.** Only by decoding. `silence-scan.mjs voiceover.mp3` and compare the
+runs between speech against `intake.perceivedGapMs`. No amount of reading the
+solver's own log will reveal it; the log is self-consistent and wrong.
+
+**The consequence that makes this more than a bug.** Three videos now exist, all
+`en-US-AndrewNeural` at `+20%`, all solving for a 1,500 ms perceived gap, and all
+inserting **1,416 ms**:
+
+| Project | Inserted gaps | Decoded? |
+|---|---|---|
+| `interviewer-qna-dataprep` | `1416` × 11 | **never** |
+| `interviewer-qna-delta` | `1416` × 8 | **never** |
+| `eval-loop-demo` | `1416` × 7 | yes — 1.83 s measured |
+
+All three therefore play at **~1.83 s perceived gaps**, and are **internally
+consistent with each other**. The defect is uniform, not erratic.
+
+So fixing `voice.mjs` is **a series-wide pacing decision, not a silent
+correctness fix**: the first video rendered after the fix will pace differently
+from every video before it, which is exactly the back-to-back mismatch
+`SKILL.md` § *Series continuity* warns about. Make it deliberately, and re-render
+the siblings if the series must stay consistent.
+
+**Equally: do not "correct" a single project by lowering `perceivedGapMs` to
+compensate.** That lands one video at a true 1.5 s while its siblings sit at
+1.83 s, which is the same continuity break with none of the benefit.
 
 ---
 
@@ -269,8 +465,54 @@ Cheap checks worth running every time:
 
 ---
 
-## Adding to this ledger
+## Scene authoring
 
+### 14. A trigger that resolves to nothing renders a blank segment, silently
+
+**Symptom.** A segment renders as its title and subtitle over an empty stage.
+Every card, node and edge is missing. Nothing errors, the capture succeeds, the
+encode succeeds, and the storyboard preview looks perfect — because the
+storyboard draws from the same data without going through the trigger layer.
+
+**Cause.** Three independent versions of the same mistake, all in the scene data
+rather than the engine:
+
+1. **Unqualified trigger targets.** The builder emits **segment-qualified** DOM
+   ids — `scenario-item-0`, `twotier-node-lane_ui`, `loop-edge-3`. A trigger
+   targeting a bare `item-0` or `lane_ui` calls `getElementById` on an id that
+   does not exist, gets `null`, and returns without revealing anything. Elements
+   start hidden, so the segment stays empty.
+2. **Edges with no draw trigger.** `revealNode` does not draw edges. An edge needs
+   its own `drawEdge` — or a `flowEdge`, which draws it as a side effect. A
+   diagram of disconnected boxes is easy to miss in review.
+3. **Triggers scheduled past the segment's end.** Segment-relative `atMs` is
+   compared against the *measured* window. The reference `voice.mjs` reflows
+   segment windows onto real audio but **leaves trigger times untouched**, so
+   anything authored against a pre-synthesis estimate drifts — and a segment that
+   came in shorter than estimated silently drops its last reveals.
+
+**Fix.** Validate the scene data against the id scheme *before* rendering — it is
+a free check against a stage that costs tens of minutes. Assert that every
+trigger target is an id the builder will emit, that every declared element is
+revealed by something, that every edge is drawn, and that no `atMs` is beyond its
+segment's measured duration. Reflowing trigger times alongside segment windows
+belongs in the synthesis stage.
+
+**Detect — the capture dedup ratio is the cheap canary.** Frame capture reports
+how many frames it deduplicated. Measured on one 4-minute project:
+
+| State | Unique frames | Dedup |
+|---|---|---|
+| Every trigger broken — nothing animates | 159 / 3,760 | **96%** |
+| Triggers fixed — content animates | 3,685 / 3,760 | **2%** |
+
+A dedup ratio far higher than the scene's static-ness would suggest means nothing
+is moving. **Check it before spending an encode**, and before believing a fast
+capture was good luck.
+
+---
+
+## Adding to this ledger
 When a bug costs more than one render cycle to find, add it. Keep the
 **Symptom → Cause → Fix → Detect** shape — the symptom is what a future session
 will recognise, and the detection method is what makes it cheap next time.

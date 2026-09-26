@@ -1,0 +1,40 @@
+{
+  "_readme": [
+    "Decoded silence measurements for voiceover.mp3, from:",
+    "  node ../SizzleCraft/src/silence-scan.mjs voiceover.mp3",
+    "",
+    "These are MEASURED BY DECODING, not read from synthesis metadata (bug-ledger entry 5).",
+    "They exist because voice.mjs solves the gap from msedge-tts word-boundary metadata, and",
+    "that metadata reported a 0 ms tail on all 8 clips — which the decoder disproves.",
+    "",
+    "write-script.mjs reads this file so script.md reports measured values rather than targets",
+    "(SKILL.md §6). Re-run the scan and replace this file after any change at S3 or S4."
+  ],
+  "source": "silence-scan.mjs",
+  "file": "voiceover.mp3",
+  "scannedAtUtc": "2026-09-26T00:40:00Z",
+  "scannedAfter": "review round 3 — loop reframed as a win, dimensions counts rounded",
+  "method": "OfflineAudioContext decode, 20 ms RMS window, threshold 0.004, runs >= 400 ms",
+  "durationMs": 281712,
+  "leadIn": {
+    "targetMs": 2000,
+    "insertedMs": 1920,
+    "decodedMs": 2040
+  },
+  "perceivedGaps": {
+    "targetMs": 1500,
+    "insertedMs": 1416,
+    "decodedMs": [1820, 1840, 1840, 1820, 1900, 1840, 1800],
+    "afterSegment": ["hard", "scenario", "freeform", "many", "dimensions", "twotier", "blindspot"],
+    "decodedMeanMs": 1837,
+    "decodedMinMs": 1800,
+    "decodedMaxMs": 1900,
+    "overshootMs": 337,
+    "_note": "voice.mjs solved for 1500 ms using a metadata tail of 0 ms. The decoder puts the real tail at roughly 335 ms, which matches the ~276-312 ms the pipeline contract documents. The gaps are uniform and correct relative to each other; they are simply ~335 ms longer than asked for. Recovering it needs either perceivedGapMs lowered to ~1165, or a decode-based tail measurement in voice.mjs."
+  },
+  "intraSegmentPauses": {
+    "_note": "Natural sentence breaks inside a segment, not gap-solve output. The count varies by +/-1 between runs because a ~400 ms pause sits exactly on the detector's 400 ms floor and quantises differently across the 20 ms RMS grid once the timeline shifts. Not an audio change.",
+    "runsMs": [400, 420, 420],
+    "atMs": [16720, 75940, 147060]
+  }
+}

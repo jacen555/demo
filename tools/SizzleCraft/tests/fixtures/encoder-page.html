@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>sizzlecraft test encoder</title>
+<script>
+  // A minimal stand-in for the shipped encoder page.
+  //
+  // src/encoder-page.html ships on a sibling branch and is absent from this worktree, so
+  // the S7 apply path cannot reach its own writes against src/. Tests that tolerate that
+  // pass on the missing-prerequisite failure and prove nothing about the write stage —
+  // which is exactly the false green this fixture exists to remove.
+  //
+  // It does the one thing the host contract requires: announce readiness, then push bytes
+  // back through the exposed `writeMp4Chunk` binding. It does NOT encode video. Tests that
+  // use it must request a silent render (intake.silent = true) so the audio-presence and
+  // A/V-drift gates — which need a real MP4 — do not apply.
+  window.__sizzleEncoderReady = true;
+
+  // Deterministic payload so a test can assert the published bytes exactly.
+  window.__sizzleTestBytes = [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d];
+
+  window.encodeSizzleFrames = async (opts) => {
+    const bytes = window.__sizzleTestBytes;
+    await window.writeMp4Chunk(bytes, 0);
+    return { frameCount: opts.frameCount, audioChunks: opts.audioMp3Base64 ? 1 : 0 };
+  };
+</script>

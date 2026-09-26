@@ -1,3 +1,4 @@
+using System.Globalization;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Transcripts;
@@ -106,6 +107,20 @@ public sealed class LlmConversationRunner : IScenarioRunner
 
     /// <inheritdoc/>
     public ScenarioKind Kind => ScenarioKind.Llm;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <see cref="LlmConversationRunnerOptions.MaxTurnCeiling"/> caps every conversation this
+    /// runner drives and wins over the scenario's own ceiling, so two runs of one suite under
+    /// different values gather different amounts of evidence from the same system. That is a
+    /// setting the coordinator cannot see and a comparison must refuse across.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> VerdictBearingSettings =>
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["maxTurnCeiling"] = _options.MaxTurnCeiling.ToString(CultureInfo.InvariantCulture),
+            ["retainUnredactedEvidence"] = _options.RetainUnredactedEvidence ? "true" : "false",
+        };
 
     /// <summary>
     /// The turns this run may take: the runner's ceiling, narrowed by the scenario's if it

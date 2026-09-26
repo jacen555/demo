@@ -86,6 +86,18 @@ internal static class ComparisonFixtures
 
     public static ScenarioResult Scenario(string id, params RunStatus[] statuses) => Scenario(id, statuses, null);
 
+    /// <param name="perRunAssertions">
+    /// The assertion expressions each repetition was graded against, one entry per repetition.
+    /// Overrides <paramref name="assertions"/>, which applies the same set to every repetition.
+    /// This is what lets a test build a scenario whose repetitions were graded against
+    /// <i>different</i> checks — the shape a union across runs cannot see.
+    /// </param>
+    /// <param name="gradedExchange">
+    /// The exchange state stamped on every run that carries a verdict. Defaults to the state a
+    /// real runner records for a run that reached the system under test; pass a harness-failure
+    /// state, or <see langword="null"/> for none at all, to build a verdict whose own transcript
+    /// says no evidence was gathered.
+    /// </param>
     public static ScenarioResult Scenario(
         string id,
         IReadOnlyList<RunStatus> statuses,
@@ -95,7 +107,9 @@ internal static class ComparisonFixtures
         int? declaredRepetitions = null,
         StatisticalSummary? summary = null,
         bool summarize = true,
-        string? definitionFingerprint = DefaultFingerprint
+        string? definitionFingerprint = DefaultFingerprint,
+        IReadOnlyList<IReadOnlyList<string>>? perRunAssertions = null,
+        string? gradedExchange = ExchangeState.Responded
     )
     {
         var specs = (assertions ?? DefaultAssertions).Select(AssertionSpec.Parse).ToArray();
@@ -105,7 +119,15 @@ internal static class ComparisonFixtures
                 (status, index) =>
                     new RunResult
                     {
-                        Transcript = Transcript(id, seeds is null ? SeedFor(index) : seeds[index]),
+                        Transcript = Transcript(
+                            id,
+                            seeds is null ? SeedFor(index) : seeds[index],
+                            // An errored run is one the harness could not conduct, so it records
+                            // a state that gathered nothing — the shape the coordinator writes.
+                            status == RunStatus.Error
+                                ? ExchangeState.RunnerFailed
+                                : gradedExchange
+                        ),
                         Status = status,
                         ErrorDetail = status == RunStatus.Error ? "transport refused the connection" : null,
 
@@ -116,7 +138,11 @@ internal static class ComparisonFixtures
                                 ? []
                                 :
                                 [
-                                    .. specs.Select(spec => new AssertionResult
+                                    .. (
+                                        perRunAssertions is null
+                                            ? specs
+                                            : [.. perRunAssertions[index].Select(AssertionSpec.Parse)]
+                                    ).Select(spec => new AssertionResult
                                     {
                                         Spec = spec,
                                         Pass = status == RunStatus.Pass,
@@ -132,15 +158,31 @@ internal static class ComparisonFixtures
             Kind = kind,
             Runs = runs,
             RepetitionPolicyUsed = RepetitionPolicy.Repeat(declaredRepetitions ?? Math.Max(1, statuses.Count)),
-            Summary = summary ?? (summarize ? ScenarioAggregator.Default.Summarize(runs) : null),
+
+            // A scenario whose runs deliberately contradict themselves has no summary to compute:
+            // the aggregator refuses such a run, which is the property under test one layer along.
+            // The fixture knows which shape it was asked for, so it does not have to ask.
+            Summary =
+                summary ?? (summarize && Gathers(gradedExchange) ? ScenarioAggregator.Default.Summarize(runs) : null),
             DefinitionFingerprint = definitionFingerprint,
         };
     }
 
+    /// <summary>Whether an exchange state is one that produced something to grade.</summary>
+    private static bool Gathers(string? exchange) =>
+        exchange is ExchangeState.Responded or ExchangeState.MalformedResponse;
+
     /// <summary>Repeats one verdict, the shape a scenario with a repetition policy produces.</summary>
     public static RunStatus[] Repeated(RunStatus status, int count) => [.. Enumerable.Repeat(status, count)];
 
-    public static Transcript Transcript(string scenarioId, long seed) =>
+    /// <summary>A transcript shaped the way a runner in this library actually writes one.</summary>
+    /// <param name="scenarioId">The scenario the run belongs to.</param>
+    /// <param name="seed">The seed the run was driven with.</param>
+    /// <param name="exchange">
+    /// What happened on the wire, or <see langword="null"/> to record nothing — the shape of an
+    /// artifact whose transcript never says whether the system under test was reached at all.
+    /// </param>
+    public static Transcript Transcript(string scenarioId, long seed, string? exchange = ExchangeState.Responded) =>
         new()
         {
             ScenarioId = scenarioId,
@@ -158,6 +200,7 @@ internal static class ComparisonFixtures
                 },
             ],
             Outcome = new Outcome { ObservedOutcome = "resolved", ObservedPath = "triage/resolve" },
+            Transport = new TransportMetadata { Kind = "http", Attributes = ArtifactShapes.For(exchange) },
         };
 
     public static ScenarioComparison For(ComparisonResult result, string scenarioId) =>

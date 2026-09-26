@@ -550,10 +550,28 @@ evidence being graded as another's:
 - A participant comes from `IParticipantFactory`, **once per run**, never reused. A stateful
   caller shared across repetitions would make repetition two a continuation of repetition one
   rather than an independent sample — and under concurrency it would have no defined behaviour.
-- **Seeds are drawn before anything is dispatched**, sequentially, in suite order. A run's seed is
-  therefore a function of its position and the root seed, never of which worker reached it first.
-  Drawing them inside workers would make the artifact depend on the throttle, and `ISeedSource`
-  implementations are not required to be thread-safe.
+- **Seeds are drawn before anything is dispatched**, on one thread, in suite order. A run's seed is
+  a function of the root seed, **the scenario's own id**, and the repetition number — never of its
+  position in the suite and never of which worker reached it first. Position is deliberately not an
+  input: the comparison is paired by seed, so a positional draw would make reordering the suite file
+  or narrowing it with impact selection move every later scenario's seed out from under its own
+  baseline, and the pairing guard would then report exactly the selected scenarios `notComparable`.
+  Drawing them inside workers would make the artifact depend on the throttle instead, and
+  `ISeedSource` implementations are not required to be thread-safe. The default derivation is
+  injective in the repetition, so two repetitions of one scenario cannot collide by construction.
+- **`ISeedSource.SeedFor` has no working default.** It is a default interface member only because it
+  could not be made abstract without breaking every existing implementer at compile time — and the
+  body **throws**. A member that quietly derived a seed instead would leave an implementer written
+  against `NextSeed` alone still compiling, no longer consulted, and producing runs that pair
+  against nothing in the baselines it had already written. A compiler guarantee that nothing breaks
+  at the *call site* is not a guarantee that the implementer still participates. Such a source is
+  refused before anything is dispatched, and the run records `seedDerivation` so an artifact written
+  under the old scheme is refused by name rather than un-pairing scenario by scenario.
+- **A runner attests the settings it ran under.** `IScenarioRunner.VerdictBearingSettings` is
+  required rather than defaulted, for the same reason: a transport timeout or a turn ceiling changes
+  what a run observes, the coordinator holds runners only as an interface, and a default returning
+  nothing would make that silence the behaviour every runner inherited without anyone choosing it.
+  The coordinator records them under `runner.<kind>.<key>`.
 - Each result is written into the slot reserved for its own run. There is no shared accumulator,
   so suite order is structural rather than restored by sorting.
 - A returned transcript is **checked against the run it claims to describe**. One naming another
@@ -572,6 +590,69 @@ exercising that system's own throttling, so it has to be honest; the count is re
 assertions are **not evaluated at all** — recording green verdicts beside a run that asked nothing
 is how a suite of unsupported scenarios comes to read as clean. An `AssertionEvaluationException`
 is `Error` too, keeping T4's refusal-versus-failure line.
+
+**A known gap can be carved out, and a carve-out excuses a verdict rather than the absence of
+one.** `Grading.ExpectedFailure` declares that a scenario is known not to work and states why. A
+carved-out scenario whose assertions do not hold is recorded `RunStatus.ExpectedFailure` instead of
+`RunStatus.Fail`, so a reader can tell a known gap from a failure the change just caused; one that
+*passes* is recorded as a pass, because a gap clearing is the headline the harness exists to
+produce; and one that gathered no evidence stays `RunStatus.Error`, because excusing an absence is
+the shape this library guards against everywhere else. The carve-out is copied onto
+`ScenarioResult.ExpectedFailure` so the committed artifact carries what was excluded and why.
+
+A carve-out **inflates nothing** — an expected failure is still a graded non-pass in the pass rate,
+the interval, and the paired statistics. And it lives inside `Grading`, so `ScenarioFingerprint`
+covers it: adding or removing one moves the fingerprint and `SuiteComparator` reports the scenario
+`notComparable` rather than letting the carve-out itself turn a regression into a stable failure.
+
+**Settings this layer cannot see are stated by the seam that owns them.** The coordinator records
+what it holds — the throttle, the interval parameters, and `seedDerivation`, the scheme its seeds
+were derived under. Everything else belongs to a seam and is **required** of it, never defaulted:
+
+- A transport timeout and a turn ceiling belong to a runner, so
+  `IScenarioRunner.VerdictBearingSettings` attests them and they travel into the artifact under
+  `runner.<kind>.<key>`.
+- A stimulus ceiling and a persona belong to the caller, so
+  `IParticipantFactory.VerdictBearingSettings` attests them under `participants.<key>`.
+  `LlmCallerOptions.MaxStimulusLength` truncates **before** sending, so two runs differing only in
+  it ask the system a different question; `LlmCallerOptions.VerdictBearingSettings` supplies the
+  map so no composition root re-derives the key names.
+- Anything a composition root knows and no seam owns goes into
+  `RunCoordinatorOptions.HarnessConfig`.
+
+Both members are required rather than defaulted for the same reason: a default returning nothing
+would make silence the behaviour every existing implementation inherited without anyone choosing
+it. A seam with genuinely nothing that can vary returns an empty map, **explicitly**.
+
+**The persona is witnessed, not quoted**, and the witness is of the *effective* value —
+`LlmCaller` trims before placing it in the instruction, so two options differing only in
+surrounding whitespace witness identically rather than refusing a comparison over a difference no
+run could observe. An attestation witnesses what was used, not what was supplied.
+
+**Attestations are read and validated before dispatch**, and re-checked at assembly: a seam whose
+effective settings moved mid-suite is refused, because a figure stamped beside runs it did not
+govern is a committed artifact misstating what produced it.
+
+The keys the coordinator writes itself — its own four, and everything under `runner.` and
+`participants.` — are refused in `HarnessConfig` rather than silently overwritten: two sources of
+truth for one setting is the failure the surface exists to close. An exactly-reserved key is named
+in the refusal because this library chose it; a prefix match is described, because the suffix is
+the caller's.
+
+**Three doors, one rule, for anything an author writes into an artifact.** A machine path in a
+harness setting or in a carve-out reason is refused by `SuiteLoader` on the way in from a suite
+file, by `CanonicalJson.Serialize` on the way out to a published file, and by
+`CanonicalJson.DeserializeSuiteResult` on the way back in. The write door is the one that covers a
+caller constructing a `SuiteResult` in process — which is what every consumer of the coordinator
+does, and what neither of the other two is reached by.
+
+**A verdict is refused wherever it is read, not only where it is compared.** A run recorded as a
+pass beside a transcript whose exchange gathered nothing is refused by the read door, by
+`SuiteComparator`, by `ImpactSelector`, and by `ScenarioAggregator.Summarize`. The rule lives once,
+in `VerdictEvidence`, and is asked rather than restated — four copies of a rule that must agree and
+are never checked against each other is how one of them quietly stops agreeing. `Summarize` is on
+that list because it is a public method: its callers are whatever its signature admits, not
+whatever calls it today.
 
 **One broken runner does not take down a mixed suite.** A runner that throws, returns nothing, or
 was never registered for a kind yields a recorded error carrying an ungradeable transcript
@@ -789,16 +870,27 @@ A scenario id is a join key, and a join key is only worth what the claim that bo
 same thing by it is worth. Two artifacts can agree on every id and still describe different work.
 **Two artifacts are comparable when they agree on** the suite name, the root seed, and every entry
 of `EvaluationEnvironment.HarnessConfig`; anything else throws `ComparisonRefusedException`, which
-names the property that diverged. `Endpoint`, `BaselineRef`, and `Timestamp` are deliberately not
-compared — two variants at two addresses at two times is the case this stage exists for.
+names the property that diverged. An artifact that records **no** harness settings at all is
+refused too, under the property `harnessConfig`: every entry-by-entry check passes vacuously
+against an empty map, so absence would otherwise read as agreement. `Endpoint`, `BaselineRef`, and
+`Timestamp` are deliberately not compared — two variants at two addresses at two times is the case
+this stage exists for.
 
 **Two scenarios are comparable when they agree on** the kind, the **definition fingerprint** of
 what each was run from, the repetition policy used, the runs actually recorded under it, the set
-of assertions they were graded against, the seed of every repetition pairwise and in order, and
+of assertions they were graded against **and the set each evidence-carrying repetition was graded
+against pairwise**, the seed of every repetition pairwise and in order, and
 both having produced at least one gradeable paired run. A scenario failing any of those is
 reported as `notComparable` with a stated reason, logged once, and excluded from `newlyCovered`
 and from the observations handed to the significance test — but it does not veto the rest of the
 suite.
+
+The scenario-level assertion set is a **union across runs**, and that is why the pairwise check
+sits beside it: a union is identical whether or not every repetition contributed the same members
+to it, so one repetition graded against fewer assertions than its pair slips through. A pass drawn
+over fewer checks means "nothing that ran failed" rather than "every declared check held", and
+paired against a repetition that evaluated all of them it becomes an effect size — or a reported
+fix — earned by an assertion that never ran.
 
 The seed check is the load-bearing one. `PairedObservation.Seed` exists precisely so a reader can
 confirm two runs were driven identically; comparing repetitions driven from different seeds
@@ -1082,6 +1174,13 @@ a recorded pass is believed only when:
   is no more evidence than a run carrying none;
 - at least one run produced a verdict at all. An all-errored scenario is `new`: **an absence of
   recorded failure is not a record of passing.**
+- **every run carrying a verdict records an exchange that actually gathered evidence.** The
+  coordinator never writes a graded verdict beside a transcript whose
+  `ExchangeState.IsHarnessFailure` says the system was never successfully asked — it records
+  `error` and evaluates nothing. A baseline read from disk carries no such guarantee, and a `pass`
+  with no verdicts beside it satisfies both checks above vacuously, so an incomplete baseline would
+  otherwise be indistinguishable from a passing one. This is the road with no downstream catch: a
+  scenario retired here never runs, emits nothing, and never reaches the comparator.
 
 Every one of those is an **under-selection** guard, which is the class that matters here: each
 describes a way a baseline can look like a pass without being one, and being wrong about any of
@@ -1134,11 +1233,6 @@ yet:
   which resolves a whole baseline *artifact* and now has two implementations.
 - No repetition **override**. `ScenarioResult.RepetitionPolicyUsed` always reports the scenario's
   declared policy, because nothing can yet tell the harness to run a different count.
-- `RunStatus.ExpectedFailure` is never produced. Nothing in `Scenario` declares that a scenario is
-  expected to fail — `expectedBehavior` asserts the named behaviour and **passes** when the system
-  does it — so the member stays unused rather than being inferred from a guess. The aggregator and
-  the comparator nonetheless have stated rules for it, so the meaning is fixed before anything
-  emits one.
 - No reporter, no CLI wiring.
 
 ### Known sharp edge

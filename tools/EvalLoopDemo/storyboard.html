@@ -1,0 +1,777 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Storyboard — How do you test a conversation?</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#F5F8FC;color:#201F1E;font:15px/1.55 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:32px 24px 64px}
+h1{font-size:30px;margin:0 0 6px}
+.lede{color:#5b5a58;margin:0 0 8px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 30px}
+.badges span{background:#fff;border:1px solid #dfe3ea;border-radius:999px;padding:5px 13px;font-size:12.5px}
+.seg{background:#fff;border:1px solid #e3e7ee;border-radius:14px;margin-bottom:18px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+header{display:flex;gap:16px;align-items:flex-start;padding:16px 20px;border-bottom:1px solid #eef1f6;border-left:6px solid var(--ca)}
+.num{font-size:26px;font-weight:800;color:var(--ca);min-width:38px}
+header h2{margin:2px 0 3px;font-size:20px}
+.kick{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--ca);font-weight:700}
+.sub{color:#5b5a58;font-size:13.5px}
+.meta{margin-left:auto;text-align:right;font-size:12px;color:#5b5a58;display:flex;flex-direction:column;gap:3px;white-space:nowrap}
+.meta b{font-size:14px;color:#201F1E}
+.mode{background:#eef3fb;color:#0078D4;border-radius:5px;padding:2px 8px;font-weight:600}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:20px;padding:18px 20px 20px}
+.volabel{font-size:10.5px;letter-spacing:.14em;color:#8a8886;font-weight:700;margin-bottom:6px}
+.vo p{margin:0 0 12px;font-size:16px;line-height:1.62}
+.claims{display:flex;flex-direction:column;gap:5px}
+.claim{font-size:11px;font-family:ui-monospace,Consolas,monospace;background:#f2f7f2;border-left:3px solid #107C10;padding:4px 8px;border-radius:0 4px 4px 0;color:#3b3a39;word-break:break-word}
+.claim.derived{background:#fff8ee;border-left-color:#F7630C}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.card{background:#fff;border:1px solid #e6eaf1;border-radius:9px;padding:11px 13px}
+.k{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:#605e5c;font-weight:700}
+.v{font-size:23px;font-weight:800;margin:3px 0 5px;letter-spacing:-.5px}
+.b{font-size:12.5px;color:#4a4948;line-height:1.45}
+.dg{width:100%;background:#fbfcfe;border:1px solid #e6eaf1;border-radius:9px}
+.shot{margin:0}.shot img{width:100%;border:1px solid #e6eaf1;border-radius:9px;display:block}
+.shot figcaption{font-size:12px;color:#605e5c;margin-top:6px;text-align:center}
+.nl{width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px 12px 8px 42px;font:600 26px/1.25 "Segoe UI",sans-serif;color:#201F1E}
+footer{margin-top:26px;color:#8a8886;font-size:12.5px;text-align:center}
+</style></head><body><div class="wrap">
+<h1>How do you test a conversation? — storyboard</h1>
+<p class="lede">Hundreds of simulated customers, each with their own knowledge of their own problem, run against a pull-request branch before anyone opens the review.</p>
+<div class="badges">
+  <span><b>4:41</b> total (NaN:NaN narration + NaNs end-card)</span>
+  <span>8 segments</span>
+  <span>16:9 · 3840×2160 @ 30fps (live)</span>
+  <span>en-US-AndrewNeural @ 1.2×</span>
+  <span>engagement: rich</span>
+  <span>background: white</span>
+</div>
+
+  <section class="seg">
+    <header style="--ca:#0078D4">
+      <span class="num">01</span>
+      <div>
+        <div class="kick">The problem</div>
+        <h2>One assert, or ten branching turns</h2>
+        <div class="sub">Left: a unit test. Right: the interview. Below: how we used to check it.</div>
+      </div>
+      <div class="meta">
+        <b>0:01 – 0:27</b>
+        <span>25.8s · 98 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>A unit test is easy. One input, one answer; and the same answer every time. Now try testing a conversation. On the right of the screen, the interview branches for each turn. When you run it again, a different branch occurs. There is no single assert to check. So how did we check it? One case at a time. Type an opening into Postman, read the reply, type the next. Or deploy it all the way to PPE and test the larger interface by hand. It was so slow that customers were finding the regressions before we did.</p><div class="claims"><span class="claim direct">c-before · direct · content-owner:stated (jonosace)</span><span class="claim direct">c-flip · direct · interview-eval/README.md:One run is not a measurement, contextlayer-eval/README.md:Replication</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="165" y1="63" x2="165" y2="233" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="165" y1="233" x2="165" y2="403" stroke="#00B7C3" stroke-width="5" opacity=".75"/><line x1="535" y1="63" x2="860" y2="157" stroke="#8661C5" stroke-width="5" opacity=".75"/><line x1="535" y1="63" x2="860" y2="285" stroke="#E3008C" stroke-width="5" opacity=".75"/><line x1="860" y1="157" x2="1205" y2="77" stroke="#107C10" stroke-width="5" opacity=".75"/><line x1="860" y1="157" x2="1205" y2="205" stroke="#F7630C" stroke-width="5" opacity=".75"/><line x1="860" y1="285" x2="1205" y2="333" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="580" y1="461" x2="1010" y2="461" stroke="#00B7C3" stroke-width="5" opacity=".75"/><line x1="1010" y1="461" x2="580" y2="461" stroke="#8661C5" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="40" y="26" width="250" height="74" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="40" y="26" width="250" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">one input</div>
+          </foreignObject>
+          <circle cx="62" cy="48" r="20" fill="#0078D4"/>
+          <text x="62" y="56" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="40" y="196" width="250" height="74" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="40" y="196" width="250" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">one assert</div>
+          </foreignObject>
+          <circle cx="62" cy="218" r="20" fill="#00B7C3"/>
+          <text x="62" y="226" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="40" y="366" width="250" height="74" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="40" y="366" width="250" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">the same answer every time</div>
+          </foreignObject>
+          <circle cx="62" cy="388" r="20" fill="#8661C5"/>
+          <text x="62" y="396" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="420" y="26" width="230" height="74" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="420" y="26" width="230" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">the opening turn</div>
+          </foreignObject>
+          <circle cx="442" cy="48" r="20" fill="#E3008C"/>
+          <text x="442" y="56" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="760" y="120" width="200" height="74" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="760" y="120" width="200" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">turn 2</div>
+          </foreignObject>
+          <circle cx="782" cy="142" r="20" fill="#107C10"/>
+          <text x="782" y="150" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+        <g>
+          <rect x="760" y="248" width="200" height="74" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="760" y="248" width="200" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">turn 2</div>
+          </foreignObject>
+          <circle cx="782" cy="270" r="20" fill="#F7630C"/>
+          <text x="782" y="278" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">6</text>
+        </g>
+        <g>
+          <rect x="1090" y="40" width="230" height="74" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="1090" y="40" width="230" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">turn 3</div>
+          </foreignObject>
+          <circle cx="1112" cy="62" r="20" fill="#0078D4"/>
+          <text x="1112" y="70" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">7</text>
+        </g>
+        <g>
+          <rect x="1090" y="168" width="230" height="74" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="1090" y="168" width="230" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">turn 3</div>
+          </foreignObject>
+          <circle cx="1112" cy="190" r="20" fill="#00B7C3"/>
+          <text x="1112" y="198" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">8</text>
+        </g>
+        <g>
+          <rect x="1090" y="296" width="230" height="74" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="1090" y="296" width="230" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">turn 3</div>
+          </foreignObject>
+          <circle cx="1112" cy="318" r="20" fill="#8661C5"/>
+          <text x="1112" y="326" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">9</text>
+        </g>
+        <g>
+          <rect x="420" y="424" width="320" height="74" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="420" y="424" width="320" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">one case at a time</div>
+          </foreignObject>
+          <circle cx="442" cy="446" r="20" fill="#E3008C"/>
+          <text x="442" y="454" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">10</text>
+        </g>
+        <g>
+          <rect x="850" y="424" width="320" height="74" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="850" y="424" width="320" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Postman, or by hand</div>
+          </foreignObject>
+          <circle cx="872" cy="446" r="20" fill="#107C10"/>
+          <text x="872" y="454" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">11</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#00B7C3">
+      <span class="num">02</span>
+      <div>
+        <div class="kick">The hero beat</div>
+        <h2>One scenario, field by field</h2>
+        <div class="sub">Real object from scenarios.json — id: outlook-ios-not-receiving</div>
+      </div>
+      <div class="meta">
+        <b>0:29 – 1:20</b>
+        <span>51.8s · 184 words</span>
+        <span class="mode">code</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>Let&#39;s look at one specific scenario definition. The opening is what the conversation starts with: my email has just stopped working. That is deliberately vague, because that is how people actually write. Underneath it sits the target: Outlook, on iOS, not receiving email. The interview never sees that, we are using it to grade once the conversation ends. Then we have the knowledge bank. Three authored facts this customer knows and will say if asked: that they are using the mail app on an iPhone; that they can still send messages, but nothing new ever arrives; and that they have checked junk, and the mailbox is not full. Notice the second one. Can send, cannot receive — that is the detail separating this from a dozen neighbouring categories, and the interview only learns it if it thinks to ask. Then a pool of alternative phrasings, so the customer can choose different phrasings to not repeat every time. And last, the assertions this scenario has to satisfy. That is what makes it a conversation and not a prompt. We have defined nearly two-hundred of them.</p><div class="claims"><span class="claim direct">c-scenario · direct · interview-eval/scenarios.json:onedrive-data-loss (opening, targetPath, facts[3], answerPool[11], assertions[3])</span><span class="claim direct">c-suite · direct · interview-eval/scenarios.json:162 objects, counted by kind</span></div></div>
+      <div class="viz"><div class="cards"></div></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#8661C5">
+      <span class="num">03</span>
+      <div>
+        <div class="kick">The hard part</div>
+        <h2>The interview invents the questions. The customer still has to answer.</h2>
+        <div class="sub">A priority ladder, not a script.</div>
+      </div>
+      <div class="meta">
+        <b>1:22 – 2:08</b>
+        <span>46.5s · 170 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>But here is the hard part: the thing being tested is a language model. It writes its own questions, and it will ask things nobody anticipated. A script of canned answers can fall apart on the first unexpected turn. So the simulated customer answers by rule, in priority order. If the question offers choices, and those choices carry routing data, it picks the one whose route runs closest to its own target. If the choices are platforms, it answers with the platform it is actually on. If it is any other multiple choice, it scores each option against its own vocabulary. And if the question has no choices at all — free text, invented on the spot — it draws the next unused line from its knowledge bank. One guard matters more than the rest. The customer will never name a platform it is not on. Those phrasings come from real support data. Matching is on word boundaries — which is why Xbox Game Studios is not an iOS case.</p><div class="claims"><span class="claim direct">c-strategies · direct · interview-eval/README.md:What it does — strategy table (route, family, platform, leafRoute, overlap, freeText)</span><span class="claim direct">c-platformguard · direct · interview-eval/README.md:If you regenerate the suite — match on word boundaries, Xbox Game Studios is not an iOS case, contextlayer-eval/README.md:The scripted customer — one guard carries over verbatim</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      
+      
+        <g>
+          <rect x="320" y="14" width="960" height="52" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="320" y="14" width="960" height="52">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">the interview asks — often something nobody anticipated</div>
+          </foreignObject>
+          <circle cx="342" cy="36" r="20" fill="#0078D4"/>
+          <text x="342" y="44" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="120" y="82" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="120" y="82" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">choices carry routing → pick the route closest to my target</div>
+          </foreignObject>
+          <circle cx="142" cy="104" r="20" fill="#00B7C3"/>
+          <text x="142" y="112" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="120" y="142" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="120" y="142" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">choices are platforms → answer with the platform I am on</div>
+          </foreignObject>
+          <circle cx="142" cy="164" r="20" fill="#8661C5"/>
+          <text x="142" y="172" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="120" y="202" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="120" y="202" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">any other multiple choice → score options against my vocabulary</div>
+          </foreignObject>
+          <circle cx="142" cy="224" r="20" fill="#E3008C"/>
+          <text x="142" y="232" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="120" y="262" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="120" y="262" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">no choices at all → next unused line from my knowledge bank</div>
+          </foreignObject>
+          <circle cx="142" cy="284" r="20" fill="#107C10"/>
+          <text x="142" y="292" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+        <g>
+          <rect x="120" y="336" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="120" y="336" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">GUARD · never name a platform I am not on</div>
+          </foreignObject>
+          <circle cx="142" cy="358" r="20" fill="#F7630C"/>
+          <text x="142" y="366" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">6</text>
+        </g>
+        <g>
+          <rect x="120" y="396" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="120" y="396" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">phrasings come from real support data</div>
+          </foreignObject>
+          <circle cx="142" cy="418" r="20" fill="#0078D4"/>
+          <text x="142" y="426" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">7</text>
+        </g>
+        <g>
+          <rect x="120" y="456" width="1360" height="50" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="120" y="456" width="1360" height="50">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">matched on word boundaries — Xbox Game Stud[ios] is not an iOS case</div>
+          </foreignObject>
+          <circle cx="142" cy="478" r="20" fill="#00B7C3"/>
+          <text x="142" y="486" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">8</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#E3008C">
+      <span class="num">04</span>
+      <div>
+        <div class="kick">Scale, and noise</div>
+        <h2>Independent scenarios run in parallel — three times each</h2>
+        <div class="sub">Three runs, one scenario, three outputs.</div>
+      </div>
+      <div class="meta">
+        <b>2:10 – 2:38</b>
+        <span>28.7s · 99 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>Each of the hundreds of scenarios opens its own conversation and shares no state with any other, so they can go out in parallel. And we run every scenario three times, because the same input doesn&#39;t give the same answer twice. On screen, three result strips for one scenario land on three different outputs, and an average line resolves between them. Replication across this suite showed the same scenario changing grade from one run to the next, for no reason at all. So we average across three runs, and a real change is separated from the model&#39;s own noise.</p><div class="claims"><span class="claim direct">c-parallel · direct · interview-eval/README.md:Parallelism — full 75-scenario suite at ~74 s with 10 workers</span><span class="claim direct">c-suite · direct · interview-eval/scenarios.json:162 objects, counted</span><span class="claim direct">c-flip · direct · interview-eval/README.md:~20% per-scenario grade-flip rate, contextlayer-eval/README.md:Replication</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="310" y1="212" x2="800" y2="422" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="800" y1="212" x2="800" y2="422" stroke="#00B7C3" stroke-width="5" opacity=".75"/><line x1="1290" y1="212" x2="800" y2="422" stroke="#8661C5" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="480" y="30" width="640" height="84" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="480" y="30" width="640" height="84">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">162 scenarios · running in parallel</div>
+          </foreignObject>
+          <circle cx="502" cy="52" r="20" fill="#0078D4"/>
+          <text x="502" y="60" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="140" y="170" width="340" height="84" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="140" y="170" width="340" height="84">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">run 1 · output A</div>
+          </foreignObject>
+          <circle cx="162" cy="192" r="20" fill="#00B7C3"/>
+          <text x="162" y="200" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="630" y="170" width="340" height="84" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="630" y="170" width="340" height="84">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">run 2 · output A</div>
+          </foreignObject>
+          <circle cx="652" cy="192" r="20" fill="#8661C5"/>
+          <text x="652" y="200" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="1120" y="170" width="340" height="84" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="1120" y="170" width="340" height="84">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">run 3 · output B</div>
+          </foreignObject>
+          <circle cx="1142" cy="192" r="20" fill="#E3008C"/>
+          <text x="1142" y="200" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="480" y="380" width="640" height="84" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="480" y="380" width="640" height="84">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">averaged across three runs</div>
+          </foreignObject>
+          <circle cx="502" cy="402" r="20" fill="#107C10"/>
+          <text x="502" y="410" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#107C10">
+      <span class="num">05</span>
+      <div>
+        <div class="kick">Breadth</div>
+        <h2>Several different questions, graded separately</h2>
+        <div class="sub">Including the two that pull in opposite directions.</div>
+      </div>
+      <div class="meta">
+        <b>2:40 – 3:15</b>
+        <span>35.2s · 118 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>And it is not grading one thing. Did the interview reach the right category — sixty-seven scenarios on that. Did it ask for the context it needed — fifty more, drawn from real customer queries. Does it repeat itself or leak across products — forty-five. And the sharpest one: does it refuse what it should, without refusing what it shouldn&#39;t? A customer opens about Outlook, then asks how to order a pizza. The interview must notice and clarify scope. But it must not refuse ordinary requests that merely sound odd — someone overriding an inbox rule. Across all hundred and sixty-two scenarios: around a hundred and thirty-five must not refuse, a handful must, and zero counted in both.</p><div class="claims"><span class="claim direct">c-suite · direct · interview-eval/scenarios.json:67 l5-descent + 50 golden-disambiguation + 45 review-repro, counted</span><span class="claim direct">c-pizza · direct · out_of_scope_interview.feature:An off-topic follow-up is questioned, not routed, out_of_scope_interview.feature:Ordinary support text is never refused</span><span class="claim derived">c-polarity · derived · contextlayer-eval/README.md:Validated across all 162 scenarios — 0 conflicts, 7 / 134 / 21. SPOKEN ROUNDED at user request: 134 as &quot;around a hundred and thirty-five&quot;, 21 as &quot;~20&quot; on screen, 7 as &quot;a handful&quot; (rounding 7 to 5 would assert a 29% error). 0 conflicts is exact and unrounded.</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="960" y1="61" x2="960" y2="146" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="960" y1="146" x2="960" y2="231" stroke="#00B7C3" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="30" y="25" width="540" height="72" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="30" y="25" width="540" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">reached the right category — 67</div>
+          </foreignObject>
+          <circle cx="52" cy="47" r="20" fill="#0078D4"/>
+          <text x="52" y="55" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="30" y="110" width="540" height="72" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="30" y="110" width="540" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">asked for the context it needed — 50</div>
+          </foreignObject>
+          <circle cx="52" cy="132" r="20" fill="#00B7C3"/>
+          <text x="52" y="140" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="30" y="195" width="540" height="72" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="30" y="195" width="540" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">repeats itself, or leaks across products — 45</div>
+          </foreignObject>
+          <circle cx="52" cy="217" r="20" fill="#8661C5"/>
+          <text x="52" y="225" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="620" y="25" width="680" height="72" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="620" y="25" width="680" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">customer: “issue with outlook”</div>
+          </foreignObject>
+          <circle cx="642" cy="47" r="20" fill="#E3008C"/>
+          <text x="642" y="55" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="620" y="110" width="680" height="72" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="620" y="110" width="680" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">customer: “how can I order pizza”</div>
+          </foreignObject>
+          <circle cx="642" cy="132" r="20" fill="#107C10"/>
+          <text x="642" y="140" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+        <g>
+          <rect x="620" y="195" width="680" height="72" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="620" y="195" width="680" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">interview: clarifies scope</div>
+          </foreignObject>
+          <circle cx="642" cy="217" r="20" fill="#F7630C"/>
+          <text x="642" y="225" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">6</text>
+        </g>
+        <g>
+          <rect x="400" y="290" width="900" height="72" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="400" y="290" width="900" height="72">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">“How do I override the rule in my inbox…” — NOT refused</div>
+          </foreignObject>
+          <circle cx="422" cy="312" r="20" fill="#0078D4"/>
+          <text x="422" y="320" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">7</text>
+        </g>
+        <g>
+          <rect x="80" y="400" width="330" height="76" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="80" y="400" width="330" height="76">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">a handful must refuse</div>
+          </foreignObject>
+          <circle cx="102" cy="422" r="20" fill="#00B7C3"/>
+          <text x="102" y="430" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">8</text>
+        </g>
+        <g>
+          <rect x="430" y="400" width="360" height="76" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="430" y="400" width="360" height="76">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">~135 must not refuse</div>
+          </foreignObject>
+          <circle cx="452" cy="422" r="20" fill="#8661C5"/>
+          <text x="452" y="430" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">9</text>
+        </g>
+        <g>
+          <rect x="810" y="400" width="320" height="76" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="810" y="400" width="320" height="76">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">~20 not applicable</div>
+          </foreignObject>
+          <circle cx="832" cy="422" r="20" fill="#E3008C"/>
+          <text x="832" y="430" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">10</text>
+        </g>
+        <g>
+          <rect x="1150" y="400" width="330" height="76" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="1150" y="400" width="330" height="76">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">0 counted in both</div>
+          </foreignObject>
+          <circle cx="1172" cy="422" r="20" fill="#107C10"/>
+          <text x="1172" y="430" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">11</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#F7630C">
+      <span class="num">06</span>
+      <div>
+        <div class="kick">Two tiers</div>
+        <h2>The fast tier gates the branch</h2>
+        <div class="sub">Labelled lanes, not two colours.</div>
+      </div>
+      <div class="meta">
+        <b>3:16 – 3:37</b>
+        <span>20.4s · 67 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>Two harnesses, and the lanes on screen fill against the same clock. The upper lane, labelled U I, clears thirteen scenarios in three runs each — about three and a half minutes. The lower lane, labelled A P I, clears all hundred and sixty-two in less time than that. So the fast tier is the pull-request gate; the interface harness cannot target a pull-request build at all.</p><div class="claims"><span class="claim derived">c-tiers · derived · contextlayer-eval/README.md:Usage — 13-scenario subset, 3 replicates, 4 workers (~3.5 min), interview-eval/README.md:Parallelism — 74 s at 10 workers for 75 scenarios, scaled to 162</span><span class="claim direct">c-nopr · direct · contextlayer-eval/README.md:What this harness cannot do — evaluate a pull request</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="400" y1="108" x2="1455" y2="108" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="400" y1="258" x2="1455" y2="258" stroke="#00B7C3" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="60" y="60" width="680" height="96" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="60" y="60" width="680" height="96">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">U I · 13 scenarios × 3 runs · ~3.5 min</div>
+          </foreignObject>
+          <circle cx="82" cy="82" r="20" fill="#0078D4"/>
+          <text x="82" y="90" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="1380" y="60" width="150" height="96" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="1380" y="60" width="150" height="96">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">▶</div>
+          </foreignObject>
+          <circle cx="1402" cy="82" r="20" fill="#00B7C3"/>
+          <text x="1402" y="90" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="60" y="210" width="680" height="96" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="60" y="210" width="680" height="96">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">A P I · 162 scenarios · less time than that</div>
+          </foreignObject>
+          <circle cx="82" cy="232" r="20" fill="#8661C5"/>
+          <text x="82" y="240" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="1380" y="210" width="150" height="96" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="1380" y="210" width="150" height="96">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">▶</div>
+          </foreignObject>
+          <circle cx="1402" cy="232" r="20" fill="#E3008C"/>
+          <text x="1402" y="240" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="420" y="380" width="760" height="90" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="420" y="380" width="760" height="90">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">the fast tier is the pull-request gate</div>
+          </foreignObject>
+          <circle cx="442" cy="402" r="20" fill="#107C10"/>
+          <text x="442" y="410" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#0078D4">
+      <span class="num">07</span>
+      <div>
+        <div class="kick">The blind spot</div>
+        <h2>Correct category, right agent — and resolution failed anyway</h2>
+        <div class="sub">The fast tier stops before this is expressible.</div>
+      </div>
+      <div class="meta">
+        <b>3:38 – 4:00</b>
+        <span>21.5s · 75 words</span>
+        <span class="mode">footage</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>But the slow tier sees something the fast one is structurally blind to. Watch it drive the real U I, and a stage trace surfaces: running Outlook Q and A agent, agent completed, workflow failed. The interview got the category right, the right agent was picked, and resolution failed anyway. The customer got a canned refusal. The fast tier stops at the category and cannot say any of that. Different data, not just slower data.</p><div class="claims"><span class="claim direct">c-uiblind · direct · contextlayer-eval/README.md:Why a second harness — Running: Outlook QnA Agent -&gt; completed -&gt; Workflow failed, reproducing 3/3</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="455" y1="170" x2="880" y2="170" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="880" y1="170" x2="1240" y2="170" stroke="#00B7C3" stroke-width="5" opacity=".75"/><line x1="1240" y1="170" x2="800" y2="285" stroke="#8661C5" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="400" y="20" width="800" height="80" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="400" y="20" width="800" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">correct category — intact</div>
+          </foreignObject>
+          <circle cx="422" cy="42" r="20" fill="#0078D4"/>
+          <text x="422" y="50" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="230" y="130" width="450" height="80" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="230" y="130" width="450" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Running: Outlook QnA Agent</div>
+          </foreignObject>
+          <circle cx="252" cy="152" r="20" fill="#00B7C3"/>
+          <text x="252" y="160" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="720" y="130" width="320" height="80" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="720" y="130" width="320" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">agent completed</div>
+          </foreignObject>
+          <circle cx="742" cy="152" r="20" fill="#8661C5"/>
+          <text x="742" y="160" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="1080" y="130" width="320" height="80" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="1080" y="130" width="320" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Workflow failed</div>
+          </foreignObject>
+          <circle cx="1102" cy="152" r="20" fill="#E3008C"/>
+          <text x="1102" y="160" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="400" y="245" width="800" height="80" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="400" y="245" width="800" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">customer sees a canned refusal</div>
+          </foreignObject>
+          <circle cx="422" cy="267" r="20" fill="#107C10"/>
+          <text x="422" y="275" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+        <g>
+          <rect x="400" y="360" width="800" height="80" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="400" y="360" width="800" height="80">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">the fast tier stops at the category</div>
+          </foreignObject>
+          <circle cx="422" cy="382" r="20" fill="#F7630C"/>
+          <text x="422" y="390" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">6</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+  <section class="seg">
+    <header style="--ca:#00B7C3">
+      <span class="num">08</span>
+      <div>
+        <div class="kick">The payoff</div>
+        <h2>The comparison exists before the pull request does</h2>
+        <div class="sub">Every headline number said better. One line said less safe.</div>
+      </div>
+      <div class="meta">
+        <b>4:01 – 4:41</b>
+        <span>40.1s · 139 words</span>
+        <span class="mode">diagram</span>
+      </div>
+    </header>
+    <div class="grid2">
+      <div class="vo"><div class="volabel">VOICEOVER</div><p>We deploy the pull-request branch, point the harness at it, and run it three times. Then the same suite against main, and we diff the two. The comparison exists before the review does. On one real change, routing got clearly better. Cases reaching the right support area went from twenty-seven to thirty-five out of sixty-seven. Cases where the interview came back with nothing were almost halved. Twenty-six fewer failed assertions. And then the harness flagged something the totals would have buried. A prompt-injection probe — one that exists to be refused — had quietly started getting answered. Every headline number said this build was better. It was also less safe, and one line caught it. Not in production. Not in review. Before the pull request was ever opened. That is what this buys. Run it against your branch first.</p><div class="claims"><span class="claim direct">c-win · direct · report-1602086-vs-1601897.html:L3 or better 27.0-&gt;35.0/67 (ranges 24-29 vs 34-37), report-1602086-vs-1601897.html:Returned NO path 21.3-&gt;11.7/67 — spoken as &quot;almost halved&quot;, report-1602086-vs-1601897.html:Assertions failed delta -26.0, report-1602086-vs-1601897.html:3 runs per arm</span><span class="claim direct">c-caveat · direct · report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -&gt; 1/3</span></div></div>
+      <div class="viz">
+    <svg viewBox="0 0 1600 520" class="dg">
+      <line x1="195" y1="57" x2="525" y2="57" stroke="#0078D4" stroke-width="5" opacity=".75"/><line x1="525" y1="57" x2="855" y2="57" stroke="#00B7C3" stroke-width="5" opacity=".75"/><line x1="855" y1="57" x2="1150" y2="57" stroke="#8661C5" stroke-width="5" opacity=".75"/><line x1="1150" y1="57" x2="1150" y2="149" stroke="#E3008C" stroke-width="5" opacity=".75"/><line x1="1150" y1="149" x2="525" y2="57" stroke="#107C10" stroke-width="5" opacity=".75"/><line x1="855" y1="57" x2="845" y2="149" stroke="#F7630C" stroke-width="5" opacity=".75"/>
+      
+        <g>
+          <rect x="60" y="20" width="270" height="74" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="60" y="20" width="270" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">deploy the branch</div>
+          </foreignObject>
+          <circle cx="82" cy="42" r="20" fill="#0078D4"/>
+          <text x="82" y="50" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">1</text>
+        </g>
+        <g>
+          <rect x="390" y="20" width="270" height="74" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="390" y="20" width="270" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">run the suite × 3</div>
+          </foreignObject>
+          <circle cx="412" cy="42" r="20" fill="#00B7C3"/>
+          <text x="412" y="50" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">2</text>
+        </g>
+        <g>
+          <rect x="720" y="20" width="270" height="74" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="720" y="20" width="270" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">read the delta</div>
+          </foreignObject>
+          <circle cx="742" cy="42" r="20" fill="#8661C5"/>
+          <text x="742" y="50" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">3</text>
+        </g>
+        <g>
+          <rect x="1050" y="20" width="200" height="74" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="1050" y="20" width="200" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">fix</div>
+          </foreignObject>
+          <circle cx="1072" cy="42" r="20" fill="#E3008C"/>
+          <text x="1072" y="50" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">4</text>
+        </g>
+        <g>
+          <rect x="1050" y="112" width="200" height="74" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="1050" y="112" width="200" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">re-run</div>
+          </foreignObject>
+          <circle cx="1072" cy="134" r="20" fill="#107C10"/>
+          <text x="1072" y="142" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">5</text>
+        </g>
+        <g>
+          <rect x="700" y="112" width="290" height="74" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="700" y="112" width="290" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">→ open the pull request</div>
+          </foreignObject>
+          <circle cx="722" cy="134" r="20" fill="#F7630C"/>
+          <text x="722" y="142" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">6</text>
+        </g>
+        <g>
+          <rect x="60" y="215" width="620" height="52" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="60" y="215" width="620" height="52">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">right support area   27.0 → 35.0  of 67</div>
+          </foreignObject>
+          <circle cx="82" cy="237" r="20" fill="#0078D4"/>
+          <text x="82" y="245" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">7</text>
+        </g>
+        <g>
+          <rect x="60" y="272" width="620" height="52" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="60" y="272" width="620" height="52">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">came back with nothing — almost halved</div>
+          </foreignObject>
+          <circle cx="82" cy="294" r="20" fill="#00B7C3"/>
+          <text x="82" y="302" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">8</text>
+        </g>
+        <g>
+          <rect x="60" y="329" width="620" height="52" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="60" y="329" width="620" height="52">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">assertions failed   − 26.0</div>
+          </foreignObject>
+          <circle cx="82" cy="351" r="20" fill="#8661C5"/>
+          <text x="82" y="359" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">9</text>
+        </g>
+        <g>
+          <rect x="60" y="386" width="620" height="52" rx="14"
+                fill="#fff" stroke="#E3008C" stroke-width="4"/>
+          <foreignObject x="60" y="386" width="620" height="52">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">3 runs per arm</div>
+          </foreignObject>
+          <circle cx="82" cy="408" r="20" fill="#E3008C"/>
+          <text x="82" y="416" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">10</text>
+        </g>
+        <g>
+          <rect x="760" y="215" width="780" height="56" rx="14"
+                fill="#fff" stroke="#107C10" stroke-width="4"/>
+          <foreignObject x="760" y="215" width="780" height="56">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">CAUGHT BEFORE THE PULL REQUEST</div>
+          </foreignObject>
+          <circle cx="782" cy="237" r="20" fill="#107C10"/>
+          <text x="782" y="245" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">11</text>
+        </g>
+        <g>
+          <rect x="760" y="278" width="780" height="74" rx="14"
+                fill="#fff" stroke="#F7630C" stroke-width="4"/>
+          <foreignObject x="760" y="278" width="780" height="74">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">prompt-injection probe (must be refused)   3 of 3  →  1 of 3</div>
+          </foreignObject>
+          <circle cx="782" cy="300" r="20" fill="#F7630C"/>
+          <text x="782" y="308" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">12</text>
+        </g>
+        <g>
+          <rect x="760" y="366" width="780" height="44" rx="14"
+                fill="#fff" stroke="#0078D4" stroke-width="4"/>
+          <foreignObject x="760" y="366" width="780" height="44">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Not in production.</div>
+          </foreignObject>
+          <circle cx="782" cy="388" r="20" fill="#0078D4"/>
+          <text x="782" y="396" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">13</text>
+        </g>
+        <g>
+          <rect x="760" y="417" width="780" height="44" rx="14"
+                fill="#fff" stroke="#00B7C3" stroke-width="4"/>
+          <foreignObject x="760" y="417" width="780" height="44">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Not in review.</div>
+          </foreignObject>
+          <circle cx="782" cy="439" r="20" fill="#00B7C3"/>
+          <text x="782" y="447" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">14</text>
+        </g>
+        <g>
+          <rect x="760" y="468" width="780" height="44" rx="14"
+                fill="#fff" stroke="#8661C5" stroke-width="4"/>
+          <foreignObject x="760" y="468" width="780" height="44">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="nl">Before the pull request was ever opened.</div>
+          </foreignObject>
+          <circle cx="782" cy="490" r="20" fill="#8661C5"/>
+          <text x="782" y="498" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">15</text>
+        </g>
+    </svg></div>
+    </div>
+  </section>
+<footer>Preview only — final frames are rendered by the Builder from this same timing.json. Step numbers show reveal order; motion (edge draw, flowing particles, active-path pulse) is applied at render.</footer>
+</div></body></html>

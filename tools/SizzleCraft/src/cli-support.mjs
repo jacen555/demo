@@ -22,7 +22,9 @@
  */
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { canonicalBytes } from './canonical-json.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -228,7 +230,7 @@ export function createBoundary(rootDirectory) {
  * recursively: following an in-root link there clobbers whatever it points at, which the
  * caller never named.
  */
-function resolveUnlinkedPath(boundary, candidate, label) {
+function resolveUnlinkedPath(boundary, candidate, label, action = 'write') {
   const lexical = trimTrailingSep(path.resolve(boundary.root, candidate));
   if (!contains(boundary.root, lexical)) {
     throw new CliError(`${label} "${candidate}" resolves outside the project root (${boundary.root}) — refusing`);
@@ -242,24 +244,28 @@ function resolveUnlinkedPath(boundary, candidate, label) {
   }
   if (st?.isSymbolicLink()) {
     throw new CliError(
-      `${label} "${candidate}" is a link (${lexical}) — refusing to write through it. ` +
+      `${label} "${candidate}" is a link (${lexical}) — refusing to ${action} through it. ` +
         `Being inside the project root is not the same as being the file that was named.`,
     );
   }
 
   const resolved = boundary.resolve(candidate, label);
   if (!samePath(resolved, lexical)) {
-    throw new CliError(`${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to write through a link`);
+    throw new CliError(`${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to ${action} through a link`);
   }
   return { lexical, stat: st };
 }
 
 /**
- * Resolves a path the engine writes on its own initiative — its own metadata, not a
+ * Resolves a path the engine touches on its own initiative — its own metadata, not a
  * destination the user named. Refuses links outright.
+ *
+ * `action` only shapes the diagnostic. It is not cosmetic: these paths are both written
+ * and read, and telling someone a read was "refused to write through" sends them looking
+ * for the wrong thing.
  */
-export function resolveInternalArtifact(root, candidate, label = 'engine metadata') {
-  return resolveUnlinkedPath(createBoundary(root), candidate, label).lexical;
+export function resolveInternalArtifact(root, candidate, label = 'engine metadata', action = 'write') {
+  return resolveUnlinkedPath(createBoundary(root), candidate, label, action).lexical;
 }
 
 /**
@@ -409,6 +415,145 @@ export function requireFiniteNumber(raw, { name, min = -Infinity, max = Infinity
     throw new CliError(`${name} must be between ${min} and ${max} — got ${value}`);
   }
   return value;
+}
+
+/**
+ * The prefix every environment knob in this engine shares.
+ * @see resolveKnob for the precedence rule that governs all of them.
+ */
+export const KNOB_PREFIX = 'SIZZLECRAFT_';
+
+/**
+ * Fingerprints one segment's narration, so a later stage can prove a measurement was
+ * taken FROM this exact text.
+ *
+ * Written by voice.mjs into calibration-observed.json and checked by validate-timing.
+ * It exists because `{ words, chars, clipMs }` is a SUMMARY, and every summary collides:
+ * "word0 word1 word2 word3" and "other word1 word2 word3" agree on all three — same word
+ * count, same 23 characters, same audio duration — while being different scripts needing
+ * different audio. A lineage gate built on the summary passes the rewrite it exists to
+ * catch. The hash is over the exact bytes, so nothing survives it but the text itself.
+ */
+export function narrationFingerprint(text) {
+  return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex');
+}
+
+/**
+ * The timing seal: sha256 over the canonical bytes of a timeline, EXCLUDING its own
+ * `timingHash` so that re-sealing a sealed timeline reproduces the same value.
+ *
+ * Written by voice.mjs and remix.mjs at the end of a run. It lives here, in one place,
+ * because both were carrying their own copy of the expression and a hash rule with two
+ * implementations is a hash rule waiting to disagree.
+ *
+ * WHAT IT PROVES, EXACTLY: that nobody edited this file after it was sealed. That is
+ * self-consistency, NOT provenance — `remix` seals timelines it did not synthesise, so a
+ * valid seal says nothing about which stage produced the narration in the file. Reading
+ * it as provenance is a live hazard: it is what made a lineage-stamping tool look
+ * feasible when it was not (see README, "Proving lineage after the fact is not possible").
+ *
+ * Non-mutating, so a caller may verify a timeline it must not change.
+ */
+export function timingSeal(timing) {
+  const { timingHash: _recordedSeal, ...sealed } = timing;
+  return crypto.createHash('sha256').update(canonicalBytes(sealed)).digest('hex');
+}
+
+const TRUTHY_KNOB = Object.freeze(['1', 'true', 'yes', 'on']);
+const FALSY_KNOB = Object.freeze(['0', 'false', 'no', 'off']);
+
+function knobVariable(knob) {
+  if (typeof knob !== 'string' || knob.trim() === '') {
+    throw new CliError('a knob needs a name — got ' + JSON.stringify(knob));
+  }
+  if (knob.startsWith(KNOB_PREFIX)) {
+    throw new CliError(
+      `knob "${knob}" must be named WITHOUT the ${KNOB_PREFIX} prefix — the resolver adds it, ` +
+        `so passing the full name would read ${KNOB_PREFIX}${knob}, which nothing sets.`,
+    );
+  }
+  return `${KNOB_PREFIX}${knob}`;
+}
+
+/**
+ * Resolves one `SIZZLECRAFT_*` knob, and is the ONLY place that reads one.
+ *
+ * ## THE PRECEDENCE RULE — every knob in this engine obeys it, without exception:
+ *
+ *     argv  overrides  env  overrides  config  overrides  default
+ *
+ * Most specific wins. A flag typed on this invocation beats a variable exported for this
+ * shell, which beats a value committed to timing.json, which beats what the engine
+ * assumes when nobody said.
+ *
+ * This helper exists because there was no rule, only precedent. Three knobs
+ * (FRAME_FORMAT, JPEG_QUALITY, WORKERS) read env first and two (FPS, MODE) read config
+ * first, so the two that silently ignored the environment were indistinguishable from the
+ * three that honoured it — a consumer's half-fps draft rendered at 30 and nothing said
+ * why. The defect was never the inversion, it was the INCONSISTENCY: three-out-of-five is
+ * exactly the ratio that makes copying a neighbour feel safe, so the next knob added was a
+ * coin flip. Inverting the two outliers would have fixed that bug and left the next one.
+ *
+ * `envKnobs_everyDirectEnvironmentRead_goesThroughTheSharedResolver` in
+ * tests/env-precedence.test.mjs fails if any other file in src/ reads the environment
+ * directly, in any access form. A rule that is written but not enforceable decays back to
+ * precedent-by-proximity.
+ *
+ * Presence is `??`-shaped, never `||`-shaped: a configured `0` is a VALUE, not an absence,
+ * so it survives to be validated and refused rather than being silently replaced by the
+ * default. (`timing.project.fps` differed between two files for exactly this reason.) An
+ * empty environment variable IS treated as unset, because that is how a shell clears one.
+ *
+ * The caller still validates: this decides *which* value is in force and *where it came
+ * from*, not whether it is sane.
+ *
+ * @param {string} knob knob name WITHOUT the `SIZZLECRAFT_` prefix, e.g. `'FPS'`.
+ * @param {{argv?: unknown, config?: unknown, fallback?: unknown, legacy?: string[], env?: Record<string, string|undefined>}} [sources]
+ * @returns {{value: unknown, source: 'argument'|'environment'|'config'|'default', variable: string}}
+ */
+export function resolveKnob(knob, { argv, config, fallback, legacy = [], env = process.env } = {}) {
+  const variable = knobVariable(knob);
+  if (argv !== undefined && argv !== null) return { value: argv, source: 'argument', variable };
+  // `legacy` carries fully-qualified names predating the `SIZZLECRAFT_` convention, so an
+  // existing caller's exported variable keeps working while the canonical name takes over.
+  // They are consulted AFTER the canonical name, never before.
+  for (const name of [variable, ...legacy]) {
+    const raw = env[name];
+    if (raw !== undefined && raw !== null && String(raw) !== '') {
+      return { value: raw, source: 'environment', variable: name };
+    }
+  }
+  if (config !== undefined && config !== null) return { value: config, source: 'config', variable };
+  return { value: fallback, source: 'default', variable };
+}
+
+/**
+ * Resolves a boolean `SIZZLECRAFT_*` knob under the same precedence rule as
+ * {@link resolveKnob}.
+ *
+ * An unrecognised value is REFUSED rather than read as false. The previous shape,
+ * a `/^(1|true|yes)$/i` test against the raw variable coerced through `String(x || '')`,
+ * made `X=ture` and `X=off` and "never set it" all produce the same `false` — so a typo
+ * silently disabled the very flag the user was trying to turn on, which is the failure
+ * mode this engine keeps finding.
+ *
+ * @returns {{value: boolean, source: 'argument'|'environment'|'config'|'default', variable: string}}
+ */
+export function resolveBooleanKnob(knob, { argv, config, fallback = false, env = process.env } = {}) {
+  const variable = knobVariable(knob);
+  if (typeof argv === 'boolean') return { value: argv, source: 'argument', variable };
+  const raw = env[variable];
+  if (raw !== undefined && raw !== null && String(raw) !== '') {
+    const text = String(raw).trim().toLowerCase();
+    if (TRUTHY_KNOB.includes(text)) return { value: true, source: 'environment', variable };
+    if (FALSY_KNOB.includes(text)) return { value: false, source: 'environment', variable };
+    throw new CliError(
+      `${variable} must be one of ${[...TRUTHY_KNOB, ...FALSY_KNOB].join(', ')} — got ${JSON.stringify(String(raw))}. ` +
+        `An unrecognised value is refused rather than read as "off", so a typo cannot silently disable the flag you asked for.`,
+    );
+  }
+  if (typeof config === 'boolean') return { value: config, source: 'config', variable };
+  return { value: fallback, source: 'default', variable };
 }
 
 /**
@@ -566,6 +711,142 @@ export function resolveOutput(root, candidate, { apply, replace, label = 'output
  */
 export function resolveEngineOutput(root, candidate, { apply, replace, label = 'output' }) {
   return applyWriteGuards(resolveInternalArtifact(root, candidate, label), candidate, { apply, replace, label });
+}
+
+/**
+ * Creates and opens an engine-chosen temp file, refusing to write through anything that
+ * is already there, and returns a handle that owns it.
+ *
+ * Resolving the path and then opening it with `'w+'` puts the decision and the action in
+ * two places, and `'w+'` follows a link: an entry planted at this name is opened and
+ * TRUNCATED, destroying whatever it points at. So the exclusivity is the open itself —
+ * `'wx+'` refuses to create through any existing entry, link or file, with no window
+ * between the check and the act.
+ *
+ * The handle exists because the refusal is only half the job. A caller that cleans up by
+ * path deletes whatever is at that path — including the pre-existing entry it was just
+ * told it may not touch, which makes the guard perform the destruction it exists to
+ * prevent. Cleanup belongs to the handle, and a handle is only ever returned when THIS
+ * call created the file, so there is nothing to delete when the open was refused.
+ *
+ * The boundary resolve is still not redundant: it keeps the path inside the project and
+ * turns a planted link into a clear refusal instead of a bare EEXIST.
+ *
+ * @returns {{fd: number, path: string, cleanup: () => void}}
+ */
+export function openExclusiveEngineFile(root, candidate, label = 'temp file') {
+  const abs = resolveInternalArtifact(root, candidate, label);
+
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'wx+');
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      throw new CliError(
+        `${label} already exists: ${abs} — refusing to write through an entry this run did not create. ` +
+          `It has been left untouched; delete it and re-run.`,
+      );
+    }
+    throw new CliError(`${label}: could not create ${abs} (${err.code ?? err.message})`);
+  }
+
+  let done = false;
+  let outcome = null;
+  return {
+    fd,
+    path: abs,
+    /**
+     * Closes and removes the file this handle created. Idempotent.
+     *
+     * @returns {null|{path: string, code: string|null, message: string}} null when the
+     *   file is gone, otherwise the artifact left behind. Swallowing a failed removal
+     *   reported the "no partial is left behind" guarantee as honoured whether or not it
+     *   was, so a failed encode could strand an unreported `.part-*` file.
+     */
+    cleanup() {
+      if (done) return outcome;
+      done = true;
+      try { fs.closeSync(fd); } catch {}
+      try {
+        fs.rmSync(abs, { force: true });
+      } catch (err) {
+        outcome = {
+          path: abs,
+          code: err.code ?? null,
+          message: `${label} ${abs} could not be removed (${err.code ?? err.message}) — delete it by hand`,
+        };
+      }
+      return outcome;
+    },
+  };
+}
+
+/** Names a JSON value for a diagnostic, keeping `null` distinct from "an object". */
+function describeJsonValue(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+/**
+ * Reads an OPTIONAL engine-chosen JSON file, keeping apart the states that
+ * `try { ... } catch {}` collapses into one.
+ *
+ * Absent is a legitimate answer for an optional input. "Present but unreadable",
+ * "present but malformed" and "present but redirected through a link" are not, and
+ * swallowing the error renders all of them as "not present" — so a corrupted file
+ * silently removes content from the output while a planted one silently adds it.
+ * Suppressing the error hides the message, not the read.
+ *
+ * `null` is therefore reserved for ENOENT and nothing else. A present file whose JSON is
+ * `null` — or an array, or a scalar — is NOT an absent file, even though every caller
+ * here spells its default `?? {}` and would have accepted one. That equivalence is the
+ * same ambiguity one layer down, and it is why this returns a plain object or throws.
+ *
+ * @param {object} [expect] per-property shape the caller relies on, e.g. `{ clips: 'array' }`
+ * @returns {object|null} the parsed object, or null when the file is genuinely absent
+ * @throws {CliError} when the path is unsafe, unreadable, malformed, or the wrong shape
+ */
+export function readOptionalEngineJson(root, candidate, label, expect = {}) {
+  const abs = resolveInternalArtifact(root, candidate, label, 'read');
+
+  let raw;
+  try {
+    raw = fs.readFileSync(abs, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null; // the only state that means "absent"
+    throw new CliError(
+      `${label}: could not read ${abs} (${err.code ?? err.message}) — refusing to treat an unreadable file as an absent one`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`${label}: ${abs} is not valid JSON — ${err.message}`);
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new CliError(
+      `${label}: ${abs} must contain a JSON object — got ${describeJsonValue(parsed)}. ` +
+        `A file that is present with nothing in it is not the same as no file; delete it if there is nothing to declare.`,
+    );
+  }
+
+  for (const [key, kind] of Object.entries(expect)) {
+    if (!Object.hasOwn(parsed, key)) continue; // an absent optional property is fine
+    const value = parsed[key];
+    const ok =
+      kind === 'array' ? Array.isArray(value) : value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!ok) {
+      throw new CliError(
+        `${label}: ${abs} property "${key}" must be ${kind === 'array' ? 'an array' : 'an object'} — got ${describeJsonValue(value)}`,
+      );
+    }
+  }
+
+  return parsed;
 }
 
 /**

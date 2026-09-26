@@ -22,9 +22,10 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 152 (151 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 1 of the audit closed** — safe defaults, exit contract, path confinement, engine-vs-user-named write classification across 49 sinks. **Group 3 (operability) not started; see the blocking preconditions below.** |
-| `eval-engine` | lib | 1 | `working` | 1779 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load and artifact read-back. **Group 2 of the audit (comparison correctness) is not started — 4 open findings.** `Mcp` and `Ui` scenario kinds are declared stubs. |
-| `eval-cli` | tool | 2 | `working` | 760 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Group 1 of the audit closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, artifact shape checked before publication. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 331 (330 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. |
+| `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
+| `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42, shipped at 4K/JPEG. Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
+| `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -145,12 +146,74 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 6. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
 7. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
    has never actually been executed.
-7. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
-   cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
-   complete story.
-8. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
-   base SDK. Worth a spike and an ADR before the first real desktop app.
-9. ~~**`ComparisonResult.NewlyCovered` overclaims, in the engine.**~~ **Closed** by T14a
+8. ~~**`SIZZLECRAFT_*` override precedence is inconsistent within one file.**~~ **Closed** by
+   `5979e4d`. One `resolveKnob`, one stated rule — environment overrides config overrides
+   default — and a scanner test that fails when a new knob bypasses it. That scanner
+   immediately found a **sixth** knob (`SIZZLE_MUSIC_PRESET`, a different prefix, invisible
+   to every earlier count), now carried as a legacy alias. **One stated limit:** an author
+   who aliases the global first (`const p = process; p.env.X`) defeats any purely textual
+   rule. Recorded in the scanner's doc comment and in the README. Ruled a recordable Tier 2
+   limit for a drift guard — the guard exists to stop a knob arriving by copying a
+   neighbour, which is how all six arrived, not to sandbox a determined author. Closing it
+   needs a real parser and would be its own task.
+9. ~~**The word budget is a planning check run after synthesis.**~~ **Closed** by `5979e4d`.
+   Suppression now requires **proof of lineage** — a sha256 of the exact narration, written
+   by `voice.mjs` and checked by `validate-timing`. A summary of `{words, chars, clipMs}`
+   collides: `"word0 word1 word2 word3"` and `"other word1 word2 word3"` are identical under
+   all three. An absent fingerprint is **UNPROVEN, not intact**, so old calibrations evaluate
+   the budget until a voice re-run records one. Worth keeping: removing the safety margin
+   still left half the segments warning, because half a population must exceed its own mean —
+   the margin was never the defect.
+10. ~~**The calibration lookup reads a key nothing writes.**~~ **Closed** by `5979e4d`. Reads
+    `aggregate.observedEffWps`; a calibration that parses but yields no rate is its own error
+    rather than rendering as absent. `wpsSafetyMargin` got its own verdict with evidence —
+    legitimately absent, declared under `intake` only, and `observedSafeWps` is
+    `effWps / roundedSpeed`, not a margin. Same error in form, no data to miss.
+11. ~~**The contiguity check can never pass.**~~ **Closed** by `5979e4d`. An overlap fails; a
+    gap passes and is reported; an uneven gap is called out. `safe-defaults.test.mjs:182`,
+    which pinned the defect as a requirement, was replaced. **One recorded limit:** the
+    lead-in counts as an "inter-segment gap", so otherwise-uniform gaps can print `UNEVEN`.
+    Advisory, and the detail lines name each affected segment. Kept deliberately to match the
+    consuming project's accepted wording rather than diverging unilaterally; correct on both
+    branches together.
+12. **Four unguarded reads in `write-build-html.mjs`** — **closed** by `1aa6924`; retained here
+    hands it to `JSON.parse`, whose error quotes the first bytes parsed — the same
+    disclosure just closed at `encode-mp4.mjs:54`, and **High**. `:124`, `:126` and `:131`
+    read `clips.json` / `manifest.json` / `evidence-pack.json` through the same unguarded
+    join but are `catch {}`-swallowed, so they disclose nothing via a message while still
+    reading through a link into the rendered page — **Medium**, each needing its own
+    verdict. Severity rises with the new `code` mode, which renders **source data** into the
+    frame rather than authored copy: an unguarded `jsonFile` does not leak into a log, it is
+    composited into the video and encoded.
+13. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
+    cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
+    complete story.
+14. **The fixture-shape inventory is guarded by a count, not by evidence.**
+    `FixtureFidelityTests` drives real runners into every modelled `(exchange, stoppedBy)`
+    pair and compares full values, and the factory inventory is closed by reflection. But a
+    **matched deletion** of a pair whose two constants both appear in other pairs still
+    satisfies every check except a count tripwire. Closing it properly needs a disposition
+    for all 63 cells of the constant cross-product, judged disproportionate. Accepted by the
+    reviewer as "an honest, recordable tripwire" — it is not proof, and should not be
+    described as one.
+15. **Assertion operands live in evidence surfaces and are deliberately not guarded there.**
+    ADR 0005's accepted under-guarding, with the boundary now explicit: an operand is
+    accepted **in** the suite and the transcript, because the consumer nets those at
+    publication — and refused **into** anything the consumer publishes without netting: the
+    artifact diagnostic, the log, and `ScenarioSelection.Detail`. The general form is *output
+    the consumer does not net*, not *logs*; an earlier framing as "not a build log" was a
+    special case. An operand naming a machine path therefore reaches the suite file and the
+    transcript, by design.
+16. **The method exemption requires a leading bare method.** `presence:response/GET /home/dashboard`
+    is refused **as a scenario id**, because ordinal 0 is `presence:response/GET` rather than a
+    bare method, so the ordinal-1 exemption misses. Pre-existing and **not** the round-5
+    regression: a 26-site sink sweep confirms no assertion expression reaches this predicate,
+    so an assertion spelled that way still loads. Left unfixed deliberately — changing an
+    exemption's shape in `MachinePath` is what produced this audit's only false refusal, and
+    doing it safely needs the route-shaped positives pinned first.
+17. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
+    base SDK. Worth a spike and an ADR before the first real desktop app.
+18. ~~**`ComparisonResult.NewlyCovered` overclaims, in the engine.**~~ **Closed** by T14a
    (`8f52efa`). The engine now withholds any scenario that was not fully conducted, in three
    named causes — incomplete, over-recorded, errored — and reports them on
    `NewlyCoveredWithheld` / `…Reason` rather than dropping them. `eval-cli`'s workaround was
@@ -158,7 +221,7 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    is a single suite-level string, so a reader cannot attribute a cause to a specific scenario
    from that field alone. Per-scenario attribution is a Tier 1 change and will be sequenced
    only if the report genuinely needs it.
-10. **Four tracked follow-ups from the T15 work**, none blocking:
+19. **Four tracked follow-ups from the T15 work**, none blocking:
     - **T15b** — the trend report. The comparison report exists; a separate
       dashboard showing movement across runs does not.
     - **T15c** — `NewlyCoveredWithheldReason` is a single suite-level string, so
@@ -172,6 +235,22 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     - **T15h** — three CLI-owned messages still print an absolute path to stderr
       deliberately. That may be correct — the tool printing it once under its own
       policy — but it should be a decision rather than a leftover.
+
+20. **`resolveFfmpeg` builds its pointer-file path with a raw `path.join`**, in
+    `remux-music.mjs` and `check-levels.mjs` both. Graded narrow and left open
+    deliberately: the path is `--apply`-only, and an attacker who can write
+    `ffmpeg-path.txt` in the project root can set the binary directly, so
+    confining it buys only the link-without-write case. **Fix both files in one
+    task**, and settle whether the pointer file is engine-chosen or author-chosen
+    first — that answer decides which resolver it wants.
+
+21. **12 raw `path.join(projectDir, …)` sinks across 9 files — swept, not traced.**
+    **Severity unknown, and that is the point.** A builder declined three rounds
+    running to grade them without tracing each to its resolver, which was correct:
+    **a sweep produces candidates, not conclusions.** Publishing 12
+    unsecured-sounding items would have overstated the evidence in exactly the way
+    this audit spent forty rounds learning not to. Schedule the traced sweep as its
+    own task; grade each sink only once its resolver is known.
 
 ## Next
 

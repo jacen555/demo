@@ -29,6 +29,13 @@ import {
   BLOCK_PLAYWRIGHT,
   assertCleanExit,
   runScriptDeletingOnMarker,
+  makeEngineCopy,
+  operableProject,
+  runEngineScript,
+  runScriptPlantingOnMarker,
+  footageProject,
+  probeFootageFrames,
+  gsapStubWithout,
 } from './_helpers.mjs';
 
 const SENTINEL = 'SENTINEL — MUST SURVIVE';
@@ -256,22 +263,31 @@ describe('calibration input validation', () => {
     { id: 'one', startMs: 0, endMs: 1000, voiceoverText: 'far too many words for a single second of narration here' },
   ];
 
-  test('validateTiming_calibrationWordsPerSecondNotANumber_failsRatherThanPassing', (t) => {
+  // The fixtures below deliberately match `voice.mjs`'s OWN output shape
+  // (`aggregate.observedEffWps`, nested). They used to hand-write
+  // `{ wordsPerSecond, wpsSafetyMargin }` at the top level — a shape voice.mjs has never
+  // emitted. Those tests passed while the reader they "covered" missed on every real
+  // project, which is precisely how the defect survived: when the red and the green come
+  // from different bodies, the red proves nothing about what ships.
+  // `tests/_realistic-fixture.mjs` builds the real shape; see `tests/word-rate.test.mjs`.
+  test('validateTiming_calibrationRateNotANumber_failsRatherThanPassing', (t) => {
     const dir = makeProject(t, {
       'timing.json': timingFixture(overBudget),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 'oops' }),
+      'calibration-observed.json': JSON.stringify({ aggregate: { observedEffWps: 'oops' } }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema', '--strict'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'a NaN budget must not silently pass --strict: ');
   });
 
-  test('validateTiming_calibrationMarginNotANumber_failsRatherThanPassing', (t) => {
+  test('validateTiming_intakeMarginNotANumber_failsRatherThanPassing', (t) => {
     // Deliberately WITHIN budget and contiguous: the only thing that can fail this run is
     // the margin guard, so a pass cannot be mistaken for the budget check firing.
+    // The margin lives in `intake` — timing-schema.json declares it there and nowhere
+    // else, and it is an authoring hedge rather than something that can be observed.
     const dir = makeProject(t, {
-      'timing.json': timingFixture(contiguousSegments),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 3, wpsSafetyMargin: null }),
+      'timing.json': timingFixture(contiguousSegments, { intake: { wpsSafetyMargin: null } }),
+      'calibration-observed.json': JSON.stringify({ aggregate: { observedEffWps: 3 } }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema', '--strict'], dir);
 
@@ -300,7 +316,12 @@ describe('calibration input validation', () => {
   test('validateTiming_validCalibration_isUsed', (t) => {
     const dir = makeProject(t, {
       'timing.json': timingFixture(contiguousSegments),
-      'calibration-observed.json': JSON.stringify({ wordsPerSecond: 3.43, wpsSafetyMargin: 0.97 }),
+      'calibration-observed.json': JSON.stringify({
+        voiceId: 'en-US-AvaNeural',
+        roundedSpeed: 1.2,
+        aggregate: { words: 370, speechMs: 101236, observedEffWps: 3.655, observedSafeWps: 3.046 },
+        segments: [],
+      }),
     });
     const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
 
@@ -697,6 +718,431 @@ describe('present-but-invalid is not absent', () => {
 
     assertCleanExit(r, EXIT.USAGE, 'an unreadable envelope must be refused: ');
     assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// encode-mp4: four writes the ENGINE chose, none of them named by the caller.
+//
+// These were unreachable only because encoder-page.html shipped nowhere, so the script
+// threw before touching them. An accident of brokenness is not a guard, and it stopped
+// being true the moment the first real consumer extracted the page.
+//
+// Each guard is asserted on the victim's CONTENTS and on the sentinel's absence from the
+// output, not on the exit code alone — for several of these the code is unchanged either
+// way, so an exit-code assertion passes while the file is destroyed.
+// ---------------------------------------------------------------------------
+describe('encode-mp4 engine-chosen writes', () => {
+  const encodableProject = (t, extra = {}) =>
+    makeProject(t, {
+      'timing.json': timingFixture(),
+      'frames/frame_00000.png': 'frame',
+      'voiceover.mp3': 'x'.repeat(4096),
+      ...extra,
+    });
+
+  test('encodeMp4_encoderDirLinkedOutsideRoot_refusesBeforeInstallingAnything', (t) => {
+    const dir = encodableProject(t);
+    const outside = makeOutsideDir(t, { 'victim.html': SENTINEL });
+    if (!tryMakeDirLink(path.join(dir, 'encoder'), outside)) return t.skip('platform refused to create a directory link');
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a junction at the engine-chosen encoder dir must be refused: ');
+    assert.equal(fs.readFileSync(path.join(outside, 'victim.html'), 'utf8'), SENTINEL);
+    assert.equal(fs.existsSync(path.join(outside, 'encoder-page.html')), false, 'nothing may be installed through the junction');
+    assert.equal(fs.existsSync(path.join(outside, 'mp4-muxer.js')), false);
+    assert.doesNotMatch(r.all, /MUST SURVIVE/, 'and the victim must never be echoed');
+  });
+
+  test('encodeMp4_encoderPageLinkedOutsideRoot_refusesWithoutClobberingTheVictim', (t) => {
+    const dir = encodableProject(t);
+    const outside = makeOutsideDir(t, { 'victim.html': SENTINEL });
+    const victim = path.join(outside, 'victim.html');
+    fs.mkdirSync(path.join(dir, 'encoder'));
+    if (!tryMakeFileLink(path.join(dir, 'encoder', 'encoder-page.html'), victim)) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'copyFileSync follows a destination link, so the guard must fire first: ');
+    assert.equal(fs.readFileSync(victim, 'utf8'), SENTINEL);
+    assert.doesNotMatch(r.all, /MUST SURVIVE/);
+  });
+
+  test('encodeMp4_muxerDestinationLinkedOutsideRoot_refusesWithoutClobberingTheVictim', (t) => {
+    const dir = encodableProject(t);
+    const outside = makeOutsideDir(t, { 'victim.js': SENTINEL });
+    const victim = path.join(outside, 'victim.js');
+    fs.mkdirSync(path.join(dir, 'encoder'));
+    if (!tryMakeFileLink(path.join(dir, 'encoder', 'mp4-muxer.js'), victim)) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'the muxer copy has the same destination-link problem: ');
+    assert.equal(fs.readFileSync(victim, 'utf8'), SENTINEL);
+    assert.doesNotMatch(r.all, /MUST SURVIVE/);
+  });
+
+  test('encodeMp4_outputMp4IsAnInRootLink_refusesRatherThanGuardingADifferentEntry', (t) => {
+    // The publish guard resolved the link's TARGET while renameSync replaces the link
+    // ENTRY. Not an outside-root clobber today — but guard and action referred to
+    // different files, which is "correct for a reason nothing enforces".
+    const dir = encodableProject(t, { 'real.mp4': SENTINEL });
+    if (!tryMakeFileLink(path.join(dir, 'demo.mp4'), path.join(dir, 'real.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an engine-chosen publish target must not be a link: ');
+    assert.equal(fs.readFileSync(path.join(dir, 'real.mp4'), 'utf8'), SENTINEL);
+  });
+
+  test('encodeMp4_outputMp4LinkedOutsideRoot_stillRefusesWithoutClobbering', (t) => {
+    // Regression cover: containment already refused this before the change, and it must
+    // keep doing so now that the policy resolving it is a different one.
+    const dir = encodableProject(t);
+    const outside = makeOutsideDir(t, { 'victim.mp4': SENTINEL });
+    const victim = path.join(outside, 'victim.mp4');
+    if (!tryMakeFileLink(path.join(dir, 'demo.mp4'), victim)) return t.skip('platform refused to create a file link');
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE);
+    assert.equal(fs.readFileSync(victim, 'utf8'), SENTINEL);
+    assert.doesNotMatch(r.all, /MUST SURVIVE/);
+  });
+
+  test('encodeMp4_timingJsonLinkedOutsideRoot_refusesWithoutDisclosingIt', (t) => {
+    // A path that is written is also a path that is read, and the two need separate
+    // verdicts. Every other stage resolves timing.json through requireExistingFile;
+    // encode-mp4 alone joined it raw, so a planted link was followed and JSON.parse put
+    // the first line of the target into its error message — the same shape as the lock
+    // file disclosure, reached on the DEFAULT no-flag path.
+    //
+    // The exit code is non-zero either way, so it proves nothing here. The sentinel does.
+    const dir = makeProject(t);
+    const outside = makeOutsideDir(t, { 'secret.txt': `AKIA${SENTINEL}` });
+    if (!tryMakeFileLink(path.join(dir, 'timing.json'), path.join(outside, 'secret.txt'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('encode-mp4.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /MUST SURVIVE/, 'the contents of a file outside the project must never be echoed');
+    assertCleanExit(r, EXIT.USAGE, 'a timing.json link escaping the root must be refused: ');
+  });
+
+  test('encodeMp4_encoderPathIsARegularFile_refusesCleanlyRatherThanCrashing', (t) => {
+    // `encoder` occupied by an ordinary file made mkdirSync throw a raw EEXIST stack and
+    // exit 1. The entry is engine-chosen and the situation is recoverable, so it deserves
+    // the documented usage code and a message saying what to do.
+    const dir = encodableProject(t, { encoder: 'not a directory' });
+
+    const r = runScript('encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a non-directory at encoder/ must be refused, not crash mkdirSync: ');
+    assert.match(r.all, /encoder/i, 'and the refusal must name the entry it refused');
+  });
+
+  test('encodeMp4_partFileCollision_refusesWithoutDeletingTheExistingEntry', async (t) => {
+    // The inversion: the exclusive open refuses a pre-existing entry precisely so it is
+    // not written through — and the cleanup path then deleted it anyway. The guard
+    // performed the destruction it exists to prevent.
+    //
+    // The temp file is `<out>.part-<pid>`, so the collision cannot be staged before the
+    // run. It is planted from the child's own PID once the run announces itself, inside
+    // the window Chromium's launch provides.
+    const engineDir = makeEngineCopy(t);
+    const dir = operableProject(t);
+    let victim = null;
+
+    const r = await runScriptPlantingOnMarker(
+      engineDir,
+      'encode-mp4.mjs',
+      ['--apply', '--replace'],
+      dir,
+      'silent render requested',
+      (pid) => {
+        victim = path.join(dir, `demo.mp4.part-${pid}`);
+        fs.writeFileSync(victim, SENTINEL);
+      },
+    );
+
+    assert.equal(r.planted, true, 'the collision must actually have been staged for this to test anything');
+    assert.notEqual(victim, null);
+    assert.equal(fs.existsSync(victim), true, 'the refused entry must still exist — a refusal must not delete what it declined to create');
+    assert.equal(fs.readFileSync(victim, 'utf8'), SENTINEL, 'and its contents must be untouched');
+    assertCleanExit(r, EXIT.USAGE, 'a refused temp-file collision must exit with the documented usage code: ');
+  });
+
+  test('encodeMp4_cleanProject_completesEveryGuardedWriteAndPublishes', (t) => {
+    // Replaces a test that accepted any exit other than 2 and matched the
+    // missing-encoder-page error — so it passed on an unrelated prerequisite failure and
+    // never established that a single guarded write was reached. The guards must not fire
+    // on a legitimate project, and the only way to show that is to let the writes happen.
+    const engineDir = makeEngineCopy(t);
+    const dir = operableProject(t);
+
+    const r = runEngineScript(engineDir, 'encode-mp4.mjs', ['--apply', '--replace'], dir);
+
+    assert.equal(r.code, EXIT.OK, `a legitimate project must clear every guard and publish\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'encoder', 'encoder-page.html')), true, 'the guarded encoder-page copy must have executed');
+    assert.equal(fs.existsSync(path.join(dir, 'encoder', 'mp4-muxer.js')), true, 'the guarded muxer copy must have executed');
+    assert.equal(fs.existsSync(path.join(dir, 'demo.mp4')), true, 'the guarded publish must have executed');
+    assert.equal(
+      fs.readdirSync(dir).filter((n) => n.includes('.part-')).length,
+      0,
+      'and no temp file may survive a successful publish',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// write-build-html reads four engine-chosen files and confined none of them.
+//
+// `:35` is the live one: timing.json joined raw, handed to JSON.parse, whose message
+// quotes what it parsed — the same disclosure just closed in encode-mp4, on the bare
+// invocation path.
+//
+// The other three are wrapped in `try { ... } catch {}`, which stops the MESSAGE
+// disclosure but not the read: valid JSON from outside the project still reaches the
+// rendered page. Swallowing also collapses three different states — absent, unreadable,
+// and unsafe — into "not present", so a corrupted manifest silently removes content and
+// a planted one silently adds it.
+// ---------------------------------------------------------------------------
+describe('write-build-html engine-chosen reads', () => {
+  // An OPERABLE scene project. An under-specified fixture made the refusal tests below
+  // pass on a missing evidence-pack rather than on the guard — the same free pass this
+  // round was opened to remove, reproduced in the tests for it.
+  const sceneProject = (t, extra = {}) =>
+    makeProject(t, {
+      'timing.json': timingFixture(),
+      'evidence-pack/.keep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* gsap stub */',
+      ...extra,
+    });
+
+  test('writeBuildHtml_fixtureIsOperable_buildsTheSceneBeforeAnyGuardIsTested', (t) => {
+    // Pins the fixture itself. If this stops passing, every refusal assertion below has
+    // become unfalsifiable and must not be trusted.
+    const dir = sceneProject(t);
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assert.equal(r.code, EXIT.OK, `the scene fixture must build, or the guard tests prove nothing\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), true);
+  });
+
+  test('writeBuildHtml_timingJsonLinkedOutsideRoot_refusesWithoutDisclosingIt', (t) => {
+    const dir = makeProject(t);
+    const outside = makeOutsideDir(t, { 'secret.txt': `AKIA${SENTINEL}` });
+    if (!tryMakeFileLink(path.join(dir, 'timing.json'), path.join(outside, 'secret.txt'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /MUST SURVIVE/, 'the contents of a file outside the project must never be echoed');
+    assertCleanExit(r, EXIT.USAGE, 'a timing.json link escaping the root must be refused: ');
+  });
+
+  test('writeBuildHtml_manifestLinkedOutsideRoot_refusesRatherThanReadingThroughIt', (t) => {
+    // Swallowing the error hides the message, not the read — valid outside JSON still
+    // influences the page. The refusal has to happen before the read.
+    const dir = sceneProject(t);
+    const outside = makeOutsideDir(t, { 'planted.json': JSON.stringify({ title: SENTINEL }) });
+    if (!tryMakeFileLink(path.join(dir, 'manifest.json'), path.join(outside, 'planted.json'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an optional input redirected outside the root must be refused: ');
+    assert.doesNotMatch(r.all, /MUST SURVIVE/);
+    const built = path.join(dir, 'video-auto.html');
+    if (fs.existsSync(built)) {
+      assert.doesNotMatch(fs.readFileSync(built, 'utf8'), /MUST SURVIVE/, 'and must never reach the rendered page');
+    }
+  });
+
+  test('writeBuildHtml_absentOptionalFile_isTreatedAsAbsentNotAsAnError', (t) => {
+    // The state that legitimately means "nothing to add". Confining the read must not
+    // turn an ordinary project into a failure.
+    const dir = sceneProject(t);
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assert.equal(r.code, EXIT.OK, `an absent optional input is not an error\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), true);
+  });
+  test('writeBuildHtml_unreadableOptionalFile_failsRatherThanTreatingItAsAbsent', (t) => {
+    // "I could not read your manifest" and "you have no manifest" are different facts and
+    // only one of them is safe to assume. A directory at the path makes the read fail with
+    // EISDIR, which the old `catch {}` rendered as absence.
+    const dir = sceneProject(t);
+    fs.mkdirSync(path.join(dir, 'manifest.json'));
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an unreadable optional input must not render as an absent one: ');
+    assert.match(r.all, /manifest\.json/, 'and must name the file it could not read');
+  });
+
+  test('writeBuildHtml_malformedOptionalFile_failsRatherThanSilentlyDroppingContent', (t) => {
+    const dir = sceneProject(t, { 'manifest.json': '{ not valid json' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a corrupt optional input silently removed content: ');
+  });
+
+  // -------------------------------------------------------------------------
+  // The fourth state, created inside the separation of the other three.
+  //
+  // `null` was returned for an ABSENT file and for a PRESENT file whose JSON is `null`,
+  // and both callers map it to `{}`. So a present clips.json containing `null` suppressed
+  // approved footage, rendered the synthetic fallback, and exited 0 — the exact outcome
+  // the three-state split was written to remove, reachable through the sentinel that
+  // performed the split.
+  // -------------------------------------------------------------------------
+  test('writeBuildHtml_footageFixtureIsOperable_loadsRealFramesAtTheStartAndLaterInTheClip', async (t) => {
+    // The positive control, and the thing it controls for is narrow: that footage actually
+    // RENDERS. The previous version asserted only that "myclip" appeared in the HTML, which
+    // proves the clip was selected into the scene and nothing more — it passed over frames
+    // that were text rather than JPEG and zero-based rather than one-based, so every load
+    // failed. A control that cannot see a broken render cannot certify a refused one.
+    //
+    // Two points are checked because asserting only the first frame would pass on a fixture
+    // with exactly one usable frame — close to the shape that was wrong before.
+    const dir = footageProject(t);
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+    assert.equal(r.code, EXIT.OK, `the footage fixture must build\n${r.all}`);
+
+    const [atStart, later] = await probeFootageFrames(path.join(dir, 'video-auto.html'), [0, 100]);
+
+    assert.equal(atStart.loaded, true, `the first footage frame must decode and be applied, got ${JSON.stringify(atStart)}`);
+    assert.equal(atStart.applied, 'frame_00001.jpg', 'the runtime is one-based: the clip starts at frame_00001.jpg');
+    assert.equal(later.loaded, true, `a later footage frame must decode too, got ${JSON.stringify(later)}`);
+    assert.equal(later.applied, 'frame_00004.jpg', 'and a later time must advance to a different frame');
+  });
+
+  test('writeBuildHtml_footageControlFails_whenTheFramesCannotDecode', async (t) => {
+    // Proves the control's alarm can actually fire. A control whose alarm has never been
+    // heard is indistinguishable from one that cannot ring: this deliberately degrades the
+    // render path — frames present, digests correct, bytes not an image — and asserts the
+    // control goes red. That is exactly the fixture defect the previous version shipped.
+    const dir = footageProject(t, { frameBytes: Buffer.from('not a jpeg at all') });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+    assert.equal(r.code, EXIT.OK, `the build still succeeds — that is the point of this case\n${r.all}`);
+
+    const [atStart] = await probeFootageFrames(path.join(dir, 'video-auto.html'), [0]);
+
+    assert.equal(atStart.loaded, false, 'undecodable frames must be visible to the control, not silently tolerated');
+    assert.equal(atStart.applied, null, 'and nothing may be applied as the background');
+  });
+
+  test('writeBuildHtml_footageControlFails_whenTheSceneThrowsAfterInitialising', async (t) => {
+    // The alarm for a failure the decode alarm cannot see: the scene initialises, the frames
+    // are real, one-based and decodable, every frame assertion passes — and the scene throws
+    // on every trigger. That was this control's actual state two rounds ago.
+    //
+    // The broken stub is DERIVED from the working one by removing a single method, so the
+    // only possible cause of failure is that method. A hand-written second stub differs in
+    // ways nobody enumerated, and could fail through the initialisation path instead — which
+    // would leave the post-sampling check unpinned while this test still went green.
+    //
+    // And the assertion is on the tagged stage, not on a phrase both failures share.
+    const dir = footageProject(t, { gsapStub: gsapStubWithout('totalProgress') });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+    assert.equal(r.code, EXIT.OK, `the build still succeeds — that is the point of this case\n${r.all}`);
+
+    await assert.rejects(
+      () => probeFootageFrames(path.join(dir, 'video-auto.html'), [0]),
+      (err) => {
+        assert.equal(err.stage, 'post-init', `the alarm must fire on the post-sampling check, not initialisation (got ${err.stage}: ${err.message})`);
+        assert.equal(err.frames?.[0]?.loaded, true, 'and it must fire despite the frame loading perfectly');
+        assert.equal(err.frames?.[0]?.applied, 'frame_00001.jpg', 'with the frame actually applied');
+        assert.ok(err.pageErrors.some((m) => /totalProgress/.test(m)), `the removed method must be what broke it, got ${JSON.stringify(err.pageErrors)}`);
+        return true;
+      },
+    );
+  });
+
+  test('writeBuildHtml_footageControlFails_whenTheSceneNeverInitialises', async (t) => {
+    // The third distinct failure, pinned separately so the two can never satisfy each other:
+    // gsap absent entirely kills the script block before __setFootageFrame is assigned.
+    const dir = footageProject(t, { gsapStub: '/* nothing at all */' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+    assert.equal(r.code, EXIT.OK, r.all);
+
+    await assert.rejects(
+      () => probeFootageFrames(path.join(dir, 'video-auto.html'), [0]),
+      (err) => {
+        assert.equal(err.stage, 'init', `expected the initialisation failure, got ${err.stage}: ${err.message}`);
+        return true;
+      },
+    );
+  });
+
+  test('writeBuildHtml_clipsJsonContainingNull_isRefusedRatherThanSilentlyDroppingFootage', (t) => {
+    // The signature of this bug is exit 0 with content missing, so the exit code alone
+    // proves nothing — the scene is checked too.
+    const dir = footageProject(t, { clipsJson: 'null' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a present file whose content is null is not an absent file: ');
+    assert.match(r.all, /clips\.json/, 'and the refusal must name the file');
+    const built = path.join(dir, 'video-auto.html');
+    if (fs.existsSync(built)) {
+      assert.match(fs.readFileSync(built, 'utf8'), /myclip/, 'a scene must never be published with the footage silently dropped');
+    }
+  });
+
+  test('writeBuildHtml_evidencePackContainingNull_isRefused', (t) => {
+    const dir = footageProject(t, { evidenceJson: 'null' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'the approval gate must not be emptied by a null file: ');
+  });
+
+  test('writeBuildHtml_clipsJsonContainingAnArray_isRefused', (t) => {
+    // `typeof [] === 'object'`, so an array reached callers that index it by property and
+    // read undefined everywhere — absence again, wearing a different shape.
+    const dir = footageProject(t, { clipsJson: '[]' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a JSON array is not the object the caller requires: ');
+  });
+
+  test('writeBuildHtml_clipsJsonContainingAScalar_isRefused', (t) => {
+    const dir = footageProject(t, { clipsJson: '42' });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a JSON scalar is not the object the caller requires: ');
+  });
+
+  test('writeBuildHtml_clipsPropertyWithWrongType_isRefused', (t) => {
+    // The shape the caller actually relies on: `(FOOTAGE.clips || []).find(...)`. A string
+    // `clips` has a .find of undefined, and an object has none at all.
+    const dir = footageProject(t, { clipsJson: JSON.stringify({ clips: 'not-an-array' }) });
+
+    const r = runScript('write-build-html.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'clips must be an array where the caller iterates it: ');
+    assert.match(r.all, /clips/, 'and the refusal must name the property');
   });
 });
 

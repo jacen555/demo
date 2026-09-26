@@ -100,6 +100,100 @@ public sealed class SuiteComparatorPairingTests
         act.Should().Throw<ComparisonRefusedException>().Which.Property.Should().Be("throttleMilliseconds");
     }
 
+    /// <summary>
+    /// Two artifacts that recorded nothing about how they were conducted are not two artifacts
+    /// conducted alike.
+    /// </summary>
+    /// <remarks>
+    /// Every other setting check here is a comparison of two stated values, and each of them
+    /// passes vacuously when there is nothing to compare. So an artifact recording no harness
+    /// config at all is the one input on which the whole set of them agrees that the runs match —
+    /// on the strength of neither run having said anything. That is absence reading as agreement,
+    /// which is the same shape as a missing definition fingerprint reading as a match, and it is
+    /// refused for the same reason. Every artifact this engine writes carries settings, so the
+    /// only way here is an artifact written elsewhere or edited by hand (§V).
+    /// </remarks>
+    [Fact]
+    public void Compare_NeitherArtifactRecordsAnyHarnessSetting_RefusesRatherThanReadingAbsenceAsAgreement()
+    {
+        var empty = new Dictionary<string, string>(StringComparer.Ordinal);
+        var baseline = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Fail)],
+            harnessConfig: empty
+        );
+        var candidate = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Pass)],
+            harnessConfig: empty
+        );
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        act.Should().Throw<ComparisonRefusedException>().Which.Property.Should().Be("harnessConfig");
+    }
+
+    [Fact]
+    public void Compare_OnlyTheCandidateRecordsNoHarnessSetting_RefusesRatherThanComparingUnlikeRuns()
+    {
+        var baseline = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Fail)]);
+        var candidate = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Pass)],
+            harnessConfig: new Dictionary<string, string>(StringComparer.Ordinal)
+        );
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        act.Should().Throw<ComparisonRefusedException>().Which.Property.Should().Be("harnessConfig");
+    }
+
+    /// <summary>
+    /// The key two runs disagree on is artifact-supplied, so the refusal describes it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ComparisonRefusedException.Property"/> carries it as structured data for a
+    /// consumer that deliberately wants it — the same opt-in
+    /// <see cref="Serialization.SchemaVersionException.DeclaredVersion"/> offers, and the
+    /// difference between an opt-in and a splice into prose. A path-shaped key never reaches
+    /// here at all: <c>Compare</c> refuses the artifact outright, which is
+    /// <see cref="MessageProvenanceTests"/>'s subject.
+    /// </remarks>
+    [Fact]
+    public void Compare_HarnessSettingsDisagreeing_DescribesTheKeyWithoutQuotingItInProse()
+    {
+        var baseline = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Pass)],
+            harnessConfig: new Dictionary<string, string>(StringComparer.Ordinal) { ["restTimeoutSeconds"] = "1" }
+        );
+        var candidate = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Pass)],
+            harnessConfig: new Dictionary<string, string>(StringComparer.Ordinal) { ["restTimeoutSeconds"] = "8" }
+        );
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        var thrown = act.Should().Throw<ComparisonRefusedException>().Which;
+        thrown.Message.Should().NotContain("restTimeoutSeconds");
+        thrown.Property.Should().Be("restTimeoutSeconds", "the structured channel is the opt-in");
+    }
+
+    [Fact]
+    public void Compare_HarnessSettingPresentOnOneSideOnly_DescribesItWithoutQuotingItInProse()
+    {
+        var baseline = ComparisonFixtures.Artifact([ComparisonFixtures.Scenario("a", RunStatus.Pass)]);
+        var candidate = ComparisonFixtures.Artifact(
+            [ComparisonFixtures.Scenario("a", RunStatus.Pass)],
+            harnessConfig: new Dictionary<string, string>(ComparisonFixtures.Config(), StringComparer.Ordinal)
+            {
+                ["restTimeoutSeconds"] = "1",
+            }
+        );
+
+        var act = () => new SuiteComparator().Compare(baseline, candidate);
+
+        var thrown = act.Should().Throw<ComparisonRefusedException>().Which;
+        thrown.Message.Should().NotContain("restTimeoutSeconds");
+        thrown.Property.Should().Be("restTimeoutSeconds");
+    }
+
     [Fact]
     public void Compare_EndpointsDiffer_ComparesBecauseTwoAddressesIsThePoint()
     {

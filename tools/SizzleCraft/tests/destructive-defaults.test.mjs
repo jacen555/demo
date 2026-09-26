@@ -441,20 +441,44 @@ describe('silence-gen call-site contract', () => {
 describe('remux-music video stream verdict', () => {
   // The verdict's own input validation lives in guard-inputs.test.mjs, which owns the
   // "equal but unparsed is not a match" contract. This keeps the integration case.
-  test('remuxMusic_ffmpegMissing_failsBeforeClaimingSuccess', (t) => {
+  //
+  // PROBEABLE music and --video-seconds are both load-bearing. With undecodable bytes,
+  // probeDurationSeconds throws first and resolveFfmpeg is never reached — so exit 1, a
+  // non-empty message and the absence of "VIDEO STREAM IDENTICAL" were all satisfied by
+  // an unrelated failure, and this test passed without ever exercising ffmpeg at all.
+  // The diagnostic assertion below is what makes it non-vacuous: it can only be produced
+  // by the path this test is named for.
+  function frameAlignedMp3(frames = 200) {
+    const buf = Buffer.alloc(288 * frames);
+    for (let i = 0; i < frames; i++) {
+      const o = i * 288;
+      buf[o] = 0xff; buf[o + 1] = 0xf3; buf[o + 2] = 0xa4; buf[o + 3] = 0xc0;
+    }
+    return buf;
+  }
+
+  test('remuxMusic_ffmpegMissing_failsNamingTheBinaryItCouldNotRun', (t) => {
     const dir = makeProject(t, {
       'ffmpeg-path.txt': MISSING_FFMPEG,
       'in.mp4': 'video',
       'voiceover.mp3': 'voice',
-      'music.wav': 'music',
     });
+    fs.writeFileSync(path.join(dir, 'music.mp3'), frameAlignedMp3());
+
     const r = runScript(
       'remux-music.mjs',
-      ['--video', 'in.mp4', '--out', 'out.mp4', '--apply'],
+      ['--video', 'in.mp4', '--music', 'music.mp3', '--out', 'out.mp4',
+        '--video-seconds', '30', '--apply', '--confirm-gain'],
       dir,
     );
 
     assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.match(r.all, /no-such-ffmpeg/, 'the diagnostic must name the executable it could not run');
+    assert.doesNotMatch(r.all, /VIDEO STREAM IDENTICAL/, 'and must never claim the guarantee it could not check');
     assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+    assert.equal(
+      fs.existsSync(path.join(dir, 'music-gain.lock.json')), false,
+      'a failed remux must not leave a pin behind claiming the gain was used',
+    );
   });
 });

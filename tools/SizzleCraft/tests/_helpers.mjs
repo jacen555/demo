@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -148,4 +149,282 @@ export function tryMakeDirLink(linkPath, target) {
   } catch {
     return false;
   }
+}
+
+const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
+
+/**
+ * Copies the engine into a throwaway directory INSIDE the package and installs a minimal
+ * encoder page beside it.
+ *
+ * `src/encoder-page.html` ships on a sibling branch and is absent here, so the S7 apply
+ * path throws on a missing prerequisite before it reaches any of the writes it guards. A
+ * test run against `src/` therefore passes on that failure and establishes nothing about
+ * the write stage. Copying the engine gives `scriptDir` an encoder page without writing a
+ * fixture into `src/`, and keeping the copy inside the package means `node_modules` still
+ * resolves for the `playwright` import.
+ */
+export function makeEngineCopy(t) {
+  const engineDir = fs.mkdtempSync(path.join(path.dirname(srcDir), 'tests', '.engine-'));
+  t.after(() => fs.rmSync(engineDir, { recursive: true, force: true }));
+  for (const entry of fs.readdirSync(srcDir)) {
+    if (entry.endsWith('.mjs') || entry.endsWith('.json')) {
+      fs.copyFileSync(path.join(srcDir, entry), path.join(engineDir, entry));
+    }
+  }
+  fs.copyFileSync(path.join(fixturesDir, 'encoder-page.html'), path.join(engineDir, 'encoder-page.html'));
+  return engineDir;
+}
+
+/** A project the COPIED engine can actually encode: silent render, one frame, a muxer stub. */
+export function operableProject(t, extra = {}) {
+  return makeProject(t, {
+    'timing.json': timingFixture(contiguousSegments, { intake: { toleranceMs: 750, silent: true } }),
+    'frames/frame_00000.png': 'frame',
+    'node_modules/mp4-muxer/build/mp4-muxer.js': '/* muxer stub — the fixture page does not load it */',
+    ...extra,
+  });
+}
+
+/**
+ * A real 8x8 JPEG, produced by Chromium's own canvas encoder and embedded so the fixture
+ * needs no browser to build.
+ *
+ * Frame files must be DECODABLE, not merely present. A text file named `.jpg` satisfies
+ * the lineage digest perfectly — the digest is computed over bytes and does not care what
+ * they mean — while every `new Image()` in the runtime fails. That is how a control can
+ * pass over content that is not an image.
+ */
+const FIXTURE_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABh' +
+    'Y3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAAB' +
+    'UAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAA' +
+    'AAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9Y' +
+    'WVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAM' +
+    'ZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUG' +
+    'CQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQ' +
+    'EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/' +
+    'xAAhEAABAgQHAAAAAAAAAAAAAAAABxICERMUFRYlMURhYv/EABQBAQAAAAAAAAAAAAAAAAAAAAf/xAAgEQABAwQDAQEAAAAAAAAA' +
+    'AAABAgURAwQGIQASMRNB/9oADAMBAAIRAxEAPwCjUJQs+YfpFjY1eRVe9nmGUmd7gAXsex5txRtptDRT+dCnPVMqVHZRUdqKlGVK' +
+    'J2T7A1wicnK5drlV5eK7VFRJgCYAA0AB4B+c/9k=',
+  'base64',
+);
+
+/** How many frames the fixture clip contains. >1 so a "later in the clip" index exists. */
+export const FOOTAGE_FRAME_COUNT = 4;
+
+/**
+ * An OPERABLE footage project: a segment that renders a real approved clip.
+ *
+ * Reproduces the full lineage contract write-build-html enforces (frame-set digest,
+ * evidence-pack approval, and the manifest projection hash) because nothing less than a
+ * working footage render can show the failure this exists to catch: the footage silently
+ * dropping out while the build still exits 0. The digests are computed rather than
+ * hardcoded, so a change to the lineage algorithm fails the positive control loudly
+ * instead of leaving it quietly unfalsifiable.
+ *
+ * Two details are load-bearing and were wrong the first time:
+ *   - frames are REAL JPEGs, because the runtime decodes them with `new Image()`;
+ *   - frames are named ONE-BASED, because the runtime computes `idx = …+1` and requests
+ *     `frame_00001.jpg` first (write-build-html.mjs, __setFootageFrame).
+ * Zero-based text files satisfied every digest and loaded nothing.
+ */
+export function footageProject(t, { clipsJson, evidenceJson, manifestJson, frameBytes = FIXTURE_JPEG, gsapStub } = {}) {
+  const fps = 30;
+  const dir = makeProject(t, {
+    'node_modules/gsap/dist/gsap.min.js': gsapStub ?? fs.readFileSync(path.join(fixturesDir, 'gsap-stub.js'), 'utf8'),
+  });
+
+  const clipRoot = path.join(dir, 'evidence-pack', 'footage', 'myclip');
+  fs.mkdirSync(clipRoot, { recursive: true });
+  for (let i = 1; i <= FOOTAGE_FRAME_COUNT; i++) {
+    fs.writeFileSync(path.join(clipRoot, `frame_${String(i).padStart(5, '0')}.jpg`), frameBytes);
+  }
+
+  const frames = fs.readdirSync(clipRoot).filter((n) => /^frame_\d{5}\.jpg$/.test(n)).sort();
+  const digest = crypto.createHash('sha256');
+  digest.update(Buffer.from('sizzlecraft-frame-set-v1', 'utf8'));
+  digest.update(Buffer.from([0]));
+  for (const rel of frames) {
+    const bytes = fs.readFileSync(path.join(clipRoot, rel));
+    digest.update(Buffer.from(rel, 'utf8'));
+    digest.update(Buffer.from([0]));
+    digest.update(Buffer.from(String(bytes.length), 'ascii'));
+    digest.update(Buffer.from([0]));
+    digest.update(bytes);
+    digest.update(Buffer.from([0]));
+  }
+  const frameSetSha = digest.digest('hex');
+  const frameCount = frames.length;
+  const redaction = 'clear';
+  const projection = [{ id: 'myclip', frameSetSha, frameCount, fps, redaction }];
+  const sha256 = crypto.createHash('sha256').update(Buffer.from(JSON.stringify(projection), 'utf8')).digest('hex');
+
+  const write = (rel, body) => fs.writeFileSync(path.join(dir, rel), body);
+  write(
+    'evidence-pack/footage/clips.json',
+    clipsJson ?? JSON.stringify({ clips: [{ id: 'myclip', approvedForUse: true, redaction, fps, frameCount, frameSetSha }] }),
+  );
+  write('evidence-pack/evidence-pack.json', evidenceJson ?? JSON.stringify({ assets: [{ kind: 'clip', id: 'myclip', approvedForUse: true }] }));
+  write(
+    'manifest.json',
+    manifestJson ??
+      JSON.stringify({
+        stages: { 'materialize-footage': { derivedFootage: { kind: 'footage-frame-set-v1', producer: 'materialize-footage', sha256, clips: projection } } },
+      }),
+  );
+  write(
+    'timing.json',
+    JSON.stringify({
+      project: { name: 'demo', fps, width: 1280, height: 720, lede: 'l' },
+      durationMs: 4000,
+      contentMs: 4000,
+      endCard: { enabled: true },
+      segments: [
+        { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello', visual: { mode: 'footage', footage: { clipId: 'myclip' } } },
+        { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here' },
+      ],
+    }),
+  );
+  return dir;
+}
+
+/**
+ * Loads a built scene in Chromium and reports which footage frames actually decoded.
+ *
+ * The only way to tell "footage was refused" apart from "footage never rendered anyway"
+ * is to watch a frame load. `__setFootageFrame` resolves false on a decode failure and
+ * leaves the background unset, so it reports its own failure honestly — but only if
+ * something asks.
+ *
+ * ANY page error fails this probe, unconditionally. The previous version recorded page
+ * errors and examined them only when `__setFootageFrame` was undefined — a condition that
+ * was true only while the stub was broken badly enough to kill the whole script block.
+ * Repairing the stub far enough to define that function silently retired the check, and a
+ * scene throwing on every trigger sailed through. A guard keyed on a symptom expires when
+ * the symptom does, so this one is keyed on nothing.
+ *
+ * The scene is also driven through `fireTriggersUpTo` the way the capture path drives it,
+ * so a scene that only breaks once triggers run cannot pass by never being asked to run.
+ *
+ * @returns {Promise<Array<{atMs: number, loaded: boolean, applied: string|null}>>}
+ */
+export async function probeFootageFrames(sceneHtml, atMsList) {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true, args: ['--allow-file-access-from-files'] });
+  try {
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on('pageerror', (e) => pageErrors.push(e.message));
+    await page.goto(pathToFileURL(sceneHtml).toString(), { waitUntil: 'load' });
+
+    // The two failures are tagged and worded distinctly. They used to share the phrase
+    // "page errors", so an assertion matching that was satisfied by either — which meant a
+    // test written for the post-sampling check could be carried home by the init check and
+    // nobody would know the later one had stopped being exercised.
+    const failure = (stage, why) => {
+      const seen = [...new Set(pageErrors)];
+      const err = new Error(`${why}${seen.length ? ` — errors: ${seen.join(' | ')}` : ''}`);
+      err.stage = stage;
+      err.pageErrors = seen;
+      return err;
+    };
+
+    if ((await page.evaluate(() => typeof window.__setFootageFrame)) !== 'function') {
+      throw failure('init', 'the scene never initialised: __setFootageFrame was never defined');
+    }
+
+    const results = [];
+    for (const atMs of atMsList) {
+      try {
+        await page.evaluate((ms) => window.fireTriggersUpTo(ms / 1000), atMs);
+      } catch (err) {
+        pageErrors.push(err.message); // same bucket; reported by the unconditional check below
+      }
+      const outcomes = await page.evaluate((ms) => window.__setFootageFrame(ms), atMs);
+      const applied = await page.evaluate(() => document.querySelector('.footage-layer')?.dataset.cur ?? null);
+      // An EMPTY outcome list is success, not absence. The runtime refuses to reload the URL
+      // it is already showing (`if(el.dataset.cur===url)return`), so it returns no promises —
+      // and driving fireTriggersUpTo first, which samples the same instant, makes that the
+      // common case rather than a rare one. Scoring it as "no load" made this control
+      // intermittently red for a reason that had nothing to do with the scene.
+      results.push({
+        atMs,
+        loaded: outcomes.length > 0 ? outcomes.every(Boolean) : applied !== null,
+        applied: applied ? applied.split('/').pop() : null,
+      });
+    }
+
+    // Unconditional, and last: a scene that threw at any point is not operable, whatever
+    // the frames did.
+    if (pageErrors.length) {
+      const err = failure('post-init', 'the scene threw while running, after it had initialised');
+      err.frames = results;
+      throw err;
+    }
+    return results;
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * The working gsap stub with exactly one method removed.
+ *
+ * Hand-authoring a second, smaller stub makes the broken fixture differ from the working
+ * one in more ways than the method under test, so a resulting failure could come from
+ * anywhere — including from a path other than the one the test means to pin. Deriving it
+ * guarantees a single difference.
+ *
+ * Throws if the method is not found, because silently returning an unmodified stub would
+ * make the alarm pass while testing nothing.
+ */
+export function gsapStubWithout(methodName) {
+  const source = fs.readFileSync(path.join(fixturesDir, 'gsap-stub.js'), 'utf8');
+  const pattern = new RegExp(String.raw`^[ \t]*${methodName}: function \([^)]*\) \{[^\n]*\},?[ \t]*\r?\n`, 'm');
+  if (!pattern.test(source)) {
+    throw new Error(`gsap-stub.js does not define ${methodName}() on a single line — cannot derive a broken variant from it`);
+  }
+  const broken = source.replace(pattern, '');
+  if (broken === source) throw new Error(`removing ${methodName}() from gsap-stub.js changed nothing`);
+  return broken;
+}
+export function runEngineScript(engineDir, script, args, cwd) {
+  const r = spawnSync(process.execPath, [path.join(engineDir, script), ...args], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  return { code: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', all: (r.stdout ?? '') + (r.stderr ?? '') };
+}
+
+/**
+ * Runs a script and plants a fixture the moment `marker` appears, handing the callback the
+ * child's PID.
+ *
+ * The encode temp file is named `<out>.part-<pid>`, so a collision cannot be staged before
+ * the run — the PID is not knowable until the process exists. The marker gives a
+ * synchronisation point inside the run, and `planted` is returned so a test can prove the
+ * collision was actually staged rather than passing because it never happened.
+ */
+export function runScriptPlantingOnMarker(engineDir, script, args, cwd, marker, plant) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(engineDir, script), ...args], { cwd });
+    let all = '';
+    let planted = false;
+    const onChunk = (chunk) => {
+      all += chunk;
+      if (!planted && all.includes(marker)) {
+        planted = true;
+        plant(child.pid);
+      }
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, all, planted }));
+  });
 }

@@ -114,6 +114,49 @@ public sealed class ScenarioFingerprintTests
         ScenarioFingerprint.Of(before).Should().NotBe(ScenarioFingerprint.Of(after));
     }
 
+    /// <summary>
+    /// A carve-out changes what the scenario accepts as its result, so it has to move.
+    /// </summary>
+    /// <remarks>
+    /// Adding one turns a <see cref="Results.RunStatus.Fail"/> into a
+    /// <see cref="Results.RunStatus.ExpectedFailure"/> without the system under test changing at
+    /// all. A fingerprint that did not move would let the comparator pair the two and read the
+    /// carve-out itself as a change in behaviour — the same fabrication as editing
+    /// <see cref="Grading.ExpectedOutcome"/> while leaving the spec alone.
+    /// </remarks>
+    [Fact]
+    public void Of_ExpectedFailureCarveOutAdded_ProducesADifferentFingerprint()
+    {
+        var before = Scenario(grading: GradingFor("resolved"));
+        var after = Scenario(
+            grading: GradingFor("resolved") with
+            {
+                ExpectedFailure = new ExpectedFailure { Reason = "known gap, tracked as FORGE-214" },
+            }
+        );
+
+        ScenarioFingerprint.Of(before).Should().NotBe(ScenarioFingerprint.Of(after));
+    }
+
+    [Fact]
+    public void Of_ExpectedFailureReasonChanged_ProducesADifferentFingerprint()
+    {
+        var before = Scenario(
+            grading: GradingFor("resolved") with
+            {
+                ExpectedFailure = new ExpectedFailure { Reason = "known gap, tracked as FORGE-214" },
+            }
+        );
+        var after = Scenario(
+            grading: GradingFor("resolved") with
+            {
+                ExpectedFailure = new ExpectedFailure { Reason = "known gap, tracked as FORGE-900" },
+            }
+        );
+
+        ScenarioFingerprint.Of(before).Should().NotBe(ScenarioFingerprint.Of(after));
+    }
+
     [Fact]
     public void Of_OnlyTheReportingLabelsChanged_ProducesTheSameFingerprint()
     {

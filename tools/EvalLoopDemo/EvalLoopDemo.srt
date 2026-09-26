@@ -1,0 +1,540 @@
+1
+00:00:01,994 --> 00:00:03,281
+A unit test is easy.
+
+2
+00:00:03,321 --> 00:00:06,433
+One input, one answer; and
+the same answer every time.
+
+3
+00:00:06,473 --> 00:00:08,109
+Now try testing a conversation.
+
+4
+00:00:08,149 --> 00:00:10,365
+On the right of the screen,
+the interview branches for each
+
+5
+00:00:10,405 --> 00:00:11,018
+turn.
+
+6
+00:00:11,058 --> 00:00:13,400
+When you run it again, a
+different branch occurs.
+
+7
+00:00:13,440 --> 00:00:15,161
+There is no single assert to check.
+
+8
+00:00:15,201 --> 00:00:16,204
+So how did we check it?
+
+9
+00:00:16,244 --> 00:00:17,321
+One case at a time.
+
+10
+00:00:17,361 --> 00:00:20,979
+Type an opening into Postman,
+read the reply, type the next.
+
+11
+00:00:21,019 --> 00:00:23,962
+Or deploy it all the way to PPE
+and test the larger interface
+
+12
+00:00:24,002 --> 00:00:24,784
+by hand.
+
+13
+00:00:24,824 --> 00:00:27,367
+It was so slow that customers were
+finding the regressions before
+
+14
+00:00:27,407 --> 00:00:28,944
+we did.
+
+15
+00:00:29,244 --> 00:00:31,509
+Let's look at one specific
+scenario definition.
+
+16
+00:00:31,549 --> 00:00:34,181
+The opening is what the conversation
+starts with: my email has
+
+17
+00:00:34,221 --> 00:00:35,345
+just stopped working.
+
+18
+00:00:35,385 --> 00:00:37,923
+That is deliberately vague,
+because that is how people actually
+
+19
+00:00:37,963 --> 00:00:38,573
+write.
+
+20
+00:00:38,613 --> 00:00:42,796
+Underneath it sits the target:
+Outlook, on iOS, not receiving email.
+
+21
+00:00:42,836 --> 00:00:45,604
+The interview never sees that,
+we are using it to grade once
+
+22
+00:00:45,644 --> 00:00:46,977
+the conversation ends.
+
+23
+00:00:47,017 --> 00:00:48,402
+Then we have the knowledge bank.
+
+24
+00:00:48,442 --> 00:00:51,567
+Three authored facts this customer
+knows and will say if asked:
+
+25
+00:00:51,607 --> 00:00:54,009
+that they are using the mail
+app on an iPhone; that they can
+
+26
+00:00:54,049 --> 00:00:57,236
+still send messages, but nothing
+new ever arrives; and that they
+
+27
+00:00:57,276 --> 00:00:59,709
+have checked junk, and
+the mailbox is not full.
+
+28
+00:00:59,749 --> 00:01:00,800
+Notice the second one.
+
+29
+00:01:00,840 --> 00:01:04,561
+Can send, cannot receive — that is the
+detail separating this from a dozen
+
+30
+00:01:04,601 --> 00:01:07,202
+neighbouring categories, and
+the interview only learns it if
+
+31
+00:01:07,242 --> 00:01:08,345
+it thinks to ask.
+
+32
+00:01:08,385 --> 00:01:11,205
+Then a pool of alternative
+phrasings, so the customer can choose
+
+33
+00:01:11,245 --> 00:01:13,637
+different phrasings to
+not repeat every time.
+
+34
+00:01:13,677 --> 00:01:16,749
+And last, the assertions
+this scenario has to satisfy.
+
+35
+00:01:16,789 --> 00:01:19,233
+That is what makes it a
+conversation and not a prompt.
+
+36
+00:01:19,273 --> 00:01:22,128
+We have defined nearly
+two-hundred of them.
+
+37
+00:01:22,439 --> 00:01:25,155
+But here is the hard part: the
+thing being tested is a language
+
+38
+00:01:25,195 --> 00:01:25,795
+model.
+
+39
+00:01:25,835 --> 00:01:29,244
+It writes its own questions, and it
+will ask things nobody anticipated.
+
+40
+00:01:29,284 --> 00:01:32,210
+A script of canned answers can
+fall apart on the first unexpected
+
+41
+00:01:32,250 --> 00:01:32,828
+turn.
+
+42
+00:01:32,868 --> 00:01:36,193
+So the simulated customer answers
+by rule, in priority order.
+
+43
+00:01:36,233 --> 00:01:39,139
+If the question offers choices,
+and those choices carry routing
+
+44
+00:01:39,179 --> 00:01:42,692
+data, it picks the one whose route
+runs closest to its own target.
+
+45
+00:01:42,732 --> 00:01:45,314
+If the choices are platforms,
+it answers with the platform it
+
+46
+00:01:45,354 --> 00:01:46,373
+is actually on.
+
+47
+00:01:46,413 --> 00:01:49,611
+If it is any other multiple choice,
+it scores each option against
+
+48
+00:01:49,651 --> 00:01:50,859
+its own vocabulary.
+
+49
+00:01:50,899 --> 00:01:53,804
+And if the question has no
+choices at all — free text,
+
+50
+00:01:53,844 --> 00:01:56,918
+invented on the spot — it draws
+the next unused line from its
+
+51
+00:01:56,958 --> 00:01:57,924
+knowledge bank.
+
+52
+00:01:57,964 --> 00:01:59,780
+One guard matters more than the rest.
+
+53
+00:01:59,820 --> 00:02:02,222
+The customer will never name
+a platform it is not on.
+
+54
+00:02:02,262 --> 00:02:04,423
+Those phrasings come
+from real support data.
+
+55
+00:02:04,463 --> 00:02:07,537
+Matching is on word boundaries
+— which is why Xbox Game Studios
+
+56
+00:02:07,577 --> 00:02:10,056
+is not an iOS case.
+
+57
+00:02:10,356 --> 00:02:13,286
+Each of the hundreds of scenarios
+opens its own conversation
+
+58
+00:02:13,326 --> 00:02:16,825
+and shares no state with any other,
+so they can go out in parallel.
+
+59
+00:02:16,865 --> 00:02:20,659
+And we run every scenario three times,
+because the same input doesn't give
+
+60
+00:02:20,699 --> 00:02:22,111
+the same answer twice.
+
+61
+00:02:22,151 --> 00:02:25,313
+On screen, three result strips
+for one scenario land on three
+
+62
+00:02:25,353 --> 00:02:28,272
+different outputs, and an average
+line resolves between them.
+
+63
+00:02:28,312 --> 00:02:32,464
+Replication across this suite showed the
+same scenario changing grade from one run
+
+64
+00:02:32,504 --> 00:02:34,539
+to the next, for no reason at all.
+
+65
+00:02:34,579 --> 00:02:37,708
+So we average across three runs,
+and a real change is separated
+
+66
+00:02:37,748 --> 00:02:40,128
+from the model's own noise.
+
+67
+00:02:40,428 --> 00:02:41,870
+And it is not grading one thing.
+
+68
+00:02:41,910 --> 00:02:45,064
+Did the interview reach the right
+category — sixty-seven scenarios
+
+69
+00:02:45,104 --> 00:02:45,810
+on that.
+
+70
+00:02:45,850 --> 00:02:48,857
+Did it ask for the context it
+needed — fifty more, drawn from
+
+71
+00:02:48,897 --> 00:02:50,244
+real customer queries.
+
+72
+00:02:50,284 --> 00:02:53,534
+Does it repeat itself or leak
+across products — forty-five.
+
+73
+00:02:53,574 --> 00:02:56,129
+And the sharpest one: does
+it refuse what it should,
+
+74
+00:02:56,169 --> 00:02:57,726
+without refusing what it shouldn't?
+
+75
+00:02:57,766 --> 00:03:01,014
+A customer opens about Outlook,
+then asks how to order a pizza.
+
+76
+00:03:01,054 --> 00:03:03,326
+The interview must
+notice and clarify scope.
+
+77
+00:03:03,366 --> 00:03:06,962
+But it must not refuse ordinary
+requests that merely sound odd — someone
+
+78
+00:03:07,002 --> 00:03:08,538
+overriding an inbox rule.
+
+79
+00:03:08,578 --> 00:03:11,480
+Across all hundred and sixty-two
+scenarios: around a hundred
+
+80
+00:03:11,520 --> 00:03:16,776
+and thirty-five must not refuse, a
+handful must, and zero counted in both.
+
+81
+00:03:17,088 --> 00:03:19,926
+Two harnesses, and the lanes
+on screen fill against the same
+
+82
+00:03:19,966 --> 00:03:20,709
+clock.
+
+83
+00:03:20,749 --> 00:03:25,260
+The upper lane, labelled U I, clears thirteen scenarios in three runs each — about
+
+84
+00:03:25,300 --> 00:03:26,932
+three and a half minutes.
+
+85
+00:03:26,972 --> 00:03:31,600
+The lower lane, labelled A P I, clears all
+hundred and sixty-two in less time than
+
+86
+00:03:31,640 --> 00:03:32,224
+that.
+
+87
+00:03:32,264 --> 00:03:35,389
+So the fast tier is the pull-request
+gate; the interface harness
+
+88
+00:03:35,429 --> 00:03:38,544
+cannot target a pull-request build at all.
+
+89
+00:03:38,844 --> 00:03:41,341
+But the slow tier sees something
+the fast one is structurally
+
+90
+00:03:41,381 --> 00:03:42,198
+blind to.
+
+91
+00:03:42,238 --> 00:03:45,189
+Watch it drive the real U I,
+and a stage trace surfaces:
+
+92
+00:03:45,229 --> 00:03:49,090
+running Outlook Q and A agent,
+agent completed, workflow failed.
+
+93
+00:03:49,130 --> 00:03:52,113
+The interview got the category
+right, the right agent was picked,
+
+94
+00:03:52,153 --> 00:03:53,752
+and resolution failed anyway.
+
+95
+00:03:53,792 --> 00:03:55,411
+The customer got a canned refusal.
+
+96
+00:03:55,451 --> 00:03:58,561
+The fast tier stops at the category
+and cannot say any of that.
+
+97
+00:03:58,601 --> 00:04:01,440
+Different data, not just slower data.
+
+98
+00:04:01,740 --> 00:04:04,503
+We deploy the pull-request
+branch, point the harness at it,
+
+99
+00:04:04,543 --> 00:04:05,920
+and run it three times.
+
+100
+00:04:05,960 --> 00:04:08,523
+Then the same suite against
+main, and we diff the two.
+
+101
+00:04:08,563 --> 00:04:10,906
+The comparison exists
+before the review does.
+
+102
+00:04:10,946 --> 00:04:13,478
+On one real change,
+routing got clearly better.
+
+103
+00:04:13,518 --> 00:04:15,997
+Cases reaching the right support
+area went from twenty-seven
+
+104
+00:04:16,037 --> 00:04:18,107
+to thirty-five out of sixty-seven.
+
+105
+00:04:18,147 --> 00:04:20,594
+Cases where the interview came
+back with nothing were almost
+
+106
+00:04:20,634 --> 00:04:21,308
+halved.
+
+107
+00:04:21,348 --> 00:04:23,418
+Twenty-six fewer failed assertions.
+
+108
+00:04:23,458 --> 00:04:25,318
+And then the harness flagged
+something the totals would have
+
+109
+00:04:25,358 --> 00:04:26,053
+buried.
+
+110
+00:04:26,093 --> 00:04:29,989
+A prompt-injection probe — one that
+exists to be refused — had quietly started
+
+111
+00:04:30,029 --> 00:04:30,955
+getting answered.
+
+112
+00:04:30,995 --> 00:04:33,159
+Every headline number said
+this build was better.
+
+113
+00:04:33,199 --> 00:04:35,500
+It was also less safe,
+and one line caught it.
+
+114
+00:04:35,540 --> 00:04:36,486
+Not in production.
+
+115
+00:04:36,526 --> 00:04:37,368
+Not in review.
+
+116
+00:04:37,408 --> 00:04:39,258
+Before the pull request was ever opened.
+
+117
+00:04:39,298 --> 00:04:40,444
+That is what this buys.
+
+118
+00:04:40,484 --> 00:04:41,712
+Run it against your branch first.

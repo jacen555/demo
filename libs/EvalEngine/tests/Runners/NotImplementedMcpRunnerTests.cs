@@ -254,8 +254,25 @@ public sealed class ExchangeStateTests
     public void IsHarnessFailure_AbsentOrUnrecognisedState_IsTrue(string? state) =>
         ExchangeState.IsHarnessFailure(state).Should().BeTrue();
 
+    /// <summary>
+    /// A transcript with no exchange attribute at all — the shape no runner in this library
+    /// emits, built explicitly rather than borrowed from a shared fixture that now models one
+    /// that does.
+    /// </summary>
     [Fact]
-    public void Of_TranscriptWithoutTheAttribute_IsNull() => ExchangeState.Of(TestData.Transcript()).Should().BeNull();
+    public void Of_TranscriptWithoutTheAttribute_IsNull() =>
+        ExchangeState
+            .Of(
+                TestData.Transcript() with
+                {
+                    Transport = new TransportMetadata
+                    {
+                        Attributes = new Dictionary<string, string>(StringComparer.Ordinal),
+                    },
+                }
+            )
+            .Should()
+            .BeNull();
 
     [Fact]
     public void Of_NullTranscript_Throws()

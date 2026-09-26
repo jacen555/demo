@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { EXIT, guard, parseCli, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError } from './cli-support.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -32,7 +32,11 @@ const cli = (() => {
 })();
 
 const dir = cli.projectDir;
-const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+// timing.json is ENGINE-chosen: the caller named a project directory, not this file. Joined
+// raw, a planted link was followed and handed to JSON.parse, whose message quotes the bytes
+// it parsed — disclosing a file outside the project on the bare invocation path.
+const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
+const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
 // Harden DOM tokens: segment ids AND node/edge ids (and edge from/to) get interpolated into DOM/SVG
 // element ids (e.g. `${seg.id}-label`, `${seg.id}-shot-0`, node/edge ids) and `url(#…)` marker refs. The
 // timing schema already constrains these to a safe token, so VALIDATE (fail fast) here rather than
@@ -120,15 +124,18 @@ const assertNoSrcErrors = () => {
 // ---- footage (real user clip) metadata, resolved from clip-video output --------------------------
 // A `footage` segment plays REAL extracted clip frames (evidence-pack/footage/<clipId>/frame_*.jpg)
 // as a full-bleed background; the frame index is chosen per capture frame by window.__setFootageFrame.
-let FOOTAGE = {};
-try { FOOTAGE = JSON.parse(fs.readFileSync(path.join(dir, 'evidence-pack', 'footage', 'clips.json'), 'utf8')); } catch {}
-let MANIFEST = {};
-try { MANIFEST = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch {}
+// Each of these is an OPTIONAL engine-chosen input, and `catch {}` collapsed several distinct
+// states into one: genuinely absent (fine), unreadable or corrupt (silently removed content),
+// and redirected through a link (silently ADDED content from outside the project — suppressing
+// the error hid the message, not the read). readOptionalEngineJson keeps them apart, reserves
+// null for ENOENT alone, and is told the shape each caller below actually iterates — so a
+// present-but-empty file can never arrive here disguised as an absent one.
+let FOOTAGE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'footage', 'clips.json'), 'footage clips.json', { clips: 'array' })) ?? {};
+let MANIFEST = guard(() => readOptionalEngineJson(dir, 'manifest.json', 'manifest.json', { stages: 'object' })) ?? {};
 const DERIVED_FOOTAGE = MANIFEST.stages?.['materialize-footage']?.derivedFootage || null;
 // C-11: evidence-pack.json is the SINGLE source of truth for what may appear on-screen. clips.json alone
 // is NOT sufficient — a tampered clips.json must not be able to smuggle an unapproved clip in.
-let EVIDENCE = {};
-try { EVIDENCE = JSON.parse(fs.readFileSync(path.join(dir, 'evidence-pack', 'evidence-pack.json'), 'utf8')); } catch {}
+let EVIDENCE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'evidence-pack.json'), 'evidence-pack.json', { assets: 'array' })) ?? {};
 const evidenceApprovedClip = id => !!id && (EVIDENCE.assets || []).some(a => a && a.kind === 'clip' && a.approvedForUse === true && a.id === id);
 // clipId is used verbatim as a path segment; force it to a single safe token (no separators / `..`)
 // so neither the fallback path nor the frame URLs can escape evidence-pack/footage/.
@@ -330,8 +337,11 @@ function diagram(seg) {
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     return `<text id="${seg.id}-edgelabel-${e.id || j}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label)}</text>`;
   }).join('');
-  // Wider, clearer arrowheads (was markerWidth/Height 7) so direction reads at video scale.
-  const arrowDims = 'refX="8" refY="5" markerWidth="10" markerHeight="10"';
+  // Arrowhead size is per-visual so a dense diagram can shrink it without changing every
+  // other diagram in every project. Default 10 (raised from 7 so direction reads at video
+  // scale); refX tracks the width at the same 0.8 ratio so the head still meets the line.
+  const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 10;
+  const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
     `<marker id="${seg.id}-arr-${e.id || j}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
   return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900')}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
@@ -347,7 +357,183 @@ function live(seg) {
   return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url)}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc)}" alt=""/>` : ''}${fields}${hotspots}<div id="${seg.id}-cursor" class="cursor"></div></div></div>`;
 }
 
-function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
+// ---- code mode: a real JSON object on screen, addressable field by field ----
+// Shows configuration as it actually is rather than as a summary. That is the point —
+// and the risk, because it is the only mode that puts SOURCE DATA on the screen instead
+// of authored copy. Two guards below exist only because of that.
+
+const codePathId = (segId, p) =>
+  `${segId}-path-${String(p).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
+
+/** Renders one JSON value, recording every addressable path it emits. */
+function jsonHtml(value, segId, at, depth, paths) {
+  const pad = n => '  '.repeat(n);
+  const entry = (p, inner, block) => {
+    paths.push(p);
+    return `<span class="j-entry${block ? ' j-block' : ''}" id="${codePathId(segId, p)}" data-path="${esc(p)}">${inner}</span>`;
+  };
+
+  if (Array.isArray(value)) {
+    if (!value.length) return '<span class="j-punc">[]</span>';
+    const items = value
+      .map((v, i) => {
+        const p = `${at}[${i}]`;
+        // The separator lives INSIDE the entry. A block-level container would otherwise
+        // orphan the comma onto its own line once the highlight makes it display:block.
+        const inner = jsonHtml(v, segId, p, depth + 1, paths) +
+          (i < value.length - 1 ? '<span class="j-punc">,</span>' : '');
+        return `${pad(depth + 1)}${entry(p, inner, v !== null && typeof v === 'object')}`;
+      })
+      .join('\n');
+    return `<span class="j-punc">[</span>\n${items}\n${pad(depth)}<span class="j-punc">]</span>`;
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (!keys.length) return '<span class="j-punc">{}</span>';
+    const items = keys
+      .map((k, i) => {
+        const p = at ? `${at}.${k}` : k;
+        const inner = `<span class="j-key">"${esc(k)}"</span><span class="j-punc">: </span>` +
+          jsonHtml(value[k], segId, p, depth + 1, paths) +
+          (i < keys.length - 1 ? '<span class="j-punc">,</span>' : '');
+        return `${pad(depth + 1)}${entry(p, inner, value[k] !== null && typeof value[k] === 'object')}`;
+      })
+      .join('\n');
+    return `<span class="j-punc">{</span>\n${items}\n${pad(depth)}<span class="j-punc">}</span>`;
+  }
+  if (typeof value === 'string') return `<span class="j-str">"${esc(value)}"</span>`;
+  if (typeof value === 'number') return `<span class="j-num">${esc(value)}</span>`;
+  if (typeof value === 'boolean') return `<span class="j-bool">${esc(value)}</span>`;
+  return '<span class="j-null">null</span>';
+}
+
+function codeBlock(seg) {
+  const v = seg.visual || {};
+  let data = v.json;
+
+  if (data === undefined && v.jsonFile) {
+    // CONFINED AT RESOLUTION TIME, NOT AT RENDER TIME.
+    //
+    // My first version compared `path.relative(dir, abs)` — lexical only, so it could not
+    // see a link that stays inside the project as TEXT while pointing outside it once
+    // followed. resolveWithinRoot canonicalises and re-checks after following links.
+    //
+    // The boundary matters more here than anywhere else in this file. Every other visual
+    // mode renders authored copy; `code` mode renders the file's contents straight into
+    // the frame. An escaping read is not a log line someone might notice — it is
+    // composited into the video and encoded. And the guard must run BEFORE the read,
+    // because JSON.parse quotes the first bytes it parsed in its error message, so a
+    // parse failure discloses the file whether or not it is ever drawn.
+    //
+    // No-go patterns cannot cover this: they match content you predicted, and a link
+    // redirect changes WHICH FILE you read.
+    const abs = resolveWithinRoot(dir, v.jsonFile, `segment "${seg.id}" visual.jsonFile`);
+    if (!fs.existsSync(abs)) throw new CliError(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
+    try { data = JSON.parse(fs.readFileSync(abs, 'utf8')); }
+    catch (e) {
+      // Do NOT echo the parser message: it embeds file contents.
+      throw new CliError(`segment "${seg.id}": visual.jsonFile is not valid JSON (${v.jsonFile})`);
+    }
+    if (v.pick) {
+      // `k in data` walks the prototype chain and does not check the container's type, so
+      // `__proto__` resolves without existing in the JSON, and descending into a STRING
+      // throws a native error that can quote that string — before the no-go guard has run.
+      // Own properties of objects and arrays only, and a content-free refusal.
+      for (const k of String(v.pick).split('.')) {
+        const isContainer = data !== null && typeof data === 'object';
+        if (!isContainer || !Object.prototype.hasOwnProperty.call(data, k)) {
+          throw new CliError(`segment "${seg.id}": visual.pick path "${v.pick}" does not resolve in ${v.jsonFile} (stopped at "${k}")`);
+        }
+        data = data[k];
+      }
+    }
+  }
+  if (data === undefined) throw new CliError(`segment "${seg.id}": code mode needs visual.json or visual.jsonFile`);
+
+  // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
+  // This is the only mode that renders data nobody wrote for the screen, so the patterns
+  // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
+  //
+  // The refusal names the PATTERN and the JSON PATH, never the matched value. An earlier
+  // version printed 80 characters of it "so the author could see what tripped" — which
+  // moves the very content the pattern exists to contain into the console and the render
+  // log. A guard that discloses what it refuses has done the damage it was preventing.
+  // The author can look up the path in their own source; the log should not carry it.
+  const patterns = timing.project?.noGoPatterns;
+  if (!Array.isArray(patterns)) {
+    // ABSENT IS NOT PERMISSION. Defaulting to "no patterns" makes the frame-boundary
+    // guarantee inert exactly where it matters — a project that never configured it is
+    // the one least likely to have reviewed its source data. Opting out has to be said
+    // out loud, so an empty array is accepted and a missing key is refused.
+    throw new CliError(
+      `segment "${seg.id}": code mode requires timing.project.noGoPatterns.\n` +
+      'This mode renders source data straight into the frame, and unlike authored copy it\n' +
+      'gets no human review, so the no-go list is mandatory rather than optional.\n' +
+      'Set it to [] to state explicitly that this object needs no redaction.');
+  }
+  if (patterns.length) {
+    const hits = [];
+    for (const src of patterns) {
+      let re;
+      try { re = new RegExp(src, 'i'); }
+      catch { throw new CliError(`timing.project.noGoPatterns contains an invalid regular expression: ${JSON.stringify(src)}`); }
+      // Walk values rather than the serialised blob, so a hit can be reported by path.
+      const walk = (val, at) => {
+        if (typeof val === 'string' || typeof val === 'number') {
+          if (re.test(String(val))) hits.push({ src, at: at || '(root)' });
+        } else if (Array.isArray(val)) {
+          val.forEach((v, i) => walk(v, `${at}[${i}]`));
+        } else if (val && typeof val === 'object') {
+          for (const k of Object.keys(val)) {
+            if (re.test(k)) hits.push({ src, at: at ? `${at}.${k}` : k });
+            walk(val[k], at ? `${at}.${k}` : k);
+          }
+        }
+      };
+      walk(data, '');
+    }
+    if (hits.length) {
+      throw new CliError(
+        `segment "${seg.id}": code mode refused — ${hits.length} no-go match(es).\n` +
+        hits.slice(0, 10).map(h => `  /${h.src}/i matched at ${h.at}`).join('\n') +
+        (hits.length > 10 ? `\n  …and ${hits.length - 10} more` : '') +
+        '\n\nThe matched values are deliberately not printed. Redact the source object or\n' +
+        'narrow visual.pick; do not render it and rely on it being small on screen.');
+    }
+  }
+
+  const paths = [];
+  const html = jsonHtml(data, seg.id, '', 0, paths);
+  const emitted = new Set(paths);
+
+  // GUARD 2 — a highlight that addresses a path which does not exist must FAIL THE BUILD.
+  // Rendering nothing is indistinguishable from a highlight the viewer simply missed, and
+  // that failure mode has already cost this pipeline a card: a trigger whose target did not
+  // resolve returned null, animated nothing, and reported success. A check that cannot fire
+  // looks exactly like a check that passed.
+  const near = p => {
+    const want = String(p).toLowerCase();
+    const best = paths.filter(c => c.toLowerCase().includes(want.split(/[.[]/)[0])).slice(0, 6);
+    return best.length ? `\n  did you mean: ${best.join(', ')}` : `\n  available: ${paths.slice(0, 12).join(', ')}${paths.length > 12 ? ', …' : ''}`;
+  };
+  for (const h of v.highlights || []) {
+    if (!emitted.has(h.path)) {
+      throw new CliError(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
+    }
+  }
+  const prefix = `${seg.id}-path-`;
+  for (const t of seg.triggers || []) {
+    if (typeof t.target === 'string' && t.target.startsWith(prefix)) {
+      const ok = paths.some(p => codePathId(seg.id, p) === t.target);
+      if (!ok) throw new CliError(`segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`);
+    }
+  }
+
+  const cap = v.caption ? `<figcaption class="codecap">${esc(v.caption)}</figcaption>` : '';
+  return `<figure class="codewrap el" id="${seg.id}-code"><pre class="codeblock" data-seg="${esc(seg.id)}">${html}</pre>${cap}</figure>`;
+}
+
+function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'code' ? codeBlock(seg) : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
 
 function slide(seg, i) {
   const v = seg.visual || {}, m = mode(seg);
@@ -384,6 +570,24 @@ function autoTriggers(seg) {
       (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: `${seg.id}-edge-${e.id || j}`, action: 'flowEdge', payload: { particles } }));
       (v.edges || []).forEach((e, j) => { const eid = `${seg.id}-edge-${e.id || j}`; out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
     }
+  } else if (m === 'code') {
+    // The block carries `.el`, so like every other element it stays hidden until something
+    // reveals it. Nothing else will: codeFocus targets a FIELD, and showing a field does not
+    // show its hidden ancestor. Reveal the block itself first or the whole segment renders
+    // blank — with no error, because a trigger that resolves and animates an invisible
+    // element reports success exactly like one that worked.
+    out.push({ atMs: 300, target: `${seg.id}-code`, action: 'rise' });
+    // Walk the authored highlights in order. Each focus releases the previous one, so
+    // exactly one field is ever emphasised — the viewer is never asked which box to read.
+    const hs = v.highlights || [];
+    const step = Math.min(2600, (dur * 0.8) / (hs.length || 1));
+    hs.forEach((h, k) => out.push({
+      atMs: Math.round(h.atMs ?? (900 + k * step)),
+      target: codePathId(seg.id, h.path),
+      action: 'codeFocus',
+      payload: { label: h.label || '' },
+    }));
+    if (hs.length) out.push({ atMs: Math.round((hs[hs.length - 1].atMs ?? (900 + (hs.length - 1) * step)) + Math.min(2200, step)), target: `${seg.id}-code`, action: 'codeFocus', payload: { release: true } });
   } else if (m === 'live') {
     let at = 600;
     (v.hotspots || []).forEach(hp => { out.push({ atMs: at, target: `${seg.id}-cursor`, action: 'moveCursor', payload: { toId: `${seg.id}-hotspot-${hp.id}` } }); at += 650; out.push({ atMs: at, target: `${seg.id}-hotspot-${hp.id}`, action: 'click' }); at += 500; });
@@ -466,6 +670,29 @@ ${bg ? '' : theme.anim}
 .shot{margin:0;max-width:100%}.shot img{display:block;max-width:100%;max-height:calc(var(--fit) * 52vh);width:auto;height:auto;object-fit:contain;border-radius:.6vw;border:1px solid var(--color-card-border)}
 .shot figcaption{margin-top:.6vh;font-size:calc(var(--fit) * clamp(16px,.9vw,32px));color:var(--color-text-secondary)}
 .diagram-svg{width:100%;max-height:calc(var(--fit) * 58vh)}
+/* code mode. Highlight is outline + weight + dimming of the rest, never colour alone
+   (WCAG 1.4.1) — a viewer who cannot separate the syntax hues still sees which field
+   is being discussed, because the box and the contrast difference carry it. */
+.codewrap{width:100%;max-width:92%;margin:0}
+.codeblock{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;white-space:pre;
+  overflow:hidden;max-height:calc(var(--fit) * 62vh);margin:0;padding:calc(var(--fit) * 2.2vh);
+  border-radius:calc(var(--fit) * 1vh);background:var(--code-bg,#f6f7f9);
+  border:1px solid var(--code-br,#d6dae0);color:var(--code-fg,#1b1f24)}
+.j-key{color:var(--code-key,#8250df);font-weight:600}
+.j-str{color:var(--code-str,#0a6b40)}
+.j-num{color:var(--code-num,#0550ae)}
+.j-bool,.j-null{color:var(--code-num,#0550ae);font-style:italic}
+.j-punc{color:var(--code-punc,#6a737d)}
+.j-entry{display:inline;border-radius:3px;transition:opacity .35s ease,background .35s ease}
+/* a multi-line array/object cannot carry a clean outline as an inline box — it steps
+   around the text flow. Block-level containers give the highlight a real rectangle. */
+.j-entry.j-block{display:block}
+.codeblock.is-dim .j-entry.is-off{opacity:.28}
+.j-entry.is-focus{outline:calc(var(--fit) * 0.34vh) solid var(--code-focus,#1b1f24);
+  outline-offset:calc(var(--fit) * 0.5vh);background:var(--code-focus-bg,#fff3c4);
+  font-weight:700;opacity:1}
+.codecap{margin-top:calc(var(--fit) * 1.4vh);font-size:calc(var(--fit) * 1.7vh);opacity:.75;text-align:left}
 .dnode rect{fill:var(--color-card-bg);stroke:var(--ca,var(--color-accent-1));stroke-width:3}
 .dnode foreignObject{overflow:hidden}
 .nodelabel{width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 14px;color:var(--color-text-primary);font-family:var(--font-display);font-weight:700;font-size:22px;line-height:1.12;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
@@ -506,6 +733,22 @@ section[data-mode="diagram"] .safe{align-content:start;top:8%;gap:calc(var(--fit
 .pulsing rect,.pulsing.dedge{animation:fxPulse 1.4s ease-in-out infinite}
 @keyframes fxPulse{0%,100%{filter:drop-shadow(0 0 0 rgba(80,230,255,0))}50%{stroke-width:7;filter:drop-shadow(0 0 .6vw rgba(80,230,255,.85))}}`;
 
+// ---------------------------------------------------------------------------------------------
+// WARNING — EDITING THIS BLOCK
+//
+// Everything from here to the closing backtick is a TEMPLATE LITERAL in this .mjs file that
+// happens to contain client-side JavaScript. Two traps follow from that, and both surface far
+// from the edit, at a line number in the GENERATED output:
+//
+//   1. Most statement lines here are MINIFIED — many statements to a line. A `//` comment added
+//      mid-line therefore comments out the rest of THAT LINE, silently deleting working code.
+//      Put comments on their own line, as the existing ones are.
+//   2. A backtick anywhere in here — including inside a comment — CLOSES this template literal
+//      and the file stops parsing as intended. Use '...' or "..." in emitted code; write "backtick"
+//      in prose rather than typing one.
+//
+// `${...}` is build-time interpolation and runs in THIS file's scope, not the browser's.
+// ---------------------------------------------------------------------------------------------
 const runtime = `
 const masterTimeline=gsap.timeline({paused:true});window.masterTimeline=masterTimeline;
 // %%SEGMENTS_START%%
@@ -544,6 +787,18 @@ const fxDone=new Set();function once(tr){const k=tr.kind+'|'+tr.a+'|'+tr.t;if(fx
 function fxHost(tr,id){const el=id&&document.getElementById(id);return (el&&el.closest('.sl'))||document.getElementById('seg-'+((tr.s||1)-1));}
 function fxRect(id){const el=document.getElementById(id);if(!el)return null;const host=el.closest('.sl');if(!host)return null;const hb=host.getBoundingClientRect(),r=el.getBoundingClientRect();return{el,host,hb,x:r.left-hb.left,y:r.top-hb.top,w:r.width,h:r.height};}
 function spotlight(id,tr){const host=fxHost(tr,id);if(!host)return;if(tr.payload&&tr.payload.release){host.querySelectorAll('.fx-spot').forEach(n=>n.remove());return;}const r=fxRect(id);if(!r)return;show(r.el);const pad=Math.min(r.w,r.h)*0.25+14,d=document.createElement('div');d.className='fx-spot';d.style.left=(r.x-pad)+'px';d.style.top=(r.y-pad)+'px';d.style.width=(r.w+2*pad)+'px';d.style.height=(r.h+2*pad)+'px';host.appendChild(d);__sch(gsap.fromTo(d,{opacity:0},{opacity:1,duration:.4}));}
+function codeFocus(id,tr){const p=tr.payload||{};if(p.release){document.querySelectorAll('.codeblock.is-dim').forEach(b=>{b.classList.remove('is-dim');b.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off','is-focus'));});return;}
+const el=document.getElementById(id);if(!el)return;const blk=el.closest('.codeblock');if(!blk)return;show(blk);
+/* showing a field cannot show its hidden .el ancestor, so walk up */
+for(let a=blk;a;a=a.parentElement){if(a.classList&&a.classList.contains('el'))show(a);if(a.classList&&a.classList.contains('sl'))break;}
+blk.classList.add('is-dim');
+blk.querySelectorAll('.j-entry').forEach(n=>{n.classList.remove('is-focus');n.classList.add('is-off');});
+// the focused field and everything inside it stay lit; so do its ancestors, or a nested
+// field would sit inside a dimmed parent and read as disabled rather than as context.
+el.classList.remove('is-off');el.classList.add('is-focus');
+el.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off'));
+for(let a=el.parentElement;a&&a!==blk;a=a.parentElement){if(a.classList.contains('j-entry'))a.classList.remove('is-off');}
+__sch(gsap.fromTo(el,{opacity:.55},{opacity:1,duration:.45,ease:'power2.out'}));}
 function emphasize(id,tr){const el=document.getElementById(id);if(!el)return;show(el);const sc=(tr.payload&&tr.payload.scale)||1.12;__sch(gsap.fromTo(el,{scale:1},{scale:sc,duration:.5,yoyo:true,repeat:1,ease:'power2.inOut',transformOrigin:'center center'}));}
 function zoomFocus(id,tr){const p=tr.payload||{},host=fxHost(tr,id),surf=host&&(host.querySelector('.viewport')||host.querySelector('.diagram-svg')||host.querySelector('.stage-body'));if(!surf)return;if(p.release){__sch(gsap.to(surf,{scale:1,x:0,y:0,duration:.6,ease:'power2.inOut'}));return;}const sc=p.scale||1.4;let ox=0,oy=0;const r=fxRect(id);if(r){const cb=surf.getBoundingClientRect(),cx=cb.left-r.hb.left+cb.width/2,cy=cb.top-r.hb.top+cb.height/2;ox=(cx-(r.x+r.w/2))*sc;oy=(cy-(r.y+r.h/2))*sc;}__sch(gsap.to(surf,{scale:sc,x:ox,y:oy,duration:.7,ease:'power2.inOut',transformOrigin:'center center'}));}
 function callout(id,tr){const r=fxRect(id);if(!r)return;show(r.el);const c=document.createElement('div');c.className='callout';c.textContent=(tr.payload&&tr.payload.text)?String(tr.payload.text):'';c.style.left=Math.max(0,r.x)+'px';c.style.top=Math.max(0,r.y-16)+'px';c.style.transform='translateY(-100%)';r.host.appendChild(c);__sch(gsap.fromTo(c,{opacity:0,y:12},{opacity:1,y:0,duration:.45,ease:'power3.out'}));}
@@ -552,7 +807,7 @@ function flowEdge(id,tr){const path=document.getElementById(id);if(!path)return;
 function pulsePath(tr){const chain=(tr.payload&&tr.payload.chain&&tr.payload.chain.length)?tr.payload.chain:[tr.a];const first=document.getElementById(chain[0]);const scope=(first&&first.closest('.sl'))||document;scope.querySelectorAll('.pulsing').forEach(el=>el.classList.remove('pulsing'));chain.forEach(id=>{const el=document.getElementById(id);if(el){show(el);el.classList.add('pulsing');}});if(window.__sizzleAnim&&window.__sizzleAnim.scan)window.__sizzleAnim.scan();}
 function stepBadge(id,tr){const r=fxRect(id);if(!r)return;show(r.el);const b=document.createElement('div');b.className='stepbadge';b.textContent=String((tr.payload&&tr.payload.stepIndex)||'');b.style.left=r.x+'px';b.style.top=r.y+'px';r.host.appendChild(b);__sch(gsap.fromTo(b,{scale:0},{scale:1,duration:.4,ease:'back.out(2)'}));}
 function progressBar(tr){const host=fxHost(tr,null);if(!host)return;let bar=host.querySelector('.progress');if(!bar){bar=document.createElement('div');bar.className='progress';const i=document.createElement('i');bar.appendChild(i);host.appendChild(bar);}const v=Math.max(0,Math.min(1,(tr.payload&&tr.payload.value!=null)?tr.payload.value:1));__sch(gsap.to(bar.querySelector('i'),{width:(v*100)+'%',duration:.5,ease:'power2.out'}));}
-function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
+function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'codeFocus':return void(once(tr)&&codeFocus(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
 const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:segments[i].audioEnd+LINGER});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ''}
 // --- footage frame injection (real user clip). Maps absolute time -> extracted frame file and swaps
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.
@@ -630,8 +885,13 @@ if (!fs.existsSync(gsapPath)) {
 const gsapInline = `<script>${fs.readFileSync(gsapPath, 'utf8')}</script>`;
 // Materialize EVERY slide first. narrative()/live() call checkedSrc(), so asserting before this map
 // would inspect an empty srcErrors list and silently omit unsafe imagery from the final HTML.
-const slideHtml = timing.segments.map(slide).join('');
-assertNoSrcErrors();   // every invalid evidence source, named by segment id, reported in ONE error
+//
+// Guarded because this is where per-segment refusals are raised — a `code` mode path
+// boundary, a highlight addressing a field that does not exist, a no-go match. Unguarded,
+// those surfaced as a raw stack trace, which reads as an engine crash rather than as the
+// deliberate refusal it is, and buries the one line the author needs.
+const slideHtml = guard(() => timing.segments.map(slide).join(''));
+guard(() => assertNoSrcErrors());   // every invalid evidence source, named by segment id, reported in ONE error
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=${w},height=${h},initial-scale=1">${gsapInline}<style>${css}</style></head><body><div id="stage">${slideHtml}${endCardSlide}<audio id="vo" preload="auto" src="voiceover.mp3"></audio></div><script>${runtime}</script></body></html>`;
 const outPath = guard(() => resolveOutput(dir, cli.values.out ?? 'video-auto.html', { apply: cli.apply, replace: cli.replace, label: 'output' }));
 if (!cli.apply) {

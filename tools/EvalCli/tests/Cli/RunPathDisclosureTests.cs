@@ -349,9 +349,16 @@ public class RunPathDisclosureTests
 
         var stderr = await ReportedAsync(() => BaselineCommand.ExecuteAsync(plan, console, CancellationToken.None));
 
-        stderr.Should().NotContain(Disclosed).And.Contain(Alias);
+        // The engine stopped quoting either suite name in this refusal and now carries them on
+        // ComparisonRefusedException.Property instead, so there is no longer anything in this
+        // message for the redactor to alias. The property under test is unchanged and is what is
+        // asserted: the machine path the artifact carried must not reach stderr. The refusal is
+        // identified by the tool's own prose and exit code so this cannot pass by refusing for an
+        // unrelated reason. The redactor's own stderr coverage is elsewhere in this class.
+        stderr.Should().NotContain(Disclosed);
         stderr.Should().NotContain(workspace.Root);
-        stderr.Should().Contain("artifacts/baseline.json");
+        stderr.Should().Contain("artifacts/baseline.json").And.Contain("is a run of a different suite");
+        stderr.Should().Contain($"exiting {(int)ExitCode.ComparisonRefused}");
     }
 
     /// <summary>Produces a real baseline at artifacts/baseline.json by conducting the suite.</summary>
@@ -426,9 +433,17 @@ public class RunPathDisclosureTests
             )
         );
 
-        stderr.Should().NotContain(Disclosed).And.Contain(Alias);
+        stderr.Should().NotContain(Disclosed);
         stderr.Should().NotContain(workspace.Root);
-        stderr.Should().Contain("artifacts/baseline.json");
+        stderr.Should().Contain("artifacts/baseline.json").And.Contain("could not be compared against the baseline");
+        stderr.Should().Contain($"exiting {(int)ExitCode.ComparisonRefused}");
+
+        // The foreign-suite branch specifically. The wrapper prose and the exit code above are
+        // shared by every whole-artifact refusal — a seed divergence and a harness-settings
+        // divergence emit both — so on their own they do not establish that this invocation
+        // reached the branch under test. This clause is emitted only by BaselineComparison.Remedy
+        // for Property == "suiteName".
+        stderr.Should().Contain("almost always means the wrong artifact was named");
     }
 
     [Fact]

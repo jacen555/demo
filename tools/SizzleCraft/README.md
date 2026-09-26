@@ -45,12 +45,60 @@ place to fix a bug.
 | `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). |
 | `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. |
 | `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
+| `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
 | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
 
 Stage numbers refer to the pipeline contract in
 [`references/pipeline-contract.md`](../../.github/skills/demo-recording/references/pipeline-contract.md).
 
 **`write-script.mjs` (S1) is deliberately not here** — see below.
+
+## Configuration precedence
+
+Every `SIZZLECRAFT_*` environment knob resolves through one helper (`resolveKnob` /
+`resolveBooleanKnob` in `src/cli-support.mjs`) under one rule, with no exceptions:
+
+```
+argv  overrides  env  overrides  config  overrides  default
+```
+
+Most specific wins: a flag typed on this invocation beats a variable exported for this
+shell, which beats a value committed to `timing.json`, which beats what the engine assumes
+when nobody said. A configured `0` is a **value**, not an absence — it survives to be
+validated and refused rather than being silently replaced by the default.
+
+| Knob | Config counterpart |
+|---|---|
+| `SIZZLECRAFT_FPS` | `timing.project.fps` |
+| `SIZZLECRAFT_MODE` | `timing.project.mode` (`draft` \| `live` \| `publish`) |
+| `SIZZLECRAFT_FRAME_FORMAT` | `timing.project.frameFormat` (`png` \| `jpeg`) |
+| `SIZZLECRAFT_JPEG_QUALITY` | `timing.project.jpegQuality` |
+| `SIZZLECRAFT_WORKERS` | — (auto-sized from core count) |
+| `SIZZLECRAFT_RESUME` | `--resume` |
+| `SIZZLECRAFT_NO_DEDUP` / `SIZZLECRAFT_DEDUP_HOLDS` | — |
+| `SIZZLECRAFT_OUTRO_MS` | `--ms` |
+| `SIZZLECRAFT_MUSIC_PRESET` | `--preset` (legacy `SIZZLE_MUSIC_PRESET` still read, canonical name wins) |
+
+This is enforced, not merely documented:
+`envKnobs_everyDirectEnvironmentRead_goesThroughTheSharedResolver` in
+`tests/env-precedence.test.mjs` fails if any file under `src/` reads the environment
+directly, **anywhere in the tree**, including inside `cli-support.mjs` outside the
+resolver's own two accesses — which are exempted by character offset, not by line or by
+file. It catches every **textual** form of the read: dotted (`process.env.X`), bracketed
+(`process.env['X']`), computed access to the environment object itself
+(`process['env']['X']`), destructuring, aliasing that object (`const e = process.env`),
+an access split across lines, and any variable prefix — not just `SIZZLECRAFT_`.
+
+**What it does not catch, and why that is the right boundary.** Aliasing the *global*
+first — `const p = process; p.env.X` — defeats any purely textual rule, and closing that
+would need a real parser. This guard exists to stop a knob arriving by **copying a
+neighbour**, which is how all six of the current ones arrived; it is not a sandbox against
+a determined author. The limit is stated in the scanner's own doc comment so the code and
+this page agree.
+
+Before that rule existed, `FPS` and `MODE` read config first while three neighbours read
+env first, so a half-fps draft silently rendered at 30 — and `SIZZLE_MUSIC_PRESET` kept a
+non-conforming prefix unnoticed, because the first scanner only looked for `SIZZLECRAFT_`.
 
 ## Safe defaults and exit codes
 
@@ -101,6 +149,128 @@ rather than silently skipping** if it is missing; pass `--no-schema` to skip tha
 deliberately. `preview` treats a non-empty layout audit as a failure, matching
 `frame-capture` — the two stages must agree about whether the same condition is fatal.
 
+**A silent window is a measurement, not a failure.** `check-levels` reports three states,
+not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
+pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1`. Treating
+`-inf` as a failed probe made the last gate before delivery exit `1` on every correct
+narration-only render, and it named a cause — "the file may have no audio track" — that
+was false. That diagnosis is now only made after the input dump has actually been checked
+for an audio stream.
+
+**Proving lineage after the fact is not possible, and the report says so.** `validate-timing`
+treats a calibration with no `textHash` as lineage UNPROVEN. Only `voice` writes one — and
+**`voice --apply` is not a verification step, it is a regeneration**: it re-synthesises
+every clip and overwrites `voiceover.mp3` and `timing.json`. So the documented route to
+the proof read like a check and was a rewrite.
+
+A `stamp-lineage` tool was built here to close that, and **withdrawn**. It is worth
+recording why, because the next person to want it will reach the same design:
+
+`textHash` is a fingerprint over the **exact narration bytes**. No *voice-stage-bound*
+record of them survives. `voice` writes six things — the segment clips, `voiceover.mp3`,
+`timing.json`, `calibration-observed.json`, `sync-mapping.md` and `heal-log.txt` — and the
+only record of what was *spoken* is `segments[].audio.words`, the TTS service's
+tokenisation, which does not voice punctuation. Everything else is a summary: `chars` is a
+count. So an edit from `"… ready?"` to `"… ready!"` preserves word count, character count,
+clip duration **and** the word record, while changing the hash. `remix` then re-seals the
+edited timeline without re-synthesising, so `timingHash` verifies too — it proves
+self-consistency, never provenance.
+
+**`storyboard.html` is the near-miss, and it is worth knowing why it does not count.**
+S2 embeds `voiceoverText` verbatim (`write-storyboard.mjs:83`), so the exact narration
+*does* exist on disk. But S2 renders it from whatever `timing.json` holds **at the time it
+runs**, before and independently of synthesis, and re-running it after an edit silently
+updates it. It follows the script rather than recording what was spoken — a copy, not a
+receipt. Nothing binds a given `storyboard.html` to a given voice run, so it cannot
+witness one.
+
+Each candidate gate was real and one inferential step short of the claim:
+
+| Gate | Actually proves | Claim needed |
+|---|---|---|
+| `endMs - startMs === audio.durationMs` | the windows came from *some* audio | *this* audio |
+| `{words, chars, clipMs}` | a summary matches | the text is identical |
+| `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
+| normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
+| `sha256(--music)` unchanged | the track is the same file | the gain was ever calibrated for it |
+
+**Evidence weaker than the claim cannot establish the claim.** The correct response to
+insufficient evidence is to not certify, so there is no tool — and leaving a calibration
+UNPROVEN is a correct outcome. It costs only the word budget, which is evaluated rather
+than suppressed.
+
+### The music gain pin — a confirmation, not a measurement
+
+`remux-music.mjs` pins `--music-gain` to the music source (bug-ledger 16: a generated bed
+at −43.1 dB RMS and a licensed master at −11.4 dB are 31.7 dB apart, both accept the same
+in-range gain, and the narration-gap checks measure *presence*, not *level*).
+
+The pin requires `--confirm-gain` on **first use**, whenever **either** the source or the
+gain changes, and whenever the existing pin **records no confirmation** — the shape older
+self-pinning versions wrote. The earlier version asked only whether the source had
+*changed*, which is the last row of the table above: a changed input shows a calibration
+is stale, not that one ever happened. That left a first run pinning its own unconfirmed
+default, and left a legacy lock being read as agreement when it only ever recorded the
+tool agreeing with itself.
+
+`--confirm-gain` records a **provisional acceptance**, and the order it implies is the
+only one that can actually be carried out — `check-levels.mjs` measures a *rendered file*,
+so there is nothing to measure until the remux has run:
+
+1. `--confirm-gain` to accept the gain and produce the mix;
+2. `node src/check-levels.mjs --file <out>` to measure it;
+3. read the lead-in window, where the bed plays alone, **before delivering**.
+
+`confirmedAt` and `evidence` are written only on a run where someone actually passed
+`--confirm-gain`; a settled pin is left untouched rather than restamped.
+
+**Known gap — what this pin does not do.** It records that an operator confirmed a gain,
+not that anyone measured the result. `music-gain.lock.json` carries
+`evidence: "operator-confirmed"` so the file cannot be misread as a calibration record. A
+measured pin is not buildable from what exists today: `check-levels.mjs` writes no
+artifact, measures a *rendered video* rather than the music source, has no way to bind a
+reading to the source hash, and the render it would measure does not exist until after
+the remux the pin guards. Closing it properly means `remux-music` taking its own astats
+reading of the source and recording `sourceRms + 20·log10(gain)` as the predicted bed
+level — a real measurement, and a change that trades directly against keeping the plan
+path cheap. It is named here rather than approximated in code.
+
+### Re-running the voice stage — what it actually costs, and the recovery
+
+**TTS here is length-deterministic, not byte-deterministic.** Measured on a real
+8-segment project, re-running `voice` on *unchanged* narration produced:
+
+| | |
+|---|---|
+| `durationMs`, every segment `endMs` | identical to the millisecond |
+| every clip's byte **length** | identical to the byte |
+| every clip's duration | identical |
+| **content hash — 5 of 8 segments + `voiceover.mp3`** | **different** |
+
+Neural synthesis varies sub-perceptually between runs while landing on the same frame
+count. This is the hardest shape of divergence to catch: every cheap check agrees and only
+a content hash disagrees. Do not write a check that compares TTS audio across runs by
+anything but content — and do not assume a re-run reproduces a shipped deliverable.
+
+**The recovery, if you have already re-run.** Nothing is lost. `textHash` hashes the
+narration **text**, not the audio, which makes the two separable: keep the re-run's
+`calibration-observed.json` and `timing.json`, restore the audio files that produced the
+shipped render, and you end with lineage proven *and* a bit-reproducible artefact. The
+general property, which is the reason to fingerprint inputs rather than outputs:
+
+> **A fingerprint over the input is separable from the output it certifies; a fingerprint
+> over the output is not.**
+
+Had `textHash` hashed the audio, that recovery would not exist — the choice would have
+been between proven lineage and a reproducible deliverable.
+
+Two notes on the recovery. `remix` is the reflow path that does *not* re-synthesise —
+it reuses the `segment_*.mp3` clips on disk byte-for-byte and only changes pacing. And
+`vo-envelope.json` is the one artefact derived from audio *content*; it is recomputed on
+every run and never compared against a stored value, so nothing breaks, but it describes
+whichever audio was on disk when it last ran — regenerate it if you restore clips and
+intend to re-render.
+
 ## How to run
 
 ```powershell
@@ -108,7 +278,7 @@ npm install                 # first time — pulls playwright, msedge-tts, music
 node --test                 # run the tests
 
 # verification
-node src/validate-timing.mjs                      # schema + contiguity + word budget
+node src/validate-timing.mjs                      # schema + contiguity + word rate
 node src/validate-timing.mjs --strict             # also fail on over-budget segments
 node src/check-levels.mjs --file "Part 1=a.mp4" --file "Part 2=b.mp4"
 node src/preview.mjs --apply                      # screenshot every segment + audit layout
@@ -125,7 +295,7 @@ node src/frame-capture.mjs                     # then: --apply
 node src/encode-mp4.mjs                        # then: --apply --replace
 node src/vo-envelope.mjs                       # then: --apply --replace
 node src/make-music.mjs --out bed.wav --seconds 240 --preset bright   # then: --apply
-node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply
+node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply --confirm-gain
 
 # pure helpers
 node src/canonical-json.mjs fixed-key-order-json-utf8-v1 < input.json
@@ -150,7 +320,7 @@ directly by hand. See the skill for the stage ordering.
 
   | Script | Was | Now |
   |---|---|---|
-  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json`, then `intake.wordsPerSecond`, then a default |
+  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json` → `aggregate.observedEffWps` (measured), then `intake.wordsPerSecond` (estimate), then a default. The margin comes from `intake.wpsSafetyMargin` only — it hedges a guess and is not applied to a measurement |
   | `write-storyboard.mjs` | Hardcoded per-video lede string | `project.lede` |
   | `preview.mjs` | Hardcoded list of segment ids | Defaults to all segments; pass ids to narrow |
   | `make-music.mjs` | Forked chord progression | Named presets (`warm`, `bright`), selectable by argv |
@@ -163,6 +333,35 @@ directly by hand. See the skill for the stage ordering.
   fail; path confinement follows links; `--help` touches nothing. Covered by
   `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs` and
   `tests/safe-defaults.test.mjs`.
+- **A verifier must also be able to *pass*.** `validate-timing`'s contiguity check
+  asserted strict adjacency, but `voice.mjs` deliberately inserts a lead-in and
+  inter-segment silence — so every timeline the real pipeline produces failed on every
+  segment. That is the mirror of a check that can never fail, and worse in daily use: a
+  line that is always red trains the reader to stop reading. Overlaps now fail; gaps pass
+  and are reported, with uneven ones called out.
+- **The word budget knows the difference between a guess and a measurement.** Once the
+  windows come from synthesised audio *and* the rate is a measurement of that same audio,
+  `words / window` **is** that rate by construction — so a budget built from it, minus a
+  safety margin, flags every segment above the mean by definition. In that one case the
+  budget is skipped and **rate variance against the measured mean** is reported instead
+  (`hard +4.1%`), which is true and actionable. The budget and its margin still apply
+  wherever the comparison is real: a measured rate against authored windows is a genuine
+  prediction, and an estimate against measured windows says whether the audio came out as
+  planned. Every run states which rate it used and where it came from, so a silent
+  fallback can never again look like a measurement. See `tests/word-rate.test.mjs`.
+- **The suppression requires lineage, not just measured windows.** `endMs - startMs ===
+  audio.durationMs` proves the windows came from *some* audio — not that the calibration
+  measures the text in the file now. Edit a segment's narration without re-running the
+  voice stage and that predicate still holds, which would wave through exactly the case
+  the budget exists to catch. So `voice.mjs` records a **`textHash`** — a sha256 of each
+  segment's exact narration — and `validate-timing` checks it, along with segment order
+  and naming. `{words, chars, clipMs}` are kept only as cheap pre-checks that give better
+  messages: they are a *summary*, and every summary collides — `"word0 word1 word2 word3"`
+  and `"other word1 word2 word3"` agree on all three while being different scripts. A
+  calibration with no fingerprint is **unproven**, not intact, so the budget is evaluated.
+  A mismatch is **not** an error — editing and re-validating before re-synthesising is the
+  normal loop — it reports `calibration lineage: STALE`, names both sides of the
+  divergence, and applies the measured rate as a *prediction* with the margin restored.
 
 **Breaking change for existing build sequences**
 
@@ -195,7 +394,7 @@ sequences must add the flags.**
 | Package | Why |
 |---|---|
 | `playwright` | Headless browser for frame capture. No practical .NET equivalent for this workload — the reason this domain is Node (ADR 0002). |
-| `msedge-tts` | Narration synthesis. Deterministic, which the timing solve depends on. |
+| `msedge-tts` | Narration synthesis. **Length-deterministic, not byte-deterministic** — see "Re-running the voice stage" below. The timing solve depends on the length determinism, and nothing depends on the bytes. |
 | `music-metadata` | Cheap audio probing without a full decode. |
 | `ajv` | JSON Schema validation for `validate-timing.mjs`, against `src/timing-schema.json`. The script already imported it but never declared it, so schema validation failed at runtime; declaring it is what makes that stage real. Draft 2020-12 support is the reason for `ajv` specifically, and it brings 4 small transitive packages. |
 

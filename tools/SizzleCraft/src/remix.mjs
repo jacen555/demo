@@ -7,12 +7,11 @@
 // Decoding is the only way to see the real tail.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
-import { canonicalBytes } from './canonical-json.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations } from './cli-support.mjs';
+import { normalizeEndCardFields } from './end-card.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
 
 const USAGE = `
 remix — re-solve inserted silences from REAL measured audio and reflow the timeline
@@ -183,9 +182,12 @@ if (outroFile) parts.push(outroFile);
 fs.writeFileSync(voiceOutPath,
   Buffer.concat(parts.map((p, i) => { const b = fs.readFileSync(p); return i === 0 ? b : b.subarray(audioStart(b)); })));
 
-timing.contentMs = contentMs;
-timing.outroMs = outroRealMs;
-timing.durationMs = contentMs + outroRealMs;
+// remix is the second producer of a timing file, and it wrote these unconditionally — so a
+// disabled end card still shipped contentMs/outroMs/builderVersion and the result failed the
+// schema that forbids them. Same rule, same helper as voice.mjs: state it once, apply it at
+// every producer. `outroRealMs` is already 0 when the end card is off, so durationMs is
+// unchanged; what changes is that the end-card-only fields are no longer left behind.
+normalizeEndCardFields(timing, { contentMs, outroMs: outroRealMs });
 timing.leadInMs = leadRealMs;
 
 const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));
@@ -193,7 +195,7 @@ const driftMs = Math.abs(voiceMs - timing.durationMs);
 if (driftMs > Math.max(TOLERANCE_MS, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms`);
 
 delete timing.timingHash;
-timing.timingHash = crypto.createHash('sha256').update(canonicalBytes(timing)).digest('hex');
+timing.timingHash = timingSeal(timing);
 fs.writeFileSync(timingOutPath, JSON.stringify(timing, null, 2));
 
 const mm = ms => `${Math.floor(ms / 60000)}:${String(Math.round(ms % 60000 / 1000)).padStart(2, '0')}`;

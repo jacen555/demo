@@ -76,7 +76,7 @@ public sealed class ImpactSelectorFallbackTests
     }
 
     [Fact]
-    public void Select_AnAbsoluteChangedPath_NamesThatPathInTheFallbackReason()
+    public void Select_AnAbsoluteChangedPath_DescribesItInTheFallbackReasonWithoutQuotingIt()
     {
         var result = ImpactSelector.Select(
             ImpactFixtures.SuiteOf(Skippable),
@@ -84,7 +84,24 @@ public sealed class ImpactSelectorFallbackTests
             PassingBaseline
         );
 
-        result.FallbackReason.Should().Contain("C:\\repo\\src\\a.cs", "a fallback nobody can trace is noise");
+        // A drive-rooted path names a machine, and this reason is rendered into a published
+        // report. The redaction still distinguishes one rejected entry from another, which is
+        // what "a fallback nobody can trace is noise" actually requires.
+        result.FellBackToFullSuite.Should().BeTrue();
+        result.FallbackReason.Should().NotContain("C:\\repo").And.Contain("redacted");
+    }
+
+    [Fact]
+    public void Select_AnOrdinaryUntraceableChangedPath_StillNamesItBecauseItDisclosesNothing()
+    {
+        var result = ImpactSelector.Select(
+            ImpactFixtures.SuiteOf(Skippable),
+            ["src/a.cs", "../outside/a.cs"],
+            PassingBaseline
+        );
+
+        result.FellBackToFullSuite.Should().BeTrue();
+        result.FallbackReason.Should().Contain("../outside/a.cs", "a fallback nobody can trace is noise");
     }
 
     [Fact]

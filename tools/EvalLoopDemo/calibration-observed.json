@@ -1,0 +1,84 @@
+{
+  "voiceId": "en-US-AndrewNeural",
+  "roundedSpeed": 1.2,
+  "aggregate": {
+    "words": 950,
+    "speechMs": 269195,
+    "observedEffWps": 3.529,
+    "observedSafeWps": 2.941
+  },
+  "segments": [
+    {
+      "id": "hard",
+      "words": 98,
+      "chars": 509,
+      "clipMs": 25824,
+      "speechMs": 25750,
+      "effWps": 3.806,
+      "textHash": "fbf8127d12947cc730584b1c352a9540a4e8d13fc3330cb405470bb35589f36d"
+    },
+    {
+      "id": "scenario",
+      "words": 184,
+      "chars": 1069,
+      "clipMs": 51768,
+      "speechMs": 51684,
+      "effWps": 3.56,
+      "textHash": "ab8ed6f1fa743f3035e6096e8334e6301e20e3605ba623e196241437861ef615"
+    },
+    {
+      "id": "freeform",
+      "words": 170,
+      "chars": 925,
+      "clipMs": 46512,
+      "speechMs": 46417,
+      "effWps": 3.662,
+      "textHash": "36de724760210375ce8d2a1b5d5180f0fc37347dba3c3cb5dc011c7597a2bf00"
+    },
+    {
+      "id": "many",
+      "words": 99,
+      "chars": 560,
+      "clipMs": 28656,
+      "speechMs": 28572,
+      "effWps": 3.465,
+      "textHash": "6997b6f14d2f877bc6b392e97377b4f2e4a86e6791cf01e6fac0ffa9196165b5"
+    },
+    {
+      "id": "dimensions",
+      "words": 118,
+      "chars": 686,
+      "clipMs": 35232,
+      "speechMs": 35148,
+      "effWps": 3.357,
+      "textHash": "97e9bd0049c82bb2a1db5cbb5f3e9f87f99db5845281c1ed71cc986165c8552c"
+    },
+    {
+      "id": "twotier",
+      "words": 67,
+      "chars": 373,
+      "clipMs": 20352,
+      "speechMs": 20256,
+      "effWps": 3.308,
+      "textHash": "8d572018c4dab2db2751ad440e5da6a4eae0ffe8b2769bdb7a89d9aa3ae5c149"
+    },
+    {
+      "id": "blindspot",
+      "words": 75,
+      "chars": 426,
+      "clipMs": 21480,
+      "speechMs": 21396,
+      "effWps": 3.505,
+      "textHash": "27ef37a4e9bc530a7c0c82d52cce8cbe9067162e52a4ed9c65b070a4313f0b6f"
+    },
+    {
+      "id": "loop",
+      "words": 139,
+      "chars": 829,
+      "clipMs": 40056,
+      "speechMs": 39972,
+      "effWps": 3.477,
+      "textHash": "86324204356057afea708a8b8719125b4e2e479a0d36922e176f06a68f059370"
+    }
+  ]
+}

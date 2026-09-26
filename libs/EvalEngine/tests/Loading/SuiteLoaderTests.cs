@@ -45,6 +45,46 @@ public class SuiteLoaderTests
         scenario.Slicing.Tags.Should().Contain(new KeyValuePair<string, string>("area", "health"));
     }
 
+    /// <summary>
+    /// A carve-out a suite author cannot write is a carve-out that does not exist.
+    /// </summary>
+    [Fact]
+    public void LoadFromJson_ScenarioDeclaringAnExpectedFailure_CarriesTheCarveOutOntoTheScenario()
+    {
+        var json = MinimalSuite.Replace(
+            "\"assertions\": [\"statusIs:200\"]",
+            "\"assertions\": [\"statusIs:200\"], \"expectedFailure\": { \"reason\": \"health probe is not wired yet\" }",
+            StringComparison.Ordinal
+        );
+
+        var result = SuiteLoader.LoadFromJson(json, "minimal.json");
+
+        result.Succeeded.Should().BeTrue(because: string.Join("; ", result.Messages));
+        result.Suite!.Scenarios[0].Grading.ExpectedFailure!.Reason.Should().Be("health probe is not wired yet");
+    }
+
+    [Fact]
+    public void LoadFromJson_ScenarioDeclaringNoExpectedFailure_CarriesNone()
+    {
+        var result = SuiteLoader.LoadFromJson(MinimalSuite, "minimal.json");
+
+        result.Suite!.Scenarios[0].Grading.ExpectedFailure.Should().BeNull();
+    }
+
+    [Fact]
+    public void LoadFromJson_ExpectedFailureWithABlankReason_ReportsAnErrorRatherThanStoringIt()
+    {
+        var json = MinimalSuite.Replace(
+            "\"assertions\": [\"statusIs:200\"]",
+            "\"assertions\": [\"statusIs:200\"], \"expectedFailure\": { \"reason\": \"   \" }",
+            StringComparison.Ordinal
+        );
+
+        var result = SuiteLoader.LoadFromJson(json, "minimal.json");
+
+        result.Succeeded.Should().BeFalse();
+    }
+
     [Fact]
     public void LoadFromJson_RepetitionPolicyAsCount_ProducesThatManyRepetitions()
     {

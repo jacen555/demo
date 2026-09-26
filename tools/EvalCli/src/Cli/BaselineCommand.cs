@@ -257,10 +257,7 @@ internal static class BaselineCommand
 
         // The whole suite, always. RunPlan refuses --changed-since here: a baseline assembled
         // from a narrowed run records only the scenarios that ran, and every later comparison
-        // would read the missing ones as removed. Pinned anyway, so the seed schedule is settled
-        // in one place for both commands rather than defaulted in one of them.
-        provider.GetRequiredService<SeedSchedule>().PinTo(suite, [.. suite.Scenarios.Select(s => s.Identity.Id)]);
-
+        // would read the missing ones as removed.
         var candidate = await SuiteDiscovery
             .ConductAsync(provider.GetRequiredService<RunCoordinator>(), suite, cancellationToken)
             .ConfigureAwait(false);

@@ -696,4 +696,7 @@ internal sealed class CancellingSeedSource(CancellationTokenSource cancellation,
 
         return Interlocked.Increment(ref _next);
     }
+
+    /// <summary>The draw the coordinator actually makes, counted and cancelling the same way.</summary>
+    public long SeedFor(string scenarioId, int repetition) => NextSeed();
 }

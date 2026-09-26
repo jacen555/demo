@@ -345,15 +345,27 @@ public sealed class RunCoordinatorTests
         result.ScenarioResults[1].RepetitionPolicyUsed.Repetitions.Should().Be(5);
     }
 
+    /// <summary>
+    /// A scenario's runs appear in the artifact in repetition order, whatever the throttle.
+    /// </summary>
+    /// <remarks>
+    /// Checked against what the runner was actually dispatched rather than against a seed
+    /// sequence: the seed is a function of the repetition, not a counter, so an ascending seed
+    /// would pin the fixture that produced it rather than the ordering the artifact promises.
+    /// </remarks>
     [Fact]
     public async Task RunAsync_Repetitions_AreOrderedByRepetitionNumberInTheArtifact()
     {
+        var runner = new StubRunner(ScenarioKind.Rest);
         var result = await CoordinatorFixtures
-            .Coordinator([new StubRunner(ScenarioKind.Rest)], options: new RunCoordinatorOptions { MaxConcurrency = 4 })
+            .Coordinator([runner], options: new RunCoordinatorOptions { MaxConcurrency = 4 })
             .RunAsync(CoordinatorFixtures.Suite(CoordinatorFixtures.Scenario(repetitions: 6)), default);
 
-        var seeds = result.ScenarioResults.Single().Runs.Select(run => run.Transcript.Seed).ToArray();
-        seeds.Should().BeInAscendingOrder("the counting seed source hands seeds out in repetition order");
+        result
+            .ScenarioResults.Single()
+            .Runs.Select(run => run.Transcript.Seed)
+            .Should()
+            .Equal(runner.Seen.OrderBy(record => record.Repetition).Select(record => record.Seed));
     }
 
     /// <summary>
@@ -499,7 +511,12 @@ public sealed class RunCoordinatorTests
         var run = result.ScenarioResults.Single().Runs.Single();
         run.Status.Should().Be(RunStatus.Error);
         run.AssertionResults.Should().BeEmpty("there was no evidence to grade");
-        run.ErrorDetail.Should().NotBeNullOrWhiteSpace().And.Contain("the stated reason");
+
+        // The reason is described rather than repeated: it is written by an injected runner and
+        // this value reaches both the committed artifact and the build log. The runner's own
+        // account stays in the transcript attribute, under the runner's own policy.
+        run.ErrorDetail.Should().NotBeNullOrWhiteSpace().And.NotContain("the stated reason").And.Contain("redacted");
+        RunnerFixtures.Attribute(run.Transcript, TransportAttributes.Failure).Should().Be("the stated reason");
     }
 
     /// <summary>

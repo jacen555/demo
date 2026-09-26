@@ -8,9 +8,10 @@ namespace Forge.EvalEngine.Comparison;
 /// A scenario that diverged is reported as
 /// <see cref="ScenarioClassification.NotComparable"/>, because the rest of the suite is still
 /// comparable. This exception is for the divergences that make the whole comparison meaningless —
-/// a different schema version, a different suite, a different root seed, or different harness
-/// settings. There is no partial answer to give, and a confident delta computed across two runs
-/// that were not conducted alike is worse than a refusal.
+/// a different schema version, a different suite, a different root seed, different harness
+/// settings, or an artifact that recorded no harness settings at all. There is no partial answer
+/// to give, and a confident delta computed across two runs that were not conducted alike is worse
+/// than a refusal.
 /// </para>
 /// </remarks>
 public sealed class ComparisonRefusedException : Exception
@@ -31,7 +32,8 @@ public sealed class ComparisonRefusedException : Exception
 
     /// <summary>
     /// Gets the artifact property that diverged — <c>schemaVersion</c>, <c>suiteName</c>,
-    /// <c>seed</c>, or the harness setting's key.
+    /// <c>seed</c>, <c>harnessConfig</c> when a side recorded no settings at all, or the harness
+    /// setting's key when the two disagree about one.
     /// </summary>
     public string? Property { get; init; }
 }

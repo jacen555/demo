@@ -207,6 +207,27 @@ internal static class SuiteDiscovery
                     + "and must not be treated as one."
             );
         }
+        catch (ContradictoryArtifactException refusal)
+        {
+            // Caught ahead of the filter below and given its own remedy, because the two mean
+            // opposite things to whoever has to act. That one says the file will not parse, so
+            // regenerate it. This one says the file parses perfectly and records a verdict its own
+            // evidence cannot support — a pass beside a transcript saying the system under test
+            // was never successfully asked. Regenerating from the same incomplete state reproduces
+            // it exactly; what is missing is the run, not the file.
+            //
+            // Named by position only. The engine withheld the values because this message reaches
+            // standard error and from there the build log (§V).
+            throw new EvalCliException(
+                ExitCode.UsageError,
+                $"--baseline names an artifact that records a verdict its own evidence cannot support"
+                    + $"{Contradicted(refusal)}: {Reference(plan)}",
+                "Nothing was executed. The run recorded there never gathered evidence, so it is the run that needs "
+                    + "to happen — regenerating the file from the same incomplete state would reproduce it. Re-run "
+                    + "the suite against a reachable system under test and commit what that produces. An artifact "
+                    + "that cannot be read back is not the same as no baseline, and must not be treated as one."
+            );
+        }
         catch (Exception exception)
             when (exception
                     is ArgumentException
@@ -251,6 +272,17 @@ internal static class SuiteDiscovery
     private static string Located(UnsafeIdentifierException refusal) =>
         (refusal.Field ?? "identifier")
         + (refusal.Position is { } position ? $" at scenario {position}" : string.Empty);
+
+    /// <summary>Names where a self-contradicting entry sits, without repeating what it holds.</summary>
+    /// <param name="refusal">The engine's refusal.</param>
+    /// <returns>Something like <c>, at scenario #2, run #1</c>, or empty when none was carried.</returns>
+    /// <remarks>
+    /// The position alone, because the field this arrives with is <c>runs</c> for every case and
+    /// adds nothing a reader can act on. Same principle as <see cref="Located"/>: enough to find
+    /// the entry in a file they already have, and nothing the engine withheld (§V).
+    /// </remarks>
+    private static string Contradicted(ContradictoryArtifactException refusal) =>
+        refusal.Position is { } position ? $", at {position}" : string.Empty;
 
     /// <summary>States the suite the way a refusal may carry it: relative to the root.</summary>
     /// <param name="plan">The validated plan, which holds both the path and the root.</param>

@@ -10,6 +10,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
+import { normalizeEndCardFields } from '../src/end-card.mjs';
+import { classifyGainPin, describeGainPinRefusal } from '../src/gain-pin.mjs';
 import { assertCleanExit } from './_helpers.mjs';
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -64,6 +67,232 @@ const contiguousSegments = [
   { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
   { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here' },
 ];
+
+// ---------------------------------------------------------------------------
+// write-build-html.mjs, `code` visual mode.
+//
+// This is the only mode that renders SOURCE DATA rather than authored copy, so it carries
+// two refusals nothing else needs: no-go patterns are enforced where the data reaches a
+// frame, and a highlight addressing a field that does not exist fails the BUILD.
+//
+// The second one exists because of a defect this pipeline actually shipped: a trigger whose
+// target did not resolve returned null, animated nothing, and reported success. A highlight
+// that never fires is indistinguishable from one the viewer missed, so it must not degrade
+// to a warning in a 25-minute render log — it has to stop the build.
+// ---------------------------------------------------------------------------
+describe('write-build-html code mode', () => {
+  const OBJ = {
+    id: 'demo-scenario',
+    opening: 'My email has just stopped working.',
+    facts: ['first fact', 'second fact', 'third fact'],
+    assertions: ['l5Exact', 'slotAbsent:scope/confirm'],
+  };
+
+  const codeProject = (t, { highlights, json = OBJ, extra = {}, noGoPatterns, omitNoGo = false } = {}) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json, ...(highlights ? { highlights } : {}), ...extra },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    // code mode requires the key to be present; `[]` is the explicit opt-out. Tests that
+    // are not about redaction supply it so they exercise what they actually name.
+    if (!omitNoGo) timing.project.noGoPatterns = noGoPatterns ?? [];
+    // gsap is resolved from the PROJECT, not the engine — a local-first render refuses a
+    // CDN. Without this stub every case below exits non-zero on the missing dependency,
+    // which silently turns the "must refuse" tests into false passes.
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  const build = (dir) => runScript('write-build-html.mjs', ['--apply'], dir);
+  const html = (dir) => fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+
+  test('codeMode_rendersEachFieldWithAnAddressableId', (t) => {
+    const dir = codeProject(t);
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    const out = html(dir);
+    assert.match(out, /id="scenario-path-opening"/, 'a top-level field must be addressable');
+    assert.match(out, /id="scenario-path-facts-1"/, 'an array element must be addressable by index');
+    assert.match(out, /class="j-key"/, 'keys must be marked up for highlighting, not rendered as flat text');
+  });
+
+  test('codeMode_highlightAddressingAMissingPath_failsTheBuildAndSuggestsRealOnes', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'factz', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a bad highlight path must fail the build, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /does not exist/, 'and say so plainly');
+    assert.match(r.all, /facts/, 'and name the paths that do exist, so the author can fix it now');
+    assert.doesNotMatch(r.all, /at ModuleJob|\bat async\b/, 'an authoring mistake is a refusal, not a crash');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false, 'nothing is written on refusal');
+  });
+
+  // THE END OF A LIST BEHAVES DIFFERENTLY FROM THE MIDDLE. An off-by-one in the path walk
+  // shows up only on the final element, where there is no following sibling to mask it.
+  test('codeMode_highlightOnTheLastElementOfTheLastArray_resolves', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'assertions[1]', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, `the last element of the last array must resolve, got ${r.code}\n${r.all}`);
+    assert.match(html(dir), /id="scenario-path-assertions-1"/);
+  });
+
+  test('codeMode_highlightPastTheEndOfAnArray_failsRatherThanRenderingNothing', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'assertions[2]', atMs: 100 }] });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `index past the end must fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /does not exist/, 'and fail for THAT reason, not an unrelated one');
+  });
+
+  test('codeMode_jsonMatchingANoGoPattern_refusesBeforeItReachesAFrame', (t) => {
+    const dir = codeProject(t, {
+      json: { ...OBJ, endpoint: 'https://test1.internal.example.com/api' },
+      noGoPatterns: ['https?://', '\\btest1\\b'],
+    });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /no-go match/, 'and name the pattern that matched');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  // A GUARD MUST NOT DISCLOSE WHAT IT REFUSES. An earlier version printed 80 characters of
+  // the matched value "so the author could see what tripped", which moves the very content
+  // the pattern exists to contain into the console and the render log.
+  test('codeMode_noGoRefusal_namesThePathButNeverTheMatchedValue', (t) => {
+    const SECRET = 'https://sentinel-host-9f2c.example.com/api';
+    const dir = codeProject(t, {
+      json: { ...OBJ, endpoint: SECRET },
+      noGoPatterns: ['https?://'],
+    });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /endpoint/, 'the JSON path is what the author needs, and it is not sensitive');
+    assert.ok(!r.all.includes('sentinel-host-9f2c'), 'the matched value must never be echoed');
+    assert.ok(!r.all.includes(SECRET), 'nor any part of it');
+  });
+
+  // ABSENT IS NOT PERMISSION. Defaulting a missing list to "no patterns" made the
+  // frame-boundary guarantee inert in exactly the project least likely to have reviewed
+  // its source data — which is how the real consumer shipped with it switched off while
+  // every test passed on its own fixture.
+  test('codeMode_noGoPatternsMissingEntirely_refusesRatherThanAllowingEverything', (t) => {
+    const dir = codeProject(t, { omitNoGo: true });   // no noGoPatterns key at all
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a missing no-go list must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /requires timing\.project\.noGoPatterns/);
+    assert.match(r.all, /\[\]/, 'and say how to opt out explicitly');
+  });
+
+  test('codeMode_noGoPatternsEmptyArray_isAnExplicitOptOutAndBuilds', (t) => {
+    const dir = codeProject(t, { noGoPatterns: [] });
+    const r = build(dir);
+
+    assert.equal(r.code, EXIT.OK, `an explicit empty list must be accepted, got ${r.code}\n${r.all}`);
+  });
+
+  // `k in data` walks the prototype chain, so `__proto__` resolves without existing in the
+  // JSON; and descending into a string throws a native error that can quote that string,
+  // before the no-go guard has run.
+  test('codeMode_pickTraversingPrototypeOrString_refusesWithoutEchoingContent', (t) => {
+    for (const pick of ['__proto__', 'opening.length']) {
+      const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'data.json', pick } });
+      fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ opening: 'SENTINEL-PICK-4a1b' }));
+      const r = build(dir);
+
+      assert.notEqual(r.code, EXIT.OK, `pick "${pick}" must not resolve, got ${r.code}\n${r.all}`);
+      assert.ok(!r.all.includes('SENTINEL-PICK-4a1b'), `pick "${pick}" must not echo file contents`);
+    }
+  });
+
+  test('codeMode_jsonFileEscapingTheProject_refuses', (t) => {
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: '../../../etc/passwd' } });
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a path escape must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /outside|escape/i);
+  });
+
+  // OUTSIDE-LINK VICTIM TEST. A lexical check passes here: the path stays inside the
+  // project as text and only leaves once the link is followed. `code` mode renders file
+  // contents straight into the frame, so an escaping read is not a log line someone might
+  // notice — it is composited into the video and encoded.
+  test('codeMode_jsonFileViaLinkPointingOutsideTheProject_refusesAndDoesNotDiscloseTheVictim', (t) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-victim-'));
+    t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+    const SENTINEL = 'SENTINEL-SECRET-b7f3e1a9';
+    const victim = path.join(outside, 'secret.json');
+    fs.writeFileSync(victim, JSON.stringify({ token: SENTINEL }));
+
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'linked.json' } });
+    try {
+      fs.symlinkSync(victim, path.join(dir, 'linked.json'), 'file');
+    } catch {
+      t.skip('symlink creation requires privilege on this platform');
+      return;
+    }
+
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a link out of the project must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /passes through a link|outside the project root/i,
+      'and refuse for THAT reason — a lexical check would have let this through');
+    assert.doesNotMatch(r.all, /at ModuleJob|\bat async\b/, 'a refusal is not a crash; no stack trace');
+    assert.ok(!r.all.includes(SENTINEL), 'the refusal must not echo the victim file contents');
+    if (fs.existsSync(path.join(dir, 'video-auto.html'))) {
+      const out = fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+      assert.ok(!out.includes(SENTINEL), 'and the victim must never reach a frame');
+    }
+  });
+
+  // JSON.parse embeds the first bytes it parsed in its error message, so echoing the
+  // parser's text discloses file contents on any read the guard did allow.
+  test('codeMode_unparseableJsonFile_reportsWithoutEchoingFileContents', (t) => {
+    const SENTINEL = 'SENTINEL-INSIDE-9f2c';
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'broken.json' } });
+    fs.writeFileSync(path.join(dir, 'broken.json'), `{ "leak": "${SENTINEL}" `);
+
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `unparseable JSON must fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /not valid JSON/);
+    assert.ok(!r.all.includes(SENTINEL), 'the parser message must not be echoed verbatim');
+  });
+
+  // WCAG 1.4.1: the focused field must be distinguishable without relying on hue.
+  // THE BLANK-SEGMENT CANARY. `.codewrap` carries `.el`, so it is hidden until revealed —
+  // and codeFocus targets a FIELD, which cannot reveal its hidden ancestor. Without an
+  // explicit reveal of the block the entire segment renders blank, with every trigger
+  // resolving and "succeeding" against an invisible element. Frames came back
+  // byte-identical across four different timestamps, which is the only way this shows up.
+  test('codeMode_emitsAnExplicitRevealOfTheBlock_notOnlyFieldFocuses', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'opening', atMs: 100 }] });
+    assert.equal(build(dir).code, EXIT.OK);
+
+    const out = html(dir);
+    const reveals = out.match(/"scenario-code"/g) || [];
+    assert.ok(reveals.length >= 2,
+      'the block needs its own reveal as well as the focus release — otherwise the segment is blank');
+    assert.match(out, /codeFocus/, 'and the field focuses must still be emitted');
+  });
+
+  test('codeMode_focusStyling_usesOutlineAndDimmingNotColourAlone', (t) => {
+    const dir = codeProject(t, { highlights: [{ path: 'opening', atMs: 100 }] });
+    assert.equal(build(dir).code, EXIT.OK);
+
+    const out = html(dir);
+    assert.match(out, /\.j-entry\.is-focus\{[^}]*outline:/, 'focus must carry an outline');
+    assert.match(out, /\.codeblock\.is-dim\s+\.j-entry\.is-off\{[^}]*opacity:/, 'and dim the rest');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // frame-capture.mjs — the highest-value guard in this suite.
@@ -178,16 +407,65 @@ describe('validate-timing exit contract', () => {
     assert.equal(r.code, EXIT.OK, `a valid timing file must pass, got ${r.code}\n${r.all}`);
   });
 
-  test('validateTiming_segmentGap_exitsFailureNotZero', (t) => {
+  // REPLACES `validateTiming_segmentGap_exitsFailureNotZero`, which asserted that any GAP
+  // must fail. That could never hold against real output: voice.mjs deliberately inserts
+  // inter-segment silence — the perceived pause — plus a lead-in, so every timeline the
+  // real pipeline produces is monotonic but NOT adjacent, and a correct timeline failed on
+  // every segment. A test that pins a defect converts it into a requirement and makes the
+  // correct fix arrive as a regression, so it is replaced rather than relaxed.
+  //
+  // An OVERLAP is the thing that is actually wrong, so that is what is asserted now.
+  test('validateTiming_overlappingSegments_exitsFailureNotZero', (t) => {
+    const overlapped = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
+      { id: 'two', startMs: 1500, endMs: 4000, voiceoverText: 'i start before one ended' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(overlapped) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, `an overlap must fail the build, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /overlap/i);
+  });
+
+  test('validateTiming_uniformInterSegmentGaps_passAndAreReported', (t) => {
     const gapped = [
       { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
-      { id: 'two', startMs: 2500, endMs: 4000, voiceoverText: 'gap before me' },
+      { id: 'two', startMs: 2500, endMs: 4500, voiceoverText: 'gap before me' },
+      { id: 'three', startMs: 5000, endMs: 7000, voiceoverText: 'and before me too' },
     ];
     const dir = makeProject(t, { 'timing.json': timingFixture(gapped) });
     const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
 
-    assert.equal(r.code, EXIT.FAILED, `a contiguity break must fail the build, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /gap|overlap/i);
+    assert.equal(r.code, EXIT.OK, `deliberate perceived gaps must not fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /uniform 500 ms/, 'and the gap must be reported, not silently accepted');
+  });
+
+  // An uneven gap is still worth seeing — it usually means a hand-edited window.
+  test('validateTiming_unevenGaps_passButAreCalledOut', (t) => {
+    const uneven = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there' },
+      { id: 'two', startMs: 2500, endMs: 4500, voiceoverText: 'five hundred after' },
+      { id: 'three', startMs: 5400, endMs: 7000, voiceoverText: 'nine hundred after' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(uneven) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /UNEVEN/, 'an uneven gap must be visible even though it passes');
+  });
+
+  // The lead-in is a gap before the FIRST segment — the same mechanism, and the case the
+  // strict-adjacency check hit first on every real run.
+  test('validateTiming_leadInBeforeFirstSegment_passesAndIsReported', (t) => {
+    const withLeadIn = [
+      { id: 'one', startMs: 2016, endMs: 4016, voiceoverText: 'after the lead in' },
+      { id: 'two', startMs: 4016, endMs: 6016, voiceoverText: 'straight after' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingFixture(withLeadIn) });
+    const r = runScript('validate-timing.mjs', ['--no-schema'], dir);
+
+    assert.equal(r.code, EXIT.OK, `a lead-in is not a contiguity break, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /contiguity: OK/);
   });
 
   test('validateTiming_noSchemaFlag_marksShapeAsNotVerified', (t) => {
@@ -234,6 +512,232 @@ describe('validate-timing exit contract', () => {
     const r = runScript('validate-timing.mjs', ['--schema', 'no-such-schema.json'], dir);
 
     assert.equal(r.code, EXIT.USAGE, r.all);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The schema IS the rule, and a rule that cannot fail reads exactly like a rule that
+// passed.
+//
+// As shipped, `required` listed only `segments`: `version` was unconstrained, `theme`
+// was undeclared, and the end-card rule was absent entirely. Round 1 made the validator
+// able to REPORT schema errors and then handed it a schema that barely checked anything,
+// so a timing.json with four real violations validated clean.
+// ---------------------------------------------------------------------------
+describe('the shipped schema enforces the timing contract', { skip: ajvAvailable ? false : 'ajv not installed' }, () => {
+  const validate = (t, extra) => {
+    const dir = makeProject(t, { 'timing.json': timingFixture(contiguousSegments, extra) });
+    return runScript('validate-timing.mjs', [], dir);
+  };
+  const assertRejected = (r, why) => {
+    assert.equal(r.code, EXIT.FAILED, `${why}\n${r.all}`);
+    assert.match(r.all, /SCHEMA: INVALID/, why);
+  };
+  const assertAccepted = (r, why) => {
+    assert.equal(r.code, EXIT.OK, `${why}\n${r.all}`);
+    assert.match(r.all, /SCHEMA: valid/, why);
+  };
+
+  test('validateTiming_numericVersion_isRejected', (t) => {
+    assertRejected(validate(t, { version: 1 }), 'version must be a string, not a number');
+  });
+
+  test('validateTiming_floatVersion_isRejected', (t) => {
+    // `1.0` in JSON is the number 1 — the version "1.10" and the version "1.1" are the
+    // same value once a float has eaten them.
+    assertRejected(validate(t, { version: 1.0 }), 'a float version must be rejected');
+  });
+
+  test('validateTiming_stringVersion_isAccepted', (t) => {
+    assertAccepted(validate(t, { version: '1.0' }), 'a string version is the contract');
+  });
+
+  test('validateTiming_themeAsObject_isRejected', (t) => {
+    // `THEMES[{}]` is undefined and the lookup falls back to midnight, so an object here
+    // silently rendered the wrong theme rather than failing.
+    assertRejected(validate(t, { theme: {} }), 'an object theme must be rejected');
+  });
+
+  test('validateTiming_unknownThemeName_isRejected', (t) => {
+    assertRejected(validate(t, { theme: 'neon' }), 'an unknown theme silently becomes midnight');
+  });
+
+  test('validateTiming_knownThemeName_isAccepted', (t) => {
+    assertAccepted(validate(t, { theme: 'slate' }), 'every shipped theme must still validate');
+  });
+
+  test('validateTiming_projectThemeAsObject_isRejected', (t) => {
+    // project.theme is the FIRST lookup write-build-html tries, so constraining only the
+    // top-level copy would leave the one that actually wins unchecked.
+    assertRejected(
+      validate(t, { project: { name: 'demo', fps: 30, width: 1280, height: 720, theme: {} } }),
+      'project.theme is read before the top-level one',
+    );
+  });
+
+  test('validateTiming_intakeThemeUnknown_isRejected', (t) => {
+    assertRejected(validate(t, { intake: { theme: 'neon' } }), 'intake.theme is the third lookup and is read too');
+  });
+
+  test('validateTiming_disabledEndCardWithStrayBuilderVersion_isRejected', (t) => {
+    assertRejected(
+      validate(t, { endCard: { enabled: false }, contentMs: undefined, builderVersion: '1.2.3' }),
+      'a disabled end card must not carry a builderVersion',
+    );
+  });
+
+  test('validateTiming_disabledEndCardWithPresentButValidFields_isRejected', (t) => {
+    // Isolates the absence rule: 4000/2500 satisfy every type constraint they have, so
+    // the ONLY thing that can reject this timeline is "a disabled end card carries none
+    // of its fields".
+    assertRejected(
+      validate(t, { endCard: { enabled: false }, contentMs: 4000, outroMs: 2500 }),
+      'contentMs/outroMs must be ABSENT when the end card is off',
+    );
+  });
+
+  test('validateTiming_disabledEndCardWithZeroedFields_isRejectedBySchema', (t) => {
+    // Present-and-zero is not absent. Zero reads as "measured it, got nothing", which is
+    // a different claim from "there is no end card".
+    //
+    // Asserted on the SCHEMA verdict rather than the exit code: zero additionally trips
+    // the contentMs >= 1 range guard, which throws EXIT.USAGE before the verdict is
+    // computed. The code is a symptom of the earlier guard; the schema's judgement is
+    // the property under test.
+    const r = validate(t, { endCard: { enabled: false }, contentMs: 0, outroMs: 0 });
+
+    assert.match(r.all, /SCHEMA: INVALID/, `present-and-zero must not satisfy the rule\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, 'and it must never be reported as a pass');
+  });
+
+  test('validateTiming_disabledEndCardWithNoEndCardFields_isAccepted', (t) => {
+    assertAccepted(
+      validate(t, { endCard: { enabled: false }, contentMs: undefined }),
+      'a correctly-stripped disabled end card must still validate',
+    );
+  });
+
+  test('validateTiming_enabledEndCardWithItsFields_isAccepted', (t) => {
+    // The rule must not misfire on the case it does not govern.
+    assertAccepted(
+      validate(t, { endCard: { enabled: true }, contentMs: 4000, outroMs: 2500, builderVersion: '1.2.3' }),
+      'an enabled end card legitimately carries all three fields',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enforcing the end-card rule exposes a real defect rather than fixing one: voice.mjs
+// stripped contentMs and outroMs when the end card was disabled and left builderVersion
+// behind, so once the rule is enforced NO run could produce a schema-valid disabled
+// end-card timeline. Enforcing the schema without this turns a silent defect into a
+// broken pipeline for every consumer that disables the end card.
+// ---------------------------------------------------------------------------
+describe('end-card field normalisation', () => {
+  const base = () => ({
+    builderVersion: '1.2.3',
+    contentMs: 999,
+    outroMs: 999,
+    durationMs: 999,
+    endCard: { enabled: false },
+  });
+
+  test('normalizeEndCardFields_endCardDisabled_stripsEveryEndCardOnlyField', () => {
+    const timing = normalizeEndCardFields(base(), { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(Object.hasOwn(timing, 'builderVersion'), false, 'builderVersion is an end-card field too');
+    assert.equal(Object.hasOwn(timing, 'contentMs'), false);
+    assert.equal(Object.hasOwn(timing, 'outroMs'), false);
+    assert.equal(timing.durationMs, 4000, 'a disabled end card ends at the content');
+  });
+
+  test('normalizeEndCardFields_endCardEnabled_populatesAllThreeFields', () => {
+    const timing = normalizeEndCardFields({ ...base(), endCard: { enabled: true } }, { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(timing.builderVersion, '1.2.3', 'an enabled end card keeps the version it displays');
+    assert.equal(timing.contentMs, 4000);
+    assert.equal(timing.outroMs, 2500);
+    assert.equal(timing.durationMs, 6500, 'content plus outro');
+  });
+
+  test('normalizeEndCardFields_disabledEndCardResult_validatesAgainstTheShippedSchema', { skip: ajvAvailable ? false : 'ajv not installed' }, async () => {
+    // The direction that matters: what a real run PRODUCES must satisfy the rule the
+    // validator now enforces. Asserting the rejection alone would have shipped a schema
+    // no pipeline output could pass.
+    const { default: Ajv } = await import('ajv/dist/2020.js');
+    const schema = JSON.parse(fs.readFileSync(path.join(srcDir, 'timing-schema.json'), 'utf8'));
+    const validateSchema = new Ajv({ allErrors: true, strict: false }).compile(schema);
+
+    const timing = normalizeEndCardFields({ ...base(), segments: contiguousSegments }, { contentMs: 4000, outroMs: 2500 });
+
+    assert.equal(validateSchema(timing), true, `voice.mjs output must satisfy the schema: ${JSON.stringify(validateSchema.errors)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remix is the OTHER producer of a timing file, and it wrote contentMs/outroMs
+// unconditionally — so it exited 0 having produced a file the restored schema rejects.
+//
+// normalizeEndCardFields was extracted this round to be reusable and then applied to one
+// of its two call sites. This domain's record: assertDistinctDestinations applied to one
+// collection, resolveInternalArtifact to capture metadata only, and now this. The newest
+// mechanism is the least applied.
+// ---------------------------------------------------------------------------
+describe('every producer of a timing file obeys the end-card rule', { skip: ajvAvailable ? false : 'ajv not installed' }, () => {
+  /** Real, probeable MP3s built with the engine's own generator — remix measures them. */
+  const remixableProject = (t, endCardEnabled) => {
+    const dir = makeProject(t);
+    for (const name of ['segment_000.mp3', 'segment_001.mp3']) {
+      const g = runScript('silence-gen.mjs', ['--out', name, '--ms', '2000', '--apply'], dir);
+      assert.equal(g.code, EXIT.OK, `fixture audio must build for this test to mean anything\n${g.all}`);
+    }
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
+      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+    ];
+    fs.writeFileSync(
+      path.join(dir, 'timing.json'),
+      JSON.stringify({
+        project: { name: 'demo', fps: 30, width: 320, height: 240 },
+        durationMs: 4000,
+        contentMs: 4000,
+        outroMs: 2500,
+        endCard: { enabled: endCardEnabled },
+        builderVersion: '9.9.9',
+        intake: { toleranceMs: 60_000, leadInMs: 0, perceivedGapMs: 0 },
+        segments,
+      }),
+    );
+    return dir;
+  };
+
+  test('remix_disabledEndCard_producesTimingTheShippedSchemaAccepts', (t) => {
+    const dir = remixableProject(t, false);
+
+    const remix = runScript('remix.mjs', ['--apply', '--replace'], dir);
+    assert.equal(remix.code, EXIT.OK, `remix must succeed for its output to be judged\n${remix.all}`);
+
+    // Judged by the shipped schema, not by an expectation restated here.
+    const check = runScript('validate-timing.mjs', [], dir);
+    assert.match(check.all, /SCHEMA: valid/, `remix produced a timing file its own validator rejects\n${check.all}`);
+
+    const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    assert.equal(Object.hasOwn(produced, 'builderVersion'), false, 'builderVersion is an end-card field');
+    assert.equal(Object.hasOwn(produced, 'contentMs'), false);
+    assert.equal(Object.hasOwn(produced, 'outroMs'), false);
+  });
+
+  test('remix_enabledEndCard_stillPopulatesTheEndCardFields', (t) => {
+    // The rule must not misfire on the case it does not govern.
+    const dir = remixableProject(t, true);
+
+    const remix = runScript('remix.mjs', ['--apply', '--replace'], dir);
+    assert.equal(remix.code, EXIT.OK, remix.all);
+
+    const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    assert.equal(produced.builderVersion, '9.9.9', 'an enabled end card keeps the version it displays');
+    assert.equal(typeof produced.contentMs, 'number');
+    assert.equal(typeof produced.outroMs, 'number');
   });
 });
 
@@ -322,6 +826,83 @@ describe('remux-music safety', () => {
     assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
     assert.equal(fs.readFileSync(path.join(dir, 'out.mp4'), 'utf8'), 'APPROVED DELIVERABLE');
   });
+
+  // A GAIN IS ONLY MEANINGFUL FOR THE TRACK IT WAS MEASURED AGAINST (bug-ledger 16).
+  //
+  // Bounding the gain VALUE cannot catch this: 1.50 is in range for both a bed generated
+  // to length at -43.1 dB RMS and a licensed master at -11.4 dB, and those two are 31.7 dB
+  // apart. The unchanged gain shipped a bed ~10 dB hot with every other check green,
+  // because the narration-gap checks measure PRESENCE, not LEVEL. So the pin is on the
+  // source, and it is asserted at the point the source changes.
+  const lockPath = (dir) => path.join(dir, 'music-gain.lock.json');
+  const pinTo = (dir, sha256, musicGain = 1.5) =>
+    fs.writeFileSync(
+      lockPath(dir),
+      JSON.stringify({ source: 'music.wav', sha256, musicGain, evidence: 'operator-confirmed' }),
+    );
+
+  test('remuxMusic_musicSourceChangedButGainDidNot_refusesAndNamesBothTracks', (t) => {
+    const dir = project(t);
+    pinTo(dir, 'a'.repeat(64));
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', '--apply'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /music source CHANGED/, 'the refusal must say what changed');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that re-pins it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
+  });
+
+  test('remuxMusic_changedSourceWithConfirmGain_passesTheGainCheck', (t) => {
+    const dir = project(t);
+    pinTo(dir, 'a'.repeat(64));
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4',
+        '--apply', '--confirm-gain'],
+      dir,
+    );
+
+    assert.doesNotMatch(r.all, /music source CHANGED/, '--confirm-gain must clear the pin check');
+  });
+
+  test('remuxMusic_unchangedSource_doesNotRefuseAndPlanSaysSoWithoutColourAlone', (t) => {
+    const dir = project(t);
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, 'music.wav'))).digest('hex');
+    pinTo(dir, sha);
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.OK, `an unchanged source must plan cleanly, got ${r.code}\n${r.all}`);
+    // Was /source unchanged/. The pin now covers the GAIN as well as the source, so the
+    // plan states both — asserting only the source would no longer be the whole status.
+    assert.match(r.all, /confirmed for/, 'the plan must state the pin status in words');
+    assert.match(r.all, /gain 1\.5/, 'and must name the gain that confirmation covers, not just the track');
+  });
+
+  // Planning must stay answerable about inputs that are stubbed, absent or not yet
+  // rendered. Probing durations unconditionally made a no-flag run exit non-zero on an
+  // undecodable stub, which breaks the plan-by-default contract every stage now honours.
+  test('remuxMusic_undecodableMediaWithoutApply_stillPlansAndSaysTheLoopIsUndecided', (t) => {
+    const dir = project(t);
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.OK, `planning must not require decodable media, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /loop\s+UNDECIDED/, 'and must say the loop decision was not made, not imply none is needed');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -380,5 +961,328 @@ describe('cli-support primitives', () => {
 
   test('requirePositiveNumber_nonIntegerWhenIntegerRequired_throws', () => {
     assert.throws(() => requirePositiveNumber(12.5, { name: 'totalFrames', integer: true }), CliError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gain-pin.mjs — the pure classifier behind the pin, tested directly.
+//
+// It answers one question: has anyone confirmed THIS gain for THIS source? Every way of
+// answering "no" must require a confirmation, because each of them is a way for a gain
+// nobody agreed to to reach the mix.
+// ---------------------------------------------------------------------------
+describe('gain pin classifier', () => {
+  const current = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+  // Named `confirmed`, so it must actually BE confirmed. Without `evidence` this is the
+  // legacy self-pinned shape, and a fixture that quietly supplies the defective form is
+  // how a test comes to assert the hole rather than the fix.
+  const confirmed = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5, evidence: 'operator-confirmed' };
+
+  test('classifyGainPin_noLock_requiresConfirmationBecauseNothingHasBeenConfirmed', () => {
+    const v = classifyGainPin(null, current);
+    assert.equal(v.first, true);
+    assert.equal(v.requiresConfirmation, true, 'a first run has no confirmation behind its gain');
+  });
+
+  test('classifyGainPin_sameSourceAndGain_requiresNothing', () => {
+    const v = classifyGainPin(confirmed, current);
+    assert.equal(v.requiresConfirmation, false);
+    assert.equal(v.sourceChanged, false);
+    assert.equal(v.gainChanged, false);
+  });
+
+  test('classifyGainPin_sourceChanged_requiresConfirmation', () => {
+    const v = classifyGainPin({ ...confirmed, sha256: 'a'.repeat(64) }, current);
+    assert.equal(v.sourceChanged, true);
+    assert.equal(v.requiresConfirmation, true);
+  });
+
+  test('classifyGainPin_gainChanged_requiresConfirmation', () => {
+    const v = classifyGainPin({ ...confirmed, musicGain: 0.4 }, current);
+    assert.equal(v.gainChanged, true);
+    assert.equal(v.requiresConfirmation, true);
+  });
+
+  // A lock that cannot be read as a pin is not a pin. Treating an absent or unparseable
+  // field as "matches" would let a truncated or hand-edited file wave a gain through,
+  // which is the permissive-default failure this whole check exists to avoid.
+  test('classifyGainPin_lockMissingItsFields_requiresConfirmationRatherThanAssumingAMatch', () => {
+    for (const lock of [{}, { sha256: 'b'.repeat(64) }, { musicGain: 1.5 }, { sha256: 'b'.repeat(64), musicGain: 'x' }]) {
+      const v = classifyGainPin(lock, current);
+      assert.equal(v.requiresConfirmation, true, `a lock of ${JSON.stringify(lock)} must not satisfy the pin`);
+    }
+  });
+
+  // A LEGACY LOCK MATCHES ON VALUES AND RECORDS NO CONFIRMATION. The old code pinned its
+  // own default without asking anyone, so those files exist in the wild with exactly the
+  // shape below. Reading them as confirmed means the tool agreeing with itself, and a
+  // successful run would then rewrite them stamped `operator-confirmed` — laundering a
+  // record into provenance it never had.
+  test('classifyGainPin_legacyLockWithNoEvidence_requiresConfirmationRatherThanTrustingIt', () => {
+    const legacy = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+
+    const v = classifyGainPin(legacy, current);
+
+    assert.equal(v.sourceChanged, false, 'the values do match — that is precisely the trap');
+    assert.equal(v.gainChanged, false);
+    assert.equal(v.unconfirmedPin, true, 'but it records no operator confirmation');
+    assert.equal(v.requiresConfirmation, true, 'so it must be re-confirmed, not trusted');
+  });
+
+  test('classifyGainPin_evidenceIsNotTheOperatorKind_requiresConfirmation', () => {
+    for (const evidence of ['self-pinned', 'measured', '', null, true]) {
+      const v = classifyGainPin({ ...confirmed, evidence }, current);
+      assert.equal(v.requiresConfirmation, true, `evidence ${JSON.stringify(evidence)} must not be trusted`);
+    }
+  });
+
+  test('classifyGainPin_operatorConfirmedAndMatching_requiresNothing', () => {
+    const v = classifyGainPin({ ...confirmed, evidence: 'operator-confirmed' }, current);
+    assert.equal(v.requiresConfirmation, false);
+  });
+
+  // A LEGACY PIN THAT IS ALSO STALE IS STILL A PIN NOBODY CONFIRMED. Both cases below are
+  // already refused — what is under test is the NARRATIVE. Describing the old value as
+  // "confirmed against" asserts an agreement that never happened, in the one feature
+  // built to stop a tool certifying what nobody confirmed. A reader who follows that text
+  // reasons from a history that does not exist.
+  //
+  // Asserted on the line that DESCRIBES THE PIN, not on the whole message: the standing
+  // explanation ("a gain is only meaningful for the track it was confirmed against") is a
+  // true general statement and must not be mistaken for a claim about this lock.
+  const legacy = { source: 'music.wav', sha256: 'a'.repeat(64), musicGain: 1.5 };
+  const pinLineOf = (text, sha) => text.split('\n').find((l) => l.includes(sha.slice(0, 12)));
+
+  test('classifyGainPin_legacyPinWithChangedSource_doesNotClaimTheOldPinWasConfirmed', () => {
+    const v = classifyGainPin(legacy, current);
+    assert.equal(v.sourceChanged, true, 'it is stale');
+    assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
+
+    const line = pinLineOf(describeGainPinRefusal(v, current), legacy.sha256);
+    assert.match(line, /NEVER CONFIRMED/, 'the pin line must name the absent confirmation');
+    assert.doesNotMatch(line, /^\s*confirmed/, 'and must not present it as an agreement that happened');
+  });
+
+  test('classifyGainPin_legacyPinWithChangedGain_doesNotClaimTheOldPinWasConfirmed', () => {
+    const askingFor3 = { ...current, musicGain: 3 };
+    const v = classifyGainPin({ ...legacy, sha256: current.sha256 }, askingFor3);
+    assert.equal(v.gainChanged, true, 'it is stale on the gain');
+    assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
+
+    const line = pinLineOf(describeGainPinRefusal(v, askingFor3), current.sha256);
+    assert.match(line, /NEVER CONFIRMED/, 'the pin line must name the absent confirmation');
+    assert.doesNotMatch(line, /^\s*confirmed/, 'and must not present the old gain as one somebody agreed to');
+  });
+
+  test('classifyGainPin_confirmedPinThatIsStale_stillDescribesTheOldPinAsConfirmed', () => {
+    const stale = { ...confirmed, sha256: 'a'.repeat(64) };
+    const v = classifyGainPin(stale, current);
+    assert.equal(v.pinRecordsConfirmation, true);
+
+    const line = pinLineOf(describeGainPinRefusal(v, current), stale.sha256);
+    assert.match(line, /^\s*confirmed against/, 'a genuinely confirmed pin must still be described as one');
+    assert.doesNotMatch(line, /NEVER CONFIRMED/, 'and must not be slandered as unconfirmed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remux-music.mjs — the gain pin (bug-ledger 16), re-audited.
+//
+// The pin exists so a gain calibrated against one track cannot be applied to another.
+// It asked only whether the SOURCE had changed, which left three routes to an
+// unconfirmed gain: a FIRST run pinned whatever was supplied with nobody confirming it,
+// a changed --music-gain on an unchanged source was never questioned, and --confirm-gain
+// was read as a blanket answer rather than an answer to a specific question.
+//
+// WHAT THE PIN RECORDS IS A CONFIRMATION, NOT A MEASUREMENT — see gain-pin.mjs. No
+// measured bed level is reachable at pin time, so the honest contract is "a human was
+// asked, and said yes to THIS gain for THIS source". These are the three occasions on
+// which it must ask.
+// ---------------------------------------------------------------------------
+describe('remux-music gain pin', () => {
+  const MUSIC_BYTES = 'music bytes';
+  const MUSIC_SHA = crypto.createHash('sha256').update(MUSIC_BYTES).digest('hex');
+
+  const project = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': MUSIC_BYTES,
+      ...files,
+    });
+
+  const lockFile = (dir) => path.join(dir, 'music-gain.lock.json');
+  // Defaults to a CONFIRMED pin. A lock without `evidence` is the legacy self-pinned
+  // shape and is deliberately exercised on its own below, not used as a stand-in for a
+  // settled one — seeding the defective shape and asserting it passes is how the hole
+  // stayed open through a round of review.
+  const pin = (dir, { sha256 = MUSIC_SHA, musicGain = 1.5, evidence = 'operator-confirmed' } = {}) =>
+    fs.writeFileSync(
+      lockFile(dir),
+      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, musicGain }
+        : { source: 'music.wav', sha256, musicGain, evidence }),
+    );
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  // HOLE 1: with no lock there was nothing to compare against, so the check passed and
+  // the run pinned its own default — manufacturing a calibration record for a gain that
+  // no one had ever confirmed, let alone measured.
+  test('remuxMusic_firstApplyWithoutConfirmGain_refusesRatherThanPinningAnUnconfirmedGain', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal on first use, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /never been confirmed/i, 'the refusal must say the gain has no confirmation behind it');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that supplies one');
+    assert.equal(fs.existsSync(lockFile(dir)), false, 'a refused run must not write a pin');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'and must not produce output');
+  });
+
+  // HOLE 2: the source is the same file, so the old check was satisfied — but the gain
+  // being applied to it is not the gain anybody agreed to. -43.1 dB vs -11.4 dB was the
+  // source moving; this is the multiplier moving, and it lands in the same place.
+  test('remuxMusic_gainChangedOnUnchangedSource_refusesWithoutConfirmGain', (t) => {
+    const dir = project(t);
+    pin(dir, { musicGain: 1.5 });
+
+    const r = remux(dir, ['--music-gain', '3.0', '--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal when the gain moved, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /gain/i, 'the refusal must be about the gain');
+    assert.match(r.all, /1\.5/, 'and must name the gain that was confirmed');
+    assert.match(r.all, /3/, 'and the gain now being asked for');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+  });
+
+  // HOLE 3, restated: the source moving must still be caught. This is the case the pin
+  // was originally built for and it must not regress while the other two are closed.
+  test('remuxMusic_sourceChangedWithoutConfirmGain_refusesAndNamesBothTracks', (t) => {
+    const dir = project(t);
+    pin(dir, { sha256: 'a'.repeat(64) });
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal when the source moved, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /source/i, 'the refusal must say the source changed');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that re-pins it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+  });
+
+  test('remuxMusic_unchangedSourceAndGain_doesNotAskAgain', (t) => {
+    const dir = project(t);
+    pin(dir, { musicGain: 1.5 });
+
+    const r = remux(dir);
+
+    assert.equal(r.code, EXIT.OK, `a confirmed pin must plan cleanly, got ${r.code}\n${r.all}`);
+    assert.doesNotMatch(r.all, /--confirm-gain/, 'a settled pin must not nag for a confirmation it already has');
+  });
+
+  // Planning writes nothing, so it must stay answerable — but it must also not imply the
+  // gain is settled when --apply is going to refuse. Saying so is the whole value.
+  test('remuxMusic_planWithUnconfirmedGain_stillPlansAndSaysConfirmationIsRequired', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir);
+
+    assert.equal(r.code, EXIT.OK, `planning must not require a confirmed gain, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--confirm-gain/, 'the plan must say --apply will require a confirmation');
+    assert.equal(fs.existsSync(lockFile(dir)), false, 'and planning must still write no pin');
+  });
+
+  // THE LAUNDERING CASE. A legacy lock matches on every value the old check compared and
+  // records no confirmation, because the code that wrote it never asked. Trusting it
+  // would let a successful run rewrite it stamped `operator-confirmed` with a fresh
+  // timestamp — turning a record nobody made into provenance, and making the laundered
+  // copy look stronger than the thing it came from.
+  test('remuxMusic_legacyPinWithNoEvidence_refusesAndDoesNotLaunderItIntoAConfirmation', (t) => {
+    const dir = project(t);
+    pin(dir, { evidence: null });
+    const before = fs.readFileSync(lockFile(dir), 'utf8');
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `a pin recording no confirmation must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /RECORDS NO CONFIRMATION/, 'the refusal must say the pin carries no confirmation');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that supplies one');
+    assert.equal(fs.readFileSync(lockFile(dir), 'utf8'), before, 'and must not rewrite the pin it refused');
+    assert.doesNotMatch(fs.readFileSync(lockFile(dir), 'utf8'), /operator-confirmed/, 'least of all stamping it');
+  });
+
+  // The refusal names check-levels.mjs, which measures a RENDERED FILE. On first use no
+  // such file exists — the refusal is what stopped it being made — so an instruction to
+  // measure BEFORE confirming cannot be followed. The order has to be stated correctly.
+  test('remuxMusic_firstUseRefusal_givesAnOrderThatCanActuallyBeFollowed', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--apply']);
+
+    assert.match(r.all, /re-run with --confirm-gain/, 'step 1 must be the confirmation');
+    assert.match(r.all, /check-levels\.mjs --file/, 'step 2 must be measuring the file it produces');
+    assert.match(
+      r.all,
+      /nothing to measure yet/i,
+      'and it must say why the measurement cannot come first, rather than asking for the impossible order',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remux-music.mjs --video-seconds — documented, read, and absent from the parser, so
+// the override could not be reached from the command line at all.
+// ---------------------------------------------------------------------------
+describe('remux-music video-seconds override', () => {
+  const project = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': 'music bytes',
+      ...files,
+    });
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  test('remuxMusic_videoSecondsFlag_isAcceptedByTheParser', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--video-seconds', '30']);
+
+    assert.doesNotMatch(r.all, /Unknown option/, 'the documented override must be reachable from the CLI');
+    assert.equal(r.code, EXIT.OK, `a valid override must plan, got ${r.code}\n${r.all}`);
+  });
+
+  // The case the override exists for: timing.json cannot be used, and the caller knows
+  // the length anyway. Without the override this same project is refused.
+  test('remuxMusic_videoSecondsOverrideWithUnreadableTiming_plansWithoutReadingTiming', (t) => {
+    const dir = project(t, { 'timing.json': '{ this is not json' });
+
+    const refused = remux(dir);
+    assert.equal(refused.code, EXIT.USAGE, `malformed timing must be refused, got ${refused.code}\n${refused.all}`);
+
+    const r = remux(dir, ['--video-seconds', '30']);
+    assert.equal(r.code, EXIT.OK, `the override must bypass unreadable timing, got ${r.code}\n${r.all}`);
+  });
+
+  test('remuxMusic_videoSecondsOutsideAllowedRange_exitsUsageError', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--video-seconds', '0']);
+
+    assert.equal(r.code, EXIT.USAGE, `an out-of-range override must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--video-seconds/, 'and must name the option it rejected');
   });
 });

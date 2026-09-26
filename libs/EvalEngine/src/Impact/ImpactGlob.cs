@@ -100,6 +100,19 @@ internal sealed class ChangedPath
             return false;
         }
 
+        // Rechecked after resolution, not only before it: a leading './' makes a drive-qualified
+        // path read as relative to the test above, and dropping the '.' then leaves the drive as
+        // the first segment. Matching such a path against a glob that got through the same way
+        // would retire every other scenario on a comparison between two machine paths.
+        if (PathSyntax.IsRooted(segments))
+        {
+            rejection =
+                "resolves to a drive-qualified path once its './' and '.' segments are removed, and impact "
+                + "globs are repo-relative — there is no repository root here to make the two comparable, "
+                + "because this matcher performs no I/O";
+            return false;
+        }
+
         path = new ChangedPath(value, segments);
         rejection = null;
         return true;
@@ -240,6 +253,19 @@ internal sealed class ImpactGlob
             return false;
         }
 
+        // Rechecked after the '.' segments are dropped, for the reason ChangedPath rechecks it:
+        // a leading './' makes a drive-qualified pattern read as relative to the test above, and
+        // a pattern that got through that way would match a changed path that got through the
+        // same way — retiring every other scenario on two paths that name a machine rather than
+        // this repository.
+        if (PathSyntax.IsRooted(segments))
+        {
+            rejection =
+                "resolves to a drive-qualified pattern once its './' and '.' segments are removed, and the "
+                + "paths it would be matched against are repo-relative";
+            return false;
+        }
+
         glob = new ImpactGlob(pattern, [.. segments]);
         rejection = null;
         return true;
@@ -372,6 +398,27 @@ internal static class PathSyntax
     /// </remarks>
     public static bool IsRooted(string slashed) =>
         slashed.StartsWith('/') || (slashed.Length >= 2 && char.IsAsciiLetter(slashed[0]) && slashed[1] == ':');
+
+    /// <summary>
+    /// Determines whether canonical segments still carry a root or drive qualification.
+    /// </summary>
+    /// <param name="segments">The segments, as <see cref="TryResolve"/> produced them.</param>
+    /// <returns><see langword="true"/> when the resolved path is not repo-relative after all.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Rootedness has to be tested again after normalisation, because normalisation can create
+    /// it.</b> Testing the value as written and then discarding <c>.</c> segments lets
+    /// <c>./C:/Users/&lt;account&gt;</c> pass — the leading <c>.</c> makes it read as relative —
+    /// and resolve to a drive-qualified first segment. The two steps are a few lines apart in
+    /// each caller, which is exactly the distance at which "already checked" stops being true.
+    /// </para>
+    /// <para>
+    /// A leading <c>/</c> cannot survive resolution, because the empty segment before it is
+    /// dropped; a drive qualification can, because <c>C:</c> is an ordinary segment to a splitter.
+    /// So this is the shape that gets through, and it is the one this catches.
+    /// </para>
+    /// </remarks>
+    public static bool IsRooted(IReadOnlyList<string> segments) => segments.Count > 0 && IsRooted(segments[0]);
 
     /// <summary>Reduces a <c>/</c>-separated path to canonical segments.</summary>
     /// <param name="slashed">The path, with separators already normalized to <c>/</c>.</param>
