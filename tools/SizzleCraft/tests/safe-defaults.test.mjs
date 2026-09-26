@@ -125,6 +125,7 @@ describe('write-build-html code mode', () => {
     assert.notEqual(r.code, EXIT.OK, `a bad highlight path must fail the build, got ${r.code}\n${r.all}`);
     assert.match(r.all, /does not exist/, 'and say so plainly');
     assert.match(r.all, /facts/, 'and name the paths that do exist, so the author can fix it now');
+    assert.doesNotMatch(r.all, /at ModuleJob|\bat async\b/, 'an authoring mistake is a refusal, not a crash');
     assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false, 'nothing is written on refusal');
   });
 
@@ -163,7 +164,53 @@ describe('write-build-html code mode', () => {
     const r = build(dir);
 
     assert.notEqual(r.code, EXIT.OK, `a path escape must refuse, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /escapes the project directory/);
+    assert.match(r.all, /outside|escape/i);
+  });
+
+  // OUTSIDE-LINK VICTIM TEST. A lexical check passes here: the path stays inside the
+  // project as text and only leaves once the link is followed. `code` mode renders file
+  // contents straight into the frame, so an escaping read is not a log line someone might
+  // notice — it is composited into the video and encoded.
+  test('codeMode_jsonFileViaLinkPointingOutsideTheProject_refusesAndDoesNotDiscloseTheVictim', (t) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-victim-'));
+    t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+    const SENTINEL = 'SENTINEL-SECRET-b7f3e1a9';
+    const victim = path.join(outside, 'secret.json');
+    fs.writeFileSync(victim, JSON.stringify({ token: SENTINEL }));
+
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'linked.json' } });
+    try {
+      fs.symlinkSync(victim, path.join(dir, 'linked.json'), 'file');
+    } catch {
+      t.skip('symlink creation requires privilege on this platform');
+      return;
+    }
+
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `a link out of the project must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /passes through a link|outside the project root/i,
+      'and refuse for THAT reason — a lexical check would have let this through');
+    assert.doesNotMatch(r.all, /at ModuleJob|\bat async\b/, 'a refusal is not a crash; no stack trace');
+    assert.ok(!r.all.includes(SENTINEL), 'the refusal must not echo the victim file contents');
+    if (fs.existsSync(path.join(dir, 'video-auto.html'))) {
+      const out = fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+      assert.ok(!out.includes(SENTINEL), 'and the victim must never reach a frame');
+    }
+  });
+
+  // JSON.parse embeds the first bytes it parsed in its error message, so echoing the
+  // parser's text discloses file contents on any read the guard did allow.
+  test('codeMode_unparseableJsonFile_reportsWithoutEchoingFileContents', (t) => {
+    const SENTINEL = 'SENTINEL-INSIDE-9f2c';
+    const dir = codeProject(t, { extra: { json: undefined, jsonFile: 'broken.json' } });
+    fs.writeFileSync(path.join(dir, 'broken.json'), `{ "leak": "${SENTINEL}" `);
+
+    const r = build(dir);
+
+    assert.notEqual(r.code, EXIT.OK, `unparseable JSON must fail, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /not valid JSON/);
+    assert.ok(!r.all.includes(SENTINEL), 'the parser message must not be echoed verbatim');
   });
 
   // WCAG 1.4.1: the focused field must be distinguishable without relying on hue.

@@ -28,6 +28,7 @@ const { values } = parseArgs({
     project: { type: 'string' },
     frames: { type: 'string' },
     samples: { type: 'string' },
+    'dead-air': { type: 'boolean' },
     help: { type: 'boolean' },
   },
   allowPositionals: false,
@@ -43,6 +44,7 @@ Options
   --project <dir>   project root (default: current directory)
   --frames <dir>    frame directory, relative to the project (default: frames)
   --samples <n>     sample points per segment, 1..20 (default: 3)
+  --dead-air        also report each segment's longest motionless stretch
   --help            show this message
 
 Exit codes: 0 every segment distinct · 1 two segments render identically · 2 bad usage`);
@@ -132,6 +134,36 @@ if (staticSegs.length > 0) {
 }
 
 if (missing > 0) console.log(`\nWARNING: ${missing} sample(s) had no frame on disk — capture may be incomplete.`);
+
+// DEAD AIR. A separate question from "did it render": a segment can render perfectly and
+// still sit motionless for most of its narration, which reads as a stalled video. Measured
+// by walking consecutive frames rather than inferred from trigger times, because a trigger
+// can fire and change nothing.
+if (values['dead-air']) {
+  console.log('\nsegment        longest still  at            share of segment');
+  for (const s of segs) {
+    const from = Math.max(1, Math.round((s.startMs / 1000) * fps));
+    const to = Math.max(from, Math.round((s.endMs / 1000) * fps));
+    let prev = null, run = 0, best = 0, bestEnd = from;
+    for (let n = from; n <= to; n += 1) {
+      const f = findFrame(n);
+      if (!f) { prev = null; run = 0; continue; }
+      const h = crypto.createHash('md5').update(fs.readFileSync(f)).digest('hex');
+      if (h === prev) { run += 1; if (run > best) { best = run; bestEnd = n; } }
+      else { run = 0; }
+      prev = h;
+    }
+    const stillMs = (best / fps) * 1000;
+    const startedMs = ((bestEnd - best) / fps) * 1000;
+    const share = Math.round((stillMs / (s.endMs - s.startMs)) * 100);
+    const flag = share >= 40 ? '  <-- over 40% motionless' : '';
+    console.log(
+      `${s.id.padEnd(13)} ${(stillMs / 1000).toFixed(1).padStart(13)}s ${ts(startedMs).padStart(13)} ` +
+      `${String(share).padStart(16)}%${flag}`);
+  }
+  console.log('\nDead air is advisory, not a failure — a held diagram under continuing narration is');
+  console.log('a legitimate choice. It is reported so the choice is deliberate rather than accidental.');
+}
 
 if (collisions.length === 0) {
   console.log(`\nOK: no two segments render identically (${firstSeen.size} distinct frames).`);

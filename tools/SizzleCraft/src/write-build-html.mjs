@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter } from './cli-support.mjs';
+import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError } from './cli-support.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -412,23 +412,36 @@ function codeBlock(seg) {
   let data = v.json;
 
   if (data === undefined && v.jsonFile) {
-    // Confined exactly like every other on-screen asset: a path that escapes the project
-    // would put arbitrary disk contents on screen.
-    const abs = path.resolve(dir, v.jsonFile);
-    if (path.relative(dir, abs).startsWith('..')) {
-      throw new Error(`segment "${seg.id}": visual.jsonFile escapes the project directory (${v.jsonFile})`);
-    }
-    if (!fs.existsSync(abs)) throw new Error(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
+    // CONFINED AT RESOLUTION TIME, NOT AT RENDER TIME.
+    //
+    // My first version compared `path.relative(dir, abs)` — lexical only, so it could not
+    // see a link that stays inside the project as TEXT while pointing outside it once
+    // followed. resolveWithinRoot canonicalises and re-checks after following links.
+    //
+    // The boundary matters more here than anywhere else in this file. Every other visual
+    // mode renders authored copy; `code` mode renders the file's contents straight into
+    // the frame. An escaping read is not a log line someone might notice — it is
+    // composited into the video and encoded. And the guard must run BEFORE the read,
+    // because JSON.parse quotes the first bytes it parsed in its error message, so a
+    // parse failure discloses the file whether or not it is ever drawn.
+    //
+    // No-go patterns cannot cover this: they match content you predicted, and a link
+    // redirect changes WHICH FILE you read.
+    const abs = resolveWithinRoot(dir, v.jsonFile, `segment "${seg.id}" visual.jsonFile`);
+    if (!fs.existsSync(abs)) throw new CliError(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
     try { data = JSON.parse(fs.readFileSync(abs, 'utf8')); }
-    catch (e) { throw new Error(`segment "${seg.id}": visual.jsonFile is not valid JSON — ${e.message}`); }
+    catch (e) {
+      // Do NOT echo the parser message: it embeds file contents.
+      throw new CliError(`segment "${seg.id}": visual.jsonFile is not valid JSON (${v.jsonFile})`);
+    }
     if (v.pick) {
       for (const k of String(v.pick).split('.')) {
-        if (data == null || !(k in data)) throw new Error(`segment "${seg.id}": visual.pick path "${v.pick}" not found in ${v.jsonFile}`);
+        if (data == null || !(k in data)) throw new CliError(`segment "${seg.id}": visual.pick path "${v.pick}" not found in ${v.jsonFile}`);
         data = data[k];
       }
     }
   }
-  if (data === undefined) throw new Error(`segment "${seg.id}": code mode needs visual.json or visual.jsonFile`);
+  if (data === undefined) throw new CliError(`segment "${seg.id}": code mode needs visual.json or visual.jsonFile`);
 
   // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
   // This is the only mode that renders data nobody wrote for the screen, so the patterns
@@ -440,7 +453,7 @@ function codeBlock(seg) {
       const re = new RegExp(src, 'i');
       const hit = flat.match(re);
       if (hit) {
-        throw new Error(
+        throw new CliError(
           `segment "${seg.id}": code mode refused — the JSON matches no-go pattern /${src}/i ` +
           `at ${JSON.stringify(hit[0]).slice(0, 80)}.\n` +
           'Redact the source object or narrow the pick; do not render it and rely on it being small on screen.');
@@ -464,14 +477,14 @@ function codeBlock(seg) {
   };
   for (const h of v.highlights || []) {
     if (!emitted.has(h.path)) {
-      throw new Error(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
+      throw new CliError(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
     }
   }
   const prefix = `${seg.id}-path-`;
   for (const t of seg.triggers || []) {
     if (typeof t.target === 'string' && t.target.startsWith(prefix)) {
       const ok = paths.some(p => codePathId(seg.id, p) === t.target);
-      if (!ok) throw new Error(`segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`);
+      if (!ok) throw new CliError(`segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`);
     }
   }
 
@@ -831,8 +844,13 @@ if (!fs.existsSync(gsapPath)) {
 const gsapInline = `<script>${fs.readFileSync(gsapPath, 'utf8')}</script>`;
 // Materialize EVERY slide first. narrative()/live() call checkedSrc(), so asserting before this map
 // would inspect an empty srcErrors list and silently omit unsafe imagery from the final HTML.
-const slideHtml = timing.segments.map(slide).join('');
-assertNoSrcErrors();   // every invalid evidence source, named by segment id, reported in ONE error
+//
+// Guarded because this is where per-segment refusals are raised — a `code` mode path
+// boundary, a highlight addressing a field that does not exist, a no-go match. Unguarded,
+// those surfaced as a raw stack trace, which reads as an engine crash rather than as the
+// deliberate refusal it is, and buries the one line the author needs.
+const slideHtml = guard(() => timing.segments.map(slide).join(''));
+guard(() => assertNoSrcErrors());   // every invalid evidence source, named by segment id, reported in ONE error
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=${w},height=${h},initial-scale=1">${gsapInline}<style>${css}</style></head><body><div id="stage">${slideHtml}${endCardSlide}<audio id="vo" preload="auto" src="voiceover.mp3"></audio></div><script>${runtime}</script></body></html>`;
 const outPath = guard(() => resolveOutput(dir, cli.values.out ?? 'video-auto.html', { apply: cli.apply, replace: cli.replace, label: 'output' }));
 if (!cli.apply) {
