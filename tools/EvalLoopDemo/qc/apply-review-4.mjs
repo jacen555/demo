@@ -67,6 +67,11 @@ seg.visual = {
   title: 'One scenario, field by field',
   subtitle: seg.visual?.subtitle,
   caption: 'scenarios.json — phrasings elided; internal ids removed',
+  note: 'The real scenario object from scenarios.json, rendered as syntax-highlighted JSON. '
+    + 'Six fields are outlined and the rest dimmed, one at a time, each landing on the word '
+    + 'that names it: opening, targetPath, the facts array, the second fact, answerPool, '
+    + 'assertions. Internal ids and the taxonomy description are removed; the 13 alternative '
+    + 'phrasings are elided to a count, since they derive from real support data.',
   json: scenario,
   highlights,
 };
