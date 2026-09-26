@@ -171,7 +171,7 @@ first end-to-end run of this engine by a second project measured both claims:
 |---|---|
 | Halving resolution roughly halves render time | **~8×** — 5.5 min against 42.4 min, S5–S7 at half scale and half fps |
 | Resolution scale is the biggest single lever | At 4K, **frame format is bigger** — JPEG q88 against PNG is **13×** (13.05 fps vs 1.00 fps; 2,183 → 170 KB/frame) |
-| Capture is ~84% of a render | True at **1080p with PNG only.** With JPEG, 4K capture projects to ~9.6 min and **encode becomes the long pole** |
+| Capture is ~84% of a render | **False as a general claim — it is a property of PNG, not of the pipeline or the resolution.** With JPEG q88, encode is the long pole at *both* resolutions. Measured at 1080p/JPEG: S6 capture 3.47 min vs **S7 encode 5.38 min**. The 84% figure comes from PNG's ~2,183 KB/frame write cost; choosing JPEG removes it and moves the bottleneck to encode. Anyone optimising capture on the strength of 84% is working the wrong stage |
 
 The practical consequence inverts the old advice: **4K JPEG capture (~9.6 min) is
 cheaper than the 1080p PNG render this skill was written against (35.4 min).**

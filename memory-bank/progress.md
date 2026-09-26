@@ -23,8 +23,8 @@
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
 | `sizzlecraft` | tool (`node`) | 2 | `partial` | 152 (151 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 1 of the audit closed** — safe defaults, exit contract, path confinement, engine-vs-user-named write classification across 49 sinks. **Group 3 (operability) not started; see the blocking preconditions below.** |
-| `eval-engine` | lib | 1 | `working` | 1779 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load and artifact read-back. **Group 2 of the audit (comparison correctness) is not started — 4 open findings.** `Mcp` and `Ui` scenario kinds are declared stubs. |
-| `eval-cli` | tool | 2 | `working` | 760 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Group 1 of the audit closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, artifact shape checked before publication. |
+| `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
+| `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
 `.github/domains.yaml` — if they disagree, one of them is wrong; fix it.
@@ -145,12 +145,84 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 6. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
 7. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
    has never actually been executed.
-7. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
-   cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
-   complete story.
-8. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
-   base SDK. Worth a spike and an ADR before the first real desktop app.
-9. ~~**`ComparisonResult.NewlyCovered` overclaims, in the engine.**~~ **Closed** by T14a
+8. **`SIZZLECRAFT_*` override precedence is inconsistent within one file.** `FRAME_FORMAT`,
+   `JPEG_QUALITY` and `WORKERS` read the environment first, so they override as documented.
+   `FPS` (`frame-capture.mjs:74`, `encode-mp4.mjs:126`) and `MODE` (`encode-mp4.mjs:132`)
+   read config first, so the environment variable is **unreachable in any real project** —
+   a fallback wearing an override's name. `encode-mp4.mjs:126` also uses `||` where
+   `frame-capture.mjs:74` uses `??`, so a config `fps: 0` behaves differently in the two.
+   Found by a consumer whose half-fps draft silently rendered at 30. The defect is not the
+   inversion but the inconsistency: **the two knobs that silently do nothing are
+   indistinguishable from the three that work.** Audit all seven when fixing; a measurement
+   taken through a knob that does not move is not a measurement.
+9. **The word budget is a planning check run after synthesis, where it cannot be right.**
+   `voice.mjs` sets each segment window *from the measured audio*, so post-synthesis
+   `words / window` **is** the observed rate by construction. The budget then compares that
+   against the same rate minus a 5% safety margin, so every segment above the mean is
+   guaranteed to warn — measured on a real project, 6 of 8 warn against the measured rate
+   and 8 of 8 against the planning estimate. A safety margin hedges a *guess*; applied to a
+   *measurement* it is just a threshold below the mean, which half the population must
+   exceed. Fixing the calibration key lookup (gap 10) only changes *which* segments warn.
+   Once a calibration exists, either skip the budget or report **rate variance against the
+   measured mean** — "8% above the mean rate" is true and useful; "over budget" is false
+   when the audio already exists and fits. A worked 8/8 → 6/8 example is in the consuming
+   project's `render-log.md`.
+10. **The calibration lookup reads a key nothing writes.** `validate-timing.mjs:257` tests
+    `Object.hasOwn(observed, 'wordsPerSecond')`; `voice.mjs:292` writes
+    `aggregate.observedEffWps`. The lookup always misses, so the file is read, parsed,
+    validated and then silently discarded, and every project is checked against its
+    planning estimate. The doc comment above it correctly distinguishes *absent* from
+    *malformed* calibration — and a third state exists that neither branch names, *"read
+    fine, key never written"*, which renders identically to absent. **`pick()` resolves two
+    keys; only `wordsPerSecond` has been established as never written. `wpsSafetyMargin`
+    needs its own verdict and its own evidence** — a severity attached to something you are
+    not fixing is still a claim.
+11. **The contiguity check can never pass.** `validate-timing.mjs:132` asserts strict
+    adjacency, but `voice.mjs` deliberately inserts inter-segment silence and a lead-in, so
+    a correct timeline fails every segment. The mirror of the `ajv.errors` defect in the
+    same file: one check could never fail, this one can never pass — and the second is
+    worse in daily use, because a line that is always red trains the reader to stop reading,
+    and it sits directly above output that matters. An **overlap** should fail; a gap should
+    pass and be reported; an uneven gap should pass and be called out. The existing test
+    `safe-defaults.test.mjs:182` **pins the defect** and must be replaced.
+12. **Four unguarded reads in `write-build-html.mjs`.** `:35` joins `timing.json` raw and
+    hands it to `JSON.parse`, whose error quotes the first bytes parsed — the same
+    disclosure just closed at `encode-mp4.mjs:54`, and **High**. `:124`, `:126` and `:131`
+    read `clips.json` / `manifest.json` / `evidence-pack.json` through the same unguarded
+    join but are `catch {}`-swallowed, so they disclose nothing via a message while still
+    reading through a link into the rendered page — **Medium**, each needing its own
+    verdict. Severity rises with the new `code` mode, which renders **source data** into the
+    frame rather than authored copy: an unguarded `jsonFile` does not leak into a log, it is
+    composited into the video and encoded.
+13. **Repo-wide verification is no longer one command.** `dotnet build Forge.sln` does not
+    cover Node domains (ADR 0002) — the registry's per-domain `test_cmd` is the only
+    complete story.
+14. **The fixture-shape inventory is guarded by a count, not by evidence.**
+    `FixtureFidelityTests` drives real runners into every modelled `(exchange, stoppedBy)`
+    pair and compares full values, and the factory inventory is closed by reflection. But a
+    **matched deletion** of a pair whose two constants both appear in other pairs still
+    satisfies every check except a count tripwire. Closing it properly needs a disposition
+    for all 63 cells of the constant cross-product, judged disproportionate. Accepted by the
+    reviewer as "an honest, recordable tripwire" — it is not proof, and should not be
+    described as one.
+15. **Assertion operands live in evidence surfaces and are deliberately not guarded there.**
+    ADR 0005's accepted under-guarding, with the boundary now explicit: an operand is
+    accepted **in** the suite and the transcript, because the consumer nets those at
+    publication — and refused **into** anything the consumer publishes without netting: the
+    artifact diagnostic, the log, and `ScenarioSelection.Detail`. The general form is *output
+    the consumer does not net*, not *logs*; an earlier framing as "not a build log" was a
+    special case. An operand naming a machine path therefore reaches the suite file and the
+    transcript, by design.
+16. **The method exemption requires a leading bare method.** `presence:response/GET /home/dashboard`
+    is refused **as a scenario id**, because ordinal 0 is `presence:response/GET` rather than a
+    bare method, so the ordinal-1 exemption misses. Pre-existing and **not** the round-5
+    regression: a 26-site sink sweep confirms no assertion expression reaches this predicate,
+    so an assertion spelled that way still loads. Left unfixed deliberately — changing an
+    exemption's shape in `MachinePath` is what produced this audit's only false refusal, and
+    doing it safely needs the route-shaped positives pinned first.
+17. **Desktop framework undecided.** The scaffold defaults to WPF because it ships with the
+    base SDK. Worth a spike and an ADR before the first real desktop app.
+18. ~~**`ComparisonResult.NewlyCovered` overclaims, in the engine.**~~ **Closed** by T14a
    (`8f52efa`). The engine now withholds any scenario that was not fully conducted, in three
    named causes — incomplete, over-recorded, errored — and reports them on
    `NewlyCoveredWithheld` / `…Reason` rather than dropping them. `eval-cli`'s workaround was
@@ -158,7 +230,7 @@ built through `forge-team` with a real builder and reviewer. That is the next re
    is a single suite-level string, so a reader cannot attribute a cause to a specific scenario
    from that field alone. Per-scenario attribution is a Tier 1 change and will be sequenced
    only if the report genuinely needs it.
-10. **Four tracked follow-ups from the T15 work**, none blocking:
+19. **Four tracked follow-ups from the T15 work**, none blocking:
     - **T15b** — the trend report. The comparison report exists; a separate
       dashboard showing movement across runs does not.
     - **T15c** — `NewlyCoveredWithheldReason` is a single suite-level string, so
