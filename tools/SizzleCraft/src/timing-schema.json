@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.local/sizzlecraft/timing-schema.json",
+  "title": "SizzleCraft timing.json",
+  "description": "The timing contract every pipeline stage after S4 reads. validate-timing.mjs checks a project's timing.json against this. Unknown properties are permitted throughout: projects carry their own authoring metadata, and stages read only what they declare.",
+  "type": "object",
+  "required": ["segments"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "description": "Render parameters. Consumed by frame-capture and encode-mp4.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "lede": { "type": "string" },
+        "fps": { "type": "number", "exclusiveMinimum": 0, "maximum": 240 },
+        "width": { "type": "integer", "exclusiveMinimum": 0 },
+        "height": { "type": "integer", "exclusiveMinimum": 0 },
+        "mode": { "enum": ["draft", "live", "publish"] },
+        "frameFormat": { "enum": ["png", "jpg", "jpeg"] },
+        "jpegQuality": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "additionalProperties": true
+    },
+    "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+    "totalDurationMs": { "type": "number", "exclusiveMinimum": 0 },
+    "contentMs": { "type": "number", "exclusiveMinimum": 0 },
+    "outroMs": { "type": "number", "minimum": 0 },
+    "endCard": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } },
+      "additionalProperties": true
+    },
+    "intake": {
+      "type": "object",
+      "description": "Authoring calibration. wordsPerSecond x wpsSafetyMargin gives the word budget ceiling.",
+      "properties": {
+        "wordsPerSecond": { "type": "number", "exclusiveMinimum": 0 },
+        "wpsSafetyMargin": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "startMs", "endMs", "voiceoverText"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "startMs": { "type": "number", "minimum": 0 },
+          "endMs": { "type": "number", "exclusiveMinimum": 0 },
+          "voiceoverText": { "type": "string" },
+          "audio": {
+            "type": "object",
+            "properties": {
+              "durationMs": { "type": "number", "minimum": 0 },
+              "headSilenceMs": { "type": "number", "minimum": 0 },
+              "tailSilenceMs": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

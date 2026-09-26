@@ -1,7 +1,26 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
-import fs from 'fs';
+import fs from 'node:fs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
 
-const t = JSON.parse(fs.readFileSync('timing.json', 'utf8'));
+const USAGE = `
+write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
+
+  node write-storyboard.mjs                      plan only (default)
+  node write-storyboard.mjs --apply              write storyboard.html
+  node write-storyboard.mjs --apply --replace    overwrite an existing storyboard.html
+
+Options
+  --out <file>      output path (default: storyboard.html)
+  --project <dir>   project root; no path may escape it (default: current directory)
+  --apply           actually write. Without it nothing is written.
+  --replace         permit overwriting an existing --out
+  --help            show this message
+
+Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
+`.trimStart();
+
+const { values, projectDir, apply, replace } = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
+const t = JSON.parse(fs.readFileSync(guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file')), 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const PAL = ['#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C'];
 const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}`;
@@ -116,7 +135,16 @@ ${t.segments.map(panel).join('')}
 <footer>Preview only — final frames are rendered by the Builder from this same timing.json. Step numbers show reveal order; motion (edge draw, flowing particles, active-path pulse) is applied at render.</footer>
 </div></body></html>`;
 
-fs.writeFileSync('storyboard.html', html);
-console.log(`wrote storyboard.html (${t.segments.length} segments, ${clock(t.durationMs)})`);
+const outPath = guard(() => resolveOutput(projectDir, values.out ?? 'storyboard.html', { apply, replace, label: 'output' }));
+if (!apply) {
+  console.log(`plan: render a storyboard for ${t.segments?.length ?? 0} segment(s)`);
+  console.log(`  source ${projectDir}/timing.json`);
+  console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
+fs.writeFileSync(outPath, html);
+console.log(`wrote ${outPath} (${t.segments.length} segments, ${clock(t.durationMs)})`);
+
 
 

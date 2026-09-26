@@ -1,8 +1,37 @@
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { EXIT, guard, parseCli, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
 
-const dir = process.cwd();
+const USAGE = `
+write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
+
+  node write-build-html.mjs                      plan only (default)
+  node write-build-html.mjs --apply              write video-auto.html
+  node write-build-html.mjs --apply --replace    overwrite an existing video-auto.html
+
+Options
+  --out <file>      output path (default: video-auto.html)
+  --project <dir>   project root; no path may escape it (default: current directory)
+  --apply           actually write. Without it nothing is written.
+  --replace         permit overwriting an existing --out
+  --help            show this message
+
+Exit codes: 0 success/plan · 1 build failed · 2 bad usage or refused overwrite
+`.trimStart();
+
+// Parsed before any read, so --help cannot reach the filesystem.
+const cli = (() => {
+  try {
+    return parseCli({ usage: USAGE, options: { out: { type: 'string' } } });
+  } catch (err) {
+    if (err.name === 'HelpRequested') { console.log(err.usage); process.exit(EXIT.OK); }
+    console.error(`error: ${err.message}`);
+    process.exit(err.exitCode ?? EXIT.FAILED);
+  }
+})();
+
+const dir = cli.projectDir;
 const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
 // Harden DOM tokens: segment ids AND node/edge ids (and edge from/to) get interpolated into DOM/SVG
 // element ids (e.g. `${seg.id}-label`, `${seg.id}-shot-0`, node/edge ids) and `url(#…)` marker refs. The
@@ -41,7 +70,17 @@ const jsonScript = (value, space) => JSON.stringify(value, null, space)
 // resolve beneath this run's approved evidence-pack root and remain a local relative file path.
 // Containment is decided on the REALPATH: a symlink/junction/reparse point inside evidence-pack whose
 // target lives outside it is an escape, and path.resolve() alone cannot see that.
-const EVIDENCE_ROOT = fs.realpathSync(path.resolve(dir, 'evidence-pack'));
+let EVIDENCE_ROOT;
+try {
+  EVIDENCE_ROOT = fs.realpathSync(path.resolve(dir, 'evidence-pack'));
+} catch (err) {
+  // A bare ENOENT stack here reads as a crash rather than a missing prerequisite.
+  console.error(
+    `error: evidence-pack/ not found in ${dir} (${err.code ?? err.message}) — every on-screen asset must ` +
+      `resolve beneath the approved evidence pack, so the scene cannot be built without it.`,
+  );
+  process.exit(EXIT.USAGE);
+}
 const safeEvidenceSrc = raw => {
   const s = String(raw ?? '').trim();
   if (!s || s.includes('\0') || s.includes('\\') || s.includes('%') || /[?#]/.test(s)) throw new Error('unsafe evidence src rejected');
@@ -581,12 +620,27 @@ elementTriggers.filter(t=>t.s===1&&t.withSegment).forEach(apply);`;
 
 // Inline GSAP from the local install so video-auto.html runs fully offline (C-8) — no CDN, no network, no external supply chain.
 const gsapPath = path.join(dir, 'node_modules', 'gsap', 'dist', 'gsap.min.js');
-if (!fs.existsSync(gsapPath)) throw new Error('gsap not installed locally — run `npm install gsap` (local-first render must not depend on a CDN)');
+if (!fs.existsSync(gsapPath)) {
+  console.error(
+    `error: gsap not installed locally at ${gsapPath} — run \`npm install gsap\` in ${dir} ` +
+      `(a local-first render must not depend on a CDN)`,
+  );
+  process.exit(EXIT.USAGE);
+}
 const gsapInline = `<script>${fs.readFileSync(gsapPath, 'utf8')}</script>`;
 // Materialize EVERY slide first. narrative()/live() call checkedSrc(), so asserting before this map
 // would inspect an empty srcErrors list and silently omit unsafe imagery from the final HTML.
 const slideHtml = timing.segments.map(slide).join('');
 assertNoSrcErrors();   // every invalid evidence source, named by segment id, reported in ONE error
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=${w},height=${h},initial-scale=1">${gsapInline}<style>${css}</style></head><body><div id="stage">${slideHtml}${endCardSlide}<audio id="vo" preload="auto" src="voiceover.mp3"></audio></div><script>${runtime}</script></body></html>`;
-fs.writeFileSync(path.join(dir, 'video-auto.html'), html);
+const outPath = guard(() => resolveOutput(dir, cli.values.out ?? 'video-auto.html', { apply: cli.apply, replace: cli.replace, label: 'output' }));
+if (!cli.apply) {
+  console.log(`plan: build the scene for ${timing.segments?.length ?? 0} segment(s)`);
+  console.log(`  source ${path.join(dir, 'timing.json')}`);
+  console.log(`  output ${outPath} — ${describeWrite(outPath, cli.replace)}`);
+  console.log(`  size   ${html.length} bytes of generated HTML`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
+fs.writeFileSync(outPath, html);
 console.log('wrote video-auto.html (' + timing.segments.length + ' segments)');

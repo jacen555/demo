@@ -3,13 +3,81 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { chromium } from 'playwright';
+import { parseArgs } from 'node:util';
+import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter } from './cli-support.mjs';
 
-const projectDir = process.cwd();
-const timing = JSON.parse(fs.readFileSync(path.join(projectDir, 'timing.json'), 'utf8'));
-const fps = Number(timing.project?.fps || process.env.SIZZLECRAFT_FPS || 30);
-const width = Number(timing.project?.width || 3840);
-const height = Number(timing.project?.height || 2160);
+// --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
+// directory wholesale. So the default invocation plans and writes nothing, and the
+// wipe is reachable only via an explicit --apply. See README "Safe defaults".
+const USAGE = `
+frame-capture — render video-auto.html to a frame sequence (pipeline stage S6).
+
+  node frame-capture.mjs [--project <dir>]            plan only: report what would be
+                                                      captured and what would be deleted
+  node frame-capture.mjs --apply                      perform the capture, REPLACING frames/
+  node frame-capture.mjs --apply --resume             keep frames already on disk when the
+                                                      capture inputs are unchanged
+
+Options
+  --project <dir>   project directory (default: current directory)
+  --apply           actually capture. Without it nothing is written or deleted.
+  --resume          with --apply, reuse existing frames if the input fingerprint matches
+  --help            show this message
+
+Exit codes: 0 success/plan · 1 capture failed · 2 bad usage · 3 skipped (another capture holds the lock)
+`.trimStart();
+
+let cliArgs;
+try {
+  ({ values: cliArgs } = parseArgs({
+    options: {
+      project: { type: 'string' },
+      apply: { type: 'boolean', default: false },
+      resume: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+    strict: true,
+  }));
+} catch (err) {
+  console.error(`error: ${err.message}\n\n${USAGE}`);
+  process.exit(EXIT.USAGE);
+}
+if (cliArgs.help) {
+  console.log(USAGE);
+  process.exit(EXIT.OK);
+}
+
+const projectDir = path.resolve(cliArgs.project ?? process.cwd());
+if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+  console.error(`error: --project "${projectDir}" is not an existing directory`);
+  process.exit(EXIT.USAGE);
+}
+const apply = cliArgs.apply === true;
+
+const timing = guard(() => {
+  const timingPath = requireExistingFile(projectDir, 'timing.json', 'timing file');
+  try {
+    return JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+  } catch (err) {
+    throw new CliError(`${timingPath} is not valid JSON — ${err.message}`);
+  }
+});
+
+// Capture parameters are validated up front, before anything is deleted. An unvalidated
+// fps is not a cosmetic bug: `Number('thirty')` is NaN and a negative fps is accepted by
+// `||`, either of which makes totalFrames NaN or non-positive — so --apply wiped frames/,
+// iterated zero capture ranges, printed a completion line and exited 0. That is the exact
+// defect this engine is being hardened against, reached through an argument instead of a
+// code path, so the guard belongs here rather than at the point of use.
+let fps, width, height;
+try {
+  fps = requirePositiveNumber(timing.project?.fps ?? process.env.SIZZLECRAFT_FPS ?? 30, { name: 'timing.project.fps', max: 240 });
+  width = requirePositiveNumber(timing.project?.width ?? 3840, { name: 'timing.project.width', max: 16384, integer: true });
+  height = requirePositiveNumber(timing.project?.height ?? 2160, { name: 'timing.project.height', max: 16384, integer: true });
+} catch (err) {
+  console.error(`error: ${err.message}`);
+  process.exit(EXIT.USAGE);
+}
 // Derive the total duration with nullish-coalescing (not `||`) so a present-but-invalid value like
 // timing.durationMs=0 is NOT silently replaced by a segment-derived fallback, and an empty/missing
 // `segments` array can never yield -Infinity/NaN. Validate up front so malformed timing fails fast
@@ -28,7 +96,14 @@ if (!Number.isFinite(durationMs) || durationMs <= 0) {
   throw new Error(`invalid timing duration (${durationMs}) — set a positive timing.durationMs / totalDurationMs, or provide segments with a positive endMs`);
 }
 const totalFrames = Math.ceil(((durationMs + 1000) / 1000) * fps);
-const frameDir = path.join(projectDir, 'frames');
+if (!Number.isSafeInteger(totalFrames) || totalFrames <= 0) {
+  console.error(`error: derived frame count is ${totalFrames} — a capture that would produce no frames must not delete the existing ones. Check timing.durationMs and timing.project.fps.`);
+  process.exit(EXIT.USAGE);
+}
+// frames/ is the directory this script DELETES RECURSIVELY, so containment alone is not
+// the right question — resolveWipeTarget additionally refuses a link at that name, and
+// requires the target to be the real directory strictly below the root.
+const frameDir = guard(() => resolveWipeTarget(projectDir, 'frames', 'frames directory'));
 
 // Mode-aware frame format: draft=jpeg (fast/small), live=png (fidelity). Env overrides.
 // Only jpeg (jpg) and png are supported (Playwright screenshot type + the WebCodecs encoder path,
@@ -39,7 +114,12 @@ const frameFormat = fmtRaw === 'jpg' ? 'jpeg' : fmtRaw;
 if (frameFormat !== 'jpeg' && frameFormat !== 'png') {
   throw new Error(`unsupported frame format "${fmtRaw}" — only "jpeg" (or "jpg") and "png" are supported (see references/ffmpeg-free-encoder.md)`);
 }
-const jpegQuality = Number(process.env.SIZZLECRAFT_JPEG_QUALITY || timing.project?.jpegQuality || 88);
+const jpegQuality = guard(() =>
+  requireFiniteNumber(process.env.SIZZLECRAFT_JPEG_QUALITY ?? timing.project?.jpegQuality ?? 88, {
+    name: 'jpeg quality (SIZZLECRAFT_JPEG_QUALITY / timing.project.jpegQuality)',
+    min: 1,
+    max: 100,
+  }));
 const ext = frameFormat === 'jpeg' ? 'jpg' : frameFormat;
 // Performance / reliability knobs (env override config.yaml render.capture.*).
 // Capture is CPU-bound and embarrassingly parallel, so default the worker count to the machine's core
@@ -52,7 +132,7 @@ const heavyFrames = width * height > 1920 * 1080;
 const autoWorkers = Math.max(1, Math.min(cpuCount - 1, heavyFrames ? 6 : cpuCount));
 const workersEnv = Number(process.env.SIZZLECRAFT_WORKERS);
 const workers = Math.max(1, Number.isFinite(workersEnv) && workersEnv > 0 ? workersEnv : autoWorkers);
-const resume = /^(1|true|yes)$/i.test(String(process.env.SIZZLECRAFT_RESUME || ''));
+const resume = cliArgs.resume === true || /^(1|true|yes)$/i.test(String(process.env.SIZZLECRAFT_RESUME || ''));
 // dedupHolds (render.capture.dedupHolds, default on): during capture, a fully-settled frame whose
 // deterministic visual signature (window.__frameSig) equals the previous captured frame is not
 // re-screenshotted — it is materialised as a hardlink (copy fallback) to that identical prior frame.
@@ -68,10 +148,119 @@ let _acc = 0;
 for (const s of (timing.segments || [])) { auditFrames.add(Math.round((s.startMs ?? _acc) / 1000 * fps)); _acc = s.endMs ?? _acc; }
 const frameName = (n) => `frame_${String(n).padStart(5, '0')}.${ext}`;
 
+// --- Prerequisites and the capture fingerprint. All read-only: this block must run
+// identically for a plan and for a real capture, so the plan reports the truth.
+//
+// Resume keeps already-written frames (recover from an interrupted run); otherwise start clean.
+// Resume is only honoured when the capture inputs are unchanged: a fingerprint of video-auto.html +
+// all frame parameters is stored in frames/.capture-meta.json. If it is missing or mismatched (the
+// HTML, fps, resolution, format or quality changed), kept frames would be stale — so we wipe and do a
+// full capture. This closes the "resume trusts a frame produced by a different input" determinism hole.
+const metaPath = guard(() => resolveInternalArtifact(projectDir, path.join('frames', '.capture-meta.json'), 'capture metadata'));
+const dedupStatsPath = guard(() => resolveInternalArtifact(projectDir, path.join('frames', '.dedup-stats.json'), 'dedup stats'));
+const htmlPath = path.join(projectDir, 'video-auto.html');
+// video-auto.html is a hard prerequisite for capture — without it every frame's page.goto fails.
+// Fail fast here with an actionable message instead of writing a fingerprint with an empty htmlHash
+// (which could never be a valid resume basis) and surfacing a confusing goto error deep in the loop.
+if (!fs.existsSync(htmlPath)) {
+  console.error(`error: video-auto.html not found in ${projectDir} — run the build-html step before frame capture`);
+  process.exit(EXIT.USAGE);
+}
+function captureFingerprint() {
+  const htmlHash = crypto.createHash('sha256').update(fs.readFileSync(htmlPath)).digest('hex');
+  return { htmlHash, fps, width, height, frameFormat, jpegQuality, totalFrames, v: 1 };
+}
+const fingerprint = captureFingerprint();
+
+/**
+ * Everything inside frames/ — which is exactly what --apply destroys, because it removes
+ * the directory recursively.
+ *
+ * Counting only `frame_*` understated the damage, and counting only FILES understates it
+ * again: the wipe is recursive, so a directory inside frames/ goes too. A frames/
+ * containing nothing but an empty subdirectory reported "existing none" while --apply
+ * deleted it. A plan that undercounts is the safe default telling the user a smaller
+ * truth than the one --apply acts on.
+ *
+ * A read error that is not "absent" is a refusal, not an empty list: `frames/` existing
+ * but unreadable proves nothing about what is in it.
+ */
+function existingFrameEntries() {
+  let entries;
+  try {
+    entries = fs.readdirSync(frameDir, { recursive: true, withFileTypes: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return { total: 0, frames: 0, other: [] };
+    throw new CliError(
+      `cannot inspect ${frameDir} (${err.code}) — refusing to plan a capture whose deletion scope is unknown`,
+    );
+  }
+  const isFrame = (e) => !e.isDirectory() && /^frame_\d+\./i.test(e.name);
+  const frames = entries.filter(isFrame);
+  const other = entries
+    .filter((e) => !isFrame(e))
+    .map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
+  return { total: entries.length, frames: frames.length, other };
+}
+/**
+ * True when frames/.capture-meta.json matches the current inputs, so --resume can reuse
+ * them. An ABSENT fingerprint is a legitimate mismatch; an unreadable one is not — it
+ * proves nothing, and treating it as a mismatch discards the frames the user asked to
+ * resume from.
+ */
+function fingerprintMatches() {
+  let raw;
+  try {
+    raw = fs.readFileSync(metaPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw new CliError(
+      `cannot read ${metaPath} (${err.code}) — refusing to discard the existing frames on an unverifiable fingerprint`,
+    );
+  }
+  try {
+    return JSON.stringify(JSON.parse(raw)) === JSON.stringify(fingerprint);
+  } catch {
+    return false; // present but not the fingerprint we wrote: a genuine mismatch
+  }
+}
+
+// --- The safe default. Planning is the default because a capture REPLACES frames/, and
+// a frame sequence can represent hours of render time. Nothing below this point has
+// written or deleted anything, so a plan run is side-effect free.
+if (!apply) {
+  let existing;
+  try {
+    existing = existingFrameEntries();
+  } catch (err) {
+    console.error(`error: ${err.message}`);
+    process.exit(EXIT.USAGE);
+  }
+  const reusable = resume && guard(fingerprintMatches);
+  console.log(`plan: frame capture for ${projectDir}`);
+  console.log(`  source          ${path.basename(htmlPath)}`);
+  console.log(`  output          ${frameDir}`);
+  console.log(`  frames          ${totalFrames} at ${fps} fps, ${width}x${height}, ${frameFormat}`);
+  console.log(`  workers         ${workers}`);
+  if (existing.total === 0) {
+    console.log(`  existing        none`);
+  } else if (reusable) {
+    console.log(`  existing        ${existing.total} entr${existing.total === 1 ? 'y' : 'ies'} — would be KEPT (--resume, fingerprint matches)`);
+  } else {    // --apply removes frameDir recursively, so every entry is in scope, not just frame_*.
+    console.log(`  existing        ${existing.total} entr${existing.total === 1 ? 'y' : 'ies'} — would be DELETED${resume ? ' (--resume requested but capture inputs changed)' : ''}`);
+    console.log(`                  ${existing.frames} frame file(s)${existing.other.length ? `, plus ${existing.other.length} other: ${existing.other.slice(0, 5).join(', ')}${existing.other.length > 5 ? ', …' : ''}` : ''}`);
+  }
+  console.log(`  metadata        ${path.basename(metaPath)} and ${path.basename(dedupStatsPath)} are rewritten on every --apply, including --resume`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
+
 // --- Single-writer capture lock. Two concurrent captures racing on the same
 // frames dir corrupt the sequence; a heal loop must never assume a producer is
 // alive just because frames exist. The lock owner is a live PID; a stale lock
-// (dead owner) is taken over. If another live capture owns it, we exit cleanly.
+// (dead owner) is taken over. If another live capture owns it we did NOT capture,
+// so we exit EXIT.SKIPPED — a caller that saw 0 here would move to the encode
+// stage believing a fresh frame sequence exists.
 const lockPath = path.join(projectDir, 'frames.lock');
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
 (function acquireLock() {
@@ -79,40 +268,38 @@ function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { 
     try { fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' }); return; }
     catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      const owner = Number(fs.readFileSync(lockPath, 'utf8').trim());
-      if (!owner || !pidAlive(owner)) { fs.rmSync(lockPath, { force: true }); continue; }
-      console.log(`capture already running (pid ${owner}); exiting`);
-      process.exit(0);
+      const owner = readLockOwner(lockPath);
+      if (owner.state === 'vanished') continue; // released between our write and our read
+      if (owner.state === 'unreadable') {
+        // We cannot show that nobody else is capturing, and the next step deletes the
+        // frame sequence. Refusing costs a re-run; guessing costs the render.
+        console.error(`frames.lock could not be read (${owner.detail}) — refusing to assume no capture is running`);
+        process.exit(EXIT.SKIPPED);
+      }
+      if (!pidAlive(owner.pid)) { fs.rmSync(lockPath, { force: true }); continue; }
+      console.error(`capture already running (pid ${owner.pid}); skipped without capturing`);
+      process.exit(EXIT.SKIPPED);
     }
   }
 })();
 process.on('exit', () => { try { fs.rmSync(lockPath, { force: true }); } catch {} });
 
-// Resume keeps already-written frames (recover from an interrupted run); otherwise start clean.
-// Resume is only honoured when the capture inputs are unchanged: a fingerprint of video-auto.html +
-// all frame parameters is stored in frames/.capture-meta.json. If it is missing or mismatched (the
-// HTML, fps, resolution, format or quality changed), kept frames would be stale — so we wipe and do a
-// full capture. This closes the "resume trusts a frame produced by a different input" determinism hole.
-const metaPath = path.join(frameDir, '.capture-meta.json');
-const htmlPath = path.join(projectDir, 'video-auto.html');
-// video-auto.html is a hard prerequisite for capture — without it every frame's page.goto fails.
-// Fail fast here with an actionable message instead of writing a fingerprint with an empty htmlHash
-// (which could never be a valid resume basis) and surfacing a confusing goto error deep in the loop.
-if (!fs.existsSync(htmlPath)) {
-  throw new Error(`video-auto.html not found in ${projectDir} — run the build-html step before frame capture`);
+// Load Playwright before the wipe, not at module scope: a missing browser dependency must
+// fail while the existing frames are still on disk, never after they have been deleted.
+let chromium;
+try {
+  ({ chromium } = await import('playwright'));
+} catch (err) {
+  console.error(`error: playwright is required for capture but could not be loaded — run \`npm install\` in the engine directory.\n  ${err.message}`);
+  process.exit(EXIT.USAGE);
 }
-function captureFingerprint() {
-  const htmlHash = crypto.createHash('sha256').update(fs.readFileSync(htmlPath)).digest('hex');
-  return { htmlHash, fps, width, height, frameFormat, jpegQuality, totalFrames, v: 1 };
-}
-const fingerprint = captureFingerprint();
+
+// --- Everything below this line mutates the project. Reached only via --apply.
 let effectiveResume = resume;
 if (resume) {
   fs.mkdirSync(frameDir, { recursive: true });
-  let ok = false;
-  try { ok = JSON.stringify(JSON.parse(fs.readFileSync(metaPath, 'utf8'))) === JSON.stringify(fingerprint); } catch { ok = false; }
-  if (!ok) {
-    console.log('resume requested but capture inputs changed (or no fingerprint) — discarding stale frames and capturing fresh');
+  if (!guard(fingerprintMatches)) {
+    console.error('resume requested but capture inputs changed (or no fingerprint) — discarding stale frames and capturing fresh');
     fs.rmSync(frameDir, { recursive: true, force: true });
     fs.mkdirSync(frameDir, { recursive: true });
     effectiveResume = false;
@@ -328,4 +515,10 @@ const captured = totalFrames - held;
 console.log(`wrote ${totalFrames} frames to ${frameDir}` +
   (dedupHolds ? ` (${captured} captured, ${held} held/${totalFrames} = ${Math.round(held / Math.max(1, totalFrames) * 100)}% deduped)` : ' (dedup off)'));
 // Record dedup stats for the manifest/auditability.
-try { fs.writeFileSync(path.join(frameDir, '.dedup-stats.json'), JSON.stringify({ total: totalFrames, captured, held, dedupHolds })); } catch {}
+try {
+  fs.writeFileSync(dedupStatsPath, JSON.stringify({ total: totalFrames, captured, held, dedupHolds }));
+} catch (err) {
+  // Not fatal to the render, but never silent: a swallowed failure here is how the
+  // engine stops being able to explain what it did.
+  console.error(`warning: could not write ${dedupStatsPath} (${err.code ?? err.message})`);
+}

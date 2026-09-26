@@ -1,9 +1,53 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { parseArgs } from 'node:util';
+import { EXIT, guard, resolveOutput, describeWrite, readLockOwner, requireFiniteNumber, pathExists, planFooter } from './cli-support.mjs';
 
-const projectDir = process.cwd();
+const ENCODE_USAGE = `
+encode-mp4 — encode the captured frame sequence to MP4 (pipeline stage S7).
+
+  node encode-mp4.mjs                      plan only (default)
+  node encode-mp4.mjs --apply              encode and publish <project>.mp4
+  node encode-mp4.mjs --apply --replace    overwrite an existing <project>.mp4
+
+Options
+  --project <dir>   project directory (default: current directory)
+  --apply           actually encode. Without it nothing is written.
+  --replace         permit publishing over an existing MP4
+  --help            show this message
+
+The final rename is the publish step: it replaces the deliverable. That is why it needs
+--replace rather than happening on a bare run.
+
+Exit codes: 0 success/plan · 1 encode failed · 2 bad usage · 3 skipped (another encode holds the lock)
+`.trimStart();
+
+let encodeArgs;
+try {
+  ({ values: encodeArgs } = parseArgs({
+    options: {
+      project: { type: 'string' },
+      apply: { type: 'boolean', default: false },
+      replace: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+    strict: true,
+  }));
+} catch (err) {
+  console.error(`error: ${err.message}\n\n${ENCODE_USAGE}`);
+  process.exit(EXIT.USAGE);
+}
+if (encodeArgs.help) {
+  console.log(ENCODE_USAGE);
+  process.exit(EXIT.OK);
+}
+
+const projectDir = path.resolve(encodeArgs.project ?? process.cwd());
+if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+  console.error(`error: --project "${projectDir}" is not an existing directory`);
+  process.exit(EXIT.USAGE);
+}
 // This script and its encoder-page.html ship together in the plugin. Resolve the shipped encoder page
 // relative to this file (not the project) so the render is self-contained and never hand-transcribed.
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -79,13 +123,55 @@ const height = Number(timing.project?.height || 2160);
 // #7 draft-only encode speedup: draft renders may use the fast WebCodecs `realtime` latency mode
 // (higher throughput, ~20% larger file). live/publish stay on `quality` so the deliverable keeps
 // best compression and byte-reproducibility. Default 'live' — never silently degrade a publish.
-const mode = timing.project?.mode || process.env.SIZZLECRAFT_MODE || 'live';
+const mode = timing.project?.mode ?? process.env.SIZZLECRAFT_MODE ?? 'live';
+if (!['draft', 'live', 'publish'].includes(mode)) {
+  console.error(`error: unknown mode "${mode}" — expected draft, live or publish. An unrecognised value silently selected the 'quality' encoder path.`);
+  process.exit(EXIT.USAGE);
+}
 const latencyMode = mode === 'draft' ? 'realtime' : 'quality';
+
+// The A/V drift budget, validated HERE rather than at the comparison. `Number('oops')`
+// is NaN and `Math.abs(drift) > Math.max(NaN, 1500)` is false for every drift, so the
+// sync gate at the end of the encode never fires — it publishes an out-of-sync MP4 and
+// exits 0. Validating before any work also makes the guard provable without an encoder.
+const wantAudio = timing.intake?.silent !== true;
+const toleranceMs = guard(() =>
+  requireFiniteNumber(timing.intake?.toleranceMs ?? 750, { name: 'timing.intake.toleranceMs', min: 0, max: 600_000 }));
 const frameDir = path.join(projectDir, 'frames');
 const audioPath = path.join(projectDir, 'voiceover.mp3');
 const outPath = path.join(projectDir, `${projectName}.mp4`);
 const encoderDir = path.join(projectDir, 'encoder');
 const encoderHtml = path.join(encoderDir, 'encoder-page.html');
+
+// --- The safe default. The final step of this script renames the encoded file over
+// <project>.mp4 — that rename IS the publish, and on a bare run it replaced an approved
+// deliverable with no way back. Nothing below this point has written anything yet.
+if (!encodeArgs.apply) {
+  let frameCount = 0;
+  try {
+    frameCount = fs.readdirSync(frameDir).filter((n) => /^frame_\d+\.(png|jpe?g|webp)$/i.test(n)).length;
+  } catch {
+    frameCount = 0;
+  }
+  console.log(`plan: encode ${frameCount} frame(s) at ${fps} fps, ${width}x${height} (${mode})`);
+  console.log(`  frames  ${frameDir}`);
+  // The apply path REFUSES a missing narration unless intake.silent is explicitly true,
+  // so the plan must not describe a video-only render it would never produce.
+  if (!wantAudio) {
+    console.log(`  audio   none — intentional silent render (timing.intake.silent=true)`);
+  } else if (pathExists(audioPath, 'voiceover.mp3')) {
+    console.log(`  audio   ${audioPath}`);
+  } else {
+    console.log(`  audio   MISSING (${audioPath}) — --apply would refuse rather than publish a silent video`);
+    console.log(`          set timing.intake.silent=true for an intentional silent render`);
+  }
+  console.log(`  A/V     drift budget ${Math.max(toleranceMs, 1500)}ms`);
+  console.log(`  output  ${outPath} — ${describeWrite(outPath, encodeArgs.replace)}`);
+  planFooter();
+  process.exit(EXIT.OK);
+}
+// Guarded before the lock and before any work, so a refusal costs nothing.
+guard(() => resolveOutput(projectDir, path.basename(outPath), { apply: true, replace: encodeArgs.replace, label: 'output MP4' }));
 
 // --- Single-writer lock (prevents concurrent encoders clobbering the output).
 // A stale lock whose owner PID is dead is taken over; a live owner makes us exit
@@ -97,14 +183,22 @@ function acquireLock() {
     try { fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' }); return true; }
     catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      const owner = Number(fs.readFileSync(lockPath, 'utf8').trim());
-      if (!owner || !pidAlive(owner)) { fs.rmSync(lockPath, { force: true }); continue; } // stale -> take over
-      console.log(`encode already running (pid ${owner}); exiting without touching ${path.basename(outPath)}`);
+      const owner = readLockOwner(lockPath);
+      if (owner.state === 'vanished') continue; // released between our write and our read
+      if (owner.state === 'unreadable') {
+        console.error(`${path.basename(lockPath)} could not be read (${owner.detail}) — refusing to assume no encode is running`);
+        return false;
+      }
+      if (!pidAlive(owner.pid)) { fs.rmSync(lockPath, { force: true }); continue; } // stale -> take over
+      console.error(`encode already running (pid ${owner.pid}); skipped without touching ${path.basename(outPath)}`);
       return false;
     }
   }
 }
-if (!acquireLock()) process.exit(0);
+// A skipped encode produced no MP4. Exiting 0 here told the caller an encode had
+// happened, so the next pipeline stage would publish whatever stale <project>.mp4
+// was lying around. EXIT.SKIPPED is distinguishable from both success and failure.
+if (!acquireLock()) process.exit(EXIT.SKIPPED);
 
 // Guarantee the lock is released on ANY exit path — including a throw during the pre-`try` setup
 // below (e.g. mp4-muxer not installed, permission error on the copies) or an uncaught exception —
@@ -142,7 +236,6 @@ if (!frameFiles.length) { fs.rmSync(lockPath, { force: true }); throw new Error(
 // Audio-presence gate (C-6): the default path muxes voiceover.mp3 into the MP4. A missing
 // or near-empty file would silently ship a video-only ("no volume") deliverable, so refuse
 // to encode unless the project explicitly opted into a silent render (timing.intake.silent).
-const wantAudio = timing.intake?.silent !== true;
 let audioBase64 = null;
 if (wantAudio) {
   if (!fs.existsSync(audioPath)) {
@@ -164,6 +257,16 @@ let maxEnd = 0;
 // late-arriving encoder can never reduce a good <project>.mp4 to 0 bytes.
 const partPath = `${outPath}.part-${process.pid}`;
 let fd = null;
+
+// Loaded here rather than at module scope so the lock check and the prerequisite checks
+// above can report their own outcomes before a missing browser dependency masks them.
+let chromium;
+try {
+  ({ chromium } = await import('playwright'));
+} catch (err) {
+  console.error(`error: playwright is required for encoding but could not be loaded — run \`npm install\` in the engine directory.\n  ${err.message}`);
+  process.exit(EXIT.USAGE);
+}
 
 const browser = await chromium.launch({
   headless: true,
@@ -222,7 +325,7 @@ try {
   // while sync-verify would fail it.
   const videoMs = Math.round((frameFiles.length / fps) * 1000);
   const audioMs = Number(timing.durationMs || 0);
-  const tolMs = Math.max(Number(timing.intake?.toleranceMs ?? 750), 1500);
+  const tolMs = Math.max(toleranceMs, 1500);
   if (wantAudio && audioMs > 0 && Math.abs(videoMs - audioMs) > tolMs) {
     fs.rmSync(partPath, { force: true });
     throw new Error(`A/V sync drift ${Math.abs(videoMs - audioMs)}ms (video ${videoMs}ms vs audio ${audioMs}ms) exceeds ${tolMs}ms`);
