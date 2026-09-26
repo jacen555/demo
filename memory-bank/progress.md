@@ -22,7 +22,7 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 152 (151 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 1 of the audit closed** — safe defaults, exit contract, path confinement, engine-vs-user-named write classification across 49 sinks. **Group 3 (operability) not started; see the blocking preconditions below.** |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 266 (265 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. |
 | `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
 | `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
 
@@ -145,47 +145,37 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 6. **Prettier not enforced** for Node domains (CSharpier is now installed and enforced for C#).
 7. **PSScriptAnalyzer and Pester are not installed**, so the `scripts/**` verification path
    has never actually been executed.
-8. **`SIZZLECRAFT_*` override precedence is inconsistent within one file.** `FRAME_FORMAT`,
-   `JPEG_QUALITY` and `WORKERS` read the environment first, so they override as documented.
-   `FPS` (`frame-capture.mjs:74`, `encode-mp4.mjs:126`) and `MODE` (`encode-mp4.mjs:132`)
-   read config first, so the environment variable is **unreachable in any real project** —
-   a fallback wearing an override's name. `encode-mp4.mjs:126` also uses `||` where
-   `frame-capture.mjs:74` uses `??`, so a config `fps: 0` behaves differently in the two.
-   Found by a consumer whose half-fps draft silently rendered at 30. The defect is not the
-   inversion but the inconsistency: **the two knobs that silently do nothing are
-   indistinguishable from the three that work.** Audit all seven when fixing; a measurement
-   taken through a knob that does not move is not a measurement.
-9. **The word budget is a planning check run after synthesis, where it cannot be right.**
-   `voice.mjs` sets each segment window *from the measured audio*, so post-synthesis
-   `words / window` **is** the observed rate by construction. The budget then compares that
-   against the same rate minus a 5% safety margin, so every segment above the mean is
-   guaranteed to warn — measured on a real project, 6 of 8 warn against the measured rate
-   and 8 of 8 against the planning estimate. A safety margin hedges a *guess*; applied to a
-   *measurement* it is just a threshold below the mean, which half the population must
-   exceed. Fixing the calibration key lookup (gap 10) only changes *which* segments warn.
-   Once a calibration exists, either skip the budget or report **rate variance against the
-   measured mean** — "8% above the mean rate" is true and useful; "over budget" is false
-   when the audio already exists and fits. A worked 8/8 → 6/8 example is in the consuming
-   project's `render-log.md`.
-10. **The calibration lookup reads a key nothing writes.** `validate-timing.mjs:257` tests
-    `Object.hasOwn(observed, 'wordsPerSecond')`; `voice.mjs:292` writes
-    `aggregate.observedEffWps`. The lookup always misses, so the file is read, parsed,
-    validated and then silently discarded, and every project is checked against its
-    planning estimate. The doc comment above it correctly distinguishes *absent* from
-    *malformed* calibration — and a third state exists that neither branch names, *"read
-    fine, key never written"*, which renders identically to absent. **`pick()` resolves two
-    keys; only `wordsPerSecond` has been established as never written. `wpsSafetyMargin`
-    needs its own verdict and its own evidence** — a severity attached to something you are
-    not fixing is still a claim.
-11. **The contiguity check can never pass.** `validate-timing.mjs:132` asserts strict
-    adjacency, but `voice.mjs` deliberately inserts inter-segment silence and a lead-in, so
-    a correct timeline fails every segment. The mirror of the `ajv.errors` defect in the
-    same file: one check could never fail, this one can never pass — and the second is
-    worse in daily use, because a line that is always red trains the reader to stop reading,
-    and it sits directly above output that matters. An **overlap** should fail; a gap should
-    pass and be reported; an uneven gap should pass and be called out. The existing test
-    `safe-defaults.test.mjs:182` **pins the defect** and must be replaced.
-12. **Four unguarded reads in `write-build-html.mjs`.** `:35` joins `timing.json` raw and
+8. ~~**`SIZZLECRAFT_*` override precedence is inconsistent within one file.**~~ **Closed** by
+   `5979e4d`. One `resolveKnob`, one stated rule — environment overrides config overrides
+   default — and a scanner test that fails when a new knob bypasses it. That scanner
+   immediately found a **sixth** knob (`SIZZLE_MUSIC_PRESET`, a different prefix, invisible
+   to every earlier count), now carried as a legacy alias. **One stated limit:** an author
+   who aliases the global first (`const p = process; p.env.X`) defeats any purely textual
+   rule. Recorded in the scanner's doc comment and in the README. Ruled a recordable Tier 2
+   limit for a drift guard — the guard exists to stop a knob arriving by copying a
+   neighbour, which is how all six arrived, not to sandbox a determined author. Closing it
+   needs a real parser and would be its own task.
+9. ~~**The word budget is a planning check run after synthesis.**~~ **Closed** by `5979e4d`.
+   Suppression now requires **proof of lineage** — a sha256 of the exact narration, written
+   by `voice.mjs` and checked by `validate-timing`. A summary of `{words, chars, clipMs}`
+   collides: `"word0 word1 word2 word3"` and `"other word1 word2 word3"` are identical under
+   all three. An absent fingerprint is **UNPROVEN, not intact**, so old calibrations evaluate
+   the budget until a voice re-run records one. Worth keeping: removing the safety margin
+   still left half the segments warning, because half a population must exceed its own mean —
+   the margin was never the defect.
+10. ~~**The calibration lookup reads a key nothing writes.**~~ **Closed** by `5979e4d`. Reads
+    `aggregate.observedEffWps`; a calibration that parses but yields no rate is its own error
+    rather than rendering as absent. `wpsSafetyMargin` got its own verdict with evidence —
+    legitimately absent, declared under `intake` only, and `observedSafeWps` is
+    `effWps / roundedSpeed`, not a margin. Same error in form, no data to miss.
+11. ~~**The contiguity check can never pass.**~~ **Closed** by `5979e4d`. An overlap fails; a
+    gap passes and is reported; an uneven gap is called out. `safe-defaults.test.mjs:182`,
+    which pinned the defect as a requirement, was replaced. **One recorded limit:** the
+    lead-in counts as an "inter-segment gap", so otherwise-uniform gaps can print `UNEVEN`.
+    Advisory, and the detail lines name each affected segment. Kept deliberately to match the
+    consuming project's accepted wording rather than diverging unilaterally; correct on both
+    branches together.
+12. **Four unguarded reads in `write-build-html.mjs`** — **closed** by `1aa6924`; retained here
     hands it to `JSON.parse`, whose error quotes the first bytes parsed — the same
     disclosure just closed at `encode-mp4.mjs:54`, and **High**. `:124`, `:126` and `:131`
     read `clips.json` / `manifest.json` / `evidence-pack.json` through the same unguarded
