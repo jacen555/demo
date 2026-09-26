@@ -54,10 +54,17 @@ need `npm install` in `tools/SizzleCraft` first, plus `brand/tokens.json` here (
 voice allow-list `voice.mjs` refuses to start without):
 
 ```powershell
-node ..\SizzleCraft\src\voice.mjs                      # S3 synthesis + S4 gap solve
+node ..\SizzleCraft\src\voice.mjs --apply              # S3 synthesis + S4 gap solve
 node ..\SizzleCraft\src\validate-timing.mjs            # schema + invariants
 node ..\SizzleCraft\src\silence-scan.mjs voiceover.mp3 # decoded pacing — needs chromium
 ```
+
+> **`--apply` is not optional on four stages.** Since the engine audit, `voice`,
+> `write-build-html`, `make-music` and `remux-music` **plan by default** and write only
+> under `--apply`, adding `--replace` when the output already exists. `make-music`,
+> `remux-music` and `check-levels` also take named arguments now, so older positional
+> invocations such as `remux-music.mjs 1.18 1.50` no longer work. Run any stage with no
+> flags first — the plan is a cheap correctness check before an expensive one.
 
 **S5 onward is expensive and is not authorised.** Scene build, capture and encode are
 estimated at ~38 minutes and the

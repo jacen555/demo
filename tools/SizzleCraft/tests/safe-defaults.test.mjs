@@ -10,6 +10,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -597,6 +598,77 @@ describe('remux-music safety', () => {
 
     assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
     assert.equal(fs.readFileSync(path.join(dir, 'out.mp4'), 'utf8'), 'APPROVED DELIVERABLE');
+  });
+
+  // A GAIN IS ONLY MEANINGFUL FOR THE TRACK IT WAS MEASURED AGAINST (bug-ledger 16).
+  //
+  // Bounding the gain VALUE cannot catch this: 1.50 is in range for both a bed generated
+  // to length at -43.1 dB RMS and a licensed master at -11.4 dB, and those two are 31.7 dB
+  // apart. The unchanged gain shipped a bed ~10 dB hot with every other check green,
+  // because the narration-gap checks measure PRESENCE, not LEVEL. So the pin is on the
+  // source, and it is asserted at the point the source changes.
+  const lockPath = (dir) => path.join(dir, 'music-gain.lock.json');
+  const pinTo = (dir, sha256, musicGain = 1.5) =>
+    fs.writeFileSync(lockPath(dir), JSON.stringify({ source: 'music.wav', sha256, musicGain }));
+
+  test('remuxMusic_musicSourceChangedButGainDidNot_refusesAndNamesBothTracks', (t) => {
+    const dir = project(t);
+    pinTo(dir, 'a'.repeat(64));
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', '--apply'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.USAGE, `expected a refusal, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /music source CHANGED/, 'the refusal must say what changed');
+    assert.match(r.all, /--confirm-gain/, 'and name the flag that re-pins it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
+  });
+
+  test('remuxMusic_changedSourceWithConfirmGain_passesTheGainCheck', (t) => {
+    const dir = project(t);
+    pinTo(dir, 'a'.repeat(64));
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4',
+        '--apply', '--confirm-gain'],
+      dir,
+    );
+
+    assert.doesNotMatch(r.all, /music source CHANGED/, '--confirm-gain must clear the pin check');
+  });
+
+  test('remuxMusic_unchangedSource_doesNotRefuseAndPlanSaysSoWithoutColourAlone', (t) => {
+    const dir = project(t);
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, 'music.wav'))).digest('hex');
+    pinTo(dir, sha);
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.OK, `an unchanged source must plan cleanly, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /source unchanged/, 'the plan must state the pin status in words');
+  });
+
+  // Planning must stay answerable about inputs that are stubbed, absent or not yet
+  // rendered. Probing durations unconditionally made a no-flag run exit non-zero on an
+  // undecodable stub, which breaks the plan-by-default contract every stage now honours.
+  test('remuxMusic_undecodableMediaWithoutApply_stillPlansAndSaysTheLoopIsUndecided', (t) => {
+    const dir = project(t);
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4'],
+      dir,
+    );
+
+    assert.equal(r.code, EXIT.OK, `planning must not require decodable media, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /loop\s+UNDECIDED/, 'and must say the loop decision was not made, not imply none is needed');
   });
 });
 

@@ -41,15 +41,47 @@ Git-ignored because they regenerate: `voiceover.mp3`, `segment_*.mp3`, `gap_*.mp
 cd tools\EvalLoopDemo
 node src\write-script.mjs                                  # S1
 node ..\SizzleCraft\src\write-storyboard.mjs               # S2
-node ..\SizzleCraft\src\voice.mjs                          # S3 + S4
-node ..\SizzleCraft\src\write-build-html.mjs               # S5
+node ..\SizzleCraft\src\voice.mjs --apply                  # S3 + S4
+node ..\SizzleCraft\src\write-build-html.mjs --apply --replace          # S5
 node ..\SizzleCraft\src\frame-capture.mjs                  # S6  <- the long pole
 node ..\SizzleCraft\src\encode-mp4.mjs                     # S7
 node ..\SizzleCraft\src\vo-envelope.mjs                    # S8 prep
-node ..\SizzleCraft\src\make-music.mjs music.wav 250.633 vo-envelope.json bright
-node ..\SizzleCraft\src\remux-music.mjs 1.18 1.50          # S9 — the cheap path
-node ..\SizzleCraft\src\check-levels.mjs <sibling.mp4>     # verify
+node ..\SizzleCraft\src\make-music.mjs --out music.wav --seconds 282.733 `
+  --envelope vo-envelope.json --preset bright --apply
+node ..\SizzleCraft\src\remux-music.mjs --video EvalLoopDemo.mp4 `
+  --out EvalLoopDemo-with-music.mp4 --music <track>.mp3 --music-gain 0.48 --apply
+node ..\SizzleCraft\src\check-levels.mjs --file "this=EvalLoopDemo-with-music.mp4" `
+  --file "sibling=<sibling.mp4>"                           # verify
+node ..\SizzleCraft\src\write-subtitles.mjs                # sidecars
+node ..\SizzleCraft\src\write-chapters.mjs                 # chapter metadata
 ```
+
+### Plan-by-default: what changed at the boundary, and what it cost
+
+The engine audit made every **user-named write** plan by default. Four of the stages this
+project drives are affected — `voice`, `write-build-html`, `make-music` and `remux-music`
+— and all four now need `--apply`, with `--replace` on top when the output already exists.
+`make-music`, `remux-music` and `check-levels` also moved from positional to named
+arguments, so the old `remux-music.mjs 1.18 1.50` form is gone.
+
+**This was the right call and it cost this project almost nothing.** The honest report
+back to the engine owners:
+
+- **Re-running a stage is now a two-token change, not a one-token one** (`--apply
+  --replace`). In a pipeline that is re-run dozens of times against the same output paths,
+  `--replace` is typed so reflexively that it is close to being ambient. That is a mild
+  erosion of the guarantee rather than a defect, and the alternative — overwriting an
+  approved deliverable by default — is plainly worse. Worth knowing, not worth reverting.
+- **The plan output turned out to be worth more than the safety.** `write-build-html`
+  reporting *"8 segments, 154,757 bytes, output EXISTS"* is a cheap correctness check
+  before a 25-minute render, and `remux-music`'s plan now states the loop decision and
+  the gain pin. Plan mode became a dry-run diagnostic, which is a genuine gain.
+- **One real bug surfaced from the merge.** Duration probing ran before the plan/exit
+  branch, so a no-flag run exited non-zero on undecodable media — planning must stay
+  answerable about inputs that are stubbed or not yet rendered. Fixed here, with a
+  regression test; the plan now prints `loop UNDECIDED` rather than implying no loop is
+  needed. This is the class of defect the audit could not have found by reading, because
+  it only appears when a stub reaches a stage that assumes real media.
 
 ## Measured values
 

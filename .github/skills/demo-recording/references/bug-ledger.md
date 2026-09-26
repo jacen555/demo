@@ -205,6 +205,27 @@ reveal that the level is uniformly wrong.
 > Presence checks and level checks answer different questions, and this project
 > ran the first while skipping the second.
 
+**Now enforced, and the placement is the point.** `remux-music.mjs` pins the gain
+to a SHA-256 of the music source in `music-gain.lock.json`, and refuses when the
+source changes while the gain does not:
+
+```
+error: the music source CHANGED but --music-gain did not.
+  calibrated against  music.wav (1b37457d10c6) at gain 1.5
+  now supplied        licensed-master.mp3 (52188cb00ad4) at gain 0.48
+```
+
+`--confirm-gain` re-pins after the level has actually been re-measured. The pin is
+committed with the project, so it travels rather than living in one machine's head.
+
+> **Why the check lives where the SOURCE changes, not where the gain is parsed.**
+> Validating the gain *value* bounds it to a sane range — and 1.50 is in range for
+> both a generated bed at −43.1 dB RMS and a licensed master at −11.4 dB. The two
+> are 31.7 dB apart and the same in-range number is right for one and 10 dB hot for
+> the other. **Range validation and calibration validation are different checks**,
+> and only the second one could ever have caught this. Bounding an argument protects
+> against a bad value; pinning it to its input protects against a stale one.
+
 ### ⚠️ Related: a file bed cannot duck
 
 `knobs.audio.levels` asks for two different bed levels — typically −36 dB under
