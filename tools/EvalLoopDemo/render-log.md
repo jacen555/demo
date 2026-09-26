@@ -158,6 +158,60 @@ back to the engine owners:
 
 ## Measured values
 
+### Production render — 4K, after the segment 4 re-timing
+
+| | |
+|---|---|
+| Deliverable | `EvalLoopDemo-with-music-chaptered.mp4` — **60.29 MB** |
+| Duration | **4:42.73** · 8,482 frames · 8 segments |
+| Video | 3840×2160 · h264 High · 30 fps · 1,615 kb/s · stream **bit-identical** through the music remux |
+| Audio | AAC 24 kHz stereo · 168 kb/s |
+| Render cost | **25.72 min** — S6 capture 12.2, S7 encode 13.51 |
+| Dedup | 118 / 8,482 = **1%** held |
+| Sidecars | `EvalLoopDemo.vtt` / `.srt` — 118 cues from 939 measured word boundaries |
+| Chapters | 8, one per segment, streams copied untouched |
+
+**S7 > S6 again.** With JPEG, encode is the long pole at 4K *and* at 1080p (draft: S6 3.47,
+S7 5.38). The "capture is ~84% of a render" figure from the first 1080p/PNG run describes a
+**frame-format choice**, not a property of the pipeline. Anyone optimising capture on the
+strength of it would be working the wrong stage.
+
+### Audio verification — whole-file, not windows
+
+Bug-ledger 16 was shipped once at roughly 10 dB hot with every window check green, because
+window checks measure whether a bed is **present**, not whether it is at the right **level**.
+Measured by decoding this cut:
+
+| Window | Level |
+|---|---|
+| Whole file, narration only | −18.7 dB RMS · peak −1.0 dBFS |
+| Whole file, with music | −15.3 dB RMS · peak −0.9 dBFS |
+| Lead-in (bed only, no speech) | **−25.1 dB** |
+| Mid-narration, with music | −15.0 dB |
+| Mid-narration, no music | −18.7 dB |
+| **Tail at 4:38** (past the track's 2:38 end) | **−16.2 dB** |
+
+A **+3.4 dB** whole-file lift is a bed sitting under speech, not over it. The tail
+measurement is the one that matters for bug-ledger 15: the bed is still present at 4:38,
+92 seconds past where the source track ends, so the crossfaded loop held.
+
+The gain is now pinned — `music-gain.lock.json` records `0.48` against the track's SHA-256,
+and a different track with the same gain is refused rather than rendered.
+
+### Segment 4 re-timing — measured before and after
+
+The canary reported `many` at 16.5 s motionless, 57% of its window. The cause was not
+pacing: the visual ran **~5.5 s ahead of the narration describing it**. Beats are now
+anchored to spoken words.
+
+| | longest still | share |
+|---|---|---|
+| before | 16.5 s | **57%** |
+| after | **4.9 s** | **17%** |
+
+Every segment is now ≤ 26% motionless, and all 8 render distinctly (24 distinct frames
+across 3 sample points each).
+
 Measured on the finished artifacts by decoding, not taken from inputs.
 
 | Property | Value |

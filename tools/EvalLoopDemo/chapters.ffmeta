@@ -1,0 +1,41 @@
+;FFMETADATA1
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=29160
+title=One assert, or ten branching turns
+[CHAPTER]
+TIMEBASE=1/1000
+START=29160
+END=82344
+title=One scenario, field by field
+[CHAPTER]
+TIMEBASE=1/1000
+START=82344
+END=130272
+title=The interview invents the questions. The customer still has to answer.
+[CHAPTER]
+TIMEBASE=1/1000
+START=130272
+END=160344
+title=Independent scenarios run in parallel — three times each
+[CHAPTER]
+TIMEBASE=1/1000
+START=160344
+END=196992
+title=Several different questions, graded separately
+[CHAPTER]
+TIMEBASE=1/1000
+START=196992
+END=218760
+title=The fast tier gates the branch
+[CHAPTER]
+TIMEBASE=1/1000
+START=218760
+END=241656
+title=Correct category, right agent — and resolution failed anyway
+[CHAPTER]
+TIMEBASE=1/1000
+START=241656
+END=281712
+title=The comparison exists before the pull request does
