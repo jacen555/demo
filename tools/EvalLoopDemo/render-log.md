@@ -176,8 +176,40 @@ S7 5.38). The "capture is ~84% of a render" figure from the first 1080p/PNG run 
 **frame-format choice**, not a property of the pipeline. Anyone optimising capture on the
 strength of it would be working the wrong stage.
 
-### Audio verification — whole-file, not windows
+### ⚠️ Correction: TTS is length-deterministic, NOT byte-deterministic
 
+This log previously recorded *"TTS determinism confirmed across 3+ runs."* **That claim was
+measured on timings and stated about bytes.** Re-running `voice` on unchanged narration to
+record the lineage fingerprint produced:
+
+| | |
+|---|---|
+| `durationMs`, every segment `endMs` | **identical to the millisecond** |
+| every clip's byte **length** | **identical to the byte** |
+| every clip's **duration** | identical |
+| content hash of 5 of 8 segments + `voiceover.mp3` | **different** |
+
+Same length, same duration, different samples — neural synthesis varies sub-perceptually
+between runs while landing on the same frame count. So "deterministic" is true of the
+**timeline** and false of the **audio**, and the two were conflated here.
+
+Same error shape as the 74% dedup figure: a real measurement, generalised one step further
+than it supported. Byte-identity and timing-identity are different claims, and this project
+has now got that wrong in both directions.
+
+**Consequence, and how it was resolved.** The shipped render's audio was encoded from the
+pre-re-run clips, so keeping the new ones would have left the deliverable perceptually
+correct but no longer reproducible from the inputs on disk. The lineage fingerprint is a
+hash of the narration **text**, not of the audio, so the two are separable: the re-run
+`calibration-observed.json` and `timing.json` were kept, and **the audio was restored to the
+17 files that produced the shipped MP4.** Lineage is proven and the artifact is exactly
+reproducible.
+
+> **The general hazard:** a verification-only re-run can invalidate an artifact when the
+> stage that records the proof also regenerates the inputs. Worth checking before re-running
+> any stage purely to satisfy a checker.
+
+### Audio verification — whole-file, not windows
 Bug-ledger 16 was shipped once at roughly 10 dB hot with every window check green, because
 window checks measure whether a bed is **present**, not whether it is at the right **level**.
 Measured by decoding this cut:
