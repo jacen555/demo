@@ -182,6 +182,7 @@ Load these **only when the task needs them**:
 | `references/pipeline-contract.md` | Setting up a new pipeline, or adapting a renderer that isn't the reference one |
 | `references/footage-and-broll.md` | **Before planning stock video, screen captures, or any interspliced footage.** What `footage` mode already does, the two unextracted producer stages, why footage is the most expensive frame you can add, licensing, and when B-roll helps rather than hurts |
 | `references/bug-ledger.md` | **Before any audio mix, remux, or timing solve.** Cheap to read, expensive to rediscover |
+| `references/incremental-capture.md` | **Before touching the capture fingerprint or attempting per-segment reuse.** Proposed design for reusing frames across runs — why per-segment MP4s are the wrong architecture, and the failure mode where a narration edit silently misaligns later segments |
 | `templates/knobs.json` | Starting a new project |
 | `templates/render-log.md` | Starting a new project |
 
@@ -200,7 +201,8 @@ needs revisiting and some of it becomes obsolete.
 new video after a gap:
 
 1. Has the pipeline gained partial/segment rendering or caching? (See
-   `references/cost-techniques.md` §2 and §6 for the design to build toward.)
+   `references/incremental-capture.md` for the full design, and
+   `references/cost-techniques.md` §2 for why per-segment MP4s are the wrong shape.)
 2. Are the measured stage costs in `render-log.md` still accurate?
 3. Has anything in `cost-techniques.md` §7 (*Volatile*) changed — the TTS backend,
    Chrome headless flags, upstream library versions?
