@@ -11,7 +11,6 @@
     "~/SizzleCraft/ (interviewer-qna-dataprep, interviewer-qna-delta) so all",
     "three sit together if ever played back-to-back."
   ],
-
   "project": {
     "name": "eval-loop-demo",
     "title": "How do you test a conversation?",
@@ -37,7 +36,6 @@
     "preTraining": null,
     "_preTrainingNote": "Assumes nothing. Segment 1 establishes what the interview is and what 'getting it right' means before any harness detail."
   },
-
   "accessibility": {
     "_note": "Planning-time constraints. See references/planning.md §3 and the plan's §2.E.",
     "narrationCoversVisuals": true,
@@ -50,9 +48,9 @@
     "_flashingNote": "PENDING — verify at draft render. Segment 4 is the only real risk and is deliberately a FILLING progress bar, not a strobing grid. Cap 3 state changes/sec (WCAG 2.3.1).",
     "captionPlan": "Verbatim from script.md after the locked render."
   },
-
   "narration": {
     "pronunciations": {
+      "162": "a hundred and sixty-two",
       "API": "ay pee eye",
       "UI": "you eye — but prefer the word 'interface' in narration",
       "BDD": "avoid — say 'behaviour-driven'",
@@ -65,18 +63,15 @@
       "L4": "avoid — say 'one level up'",
       "L3": "avoid — say 'right support area'",
       "Windows 11": "Windows eleven",
-      "162": "a hundred and sixty-two",
       "21.3": "twenty-one point three",
       "11.7": "eleven point seven"
     },
     "numbersConvention": "Spelled out in narration, with unit and — on first use — denominator. Replicate counts as 'three runs', never '3x'. Ratios as 'point'. Every figure that appears on screen is also spoken (WCAG G226).",
     "_numbersNote": "The report's means carry one decimal (21.3, 11.7, 17.7). Speak the decimal rather than rounding, so narration and the on-screen row agree exactly."
   },
-
   "downstream": {
     "reuse": "Likely one or two slides. Not a documentation source — per Diátaxis a walkthrough is not a lossless reference."
   },
-
   "gateDecisions": {
     "_note": "Answered by the approver at the SKILL.md §4 gate. Recorded so a later session does not re-ask (references/planning.md §1).",
     "q1_bddComparisonWeight": {
@@ -91,12 +86,10 @@
       "residualCheck": "Account chrome and any hostname must still be off-screen — the harness drives a named host."
     }
   },
-
   "signOff": {
     "approver": "jonosace",
     "_note": "Content correctness AND render approval."
   },
-
   "output": {
     "dir": "C:\\dev\\temp",
     "basename": "eval-loop-demo",
@@ -108,7 +101,6 @@
     "_resolutionNote": "Raised from 1920x1080 to 3840x2160, aspect unchanged at 16:9, so the 0 0 1600 520 diagram viewBoxes remain valid — only pixel dimensions change. write-build-html MUST be re-run after any change here or frame-capture throws 'stage/viewport mismatch'.",
     "_frameFormatNote": "MEASURED, not assumed. At 3840x2160 with dedup off: PNG 1.00 fps and 2,183 KB/frame; JPEG q88 13.05 fps and 170 KB/frame — 13x faster, 12.8x smaller. Playwright's PNG screenshot losslessly compresses 8.3M pixels per frame, and that dominates capture cost at 4K. Quality checked at 1:1 on small type over flat backgrounds: crisp edges, no ringing or blocking. This makes 4K JPEG capture CHEAPER than the 1080p PNG render previously shipped."
   },
-
   "voice": {
     "engine": "msedge-tts",
     "name": "en-US-AndrewNeural",
@@ -116,7 +108,6 @@
     "speed": 1.2,
     "_speedNote": "1.2 matches what the sibling video ACTUALLY rendered (calibration-observed.json:roundedSpeed). Its intake-constraints.json says 1.1 — that value never reached a render. Use 1.2."
   },
-
   "timing": {
     "targetDurationMs": 240000,
     "toleranceMs": 15000,
@@ -129,13 +120,11 @@
     "_wpsNote": "3.372 is the sibling video's MEASURED effective rate at 1.2x (calibration-observed.json). Its conservative counterpart, observedSafeWps 2.81, is the pessimistic bound. This script is number-dense, so the true rate likely sits between them — synthesis (S3, ~1 min) settles it before anything expensive runs.",
     "_note": "perceivedGap is what a viewer HEARS: tail(clip N) + inserted silence + head(clip N+1), not the length of the inserted file. See bug-ledger entry 6."
   },
-
   "endCard": {
     "enabled": false,
     "_note": "OFF, and it stays off. The canonical disabled form per timing-schema.json: builderVersion, contentMs and outroMs must all be ABSENT, and durationMs must equal the last segment's endMs. Do not add a tagline or builderVersion pad.",
     "_attributionInvariant": "PROJECT INVARIANT: audio.music.attribution non-null => endCard.enabled MUST be true. The end card is the only credit surface this video has, so a later track swap to a licence that requires attribution cannot be made without also re-enabling the card. Enforced by tests/write-script.test.mjs."
   },
-
   "audio": {
     "_note": "THE CHEAP BLOCK. Changes here swap the audio track and reuse the video stream byte-for-byte.",
     "music": {
@@ -160,15 +149,24 @@
       "_licenceNote": "Pixabay Content License requires no attribution and permits commercial use without credit. The creator credit was offered and declined, so no credit surface is needed — which is why endCard stays disabled. See the invariant below."
     },
     "levels": {
-      "musicUnderSpeechDb": -36,
+      "musicUnderSpeechDb": -41,
       "musicInGapsDb": -30,
       "targetIntegratedDb": -19.5,
-      "truePeakCeilingDb": -1.0,
-      "musicGain": 0.055,
-      "voiceGain": 1.18,
-      "_musicGainNote": "MEASURED, not inherited. 1.50 was tuned for the GENERATED bed (RMS -43.1 dB); the licensed track is a commercial master at RMS -11.4 dB, peak +0.6 dBFS — 31.7 dB hotter. Shipping 1.50 against it put the mix at -9.8 dB vs the sibling's -19.1. 0.055 lands the bed at -36 dB (= musicUnderSpeechDb) and the mix at -18.6 dB. A SOURCE CHANGE INVALIDATES THE GAIN — recompute as musicUnderSpeechDb minus the new track's measured RMS, and re-run check-levels against a sibling. Bug-ledger entry 16.",
-      "_duckingNote": "A file bed CANNOT duck. make-music.mjs bakes sidechain ducking in from vo-envelope.json; remux-music.mjs has no sidechain path for a file source, so the track plays flat and one gain serves both musicUnderSpeechDb and musicInGapsDb. Under-speech was chosen (-36 measured); gaps therefore sit ~6 dB below target and the lead-in reads quiet.",
-      "_note": "Narration level MUST match interviewer-qna-delta — verify with check-levels.mjs against that file, not against the target."
+      "truePeakCeilingDb": -1,
+      "musicGain": 0.031,
+      "voiceGain": 1.4,
+      "_musicGainNote": "MEASURED, not inherited, and re-derived after a 24 dB drift. The licensed track is a commercial master at RMS -11.4 dB, so the gain is musicUnderSpeechDb minus that: -41 - -11.4 = -29.6 dB = 0.031 linear. VERIFIED by decoding three narration-free gaps: -42.1, -40.9, -41.7 dB. HOW IT DRIFTED: a review asked for \"music 1.50 -> 0.85\" believing the current value was 1.50; 1.50 was the GENERATED bed gain from the sibling project and this project had been on a file source for rounds. The absolute number was applied without re-deriving it and the bed shipped at -12.0 dB. ASK FOR A TARGET LEVEL, NOT A GAIN VALUE. \"Put the bed at -41 dB\" is checkable against the file; \"set the gain to 0.85\" carries a hidden assumption about what the gain currently is. Bug-ledger entry 16.",
+      "_duckingNote": "A file bed CANNOT duck, so musicInGapsDb IS NOT HONOURED FOR FILE SOURCES. make-music.mjs bakes sidechain ducking in from vo-envelope.json; remux-music.mjs has no sidechaincompress path for a file input, so the track plays flat and ONE gain has to serve two targets 6 dB apart. Under-speech is the one chosen, so the gaps and the lead-in sit ~6 dB below where they should be. Do not tune musicInGapsDb expecting an effect on this project — it is a knob the code cannot currently honour. Engine feedback is filed: a file source should duck like a generated one, and this will recur for every project using a licensed track rather than the synth bed, which is now the expected path.",
+      "_note": "Narration level MUST match interviewer-qna-delta — verify with check-levels.mjs against that file, not against the target.",
+      "measuredBedDb": [
+        -42.1,
+        -40.9,
+        -41.7
+      ],
+      "measuredIntegratedLufs": -14.4,
+      "measuredTruePeakDbtp": -1.8,
+      "_voiceGainNote": "Raised 1.18 -> 1.40 at explicit user request (\"lift the voice\"). This DELIBERATELY breaks the narration-level match with interviewer-qna-delta. Do not \"fix\" it back without asking — the divergence is intentional and was requested after listening.",
+      "_targetNote": "targetIntegratedDb -19.5 is an RMS figure from an earlier round and is NOT LUFS — the two are not comparable. Measured integrated loudness of the shipped mix is -14.4 LUFS at -1.8 dBTP. That is still hotter than a typical streaming target (~-16 LUFS), which is a consequence of the requested voice lift; the true-peak ceiling is met with room to spare."
     },
     "fades": {
       "inMs": 1400,
@@ -180,13 +178,11 @@
       "_note": "MUST stay false. ffmpeg alimiter defaults to level=true and gain-rides the whole mix. Bug-ledger entry 1."
     }
   },
-
   "theme": {
     "background": "white",
     "palette": "default",
     "engagementLevel": "rich"
   },
-
   "render": {
     "captureDedup": true,
     "previewSegment": null,
