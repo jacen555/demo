@@ -13,9 +13,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, runCli, resolveOutput } from './cli-support.mjs';
+import { SILENCE_FRAME_BYTES, SILENCE_FRAME_MS, silentFrameCount, silentMp3 } from './silent-segment.mjs';
 
-const FRAME_BYTES = 288;
-const FRAME_MS = (576 / 24000) * 1000; // 24
+// Imported, not redeclared. concat-audio.mjs generates silence for declared silent
+// segments using the same maths, and two copies of a frame size would disagree as drift
+// rather than as an error — the hardest kind of defect to see in a video.
+const FRAME_BYTES = SILENCE_FRAME_BYTES;
+const FRAME_MS = SILENCE_FRAME_MS; // 24
 
 const USAGE = `
 silence-gen — generate a frame-aligned silent MP3 matching the msedge-tts profile.
@@ -86,7 +90,7 @@ await runCli(() => {
   // Validated before anything touches the filesystem: `ms` drives an allocation size
   // and `out` is a caller-supplied write target.
   const targetMs = parseDurationMs(msArg);
-  const frames = Math.max(1, Math.round(targetMs / FRAME_MS));
+  const frames = silentFrameCount(targetMs);
   const bytes = FRAME_BYTES * frames;
   const outPath = resolveOutput(projectDir, outArg, {
     apply: values.apply === true,
@@ -102,11 +106,7 @@ await runCli(() => {
     return EXIT.OK;
   }
 
-  const buf = Buffer.alloc(bytes);
-  for (let i = 0; i < frames; i++) {
-    const o = i * FRAME_BYTES;
-    buf[o] = 0xff; buf[o + 1] = 0xf3; buf[o + 2] = 0xa4; buf[o + 3] = 0xc0;
-  }
+  const buf = silentMp3(targetMs);
   fs.writeFileSync(outPath, buf);
   console.log(`${outPath}: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${buf.length} bytes`);
   return EXIT.OK;

@@ -11,7 +11,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, narrationFingerprint, timingSeal } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, buildCalibration } from './silent-segment.mjs';
 
 const USAGE = `
 voice — synthesise narration per segment and concatenate it (pipeline stage S3).
@@ -185,28 +186,61 @@ async function synth(text, file, id) {                      // C-14 bounded self
 }
 
 // ---- 1. synthesize -------------------------------------------------------------------------
+// A DECLARED SILENT SEGMENT IS NEVER SENT TO TTS. Synthesising "" returns an empty stream
+// with no word boundaries, which synthOnce correctly rejects ('zero-duration TTS output' /
+// 'no word boundaries returned') — four times, with backoff, before failing the run. Its
+// clip is instead GENERATED at the authored window length, so the segment occupies exactly
+// the time it was authored to occupy and every later segment keeps its place.
 console.log(`voice=${voice} rate=${ratePct} (speed ${speed})\n`);
 const results = [];
 for (let i = 0; i < timing.segments.length; i++) {
   const seg = timing.segments[i];
+  if (isSilentSegment(seg)) {
+    const problems = silentSegmentProblems(seg);
+    if (problems.length) { console.error(`error: ${problems[0]}`); process.exit(EXIT.USAGE); }
+    const authoredMs = silentDurationMs(seg);
+    const file = segmentTargets[i].path;
+    fs.writeFileSync(file, silentMp3(authoredMs));
+    // Probed, not assumed: silence is frame-quantised to 24ms, so the clip that exists can
+    // differ from the one that was asked for by up to 12ms. The timeline must describe the
+    // audio on disk, not the request.
+    const durationMs = await probeMs(file);
+    // headMs/tailMs are 0 because there is no speech for silence to lead or trail. The
+    // gap solve below does not consult them for a silent segment anyway — it skips the
+    // seam entirely, because the authored silence already IS the pause.
+    results.push({ file, durationMs, words: [], scale: 1, headMs: 0, tailMs: 0, silent: true });
+    console.log(`silent ${seg.id.padEnd(11)} ${String(durationMs).padStart(6)}ms  (authored ${authoredMs}ms, generated — not synthesised)`);
+    continue;
+  }
   const r = await synth(seg.voiceoverText, segmentTargets[i].path, seg.id);
   results.push(r);
   console.log(`synth ${seg.id.padEnd(11)} ${String(r.durationMs).padStart(6)}ms  head ${String(r.headMs).padStart(4)}ms  tail ${String(r.tailMs).padStart(4)}ms`);
 }
 
 // ---- 2. per-segment fit gate (C-10) --------------------------------------------------------
+// Silent segments are exempt: their clip is generated FROM the window, so comparing the
+// two is comparing a value to itself and can only fail on the 24ms quantisation.
 const overruns = timing.segments
-  .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs) }))
-  .filter(f => f.over > perSegToleranceMs);
+  .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs), silent: results[i].silent }))
+  .filter(f => !f.silent && f.over > perSegToleranceMs);
 if (overruns.length) throw new Error(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}`);
 
 // ---- 3. solve inserted silences so PERCEIVED pacing hits its targets ------------------------
-const leadInsertedMs = alignUp(Math.max(0, LEAD_IN_MS - results[0].headMs));
+// No lead-in before a segment that is itself silence — the author already said how long
+// the opening beat is.
+const leadInsertedMs = results[0].silent ? 0 : alignUp(Math.max(0, LEAD_IN_MS - results[0].headMs));
 const gaps = [];   // gaps[i] = silence inserted AFTER segment i
 console.log('\nperceived-gap solve:');
-console.log(`  lead-in       target ${String(LEAD_IN_MS).padStart(5)}ms  - head ${String(results[0].headMs).padStart(4)}ms  -> insert ${leadInsertedMs}ms`);
+console.log(`  lead-in       target ${String(LEAD_IN_MS).padStart(5)}ms  - head ${String(results[0].headMs).padStart(4)}ms  -> insert ${leadInsertedMs}ms${results[0].silent ? '  (suppressed: segment 1 is declared silent)' : ''}`);
 for (let i = 0; i < timing.segments.length - 1; i++) {
   const after = timing.segments[i].id;
+  // A seam touching a declared silent segment gets no inserted gap: the authored silence
+  // is the pause, and padding it would make the audio longer than the timeline says.
+  if (results[i].silent || results[i + 1].silent) {
+    gaps.push(0);
+    console.log(`  after ${after.padEnd(10)} no gap inserted — a declared silent segment adjoins this seam`);
+    continue;
+  }
   const target = Number(GAP_OVERRIDES[after] ?? GAP_DEFAULT_MS);
   const tail = results[i].tailMs, head = results[i + 1].headMs;
   const inserted = alignUp(Math.max(0, target - tail - head));
@@ -288,19 +322,13 @@ console.log(`\nvoiceover ${voiceMs}ms | timeline ${timing.durationMs}ms | drift 
 if (driftMs > Math.max(toleranceMs, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms exceeds tolerance`);
 
 // ---- 7. calibration evidence + timing hash --------------------------------------------------
+// Silent segments are excluded from the word-rate maths and kept in the record. See
+// buildCalibration: a rate over zero words is NaN, JSON.stringify writes NaN as `null`,
+// and validate-timing then reports a failure that is true about the wrong cause.
 const roundedSpeed = 1 + Math.round((speed - 1) * 100) / 100;
-const calSegs = timing.segments.map((s, i) => {
-  const words = s.voiceoverText.trim().split(/\s+/).filter(Boolean).length;
-  const speechMs = results[i].durationMs - results[i].headMs - results[i].tailMs;
-  return { id: s.id, words, chars: s.voiceoverText.length, clipMs: results[i].durationMs, speechMs, effWps: +(words / (speechMs / 1000)).toFixed(3), textHash: narrationFingerprint(s.voiceoverText) };
-});
-const totW = calSegs.reduce((a, c) => a + c.words, 0), totMs = calSegs.reduce((a, c) => a + c.speechMs, 0);
-const obsEff = totW / (totMs / 1000);
-fs.writeFileSync(calibrationPath, JSON.stringify({
-  voiceId: voice, roundedSpeed,
-  aggregate: { words: totW, speechMs: totMs, observedEffWps: +obsEff.toFixed(3), observedSafeWps: +(obsEff / roundedSpeed).toFixed(3) },
-  segments: calSegs,
-}, null, 2));
+const calibration = buildCalibration(timing.segments, results, { voiceId: voice, roundedSpeed });
+const obsEff = calibration.aggregate.observedEffWps;
+fs.writeFileSync(calibrationPath, JSON.stringify(calibration, null, 2));
 
 delete timing.timingHash;
 timing.timingHash = timingSeal(timing);

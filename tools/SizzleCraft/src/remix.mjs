@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
 import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { isSilentSegment } from './silent-segment.mjs';
 
 const USAGE = `
 remix — re-solve inserted silences from REAL measured audio and reflow the timeline
@@ -116,21 +117,45 @@ const segs = timing.segments;
 const measured = [];
 console.log('measured clip edges (decoded):');
 for (let i = 0; i < segs.length; i++) {
+  // `audio.file` is written by the voice stage for EVERY segment, silent ones included —
+  // a declared silent segment has a real generated-silence clip on disk. So an absent
+  // `audio.file` means the voice stage has not run, for silent and narrated segments
+  // alike, and remix has nothing to re-measure. Said explicitly rather than surfacing as
+  // "Cannot read properties of undefined (reading 'file')".
+  if (typeof segs[i].audio?.file !== 'string' || segs[i].audio.file.trim() === '') {
+    await browser.close();
+    console.error(
+      `error: segment "${segs[i].id}" has no audio.file — remix re-measures clips that already exist, ` +
+      'so the voice stage (S3) must have run first.' +
+      (isSilentSegment(segs[i]) ? ' A declared silent segment still gets a generated clip from that stage.' : ''));
+    process.exit(EXIT.USAGE);
+  }
   // segs[i].audio.file comes from timing.json and is opened directly — authored input is
   // not trusted input, so it is confined to the project root before it is read.
   const file = requireExistingFile(dir, segs[i].audio.file, `segment ${segs[i].id} audio`);
   const e = await edges(file);
-  measured.push({ file, ...e });
-  console.log(`  ${segs[i].id.padEnd(11)} ${String(e.totalMs).padStart(6)}ms  head ${String(e.headMs).padStart(4)}ms  tail ${String(e.tailMs).padStart(4)}ms`);
+  // A fully silent clip has no RMS above the threshold anywhere, so `edges` reports
+  // head 0 / tail 0. That is correct and unused: the gap solve below skips any seam
+  // touching a declared silent segment, exactly as the voice stage does.
+  measured.push({ file, ...e, silent: isSilentSegment(segs[i]) });
+  console.log(`  ${segs[i].id.padEnd(11)} ${String(e.totalMs).padStart(6)}ms  head ${String(e.headMs).padStart(4)}ms  tail ${String(e.tailMs).padStart(4)}ms${isSilentSegment(segs[i]) ? '  (declared silent)' : ''}`);
 }
 await browser.close();
 
 // ---- 2. re-solve inserted silences -----------------------------------------------------------
-const leadInserted = alignUp(Math.max(0, LEAD_IN_MS - measured[0].headMs));
+const leadInserted = measured[0].silent ? 0 : alignUp(Math.max(0, LEAD_IN_MS - measured[0].headMs));
 const gapsInserted = [];
 console.log('\nre-solved pacing:');
-console.log(`  lead-in       target ${LEAD_IN_MS}ms - head ${measured[0].headMs} -> insert ${leadInserted}ms`);
+console.log(`  lead-in       target ${LEAD_IN_MS}ms - head ${measured[0].headMs} -> insert ${leadInserted}ms${measured[0].silent ? '  (suppressed: segment 1 is declared silent)' : ''}`);
 for (let i = 0; i < segs.length - 1; i++) {
+  // No inserted gap at a seam touching a declared silent segment — the authored silence
+  // is the pause. Kept identical to the voice stage's rule: if the two solved pacing
+  // differently, a remix would silently move every segment after the first silent one.
+  if (measured[i].silent || measured[i + 1].silent) {
+    gapsInserted.push(0);
+    console.log(`  after ${segs[i].id.padEnd(10)} no gap inserted — a declared silent segment adjoins this seam`);
+    continue;
+  }
   const target = Number(GAP_OVERRIDES[segs[i].id] ?? GAP_DEFAULT_MS);
   const tail = measured[i].tailMs, head = measured[i + 1].headMs;
   const inserted = alignUp(Math.max(0, target - tail - head));

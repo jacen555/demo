@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EXIT, CliError, guard, parseBoundedNumber } from './cli-support.mjs';
+import { isSilentSegment, silentSegmentProblems, silentCaption } from './silent-segment.mjs';
 
 const projectDir = process.cwd();
 const argv = process.argv.slice(2);
@@ -79,12 +80,30 @@ function restorePunctuation(sourceText, metaWords) {
 }
 
 const words = [];
+const silentCues = [];
 for (const seg of timing.segments ?? []) {
+  // A DELIBERATELY SILENT SEGMENT IS NOT AN UNSYNTHESISED ONE.
+  //
+  // Both have no `audio.words`, so the error below used to fire on both — naming a cause
+  // ("run voice.mjs") that is simply wrong for an intermission, and telling the author to
+  // re-run a stage that would not have helped. The declaration separates them.
+  //
+  // There are no measured word boundaries to caption from, so the cue text is AUTHORED on
+  // the segment and spans its whole window. That is the accessibility contract: a viewer
+  // reading captions is told "[music]" rather than being shown nothing at all and left to
+  // wonder whether the captions broke.
+  if (isSilentSegment(seg)) {
+    const problems = silentSegmentProblems(seg);
+    if (problems.length) throw new CliError(problems[0], EXIT.FAILED);
+    silentCues.push({ startMs: seg.startMs, endMs: seg.endMs, text: silentCaption(seg), silent: true });
+    continue;
+  }
   const w = seg.audio?.words;
   if (!Array.isArray(w) || !w.length) {
     throw new Error(
       `segment "${seg.id}" has no audio.words — run voice.mjs (S3) first. ` +
-      `Subtitles are generated from measured word boundaries, not from the script.`);
+      `Subtitles are generated from measured word boundaries, not from the script. ` +
+      `(If this segment is meant to be silent, declare it with a "silence" block instead.)`);
   }
   for (const x of restorePunctuation(seg.voiceoverText, w)) words.push({ ...x, seg: seg.id });
 }
@@ -139,12 +158,22 @@ for (let i = 0; i < words.length; i++) {
 }
 flush();
 
+// Silent segments contribute exactly one cue each, spanning their authored window, and
+// are merged in by time so the sidecar reads in order.
+cues.push(...silentCues);
+cues.sort((a, b) => a.startMs - b.startMs);
+
 // Hold each cue into the pause that follows it. A viewer reads for as long as the cue is
 // ON SCREEN, not for as long as the words were spoken, so reading speed must be measured
 // against display duration — and extending into the natural pause is free readability.
 // Never run into the next cue, and never past the end of the timeline.
+//
+// A SILENT CUE IS NOT HELD. Its window is authored, not measured, so stretching it would
+// make the sidecar disagree with the timeline it was derived from — and "[music]" is not
+// text a viewer needs extra time to read.
 const HOLD_MS = Number(opt('hold', 1200));
 for (let i = 0; i < cues.length; i++) {
+  if (cues[i].silent) continue;
   const next = cues[i + 1];
   const ceiling = next ? next.startMs - 40 : timing.durationMs;
   cues[i].endMs = Math.min(Math.max(cues[i].endMs + HOLD_MS, cues[i].startMs + MIN_CUE_MS), ceiling);
@@ -216,30 +245,61 @@ if (apply) {
 }
 
 // Reading speed is reported against DISPLAY duration, which is what a viewer actually has.
+//
+// SILENT CUES ARE EXCLUDED FROM THE READING-SPEED STATISTICS. "[music]" held across a
+// four-second intermission is ~2 cps, which is not a fast or a slow reading speed — it is
+// not a reading speed at all, and averaging it in would drag the median toward a number
+// that describes no cue a viewer has to keep up with.
+//
+// Every aggregate below is also guarded against an EMPTY population: `Math.max(...[])` is
+// -Infinity and `undefined.toFixed(1)` throws, so a project with no spoken cues used to
+// crash in its own summary line — reachable as soon as an entire project is silent, which
+// is now an authorable thing.
 const cpsOf = c => c.text.length / ((c.endMs - c.startMs) / 1000);
-const over = cues.filter(c => cpsOf(c) > MAX_CPS);
-const longest = Math.max(...cues.map(c => c.text.length));
+const spokenCues = cues.filter(c => !c.silent);
+const silentCueCount = cues.length - spokenCues.length;
+const linesOf = c => wrap(c.text).split('\n').map(l => l.length);
+const over = spokenCues.filter(c => cpsOf(c) > MAX_CPS);
+const longest = spokenCues.length ? Math.max(...spokenCues.map(c => c.text.length)) : 0;
 // Report the longest rendered LINE, not the longest cue. A cue is allowed to be twice
 // MAX_LINE because it wraps to two; measuring the cue therefore cannot see a line that
 // failed to wrap, which is exactly how an 82-character line shipped under a "longest cue
 // 82 chars" report that looked like it was describing the limit being respected.
-const longestLine = Math.max(...cues.map(c => Math.max(...wrap(c.text).split('\n').map(l => l.length))));
-const wideLines = cues.filter(c => wrap(c.text).split('\n').some(l => l.length > MAX_LINE)).length;
-const median = [...cues.map(cpsOf)].sort((a, b) => a - b)[Math.floor(cues.length / 2)];
-console.log(`${apply ? 'wrote' : 'plan:'} ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries`);
-console.log(`  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ', all within'}) · longest cue ${longest} chars · median ${median.toFixed(1)} cps · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`);
+//
+// Line width IS checked across every cue, silent ones included: an over-wide accessibility
+// cue is just as unreadable as an over-wide spoken one.
+const longestLine = cues.length ? Math.max(...cues.flatMap(linesOf)) : 0;
+const wideLines = cues.filter(c => linesOf(c).some(l => l > MAX_LINE)).length;
+const cpsSorted = spokenCues.map(cpsOf).sort((a, b) => a - b);
+const median = cpsSorted.length ? cpsSorted[Math.floor(cpsSorted.length / 2)] : null;
+const medianText = median === null ? 'n/a (no spoken cues)' : `${median.toFixed(1)} cps`;
+const silentNote = silentCueCount ? ` + ${silentCueCount} silent-segment cue(s)` : '';
+console.log(`${apply ? 'wrote' : 'plan:'} ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries${silentNote}`);
+console.log(`  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ', all within'}) · longest cue ${longest} chars · median ${medianText} · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`);
 
 // Narration rate sets a FLOOR on caption reading speed, and no amount of re-splitting
 // escapes it: display time tracks speech time, so verbatim cues run at roughly the rate
 // the words arrive. Report that floor so a high cps is read as a property of the pacing
 // rather than a defect in the cueing.
-const speechChars = words.reduce((n, w) => n + w.text.length + 1, 0);
-const speechMs = words.at(-1).endMs - words[0].startMs;
-const floorCps = speechChars / (speechMs / 1000);
-console.log(`  narration delivers ~${floorCps.toFixed(1)} cps of text — that is the FLOOR for verbatim cues.`);
-if (floorCps > MAX_CPS * 0.9) {
-  console.log(`  At this pace verbatim captions cannot sit far below ${MAX_CPS} cps. Slower narration or`);
-  console.log(`  condensed (non-verbatim) cues are the only levers; re-splitting will not help.`);
+//
+// With no measured words there is no narration rate to report — `words.at(-1)` on an
+// empty list is undefined — so the floor is skipped and said to be skipped, rather than
+// printed as a number derived from nothing.
+if (words.length) {
+  const speechChars = words.reduce((n, w) => n + w.text.length + 1, 0);
+  const speechMs = words.at(-1).endMs - words[0].startMs;
+  const floorCps = speechMs > 0 ? speechChars / (speechMs / 1000) : null;
+  if (floorCps === null) {
+    console.log('  narration floor: not computed — the measured words span no time.');
+  } else {
+    console.log(`  narration delivers ~${floorCps.toFixed(1)} cps of text — that is the FLOOR for verbatim cues.`);
+    if (floorCps > MAX_CPS * 0.9) {
+      console.log(`  At this pace verbatim captions cannot sit far below ${MAX_CPS} cps. Slower narration or`);
+      console.log(`  condensed (non-verbatim) cues are the only levers; re-splitting will not help.`);
+    }
+  }
+} else {
+  console.log('  narration floor: none — every segment is declared silent, so there is no speech rate to report.');
 }
 if (over.length) for (const c of over.slice(0, 5)) {
   console.log(`    ${stamp(c.startMs, '.')} ${cpsOf(c).toFixed(1)} cps — ${c.text.slice(0, 60)}${c.text.length > 60 ? '…' : ''}`);

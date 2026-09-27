@@ -12,11 +12,19 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { EXIT, CliError, runCli, requireExistingFile, requireFiniteNumber, narrationFingerprint } from './cli-support.mjs';
+import { isSilentSegment, silentSegmentProblems, wordsInSegment } from './silent-segment.mjs';
 
 const SHIPPED_SCHEMA = fileURLToPath(new URL('./timing-schema.json', import.meta.url));
 
-/** Words in a segment's narration, counted the same way voice.mjs counts them. */
-const wordsIn = (s) => String(s?.voiceoverText ?? '').trim().split(/\s+/).filter(Boolean).length;
+/**
+ * Words in a segment's narration, counted the same way voice.mjs counts them.
+ *
+ * Imported rather than reimplemented: calibrationLineage compares THIS count against the
+ * `words` recorded by the calibration builder, so two copies of the rule that drifted
+ * apart would report every project as stale on evidence that is really just two different
+ * definitions of a word.
+ */
+const wordsIn = wordsInSegment;
 
 /**
  * Does this calibration measure THIS script?
@@ -231,6 +239,22 @@ await runCli(async () => {
     return EXIT.FAILED;
   }
 
+  // --- Declared silence ---------------------------------------------------
+  // Checked here, before anything reasons about rates, because a malformed declaration
+  // makes every later answer meaningless: a silent segment with narration text has no
+  // defensible word count, and one with a blank caption renders an empty caption box that
+  // nothing downstream can detect. Reported as its own block so the reason is never
+  // mistaken for a narration problem.
+  const silentSegs = segs.filter(isSilentSegment);
+  const declarationProblems = silentSegs.flatMap((s) => silentSegmentProblems(s));
+  if (declarationProblems.length > 0) {
+    console.log('declared silence: INVALID');
+    for (const p of declarationProblems) console.log(`  ${p}`);
+    failures.push(`${declarationProblems.length} malformed silence declaration(s)`);
+  } else if (silentSegs.length > 0) {
+    console.log(`declared silence: OK (${silentSegs.length} segment(s): ${silentSegs.map((s) => s.id).join(', ')})`);
+  }
+
   // --- Contiguity ---------------------------------------------------------
   console.log(`lastSeg.endMs ${segs.at(-1).endMs} contentMs ${timing.contentMs} durationMs ${timing.durationMs}`);
   let prev = 0;
@@ -275,7 +299,15 @@ await runCli(async () => {
   // real audio. This is necessary for the suppression below but NOT sufficient — see
   // calibrationLineage: it proves the windows came from some audio, not that the
   // calibration measures the text that is in the file now.
-  const measuredWindows = segs.every((s) => {
+  //
+  // DECLARED SILENT SEGMENTS ARE NOT PART OF THIS QUESTION. Their window is authored and
+  // then filled with generated silence of that exact length, so it is exact by
+  // construction rather than measured from speech — it neither supports nor undermines
+  // the claim that `words / window` is the measured rate. Note that only a DECLARED
+  // silent segment is skipped: a narrated segment with no `audio` still fails the
+  // predicate, so a project whose voice stage never ran keeps its word budget.
+  const spokenSegs = segs.filter((s) => !isSilentSegment(s));
+  const measuredWindows = spokenSegs.length > 0 && spokenSegs.every((s) => {
     const clipMs = Number(s.audio?.durationMs);
     return Number.isFinite(clipMs) && s.endMs - s.startMs === clipMs;
   });
@@ -322,6 +354,12 @@ await runCli(async () => {
     for (const s of segs) {
       const win = (s.endMs - s.startMs) / 1000;
       const w = wordsIn(s);
+      // A rate over zero words is not a slow rate — it is not a rate. "n/a" claims the
+      // measurement was attempted and failed; "silent" states the fact.
+      if (isSilentSegment(s)) {
+        console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${'silent'.padStart(5)}  ${'silent'.padStart(6)}  ${'—'.padStart(8)}`);
+        continue;
+      }
       const speechMs = speechMsOf(s);
       const segRate = speechMs > 0 ? w / (speechMs / 1000) : NaN;
       const delta = Number.isFinite(segRate) ? ((segRate - rate) / rate) * 100 : NaN;
@@ -347,7 +385,7 @@ await runCli(async () => {
     const WPS = rate * margin;
     const rateKind = measuredRate ? 'MEASURED rate' : 'ESTIMATE';
     console.log(`\nword rate: ${rate} wps x ${margin} margin = ${WPS.toFixed(2)} effective — ${rateKind} (source: ${source})`);
-    console.log(`segment windows: ${measuredWindows ? 'MEASURED from synthesised audio' : 'AUTHORED estimates'}`);
+    console.log(`segment windows: ${measuredWindows ? 'MEASURED from synthesised audio' : 'AUTHORED estimates'}${silentSegs.length ? ` (${silentSegs.length} declared-silent segment(s) excluded — their windows are authored and filled with generated silence)` : ''}`);
     if (measuredRate && !lineage.covers) {
       if (lineage.unproven) {
         // NOT stale — unproven. Nothing disagrees; there is only no evidence.
@@ -394,6 +432,12 @@ await runCli(async () => {
     for (const s of segs) {
       const win = (s.endMs - s.startMs) / 1000;
       const w = wordsIn(s);
+      // A silent segment has no narration to fit, so it has no budget to be over. Giving
+      // it one would make its headroom look like slack a writer could spend.
+      if (isSilentSegment(s)) {
+        console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${'silent'.padStart(5)}  ${'—'.padStart(6)}  ${'—'.padStart(8)}`);
+        continue;
+      }
       const budget = Math.floor(win * WPS);
       if (w > budget) over++;
       const flag = w > budget ? '  <-- OVER' : '';

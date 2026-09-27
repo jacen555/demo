@@ -1,6 +1,7 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from 'node:fs';
 import { EXIT, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { isSilentSegment, wordsInSegment } from './silent-segment.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -28,7 +29,11 @@ const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 
 const panel = (s, i) => {
   const v = s.visual || {}, ca = PAL[i % PAL.length];
   const win = ((s.endMs - s.startMs) / 1000).toFixed(1);
-  const words = s.voiceoverText.trim().split(/\s+/).length;
+  // `''.split(/\s+/)` is `['']` — length 1 — so a segment with no narration reported ONE
+  // word. A number that looks measured and is not is worse than no number, because the
+  // storyboard is what an author reviews the pacing against.
+  const words = wordsInSegment(s);
+  const silent = isSilentSegment(s);
 
   const cards = (v.items || []).map((it, j) => `
     <div class="card" style="border-top:4px solid ${PAL[j % PAL.length]}">
@@ -75,12 +80,12 @@ const panel = (s, i) => {
       </div>
       <div class="meta">
         <b>${clock(s.startMs)} – ${clock(s.endMs)}</b>
-        <span>${win}s · ${words} words</span>
+        <span>${win}s · ${silent ? 'silent' : `${words} words`}</span>
         <span class="mode">${esc(v.mode || 'narrative')}${v.layout ? ' / ' + esc(v.layout) : ''}</span>
       </div>
     </header>
     <div class="grid2">
-      <div class="vo"><div class="volabel">VOICEOVER</div><p>${esc(s.voiceoverText)}</p><div class="claims">${claims}</div></div>
+      <div class="vo"><div class="volabel">${silent ? 'SILENT — ACCESSIBILITY CUE' : 'VOICEOVER'}</div><p>${silent ? esc(s.silence?.caption ?? '') : esc(s.voiceoverText)}</p><div class="claims">${claims}</div></div>
       <div class="viz">${diagram || shots || `<div class="cards">${cards}</div>`}</div>
     </div>
   </section>`;

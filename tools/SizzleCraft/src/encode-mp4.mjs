@@ -299,7 +299,16 @@ if (wantAudio) {
   const audioBytes = fs.readFileSync(audioPath);
   if (audioBytes.length < 2048) {
     fs.rmSync(lockPath, { force: true });
-    throw new Error(`voiceover.mp3 is only ${audioBytes.length} bytes (empty/corrupt) — refusing to encode a silent video`);
+    // DELIBERATELY NOT RELAXED FOR PER-SEGMENT SILENCE. A segment declared silent gets a
+    // real generated-silence clip of its authored length, so a project full of
+    // intermissions still produces a full-size voiceover.mp3 — roughly 12 KB per second.
+    // A file under 2 KB therefore still means what it always meant: empty or truncated.
+    // Widening this guard to accommodate declared silence would remove the only check
+    // that catches a genuinely broken voice track, to fix a case that does not occur.
+    throw new Error(
+      `voiceover.mp3 is only ${audioBytes.length} bytes (empty/corrupt) — refusing to encode a silent video. ` +
+      `Declared-silent segments produce real generated silence and do not shrink this file; ` +
+      `for a whole project rendered without any audio track, set timing.intake.silent=true.`);
   }
   audioBase64 = audioBytes.toString('base64');
 } else {
