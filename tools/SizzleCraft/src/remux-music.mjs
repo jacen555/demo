@@ -44,6 +44,7 @@ import {
 } from './cli-support.mjs';
 import { videoStreamVerdict } from './remux-verify.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
+import { MIX_PARAMETERS, createMixAudit } from './mix-parameters.mjs';
 import { probeDurationSeconds } from './audio-probe.mjs';
 
 const TIMING_NAME = 'timing.json';
@@ -156,6 +157,9 @@ function resolveVideoSeconds(override, timing) {
 const GAIN_MIN = 0;
 const GAIN_MAX = 8;
 
+/** The flags a confirmation covers — read off the registry, so a new pinned knob documents itself. */
+const PINNED_FLAGS = MIX_PARAMETERS.filter((p) => p.pinned).map((p) => p.flag).join(', ');
+
 const USAGE = `
 remux-music — mix the music bed under the narration and mux it onto an existing
 video stream without re-encoding the video (pipeline stage S8/S9, "the cheap path").
@@ -174,20 +178,30 @@ Options
   --music-gain <n>      linear music gain, ${GAIN_MIN}..${GAIN_MAX} (default: 1.50)
   --crossfade <sec>     crossfade at each loop wrap, 0.1..30 (default: 3)
   --no-loop             refuse rather than loop a music bed shorter than the video
-  --confirm-gain        confirm --music-gain for the current music source (bug-ledger 16).
-                        Required on first use and whenever the source or the gain changes.
+  --confirm-gain        confirm the pinned mix parameters (${PINNED_FLAGS}) for the current
+                        music source (bug-ledger 16). Required on first use, whenever the
+                        source or any pinned parameter changes, and once for every pin
+                        written before those parameters were registered.
   --video-seconds <n>   override the video length used to size the loop
   --ceiling <dB>        limiter headroom in dB BELOW full scale, 0.1..12 (default: 1.0).
-                        NOTE this is dBFS and TRUE PEAK sits above it, because
-                        inter-sample peaks exceed sample peaks. Use about 2.5 to deliver
-                        -1.0 dBTP.
+                        This is dBFS. A delivery target is usually dBTP, and true peak
+                        sits ABOVE the sample peaks a limiter clamps. Measured on real
+                        encoded output, post-AAC:
+                            --ceiling 1.0  ->  -9.7 LUFS, -0.3 dBTP
+                            --ceiling 2.0  -> -10.0 LUFS, -1.1 dBTP
+                            --ceiling 3.0  -> -10.5 LUFS, -2.1 dBTP
+                        So --ceiling 2.0 is a measured starting point for a -1.0 dBTP
+                        target. It is NOT a guarantee: this tool clamps sample peaks
+                        before the AAC encode and measures nothing after it, so verifying
+                        a dBTP target means decoding the output and measuring it yourself.
   --project <dir>       project root; no path may escape it (default: current directory)
   --ffmpeg <path>       ffmpeg binary (default: read from ffmpeg-path.txt in the project)
   --apply               actually remux. Without it nothing is written.
   --replace             permit overwriting an existing --out
   --help                show this message
 
-Exit codes: 0 success/plan · 1 ffmpeg failed or the video stream was NOT preserved · 2 bad usage
+Exit codes: 0 success/plan · 1 ffmpeg failed, the video stream was NOT preserved, or a
+value reached the mix graph without being registered · 2 bad usage
 `.trimStart();
 await runCli(async () => {
   let values;
@@ -240,12 +254,45 @@ await runCli(async () => {
 
   // Validated before they are ever interpolated. `volume=${gain}` sits inside a filter
   // graph, so an unchecked value is a filter-injection primitive, not just a bad number.
+  //
+  // EVERY VALUE THAT REACHES THE MIX IS DECLARED, next to the parse that produces it.
+  // The pin binds to the `pinned` subset of that declaration rather than to a literal
+  // written here, and `mix.audit` refuses a graph carrying anything undeclared — so a
+  // knob added later cannot move the delivered loudness behind a pin reporting valid,
+  // which is exactly how --ceiling escaped. See mix-parameters.mjs, including its limits.
+  const mix = createMixAudit();
+
   const voiceGain = parseBoundedNumber(values['voice-gain'] ?? '1.14', {
     name: '--voice-gain', min: GAIN_MIN, max: GAIN_MAX,
   });
+  mix.declare('voiceGain', { value: voiceGain });
+
   const musicGain = parseBoundedNumber(values['music-gain'] ?? '1.50', {
     name: '--music-gain', min: GAIN_MIN, max: GAIN_MAX,
   });
+  mix.declare('musicGain', { value: musicGain });
+
+  // A LIMITER CEILING IS dBFS; A DELIVERY TARGET IS USUALLY dBTP. The two are not the
+  // same number: inter-sample peaks reconstructed on playback run above the sample peaks
+  // the limiter clamps. Measured on real encoded output, post-AAC, --ceiling 1.0 delivered
+  // -0.3 dBTP and --ceiling 2.0 delivered -1.1 dBTP. Nothing in this pipeline measures
+  // encoded true peak, so the help states 2.0 as a measured starting point and says
+  // plainly that confirming a dBTP target requires decoding the output.
+  //
+  // Expressed as dB BELOW full scale (a positive number) rather than as a negative dBFS
+  // value: gains reach an ffmpeg filter graph, so the shared parser refuses anything that
+  // is not a plain decimal, and a leading dash is also ambiguous to parseArgs. "How much
+  // headroom" is the more natural question anyway.
+  //
+  // PARSED HERE, BEFORE THE PIN, because the pin now covers it. Parsing it after the pin
+  // check is what let a ceiling change reach the mix without a renewed confirmation.
+  const ceilingBelowFs = parseBoundedNumber(values.ceiling ?? '1.0', {
+    name: '--ceiling', min: 0.1, max: 12,
+  });
+  const ceilingLinear = Number(Math.pow(10, -ceilingBelowFs / 20).toFixed(6));
+  // Pinned as the dB the operator typed, rendered as the linear limit the graph carries —
+  // a refusal that quoted 0.794328 back at someone who typed 2.0 would be no use.
+  mix.declare('ceiling', { value: ceilingBelowFs, rendered: ceilingLinear });
 
   // THE GAIN PIN (bug-ledger entry 16).
   //
@@ -255,11 +302,14 @@ await runCli(async () => {
   // either — the narration-gap checks measure whether a bed is PRESENT, not whether it is
   // at the right LEVEL.
   //
+  // `mix.pinnedValues()` rather than a hand-written object: the set the pin records is
+  // the set the registry declares, and it refuses to hand back a partial one.
+  //
   // The gate is on WRITING, not on planning: the plan produces no artefact, so it reports
-  // the pin status instead of refusing, and --apply is where an unconfirmed gain is
+  // the pin status instead of refusing, and --apply is where an unconfirmed mix is
   // stopped. See gain-pin.mjs for what this pin does and does not certify.
   const lock = readGainLock(projectDir);
-  const current = { source: path.basename(music), sha256: await sha256File(music), musicGain };
+  const current = { source: path.basename(music), sha256: await sha256File(music), mix: mix.pinnedValues() };
   const pin = classifyGainPin(lock, current);
   const confirmed = values['confirm-gain'] === true;
 
@@ -270,21 +320,7 @@ await runCli(async () => {
   const xfade = parseBoundedNumber(values.crossfade ?? '3', {
     name: '--crossfade', min: 0.1, max: 30,
   });
-
-  // A LIMITER CEILING IS dBFS; A DELIVERY TARGET IS USUALLY dBTP. The two are not the
-  // same number: inter-sample peaks reconstructed on playback run above the sample peaks
-  // the limiter clamps, so a -1.0 dBFS ceiling measured -0.3 to -0.7 dBTP on real mixes
-  // here. A project asked to deliver <= -1.0 dBTP could not reach it at any input gain,
-  // because the ceiling was fixed.
-  //
-  // Expressed as dB BELOW full scale (a positive number) rather than as a negative dBFS
-  // value: gains reach an ffmpeg filter graph, so the shared parser refuses anything that
-  // is not a plain decimal, and a leading dash is also ambiguous to parseArgs. "How much
-  // headroom" is the more natural question anyway.
-  const ceilingBelowFs = parseBoundedNumber(values.ceiling ?? '1.0', {
-    name: '--ceiling', min: 0.1, max: 12,
-  });
-  const ceilingLinear = Number(Math.pow(10, -ceilingBelowFs / 20).toFixed(6));
+  mix.declare('crossfade', { value: xfade });
 
   // A BAD ARGUMENT IS A USAGE ERROR, NOT AN UNDECIDABLE INPUT. Parsed here, outside the
   // try below, because that try turns anything it catches into "could not decide" on the
@@ -341,27 +377,36 @@ await runCli(async () => {
 
   // n copies crossfaded end-to-end yield n*D - (n-1)*X seconds. Smallest covering n.
   const copies = short ? Math.max(2, Math.ceil((videoSeconds - xfade) / (musicSeconds - xfade))) : 1;
-  const trim = undecidable === null ? `atrim=0:${videoSeconds},` : '';
+  if (undecidable === null) mix.declare('videoSeconds', { value: videoSeconds });
+  const trim = undecidable === null ? `atrim=0:${mix.use('videoSeconds')},` : '';
 
   let musicFilter;
   if (copies === 1) {
-    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${musicGain}[mu];`;
+    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];`;
   } else {
     let prev = '2:a';
     musicFilter = '';
     for (let i = 1; i < copies; i += 1) {
       const label = `ml${i}`;
-      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${xfade}:c1=tri:c2=tri[${label}];`;
+      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[${label}];`;
       prev = label;
     }
-    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${musicGain}[mu];`;
+    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];`;
   }
 
   const filter =
-    `[1:a]volume=${voiceGain},pan=stereo|c0=c0|c1=c0[vo];` +
+    `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
     musicFilter +
     `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
-    `[mx]alimiter=limit=${ceilingLinear}:level=disabled[out]`;
+    `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
+
+  // FAIL CLOSED ON AN UNREGISTERED VALUE. Anything interpolated into the graph without
+  // going through the registry leaves a number here that traces to nothing, and the run
+  // stops rather than delivering a mix the pin has never covered. Audited on the plan
+  // path too: a plan that prints a graph it cannot account for describes a mix nobody
+  // confirmed, and printing that at exit 0 is the permissive default refused everywhere
+  // else in this engine.
+  mix.audit(filter);
 
   const musicInputs = Array.from({ length: copies }, () => ['-i', music]).flat();
 
@@ -432,7 +477,10 @@ await runCli(async () => {
   // never earned it.
   if (confirmed) {
     writeGainLock(projectDir, current);
-    console.log(`${LOCK_NAME}: gain ${musicGain} confirmed for ${current.source} ` +
+    const recorded = Object.entries(current.mix)
+      .map(([name, value]) => `${MIX_PARAMETERS.find((p) => p.name === name).flag} ${value}`)
+      .join(', ');
+    console.log(`${LOCK_NAME}: ${recorded} confirmed for ${current.source} ` +
       `(${current.sha256.slice(0, 12)})`);
     console.log('   this records your acceptance, NOT a measurement — check the mix with:');
     console.log(`   node src/check-levels.mjs --file ${path.basename(outPath)}`);

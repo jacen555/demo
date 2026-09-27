@@ -193,6 +193,7 @@ Each candidate gate was real and one inferential step short of the claim:
 | `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
 | normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
 | `sha256(--music)` unchanged | the track is the same file | the gain was ever calibrated for it |
+| the mix pin's values match | the knobs it *records* did not move | no knob that moves the mix moved |
 
 **Evidence weaker than the claim cannot establish the claim.** The correct response to
 insufficient evidence is to not certify, so there is no tool — and leaving a calibration
@@ -201,31 +202,113 @@ than suppressed.
 
 ### The music gain pin — a confirmation, not a measurement
 
-`remux-music.mjs` pins `--music-gain` to the music source (bug-ledger 16: a generated bed
-at −43.1 dB RMS and a licensed master at −11.4 dB are 31.7 dB apart, both accept the same
-in-range gain, and the narration-gap checks measure *presence*, not *level*).
+`remux-music.mjs` pins the **delivered-mix parameters** to the music source (bug-ledger
+16: a generated bed at −43.1 dB RMS and a licensed master at −11.4 dB are 31.7 dB apart,
+both accept the same in-range gain, and the narration-gap checks measure *presence*, not
+*level*).
 
-The pin requires `--confirm-gain` on **first use**, whenever **either** the source or the
-gain changes, and whenever the existing pin **records no confirmation** — the shape older
-self-pinning versions wrote. The earlier version asked only whether the source had
-*changed*, which is the last row of the table above: a changed input shows a calibration
-is stale, not that one ever happened. That left a first run pinning its own unconfirmed
-default, and left a legacy lock being read as agreement when it only ever recorded the
-tool agreeing with itself.
+The pin requires `--confirm-gain` on **first use**, whenever the source or **any pinned
+mix parameter** changes, whenever the existing pin **records no confirmation**, and once
+for any pin written before those parameters were registered. The earlier version asked
+only whether the source had *changed*, which is the last-but-one row of the table above: a
+changed input shows a calibration is stale, not that one ever happened. That left a first
+run pinning its own unconfirmed default, and left a lock carrying no confirmation being
+read as agreement when it only ever recorded the tool agreeing with itself.
+
+Older self-pinning versions of this tool did write such locks. The refusal does **not**
+say so about any particular file, because a lock's contents cannot establish what wrote
+it — it names the missing `evidence` marker and stops there.
 
 `--confirm-gain` records a **provisional acceptance**, and the order it implies is the
 only one that can actually be carried out — `check-levels.mjs` measures a *rendered file*,
 so there is nothing to measure until the remux has run:
 
-1. `--confirm-gain` to accept the gain and produce the mix;
+1. `--confirm-gain` to accept the mix parameters and produce the mix;
 2. `node src/check-levels.mjs --file <out>` to measure it;
 3. read the lead-in window, where the bed plays alone, **before delivering**.
 
 `confirmedAt` and `evidence` are written only on a run where someone actually passed
 `--confirm-gain`; a settled pin is left untouched rather than restamped.
 
-**Known gap — what this pin does not do.** It records that an operator confirmed a gain,
-not that anyone measured the result. `music-gain.lock.json` carries
+#### The registered set — why the pin no longer names its own members
+
+`--ceiling` was added after the pin was written. It sets the limiter, so it moves the
+delivered loudness — and the pin recorded `{source, sha256, musicGain}`, a literal typed
+before that knob existed. A ceiling change therefore needed no renewed confirmation while
+the mix moved underneath a pin reporting itself valid.
+
+The enumeration was not the mistake. **The set was closed by construction and nothing
+failed when it grew.** So `src/mix-parameters.mjs` is now the one place a mix knob is
+declared, the pin binds to the `pinned` subset of it, and the filter graph is audited
+against it before ffmpeg is invoked. A value interpolated into the graph without being
+declared leaves a number that traces to nothing, and the run stops with exit `1` (a check
+failed) having written nothing — on the plan path too, because a plan that prints a graph
+it cannot account for describes a mix nobody confirmed.
+
+**Existing locks are refused, not upgraded.** A pin written before the registry cannot say
+which ceiling it covered, and back-filling today's default would record an agreement
+nobody was asked for. Every project therefore needs **one** fresh `--confirm-gain`. That
+cost was accepted deliberately.
+
+**A refusal names what is missing, not who wrote the file.** Five refusal states are kept
+apart: unreadable, *pre-registry* (no `mix` record **and** the complete old
+`{source, sha256, musicGain}` shape around it — the only evidence on disk that supports
+dating a lock), *no mix record* (no `mix` and not that shape either — refused, and
+described by what is absent, because nothing in it establishes when it was written), a
+`mix` record missing a registered member, and a member that moved. A pin that also turns
+out to be pinned to a **different digest** has that named as a second, independent
+difference rather than being described by its first problem alone.
+
+**What the fail-closed guard actually detects** — stated narrowly on purpose, because this
+mechanism's previous versions each claimed more than they proved, most recently by
+claiming the row below that reads "any run carrying a digit" while the scan matched a
+single anticipated shape and read `volume=.5` as nothing at all:
+
+| Detected | Not detected |
+|---|---|
+| a name used through the registry that is not declared | anything reaching ffmpeg **outside** `-filter_complex` — `-b:a`, `-ar`, an added `-af`, a changed codec |
+| a number in the finished graph that no declared use or structural literal accounts for | a change carrying **no digit at all** — swapping `alimiter` for `acompressor`, `level=disabled` → `enabled` |
+| a number duplicating a declared value (accounting is by value **and** use-count) | a value inside a `[link label]` (redacted before the scan) or shaped like a **filter identifier** (`c0`, `ml1` — digits in a name are skipped) |
+| **any run of characters carrying a digit** that is neither a plain decimal nor a filter identifier — `.5`, `5.`, `+1.5`, `-1.5`, `1e3`, `1.5E-2`, `6dB`, `128k` all stop the run rather than being skipped | **whether `pinned` is set correctly** — nothing mechanical can know a knob moves the level, and this has already been got wrong once (see below) |
+| a `pinned` parameter never declared, or declared and never applied | |
+
+The honest summary: a knob interpolated into the mix graph cannot reach ffmpeg **as a
+number** — in any numeric form ffmpeg accepts, not just the ones anticipated when the scan
+was written — without either being declared or stopping the run. Four things are still
+**not** covered, and are named rather than implied away: a value carrying no digit at all,
+a value shaped like a filter identifier (`c0`, `ml1` — digits in a name are skipped, which
+is what lets the real graph pass), a value inside a `[link label]`, and anything outside
+the graph. This guard defends against *forgetting*, which is how `--ceiling` escaped. It
+does not defend against being wrong.
+
+**`pinned` is a human judgement, and it was wrong about `--voice-gain`.** The voice gain
+was registered `pinned: false` on the reasoning that the pin asks whether the *bed* level
+was agreed to. But the narration sets the other half of the balance the bed is judged
+against, and it is the signal fed into the limiter whose ceiling *is* pinned — so a
+voice-only change moved the delivered mix while a settled pin went on reporting valid,
+which is exactly the defect `--ceiling` had. The incident behind this whole feature was a
+voice `1.40` / music `0.85` rebalance that shipped a bed 24 dB above target. It is now
+pinned; `--voice-gain`, `--music-gain` and `--ceiling` are the confirmed set. Nothing
+mechanical caught that error, and nothing mechanical would catch the next one.
+
+#### `--ceiling`, dBFS and dBTP
+
+A limiter ceiling is **dBFS**; a delivery target is usually **dBTP**, and true peak sits
+above the sample peaks a limiter clamps. Measured on real encoded output, post-AAC:
+
+| `--ceiling` | integrated | true peak |
+|---|---|---|
+| 1.0 (default) | −9.7 LUFS | −0.3 dBTP |
+| **2.0** | −10.0 LUFS | **−1.1 dBTP** |
+| 3.0 | −10.5 LUFS | −2.1 dBTP |
+
+So `--ceiling 2.0` is a **measured starting point** for a −1.0 dBTP target, not a
+guarantee. This tool clamps sample peaks before the AAC encode and measures nothing after
+it — **verifying a dBTP target means decoding the output and measuring it yourself.** The
+earlier guidance of "about 2.5" was a guess and has been removed.
+
+**Known gap — what this pin does not do.** It records that an operator confirmed a set of
+mix parameters, not that anyone measured the result. `music-gain.lock.json` carries
 `evidence: "operator-confirmed"` so the file cannot be misread as a calibration record. A
 measured pin is not buildable from what exists today: `check-levels.mjs` writes no
 artifact, measures a *rendered video* rather than the music source, has no way to bind a

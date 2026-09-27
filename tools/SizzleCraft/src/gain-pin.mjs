@@ -47,18 +47,45 @@
  * `sourceRms + 20*log10(gain)` as the predicted bed level — a real measurement, and a
  * larger change that trades directly against keeping the plan path cheap. It is named
  * in the README as a known gap rather than papered over here.
+ *
+ * ## What the pin covers, and why that is no longer a literal
+ *
+ * A fourth way through was open until recently, and it was structural rather than
+ * accidental. This pin recorded `{ source, sha256, musicGain }` — a hand-written set,
+ * fixed at the moment it was typed. `--ceiling` was added afterwards; it clamps the
+ * finished mix, so it moves the delivered loudness, and the pin had never heard of it. A
+ * ceiling change therefore needed no renewed confirmation while the mix moved underneath
+ * a pin reporting itself valid.
+ *
+ * The enumeration was not the mistake. The mistake was that the set was CLOSED BY
+ * CONSTRUCTION and nothing failed when it grew. So the pin no longer names its members:
+ * it binds to the `pinned` subset of MIX_PARAMETERS (mix-parameters.mjs), which is also
+ * the set the mix graph is built from and audited against. Declaring a knob there covers
+ * it here, and a knob that reaches the graph undeclared stops the run.
+ *
+ * Read the limits section of mix-parameters.mjs before trusting that further than it
+ * goes. In particular, nothing mechanical decides whether `pinned` is set correctly.
  */
+import { MIX_PARAMETERS, isMixRecord } from './mix-parameters.mjs';
 
 const SHA256 = /^[0-9a-f]{64}$/i;
+
+/** The registry members whose movement invalidates a confirmation. */
+const PINNED_PARAMETERS = MIX_PARAMETERS.filter((parameter) => parameter.pinned);
 
 /**
  * The only evidence kind this pin trusts.
  *
- * A lock is a claim about who agreed to something. `music-gain.lock.json` predates this
- * field, and those older files were written by code that pinned its own default without
- * asking anybody — so the absence of this marker is not a formatting detail, it is the
- * difference between "an operator confirmed this" and "the tool asserted it about
- * itself". A pin that does not say which one it is does not get read as the stronger one.
+ * A lock is a claim about who agreed to something. This marker is written ONLY on a run
+ * where an operator actually passed --confirm-gain, so its absence means no confirmation
+ * is recorded — whatever wrote the file. That is the difference between "an operator
+ * confirmed this" and a file that merely carries values, and a pin that does not say
+ * which one it is does not get read as the stronger one.
+ *
+ * What the absence does NOT establish is WHO wrote the file or WHEN. Earlier versions of
+ * this pin did write their own defaults without asking anybody, and such files exist; so
+ * do hand-edited and truncated ones. The refusal text names the missing marker and stops
+ * there, because that is the whole of what the file proves.
  */
 const OPERATOR_CONFIRMED = 'operator-confirmed';
 
@@ -67,42 +94,107 @@ function readPinnedSha(lock) {
   return typeof lock?.sha256 === 'string' && SHA256.test(lock.sha256) ? lock.sha256.toLowerCase() : null;
 }
 
-/** A pinned gain, or null when the lock does not carry a readable one. */
-function readPinnedGain(lock) {
-  const gain = typeof lock?.musicGain === 'number' ? lock.musicGain : Number.NaN;
-  return Number.isFinite(gain) ? gain : null;
+/**
+ * Whether this lock is COMPLETE IN THE SHAPE THE PIN USED TO WRITE: `{source, sha256,
+ * musicGain}`.
+ *
+ * "This pin predates the registry" is a claim about WHEN A FILE WAS WRITTEN, and the
+ * only thing on disk that supports it is the old shape itself. A lock carrying nothing
+ * but a digest is missing `source` and `musicGain` too, so it is not the old shape — it
+ * is a file that records no mix parameters, and saying more than that invents a history.
+ *
+ * That distinction is not pedantry. This module has already shipped the stronger-claim
+ * mistake once, when collapsing staleness and provenance let a stale pin describe itself
+ * as confirmed against a source nobody agreed to. A refusal may name what is missing
+ * without naming who left it out.
+ */
+function isPreRegistryShape(lock) {
+  return (
+    typeof lock?.source === 'string' &&
+    lock.source.length > 0 &&
+    typeof lock?.musicGain === 'number' &&
+    Number.isFinite(lock.musicGain)
+  );
 }
 
 /**
- * Decides whether this gain, for this source, has been confirmed.
+ * Decides whether these mix parameters, for this source, have been confirmed.
  *
  * Three things must hold, and the third is the one that was missing: the source matches,
- * the gain matches, AND the pin records an actual operator confirmation. Checking only
- * the first two reads a self-pinned legacy lock as confirmed, and a successful run then
- * rewrites it carrying `evidence: "operator-confirmed"` — laundering a record into
- * provenance it never had, and producing a file that looks STRONGER than its source.
- * Putting the distinction in the artifact and not in the predicate is the same class of
- * error as the rest of this audit: it exists in the file and not in the decision.
+ * every PINNED mix parameter matches, AND the pin records an actual operator
+ * confirmation. Checking only the first two reads a self-pinned legacy lock as confirmed,
+ * and a successful run then rewrites it carrying `evidence: "operator-confirmed"` —
+ * laundering a record into provenance it never had, and producing a file that looks
+ * STRONGER than its source. Putting the distinction in the artifact and not in the
+ * predicate is the same class of error as the rest of this audit: it exists in the file
+ * and not in the decision.
  *
  * A lock whose fields cannot be read is NOT treated as a match either. Defaulting an
  * unreadable pin to "fine" would produce the evidence of a check with none of the
  * protection — a truncated or hand-edited lock would wave any gain through.
  *
+ * FIVE REFUSAL STATES ARE KEPT APART, because each sends the reader somewhere different
+ * and collapsing them is what let a stale pin describe itself as confirmed:
+ *   - `unreadablePin`   the file is there but cannot be read as a pin;
+ *   - `preRegistryPin`  it records no mix set, AND it carries the complete shape this pin
+ *                       used to write (`source` + `musicGain`), which is the only thing
+ *                       on disk that supports dating it. Refused, never back-filled:
+ *                       inventing the missing values would mint an agreement nobody gave;
+ *   - `noMixRecord`     it records no mix set and is not that shape either. Refused, and
+ *                       described by WHAT IS MISSING — nothing about it establishes when
+ *                       it was written or what produced it, so the refusal does not say;
+ *   - `unrecordedParameters` it records a mix set that is missing a registered member;
+ *   - `changedParameters`    it records the member, and the member moved.
+ *
+ * The split between the middle two is the same discipline as the staleness/provenance
+ * split above, one level down: a refusal may name what is missing without inventing who
+ * left it out or when.
+ *
  * @param {object|null} lock the parsed lock file, or null when there is none
- * @param {{source: string, sha256: string, musicGain: number}} current what is being applied now
- * @returns {{first: boolean, unreadablePin: boolean, unconfirmedPin: boolean,
- *            pinRecordsConfirmation: boolean, sourceChanged: boolean, gainChanged: boolean,
- *            requiresConfirmation: boolean, pinnedSha: string|null, pinnedGain: number|null}}
+ * @param {{source: string, sha256: string, mix: Record<string, number>}} current what is being applied now
+ * @returns {{first: boolean, unreadablePin: boolean, preRegistryPin: boolean, noMixRecord: boolean,
+ *            unconfirmedPin: boolean, pinRecordsConfirmation: boolean, sourceChanged: boolean,
+ *            changedParameters: Array<{name: string, flag: string, summary: string, was: number, now: number}>,
+ *            unrecordedParameters: Array<{name: string, flag: string, summary: string, now: number}>,
+ *            requiresConfirmation: boolean, pinnedSha: string|null}}
  */
 export function classifyGainPin(lock, current) {
   const first = lock === null || lock === undefined || typeof lock !== 'object' || Array.isArray(lock);
 
   const pinnedSha = first ? null : readPinnedSha(lock);
-  const pinnedGain = first ? null : readPinnedGain(lock);
-  const unreadablePin = !first && (pinnedSha === null || pinnedGain === null);
+  const record = first ? undefined : lock.mix;
+  const mixAbsent = record === undefined;
+
+  // A missing mix record and a malformed one are different diagnoses. `mix: null` or
+  // `mix: "x"` means someone wrote something unreadable; no `mix` key at all means the
+  // file records no mix parameters.
+  //
+  // WHY THAT SPLITS IN TWO. A lock with no `mix` and the complete old shape around it is
+  // evidence of a pin written before the registry — a legitimate history. A lock with no
+  // `mix` AND no `source` AND no `musicGain` is evidence of nothing but its own silence.
+  // Both are refused; only the first may be dated.
+  const unreadablePin = !first && (pinnedSha === null || (!mixAbsent && !isMixRecord(record)));
+  const preRegistryPin = !first && !unreadablePin && mixAbsent && isPreRegistryShape(lock);
+  const noMixRecord = !first && !unreadablePin && mixAbsent && !preRegistryPin;
 
   const sourceChanged = pinnedSha !== null && pinnedSha !== String(current.sha256).toLowerCase();
-  const gainChanged = pinnedGain !== null && pinnedGain !== current.musicGain;
+
+  const currentMix = isMixRecord(current?.mix) ? current.mix : {};
+  const changedParameters = [];
+  const unrecordedParameters = [];
+  if (!first && !unreadablePin && !preRegistryPin && !noMixRecord) {
+    for (const { name, flag, summary } of PINNED_PARAMETERS) {
+      const was = record[name];
+      const now = currentMix[name];
+      // Absent or unreadable is NOT "unchanged": a pin that does not record a member
+      // cannot certify it, and reading a missing field as a match is the permissive
+      // default this whole check exists to refuse.
+      if (typeof was !== 'number' || !Number.isFinite(was)) unrecordedParameters.push({ name, flag, summary, now });
+      else if (was !== now) changedParameters.push({ name, flag, summary, was, now });
+    }
+  }
+
+  const stale = sourceChanged || changedParameters.length > 0 || unrecordedParameters.length > 0;
 
   // Whether the EXISTING pin was ever agreed to, asked independently of whether it is
   // stale. Staleness and provenance are different questions, and collapsing them is what
@@ -111,21 +203,24 @@ export function classifyGainPin(lock, current) {
   const pinRecordsConfirmation = !first && lock.evidence === OPERATOR_CONFIRMED;
 
   // Only asked once the pin is otherwise readable and matching: "this lock records no
-  // confirmation" is the right diagnosis for a legacy pin, and the wrong one for a pin
-  // that is simply stale.
-  const unconfirmedPin = !first && !unreadablePin && !sourceChanged && !gainChanged
-    && !pinRecordsConfirmation;
+  // confirmation" is the right diagnosis for a pin that carries the values and no
+  // agreement, and the wrong one for a pin that is simply stale.
+  const unconfirmedPin =
+    !first && !unreadablePin && !preRegistryPin && !noMixRecord && !stale && !pinRecordsConfirmation;
 
   return {
     first,
     unreadablePin,
+    preRegistryPin,
+    noMixRecord,
     unconfirmedPin,
     pinRecordsConfirmation,
     sourceChanged,
-    gainChanged,
-    requiresConfirmation: first || unreadablePin || unconfirmedPin || sourceChanged || gainChanged,
+    changedParameters,
+    unrecordedParameters,
+    requiresConfirmation:
+      first || unreadablePin || preRegistryPin || noMixRecord || unconfirmedPin || stale,
     pinnedSha,
-    pinnedGain,
   };
 }
 
@@ -151,84 +246,145 @@ const HOW_TO_PROCEED =
   'There is nothing to measure yet: the bed level can only be read off a finished mix,\n' +
   'and that mix is what this run would have produced. So the order is:\n' +
   '\n' +
-  '  1. re-run with --confirm-gain — this records a PROVISIONAL acceptance of this gain\n' +
-  '     for this source, and produces the mix;\n' +
+  '  1. re-run with --confirm-gain — this records a PROVISIONAL acceptance of these mix\n' +
+  '     parameters for this source, and produces the mix;\n' +
   '  2. measure that output before you deliver it:\n' +
   '       node src/check-levels.mjs --file <your --out file>\n' +
   '  3. read the lead-in window, where the bed plays alone. If the level is wrong, re-run\n' +
-  '     step 1 with a corrected --music-gain; the pin will ask again because the gain moved.\n' +
+  '     step 1 with corrected values; the pin will ask again because they moved.\n' +
   '\n' +
-  '--confirm-gain records that YOU accepted this gain. It does not record that anyone\n' +
+  '--confirm-gain records that YOU accepted these values. It does not record that anyone\n' +
   'measured the result, and this tool cannot do that for you — see the gain-pin section\n' +
   'of the README for why, and for what closing that gap properly would take.';
 
 /**
- * The refusal text for an unconfirmed gain, naming which of the three occasions applies.
+ * The refusal text for an unconfirmed mix, naming every cause separately.
  *
  * Each branch names both sides of what it compared. "Something changed" sends the reader
- * looking; "1.5 became 3, against the same track" tells them what to check.
+ * looking; "--ceiling 1 became 2, against the same track" tells them what to check. When
+ * more than one thing moved, each gets its own line: collapsing a ceiling change into
+ * "the source changed" describes a cause that did not occur, and a reader who follows
+ * that text reasons from a history that does not exist.
  */
 export function describeGainPinRefusal(verdict, current) {
   const short = (sha) => String(sha).slice(0, 12);
+  const applying = () =>
+    PINNED_PARAMETERS.map(({ name, flag }) => `${flag} ${current.mix?.[name]}`).join(', ');
+
   // How the EXISTING pin may honestly be described. A stale pin and an unconfirmed one
   // are independent, so the staleness branches below must not borrow the word "confirmed"
   // from a record that never carried it.
-  const held = verdict.pinRecordsConfirmation ? 'confirmed' : 'pinned, NEVER CONFIRMED,';
-  const legacyNote = verdict.pinRecordsConfirmation
+  const held = verdict.pinRecordsConfirmation ? 'confirmed against' : 'pinned, NEVER CONFIRMED, against';
+  const noConfirmationNote = verdict.pinRecordsConfirmation
     ? ''
-    : '\nThe pin it is being compared against records no confirmation either — it was\n' +
-      'written by the old self-pinning code. Neither the old value nor the new one has\n' +
-      'been agreed to by anyone.';
+    : '\nThe pin it is being compared against records no confirmation either — the marker\n' +
+      'this tool writes when someone passes --confirm-gain is absent from it. What wrote\n' +
+      'that file cannot be told from its contents and is not guessed at here; what can be\n' +
+      'said is that neither the old values nor the new ones carry an agreement.';
+
+  /*
+   * THE SECOND, INDEPENDENT DIFFERENCE — which the pre-registry refusal used to omit.
+   *
+   * A pin can both fail to record the mix AND be pinned to a different track. Those are
+   * separate facts with separate fixes, and naming only the first sent an operator to
+   * re-confirm against a source they had not been told had moved. They found out on the
+   * next run.
+   *
+   * Reporting it is not the same as calling the old values confirmed: it states that two
+   * readable digests differ, which is the whole of what is known.
+   */
+  const digestAlsoDiffers = () =>
+    verdict.sourceChanged
+      ? '\nThe digest it does carry is ALSO not the one being supplied — a second and entirely\n' +
+        'independent difference, so re-confirming will be answering for a different track too:\n' +
+        `      pinned digest  ${short(verdict.pinnedSha)}\n` +
+        `      now supplied   ${current.source} (${short(current.sha256)})`
+      : '';
+
   const head = (() => {
     if (verdict.first) {
       return (
-        `--music-gain ${current.musicGain} has NEVER BEEN CONFIRMED for ${current.source} ` +
-        `(${short(current.sha256)}).\n` +
-        'There is no pin to check it against, so nothing here has established that this\n' +
-        'gain is right for this track — and pinning it now would record a confirmation\n' +
+        `the mix parameters about to be applied have NEVER BEEN CONFIRMED for ${current.source} ` +
+        `(${short(current.sha256)}):\n  ${applying()}\n` +
+        'There is no pin to check them against, so nothing here has established that this\n' +
+        'bed level is right for this track — and pinning it now would record a confirmation\n' +
         'that never happened.'
       );
     }
     if (verdict.unreadablePin) {
       return (
         'the music gain pin exists but cannot be read as a pin — its source digest or its\n' +
-        'gain is missing or malformed. An unreadable pin is not a confirmation, and it is\n' +
-        'not treated as one.'
+        'record of the mix parameters is missing or malformed. An unreadable pin is not a\n' +
+        'confirmation, and it is not treated as one.'
+      );
+    }
+    if (verdict.preRegistryPin) {
+      return (
+        `the music gain pin PREDATES the registered set of mix parameters, so it cannot say\n` +
+        `which ${PINNED_PARAMETERS.map((p) => p.flag).join(', ')} it covered.\n` +
+        'It carries the shape the pin used to write — the music gain alone. The narration\n' +
+        'gain and the limiter ceiling also move the delivered loudness, and a pin that is\n' +
+        'silent about them certifies nothing about the mix now being asked for. Back-filling\n' +
+        'today\'s values would be worse than refusing: it would record an agreement nobody\n' +
+        'was asked for.\n' +
+        `  now asking  ${applying()}` +
+        digestAlsoDiffers() +
+        '\nEvery pin written before this change needs one fresh confirmation. That is the cost,\n' +
+        'and it is paid once per project.'
+      );
+    }
+    if (verdict.noMixRecord) {
+      return (
+        'the music gain pin RECORDS NO MIX PARAMETERS. It carries a readable source digest\n' +
+        `and nothing that says which ${PINNED_PARAMETERS.map((p) => p.flag).join(', ')} it covered.\n` +
+        'It is not the shape this pin used to write either, so nothing about it establishes\n' +
+        'when it was written or what produced it, and this refusal does not guess. What is\n' +
+        'certain is that it cannot certify the mix now being asked for, and inventing the\n' +
+        'missing values would mint an agreement nobody gave.\n' +
+        `  now asking  ${applying()}` +
+        digestAlsoDiffers() +
+        '\nRe-run with --confirm-gain to replace it with a pin that records the whole set.'
       );
     }
     if (verdict.unconfirmedPin) {
       return (
-        `the music gain pin matches ${current.source} (${short(current.sha256)}) at gain ` +
-        `${current.musicGain}, but it RECORDS NO CONFIRMATION.\n` +
-        'It was written by a version of this tool that pinned its own default without\n' +
-        'asking anyone, so the values agreeing proves only that nothing has changed since\n' +
-        'the tool agreed with itself. Matching a record nobody made is not evidence.\n' +
+        `the music gain pin matches ${current.source} (${short(current.sha256)}) on every registered\n` +
+        'mix parameter, but it RECORDS NO CONFIRMATION.\n' +
+        'The marker this tool writes when someone passes --confirm-gain is absent. What\n' +
+        'produced the file cannot be told from its contents and is not guessed at here — so\n' +
+        'the values agreeing establishes only that they have not moved since it was written,\n' +
+        'not that anybody ever agreed to them. Matching a record that carries no\n' +
+        'confirmation is not evidence that a confirmation happened.\n' +
         'Re-confirming an old pin costs one flag; trusting one costs a delivered mix.'
       );
     }
-    if (verdict.sourceChanged && verdict.gainChanged) {
-      return (
-        'BOTH the music source and --music-gain changed.\n' +
-        `  ${held}  ${short(verdict.pinnedSha)} at gain ${verdict.pinnedGain}\n` +
-        `  now        ${current.source} (${short(current.sha256)}) at gain ${current.musicGain}` +
-        legacyNote
+
+    // STALE. Every cause gets its own line, with its own before and after.
+    const causes = [];
+    if (verdict.sourceChanged) {
+      causes.push(
+        '  - the music source CHANGED\n' +
+        `      now supplied  ${current.source} (${short(current.sha256)})`,
       );
     }
-    if (verdict.sourceChanged) {
-      return (
-        'the music source CHANGED but --music-gain did not.\n' +
-        `  ${held} against  ${short(verdict.pinnedSha)} at gain ${verdict.pinnedGain}\n` +
-        `  now supplied       ${current.source} (${short(current.sha256)}) at gain ${current.musicGain}` +
-        legacyNote
+    for (const { flag, summary, was, now } of verdict.changedParameters) {
+      causes.push(
+        `  - ${flag} CHANGED — ${summary}\n` +
+        `      confirmed  ${was}\n` +
+        `      now asked  ${now}`,
+      );
+    }
+    for (const { flag, summary, now } of verdict.unrecordedParameters) {
+      causes.push(
+        `  - the pin DOES NOT RECORD ${flag} — ${summary}\n` +
+        `      now asked  ${now}`,
       );
     }
     return (
-      'the music gain CHANGED against an unchanged source.\n' +
-      `  ${held}  gain ${verdict.pinnedGain} for ${current.source} (${short(current.sha256)})\n` +
-      `  now asked  gain ${current.musicGain} for the same track\n` +
-      'Nobody has confirmed the new gain. The source not moving is not evidence about a\n' +
-      'multiplier that did.' +
-      legacyNote
+      'the confirmation on record does not cover the mix about to be produced.\n' +
+      `  ${held}  ${short(verdict.pinnedSha)}\n` +
+      `${causes.join('\n')}` +
+      noConfirmationNote
     );
   })();
 
@@ -239,23 +395,32 @@ export function describeGainPinRefusal(verdict, current) {
  * The one-line pin status for the plan.
  *
  * The plan writes nothing, so it does not refuse — but it must not read as though the
- * gain were settled when --apply is going to stop. It says which way it will go.
+ * mix were settled when --apply is going to stop. It says which way it will go, and
+ * which knob is responsible.
  */
 export function describeGainPinPlan(verdict, current, confirmed) {
   const short = String(current.sha256).slice(0, 12);
-  if (!verdict.requiresConfirmation) return `confirmed for ${current.source} (${short}) at gain ${current.musicGain}`;
+  const applying = PINNED_PARAMETERS.map(({ name, flag }) => `${flag} ${current.mix?.[name]}`).join(', ');
+  if (!verdict.requiresConfirmation) return `confirmed for ${current.source} (${short}) at ${applying}`;
+  // A pin can fail to record the mix AND be pinned to a different track. The plan names
+  // both, for the same reason the refusal does: one of them is a surprise on the next run.
+  const alsoMoved = verdict.sourceChanged ? ', source changed' : '';
   const why = verdict.first
     ? 'never confirmed'
     : verdict.unreadablePin
       ? 'pin unreadable'
-      : verdict.unconfirmedPin
-        ? 'pin records no confirmation (written by the old self-pinning code)'
-        : verdict.sourceChanged && verdict.gainChanged
-          ? 'source and gain both changed'
-          : verdict.sourceChanged
-            ? 'source changed'
-            : 'gain changed';
+      : verdict.preRegistryPin
+        ? `pin predates the registered mix parameters${alsoMoved}`
+        : verdict.noMixRecord
+          ? `pin records no mix parameters${alsoMoved}`
+          : verdict.unconfirmedPin
+            ? 'pin records no confirmation'
+            : [
+                ...(verdict.sourceChanged ? ['source changed'] : []),
+                ...verdict.changedParameters.map(({ flag }) => `${flag} changed`),
+                ...verdict.unrecordedParameters.map(({ flag }) => `pin does not record ${flag}`),
+              ].join(', ');
   return confirmed
-    ? `${why} — will be RE-PINNED to ${short} at gain ${current.musicGain} (--confirm-gain given)`
+    ? `${why} — will be RE-PINNED to ${short} at ${applying} (--confirm-gain given)`
     : `${why} — --apply will REFUSE until --confirm-gain is given`;
 }

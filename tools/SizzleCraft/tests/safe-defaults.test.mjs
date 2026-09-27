@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
 import { normalizeEndCardFields } from '../src/end-card.mjs';
-import { classifyGainPin, describeGainPinRefusal } from '../src/gain-pin.mjs';
+import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from '../src/gain-pin.mjs';
 import { assertCleanExit } from './_helpers.mjs';
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -835,10 +835,19 @@ describe('remux-music safety', () => {
   // because the narration-gap checks measure PRESENCE, not LEVEL. So the pin is on the
   // source, and it is asserted at the point the source changes.
   const lockPath = (dir) => path.join(dir, 'music-gain.lock.json');
+  // Writes the registry-aware shape: a pin records the whole declared set of mix
+  // parameters, not the music gain alone. A lock without a `mix` record predates the
+  // registry and is refused outright — exercised on its own below, never used here as a
+  // stand-in for a settled pin.
   const pinTo = (dir, sha256, musicGain = 1.5) =>
     fs.writeFileSync(
       lockPath(dir),
-      JSON.stringify({ source: 'music.wav', sha256, musicGain, evidence: 'operator-confirmed' }),
+      JSON.stringify({
+        source: 'music.wav',
+        sha256,
+        mix: { voiceGain: 1.14, musicGain, ceiling: 1 },
+        evidence: 'operator-confirmed',
+      }),
     );
 
   test('remuxMusic_musicSourceChangedButGainDidNot_refusesAndNamesBothTracks', (t) => {
@@ -972,11 +981,23 @@ describe('cli-support primitives', () => {
 // nobody agreed to to reach the mix.
 // ---------------------------------------------------------------------------
 describe('gain pin classifier', () => {
-  const current = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+  // `mix` is the registered set of delivered-mix parameters (mix-parameters.mjs), not a
+  // literal written here. A lock that records no `mix` at all predates the registry and
+  // is refused — that state has its own tests rather than being smuggled in as a fixture.
+  const current = {
+    source: 'music.wav',
+    sha256: 'b'.repeat(64),
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+  };
   // Named `confirmed`, so it must actually BE confirmed. Without `evidence` this is the
-  // legacy self-pinned shape, and a fixture that quietly supplies the defective form is
+  // self-pinned shape, and a fixture that quietly supplies the defective form is
   // how a test comes to assert the hole rather than the fix.
-  const confirmed = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5, evidence: 'operator-confirmed' };
+  const confirmed = {
+    source: 'music.wav',
+    sha256: 'b'.repeat(64),
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    evidence: 'operator-confirmed',
+  };
 
   test('classifyGainPin_noLock_requiresConfirmationBecauseNothingHasBeenConfirmed', () => {
     const v = classifyGainPin(null, current);
@@ -988,7 +1009,7 @@ describe('gain pin classifier', () => {
     const v = classifyGainPin(confirmed, current);
     assert.equal(v.requiresConfirmation, false);
     assert.equal(v.sourceChanged, false);
-    assert.equal(v.gainChanged, false);
+    assert.deepEqual(v.changedParameters, []);
   });
 
   test('classifyGainPin_sourceChanged_requiresConfirmation', () => {
@@ -998,8 +1019,8 @@ describe('gain pin classifier', () => {
   });
 
   test('classifyGainPin_gainChanged_requiresConfirmation', () => {
-    const v = classifyGainPin({ ...confirmed, musicGain: 0.4 }, current);
-    assert.equal(v.gainChanged, true);
+    const v = classifyGainPin({ ...confirmed, mix: { ...confirmed.mix, musicGain: 0.4 } }, current);
+    assert.deepEqual(v.changedParameters.map((c) => c.name), ['musicGain']);
     assert.equal(v.requiresConfirmation, true);
   });
 
@@ -1007,24 +1028,41 @@ describe('gain pin classifier', () => {
   // field as "matches" would let a truncated or hand-edited file wave a gain through,
   // which is the permissive-default failure this whole check exists to avoid.
   test('classifyGainPin_lockMissingItsFields_requiresConfirmationRatherThanAssumingAMatch', () => {
-    for (const lock of [{}, { sha256: 'b'.repeat(64) }, { musicGain: 1.5 }, { sha256: 'b'.repeat(64), musicGain: 'x' }]) {
+    const locks = [
+      {},
+      { sha256: 'b'.repeat(64) },
+      { mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } },
+      { sha256: 'b'.repeat(64), mix: { voiceGain: 1.14, musicGain: 'x', ceiling: 1 } },
+      { sha256: 'b'.repeat(64), mix: { voiceGain: 1.14, musicGain: 1.5 } },
+      { sha256: 'not-a-digest', mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } },
+    ];
+    for (const lock of locks) {
       const v = classifyGainPin(lock, current);
       assert.equal(v.requiresConfirmation, true, `a lock of ${JSON.stringify(lock)} must not satisfy the pin`);
     }
   });
 
-  // A LEGACY LOCK MATCHES ON VALUES AND RECORDS NO CONFIRMATION. The old code pinned its
-  // own default without asking anyone, so those files exist in the wild with exactly the
-  // shape below. Reading them as confirmed means the tool agreeing with itself, and a
-  // successful run would then rewrite them stamped `operator-confirmed` — laundering a
-  // record into provenance it never had.
-  test('classifyGainPin_legacyLockWithNoEvidence_requiresConfirmationRatherThanTrustingIt', () => {
-    const legacy = { source: 'music.wav', sha256: 'b'.repeat(64), musicGain: 1.5 };
+  // A LOCK IN THE REGISTRY SHAPE CAN STILL RECORD NO CONFIRMATION. It matches on every
+  // value, and carries no marker saying anybody agreed to them. Reading that as confirmed
+  // means the tool agreeing with itself, and a successful run would then rewrite it
+  // stamped `operator-confirmed` — laundering a record into provenance it never had.
+  //
+  // NOTE THE SHAPE: this fixture carries a `mix` record, so it is NOT a pre-registry
+  // pin, and the test is not named as though it were. The genuinely old shape
+  // (`{source, sha256, musicGain}`) is a different state with its own tests below; a
+  // fixture that claims one case while exercising another pins neither.
+  test('classifyGainPin_registryShapedLockWithNoEvidence_requiresConfirmationRatherThanTrustingIt', () => {
+    const noEvidence = {
+      source: 'music.wav',
+      sha256: 'b'.repeat(64),
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    };
 
-    const v = classifyGainPin(legacy, current);
+    const v = classifyGainPin(noEvidence, current);
 
     assert.equal(v.sourceChanged, false, 'the values do match — that is precisely the trap');
-    assert.equal(v.gainChanged, false);
+    assert.deepEqual(v.changedParameters, []);
+    assert.equal(v.preRegistryPin, false, 'it records a mix set, so nothing here says it predates the registry');
     assert.equal(v.unconfirmedPin, true, 'but it records no operator confirmation');
     assert.equal(v.requiresConfirmation, true, 'so it must be re-confirmed, not trusted');
   });
@@ -1041,32 +1079,40 @@ describe('gain pin classifier', () => {
     assert.equal(v.requiresConfirmation, false);
   });
 
-  // A LEGACY PIN THAT IS ALSO STALE IS STILL A PIN NOBODY CONFIRMED. Both cases below are
-  // already refused — what is under test is the NARRATIVE. Describing the old value as
-  // "confirmed against" asserts an agreement that never happened, in the one feature
-  // built to stop a tool certifying what nobody confirmed. A reader who follows that text
-  // reasons from a history that does not exist.
+  // A PIN THAT IS BOTH STALE AND UNCONFIRMED IS STILL A PIN NOBODY CONFIRMED. Both cases
+  // below are already refused — what is under test is the NARRATIVE. Describing the old
+  // value as "confirmed against" asserts an agreement that never happened, in the one
+  // feature built to stop a tool certifying what nobody confirmed. A reader who follows
+  // that text reasons from a history that does not exist.
   //
   // Asserted on the line that DESCRIBES THE PIN, not on the whole message: the standing
   // explanation ("a gain is only meaningful for the track it was confirmed against") is a
   // true general statement and must not be mistaken for a claim about this lock.
-  const legacy = { source: 'music.wav', sha256: 'a'.repeat(64), musicGain: 1.5 };
+  //
+  // The fixture is in the REGISTRY shape without an `evidence` marker — an unconfirmed
+  // pin, not a pre-registry one. The two are named apart because they are different
+  // states with different refusals.
+  const unconfirmed = {
+    source: 'music.wav',
+    sha256: 'a'.repeat(64),
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+  };
   const pinLineOf = (text, sha) => text.split('\n').find((l) => l.includes(sha.slice(0, 12)));
 
-  test('classifyGainPin_legacyPinWithChangedSource_doesNotClaimTheOldPinWasConfirmed', () => {
-    const v = classifyGainPin(legacy, current);
+  test('classifyGainPin_unconfirmedPinWithChangedSource_doesNotClaimTheOldPinWasConfirmed', () => {
+    const v = classifyGainPin(unconfirmed, current);
     assert.equal(v.sourceChanged, true, 'it is stale');
     assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
 
-    const line = pinLineOf(describeGainPinRefusal(v, current), legacy.sha256);
+    const line = pinLineOf(describeGainPinRefusal(v, current), unconfirmed.sha256);
     assert.match(line, /NEVER CONFIRMED/, 'the pin line must name the absent confirmation');
     assert.doesNotMatch(line, /^\s*confirmed/, 'and must not present it as an agreement that happened');
   });
 
-  test('classifyGainPin_legacyPinWithChangedGain_doesNotClaimTheOldPinWasConfirmed', () => {
-    const askingFor3 = { ...current, musicGain: 3 };
-    const v = classifyGainPin({ ...legacy, sha256: current.sha256 }, askingFor3);
-    assert.equal(v.gainChanged, true, 'it is stale on the gain');
+  test('classifyGainPin_unconfirmedPinWithChangedGain_doesNotClaimTheOldPinWasConfirmed', () => {
+    const askingFor3 = { ...current, mix: { ...current.mix, musicGain: 3 } };
+    const v = classifyGainPin({ ...unconfirmed, sha256: current.sha256 }, askingFor3);
+    assert.deepEqual(v.changedParameters.map((c) => c.name), ['musicGain'], 'it is stale on the gain');
     assert.equal(v.pinRecordsConfirmation, false, 'and it was never confirmed');
 
     const line = pinLineOf(describeGainPinRefusal(v, askingFor3), current.sha256);
@@ -1116,12 +1162,14 @@ describe('remux-music gain pin', () => {
   // Defaults to a CONFIRMED pin. A lock without `evidence` is the legacy self-pinned
   // shape and is deliberately exercised on its own below, not used as a stand-in for a
   // settled one — seeding the defective shape and asserting it passes is how the hole
-  // stayed open through a round of review.
-  const pin = (dir, { sha256 = MUSIC_SHA, musicGain = 1.5, evidence = 'operator-confirmed' } = {}) =>
+  // stayed open through a round of review. `mix` carries the whole registered set: a
+  // lock that omits it predates the registry and is refused, which has its own tests.
+  const pin = (dir, { sha256 = MUSIC_SHA, voiceGain = 1.14, musicGain = 1.5, ceiling = 1,
+    evidence = 'operator-confirmed' } = {}) =>
     fs.writeFileSync(
       lockFile(dir),
-      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, musicGain }
-        : { source: 'music.wav', sha256, musicGain, evidence }),
+      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling } }
+        : { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling }, evidence }),
     );
 
   const remux = (dir, extra = []) =>
@@ -1198,12 +1246,13 @@ describe('remux-music gain pin', () => {
     assert.equal(fs.existsSync(lockFile(dir)), false, 'and planning must still write no pin');
   });
 
-  // THE LAUNDERING CASE. A legacy lock matches on every value the old check compared and
-  // records no confirmation, because the code that wrote it never asked. Trusting it
-  // would let a successful run rewrite it stamped `operator-confirmed` with a fresh
-  // timestamp — turning a record nobody made into provenance, and making the laundered
-  // copy look stronger than the thing it came from.
-  test('remuxMusic_legacyPinWithNoEvidence_refusesAndDoesNotLaunderItIntoAConfirmation', (t) => {
+  // THE LAUNDERING CASE. A lock in the registry shape matches on every value the pin
+  // compares and carries no confirmation marker. Trusting it would let a successful run
+  // rewrite it stamped `operator-confirmed` with a fresh timestamp — turning a record
+  // nobody made into provenance, and making the laundered copy look stronger than the
+  // thing it came from. What WROTE the file is not knowable from it, and the refusal
+  // does not guess; the missing marker is the whole fact.
+  test('remuxMusic_pinWithNoEvidenceMarker_refusesAndDoesNotLaunderItIntoAConfirmation', (t) => {
     const dir = project(t);
     pin(dir, { evidence: null });
     const before = fs.readFileSync(lockFile(dir), 'utf8');
@@ -1231,6 +1280,433 @@ describe('remux-music gain pin', () => {
       r.all,
       /nothing to measure yet/i,
       'and it must say why the measurement cannot come first, rather than asking for the impossible order',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE PIN COVERS A DECLARED SET, NOT A HAND-WRITTEN LITERAL.
+//
+// `--ceiling` was added after the pin was written. It sets the limiter, so it moves the
+// delivered loudness of the shipped mix — and the pin recorded `{source, sha256,
+// musicGain}`, a literal written before that knob existed. So a ceiling change needed no
+// renewed confirmation: the pin reported itself valid while the mix moved underneath it.
+//
+// The enumeration was not the mistake. The mistake was that the set was CLOSED BY
+// CONSTRUCTION and nothing failed when it grew. These tests pin the two halves of the
+// fix: registered parameters are compared INDIVIDUALLY, and each staleness reason names
+// its own cause rather than being collapsed into "something changed".
+// ---------------------------------------------------------------------------
+describe('gain pin mix parameter coverage', () => {
+  const SHA = 'b'.repeat(64);
+
+  /** What is about to be mixed — the registry's pinned values, not a hand-written literal. */
+  const applying = (mix = {}) => ({
+    source: 'music.wav',
+    sha256: SHA,
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+  });
+
+  /** A pin that genuinely covers every registered parameter and records a confirmation. */
+  const settled = (over = {}) => ({
+    source: 'music.wav',
+    sha256: SHA,
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    evidence: 'operator-confirmed',
+    ...over,
+  });
+
+  test('classifyGainPin_settledPinCoveringEveryRegisteredParameter_requiresNothing', () => {
+    const v = classifyGainPin(settled(), applying());
+
+    assert.equal(v.requiresConfirmation, false, 'a pin that covers the whole declared set is settled');
+    assert.deepEqual(v.changedParameters, [], 'and nothing in that set moved');
+  });
+
+  // THE DEFECT. The source is byte-identical and --music-gain never moved, so every
+  // comparison the old pin made agreed — while the limiter, and therefore the delivered
+  // loudness, changed.
+  test('classifyGainPin_ceilingChangedOnAnUnchangedSourceAndGain_requiresConfirmation', () => {
+    const v = classifyGainPin(settled(), applying({ ceiling: 2 }));
+
+    assert.equal(v.sourceChanged, false, 'the source did not move — that is precisely the trap');
+    assert.deepEqual(
+      v.changedParameters.map((c) => c.name),
+      ['ceiling'],
+      'the ceiling is a registered member of the pinned set, so its movement must be seen',
+    );
+    assert.equal(v.requiresConfirmation, true, 'and must demand a renewed confirmation');
+  });
+
+  // REASONS MUST NOT COLLAPSE. Reporting a ceiling change as "the source changed" is the
+  // same class of error as a stale legacy pin describing itself as confirmed: a reader
+  // who follows the text reasons from a cause that did not occur.
+  test('describeGainPinRefusal_ceilingChanged_namesTheCeilingAndDoesNotBlameTheSource', () => {
+    const v = classifyGainPin(settled(), applying({ ceiling: 2 }));
+
+    const text = describeGainPinRefusal(v, applying({ ceiling: 2 }));
+
+    assert.match(text, /--ceiling CHANGED/, 'the refusal must name the knob that actually moved');
+    assert.doesNotMatch(text, /source CHANGED/, 'and must not blame the source, which did not move');
+    assert.match(text, /\bconfirmed\s+1\b/, 'it must state the ceiling that was confirmed');
+    assert.match(text, /now asked\s+2\b/, 'and the one now being asked for');
+  });
+
+  test('describeGainPinRefusal_sourceAndCeilingBothChanged_namesEachCauseSeparately', () => {
+    const now = {
+      source: 'other.wav',
+      sha256: 'c'.repeat(64),
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 2 },
+    };
+    const v = classifyGainPin(settled(), now);
+
+    const text = describeGainPinRefusal(v, now);
+
+    assert.match(text, /music source CHANGED/, 'the source cause must be named');
+    assert.match(text, /--ceiling CHANGED/, 'and the ceiling cause must be named on its own');
+    assert.doesNotMatch(text, /--music-gain CHANGED/, 'a gain that did not move must not be listed');
+  });
+
+  test('classifyGainPin_musicGainChangedWhileTheCeilingHeld_namesOnlyTheGain', () => {
+    const v = classifyGainPin(settled(), applying({ musicGain: 3 }));
+
+    assert.deepEqual(v.changedParameters.map((c) => c.name), ['musicGain']);
+    assert.doesNotMatch(describeGainPinRefusal(v, applying({ musicGain: 3 })), /--ceiling CHANGED/);
+  });
+
+  // THE VOICE GAIN IS PART OF THE DELIVERED LEVEL, AND WAS DECLARED NOT TO BE.
+  //
+  // It was registered `pinned: false` on the reasoning that the pin asks whether the BED
+  // level was agreed to, so the narration bus is a separate question. That reasoning does
+  // not survive contact with the graph it describes: the voice sets the other half of the
+  // balance the bed is judged against, and it is the signal fed into the limiter — the
+  // very knob this change made pinnable. Moving it alone moved the delivered mix while a
+  // settled pin went on reporting valid, which is the identical defect --ceiling had.
+  //
+  // The incident behind this whole feature was a voice 1.40 / music 0.85 rebalance that
+  // shipped a bed 24 dB above target. That is a voice-only change against an unmoved
+  // source, and it is precisely the case below.
+  test('classifyGainPin_voiceGainChangedWhileTheSourceAndBedHeld_requiresConfirmation', () => {
+    const v = classifyGainPin(settled(), applying({ voiceGain: 1.4 }));
+
+    assert.equal(v.sourceChanged, false, 'the source did not move — that is precisely the trap');
+    assert.deepEqual(
+      v.changedParameters.map((c) => c.name),
+      ['voiceGain'],
+      'the voice gain is a registered member of the pinned set, so its movement must be seen',
+    );
+    assert.equal(v.requiresConfirmation, true, 'and must demand a renewed confirmation');
+  });
+
+  test('describeGainPinRefusal_voiceGainChanged_namesTheVoiceGainAndBlamesNothingElse', () => {
+    const now = applying({ voiceGain: 1.4 });
+
+    const text = describeGainPinRefusal(classifyGainPin(settled(), now), now);
+
+    assert.match(text, /--voice-gain CHANGED/, 'the refusal must name the knob that actually moved');
+    assert.match(text, /\bconfirmed\s+1\.14\b/, 'it must state the voice gain that was confirmed');
+    assert.match(text, /now asked\s+1\.4\b/, 'and the one now being asked for');
+    assert.doesNotMatch(text, /source CHANGED/, 'and must not blame the source, which did not move');
+    assert.doesNotMatch(text, /--music-gain CHANGED/, 'nor the bed multiplier, which did not move');
+  });
+
+  // EXISTING LOCKS ARE REFUSED, NOT UPGRADED. A pin written before the registry cannot
+  // say which ceiling it covered, so trusting it would certify a delivered loudness
+  // nobody agreed to — the same laundering the `evidence` marker was added to stop.
+  // Silently back-filling today's default would be worse: it would mint agreement.
+  test('classifyGainPin_pinPredatingTheMixRegistry_requiresConfirmationAndIsNotCalledUnreadable', () => {
+    const preRegistry = { source: 'music.wav', sha256: SHA, musicGain: 1.5, evidence: 'operator-confirmed' };
+
+    const v = classifyGainPin(preRegistry, applying());
+
+    assert.equal(v.preRegistryPin, true, 'it must be diagnosed as predating the registry');
+    assert.equal(v.requiresConfirmation, true, 'and refused rather than trusted');
+    assert.equal(v.unreadablePin, false, 'it is not malformed — it is complete for the set that then existed');
+    assert.equal(v.sourceChanged, false, 'and nothing about the source changed');
+    assert.deepEqual(v.changedParameters, [], 'so no parameter may be reported as having moved');
+  });
+
+  test('describeGainPinRefusal_pinPredatingTheMixRegistry_saysSoRatherThanNamingAFalseCause', () => {
+    const preRegistry = { source: 'music.wav', sha256: SHA, musicGain: 1.5, evidence: 'operator-confirmed' };
+
+    const text = describeGainPinRefusal(classifyGainPin(preRegistry, applying()), applying());
+
+    assert.match(text, /predates/i, 'the refusal must say the pin predates the registered set');
+    assert.doesNotMatch(text, /CHANGED/, 'and must not invent a change to explain itself');
+    assert.match(text, /--confirm-gain/, 'and must name the flag that supplies one fresh confirmation');
+  });
+
+  // A hand-edited or partially-written mix record is a THIRD, distinct state: the pin
+  // knows about the registry but does not carry every member of it.
+  test('classifyGainPin_mixRecordMissingARegisteredParameter_namesTheParameterItDoesNotCover', () => {
+    const partial = {
+      source: 'music.wav',
+      sha256: SHA,
+      mix: { voiceGain: 1.14, musicGain: 1.5 },
+      evidence: 'operator-confirmed',
+    };
+
+    const v = classifyGainPin(partial, applying());
+
+    assert.deepEqual(v.unrecordedParameters.map((p) => p.name), ['ceiling']);
+    assert.equal(v.preRegistryPin, false, 'it does carry a mix record — it is just incomplete');
+    assert.equal(v.requiresConfirmation, true);
+    assert.match(describeGainPinRefusal(v, applying()), /--ceiling/, 'and the refusal must name it');
+  });
+
+  test('classifyGainPin_mixRecordThatIsNotAnObject_isUnreadableRatherThanPreRegistry', () => {
+    for (const mix of ['x', 42, [], null]) {
+      const v = classifyGainPin({ source: 'music.wav', sha256: SHA, mix, evidence: 'operator-confirmed' }, applying());
+      assert.equal(v.unreadablePin, true, `a mix record of ${JSON.stringify(mix)} cannot be read as one`);
+      assert.equal(v.requiresConfirmation, true);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // A REFUSAL MAY SAY WHAT IS MISSING. IT MAY NOT SAY WHO WROTE THE FILE.
+  //
+  // This module has already made the stronger-claim mistake once, when collapsing
+  // staleness and provenance let a stale pin describe itself as confirmed against a
+  // source nobody agreed to. The same error came back one level down: a lock carrying
+  // nothing but a valid digest was diagnosed "pre-registry" — a claim about WHEN it was
+  // written — on evidence that only shows it has no mix record. The old shape also
+  // carried `source` and `musicGain`, and this file has neither.
+  //
+  // Both refusals are correct. Only one of the diagnoses is supported.
+  // ---------------------------------------------------------------------------
+  test('classifyGainPin_lockCarryingOnlyADigest_isNotDiagnosedAsPreRegistry', () => {
+    const v = classifyGainPin({ sha256: SHA }, applying());
+
+    assert.equal(v.requiresConfirmation, true, 'it must still be refused — nothing here is a confirmation');
+    assert.equal(
+      v.preRegistryPin,
+      false,
+      'but it is not evidence of a pre-registry pin: the old shape carried source and musicGain, ' +
+        'and this carries neither',
+    );
+    assert.equal(v.noMixRecord, true, 'it is simply a pin with no record of the mix it covered');
+  });
+
+  test('describeGainPinRefusal_lockCarryingOnlyADigest_saysWhatIsMissingWithoutDatingTheFile', () => {
+    const text = describeGainPinRefusal(classifyGainPin({ sha256: SHA }, applying()), applying());
+
+    assert.doesNotMatch(text, /predates/i, 'it must not claim an age it cannot establish');
+    assert.match(text, /records no mix parameters/i, 'it must say what is actually missing');
+    assert.doesNotMatch(text, /CHANGED/, 'and must not invent a change to explain itself');
+    assert.match(text, /--confirm-gain/, 'and must name the flag that supplies a confirmation');
+  });
+
+  test('classifyGainPin_lockInTheOldRecordedShape_isDiagnosedAsPreRegistry', () => {
+    // `{source, sha256, musicGain}` is the shape the pin actually used to write. Only
+    // this supports the claim that a lock predates the registry.
+    const v = classifyGainPin({ source: 'music.wav', sha256: SHA, musicGain: 1.5 }, applying());
+
+    assert.equal(v.preRegistryPin, true, 'the complete old shape is what "pre-registry" is a claim about');
+    assert.equal(v.noMixRecord, false, 'and it is the more specific of the two diagnoses');
+    assert.equal(v.requiresConfirmation, true);
+  });
+
+  test('describeGainPinRefusal_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+
+    const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
+
+    assert.match(text, /RECORDS NO CONFIRMATION/, 'the absent confirmation is the fact, and must be stated');
+    assert.doesNotMatch(text, /written by/i, 'but who wrote the file is not established by its contents');
+    assert.doesNotMatch(text, /self-pinning|pinned its own default/i, 'so no origin may be attributed to it');
+  });
+
+  test('describeGainPinRefusal_stalePinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
+    const noEvidence = {
+      source: 'music.wav',
+      sha256: 'a'.repeat(64),
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    };
+
+    const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
+
+    assert.match(text, /NEVER CONFIRMED/, 'the pin line must still name the absent confirmation');
+    assert.doesNotMatch(text, /written by/i, 'without attributing the file to an author it cannot identify');
+    assert.doesNotMatch(text, /self-pinning|old self-pinning code/i, 'least of all a specific version of this tool');
+  });
+
+  test('describeGainPinPlan_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+
+    const line = describeGainPinPlan(classifyGainPin(noEvidence, applying()), applying(), false);
+
+    assert.match(line, /records no confirmation/i, 'the plan must say the pin carries no confirmation');
+    assert.doesNotMatch(line, /written by|self-pinning/i, 'and must not name an author it cannot establish');
+  });
+
+  // ---------------------------------------------------------------------------
+  // TWO INDEPENDENT DIFFERENCES, BOTH NAMED.
+  //
+  // A pin can predate the registry AND be pinned to a different track. The pre-registry
+  // refusal returned early and mentioned only the first, so an operator re-confirmed
+  // against a source they had not been told had moved, and found out on the next run.
+  // Naming the digest difference is not the same as calling the old values confirmed —
+  // it reports that two readable facts differ, which is all that is known.
+  // ---------------------------------------------------------------------------
+  test('describeGainPinRefusal_preRegistryPinWhoseDigestAlsoDiffers_namesBothDifferences', () => {
+    const preRegistry = { source: 'old.wav', sha256: 'a'.repeat(64), musicGain: 1.5 };
+
+    const v = classifyGainPin(preRegistry, applying());
+    const text = describeGainPinRefusal(v, applying());
+    // The DIAGNOSIS, not the whole message: the standing explanation that follows it ("a
+    // gain is only meaningful for the track it was confirmed against") is a true general
+    // statement, and asserting against it would be testing the wrong sentence.
+    const diagnosis = text.split('\n\n')[0];
+
+    assert.equal(v.preRegistryPin, true);
+    assert.equal(v.sourceChanged, true, 'the digest it does carry is not the one being supplied');
+    assert.match(diagnosis, /predates/i, 'the first difference must be named');
+    assert.match(diagnosis, new RegExp('a'.repeat(12)), 'and the second must name the digest that was pinned');
+    assert.match(diagnosis, new RegExp(SHA.slice(0, 12)), 'and the digest now being supplied');
+    assert.doesNotMatch(diagnosis, /confirmed against/, 'without describing the old values as agreed to');
+  });
+
+  test('describeGainPinPlan_preRegistryPinWhoseDigestAlsoDiffers_namesBothDifferences', () => {
+    const preRegistry = { source: 'old.wav', sha256: 'a'.repeat(64), musicGain: 1.5 };
+
+    const line = describeGainPinPlan(classifyGainPin(preRegistry, applying()), applying(), false);
+
+    assert.match(line, /predates/i, 'the plan must say the pin predates the registered set');
+    assert.match(line, /source changed/i, 'and must not omit that the track moved as well');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remux-music.mjs — the mix parameter registry, end to end.
+// ---------------------------------------------------------------------------
+describe('remux-music mix parameter pin', () => {
+  const MUSIC_BYTES = 'music bytes';
+  const MUSIC_SHA = crypto.createHash('sha256').update(MUSIC_BYTES).digest('hex');
+
+  const project = (t, files = {}) =>
+    makeProject(t, {
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      'in.mp4': 'video bytes',
+      'voiceover.mp3': 'voice bytes',
+      'music.wav': MUSIC_BYTES,
+      ...files,
+    });
+
+  const lockFile = (dir) => path.join(dir, 'music-gain.lock.json');
+
+  /** A settled pin in the registry-aware shape: it records every pinned parameter. */
+  const pin = (dir, mix = {}) =>
+    fs.writeFileSync(
+      lockFile(dir),
+      JSON.stringify({
+        source: 'music.wav',
+        sha256: MUSIC_SHA,
+        mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+        evidence: 'operator-confirmed',
+      }),
+    );
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'in.mp4', '--voice', 'voiceover.mp3', '--music', 'music.wav', '--out', 'out.mp4', ...extra],
+      dir,
+    );
+
+  test('remuxMusic_ceilingChangedAgainstASettledPin_refusesAndNamesTheCeiling', (t) => {
+    const dir = project(t);
+    pin(dir);
+
+    const r = remux(dir, ['--ceiling', '2.0', '--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `a moved ceiling must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--ceiling CHANGED/, 'the refusal must name the ceiling');
+    assert.doesNotMatch(r.all, /source CHANGED/, 'and must not blame the source, which did not move');
+    assert.match(r.all, /--confirm-gain/, 'and must name the flag that re-confirms it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
+  });
+
+  test('remuxMusic_settledPinCoveringTheCeiling_doesNotAskAgain', (t) => {
+    const dir = project(t);
+    pin(dir);
+
+    const r = remux(dir);
+
+    assert.equal(r.code, EXIT.OK, `a pin covering the whole set must plan cleanly, got ${r.code}\n${r.all}`);
+    assert.doesNotMatch(r.all, /--confirm-gain/, 'a settled pin must not nag for a confirmation it already has');
+  });
+
+  // A VOICE-ONLY REBALANCE MUST STOP THE RUN. The source is byte-identical, --music-gain
+  // and --ceiling never moved, so every comparison the pin made before this change agreed
+  // — while the narration bus, and therefore both the voice-to-bed balance and the signal
+  // entering the limiter, moved. 1.40 is the actual voice gain from the incident that
+  // shipped a bed 24 dB above target.
+  test('remuxMusic_voiceGainChangedAgainstASettledPin_refusesAndNamesTheVoiceGain', (t) => {
+    const dir = project(t);
+    pin(dir);
+
+    const r = remux(dir, ['--voice-gain', '1.40', '--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `a moved voice gain must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--voice-gain CHANGED/, 'the refusal must name the voice gain');
+    assert.doesNotMatch(r.all, /source CHANGED/, 'and must not blame the source, which did not move');
+    assert.doesNotMatch(r.all, /--music-gain CHANGED/, 'nor the bed multiplier, which did not move');
+    assert.match(r.all, /--confirm-gain/, 'and must name the flag that re-confirms it');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
+  });
+
+  // EVERY EXISTING LOCK NEEDS ONE RE-CONFIRMATION. That cost is accepted deliberately:
+  // a pre-registry pin cannot state which ceiling it covered, and silently upgrading it
+  // would record an agreement to a delivered loudness nobody was asked about.
+  test('remuxMusic_pinPredatingTheMixRegistry_refusesAndDoesNotRestampIt', (t) => {
+    const dir = project(t);
+    fs.writeFileSync(
+      lockFile(dir),
+      JSON.stringify({
+        source: 'music.wav',
+        sha256: MUSIC_SHA,
+        musicGain: 1.5,
+        evidence: 'operator-confirmed',
+        confirmedAt: '2025-01-01T00:00:00.000Z',
+      }),
+    );
+    const before = fs.readFileSync(lockFile(dir), 'utf8');
+
+    const r = remux(dir, ['--apply']);
+
+    assert.equal(r.code, EXIT.USAGE, `a pre-registry pin must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /predates/i, 'the refusal must say the pin predates the registered set');
+    assert.equal(fs.readFileSync(lockFile(dir), 'utf8'), before, 'and must not rewrite the pin it refused');
+  });
+
+  test('remuxMusic_planWithAMovedCeiling_saysApplyWillRefuseAndNamesTheCeiling', (t) => {
+    const dir = project(t);
+    pin(dir);
+
+    const r = remux(dir, ['--ceiling', '2.0']);
+
+    assert.equal(r.code, EXIT.OK, `planning must stay answerable, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--ceiling changed/i, 'the plan must say which knob moved');
+    assert.match(r.all, /REFUSE/, 'and that --apply will stop');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false);
+  });
+
+  // The guidance number was a guess. It has since been measured on real encoded output,
+  // post-AAC: --ceiling 2.0 delivered -1.1 dBTP. Nothing in this tool measures encoded
+  // true peak, so the help must not imply the pipeline verifies the delivery target.
+  test('remuxMusicHelp_ceilingGuidance_givesTheMeasuredValueWithoutClaimingTruePeakIsVerified', (t) => {
+    const dir = project(t);
+
+    const r = runScript('remux-music.mjs', ['--help'], dir);
+
+    assert.equal(r.code, EXIT.OK, `--help must succeed, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /--ceiling 2\.0/, 'the measured starting point must be stated');
+    assert.doesNotMatch(r.all, /about 2\.5/, 'the guessed rule of thumb must be gone');
+    assert.match(r.all, /measured/i, 'and it must read as a measurement, not a rule of thumb');
+    assert.match(
+      r.all,
+      /decod/i,
+      'and it must say that verifying a dBTP target requires decoding the output, which this tool does not do',
     );
   });
 });
