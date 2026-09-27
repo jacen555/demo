@@ -214,15 +214,21 @@ Options
   --duck-attack <ms>    1..2000 (default: ${REFERENCE_ATTACK_MS})
   --duck-release <ms>   1..9000 (default: ${REFERENCE_RELEASE_MS})
 
-                        THE GAPS LEVEL IS APPROACHED, NOT REACHED. A one-pole release
-                        closes on its target asymptotically, so the bed is always some
-                        distance short when narration resumes. At the defaults and a
-                        1.83 s gap that distance is 0.66 dB; it falls under 0.10 dB after
-                        3.3 s, which is why a silent segment sits at the gaps level
-                        properly. The plan prints the figure for the release actually in
-                        force, against the gaps measured in YOUR envelope. Shorten
-                        --duck-release to close it further, at the cost of more audible
-                        movement across word gaps.
+                        THE GAPS LEVEL IS APPROACHED, NOT REACHED — AND THE FIGURE IS
+                        MODELLED, NOT MEASURED. A one-pole release closes on its target
+                        asymptotically, so the model always puts the bed some distance
+                        short when narration resumes: 0.66 dB at the defaults and a
+                        1.83 s gap, under 0.10 dB after 3.3 s. Treat that as a
+                        PESSIMISTIC UPPER BOUND. Measured on a real render,
+                        sidechaincompress recovers FASTER than the one-pole model — a
+                        predicted 0.66 dB shortfall delivered 0.05-0.11 dB at a 1.82 s
+                        gap — so release is NOT the coefficient to tune by this number.
+                        Lengthening it costs the knob its meaning fast: measured 2.0-3.5
+                        dB short at 1500 ms and 6.1-8.7 dB at 2500 ms. The plan prints
+                        the modelled figure for the release in force, against the gaps
+                        measured in YOUR envelope. Only a decode of the ISOLATED bed
+                        settles the real depth; the mixed file cannot, because speech
+                        masks the bed it is ducking.
   --confirm-gain        confirm the pinned mix parameters (${PINNED_FLAGS}) for the current
                         music source (bug-ledger 16). Required on first use, whenever the
                         source or any pinned parameter changes, and once for every pin
@@ -724,10 +730,14 @@ function describeDuckPlan(duck) {
   const atMedian = recoveryShortfallDb({ duckDb: db, releaseMs: release, gapMs: speech.gaps.medianMs });
   const settle = timeToWithinDb({ duckDb: db, releaseMs: release, withinDb: GAPS_TOLERANCE_DB });
   lines.push(
-    `          gaps level is APPROACHED, NOT REACHED: across this envelope's median gap of`,
-    `          ${(speech.gaps.medianMs / 1000).toFixed(2)}s (${speech.gaps.count} gaps >= 0.5s) the bed is still ${atMedian.toFixed(2)} dB under it when`,
-    `          narration resumes. It is within ${GAPS_TOLERANCE_DB} dB after ${(settle / 1000).toFixed(2)}s, so a silent segment`,
-    '          sits at the gaps level properly. Shorten --duck-release to close the gap.',
+    `          gaps level is APPROACHED, NOT REACHED — MODELLED, NOT MEASURED: across this`,
+    `          envelope's median gap of ${(speech.gaps.medianMs / 1000).toFixed(2)}s (${speech.gaps.count} gaps >= 0.5s) the one-pole model puts the`,
+    `          bed ${atMedian.toFixed(2)} dB under it when narration resumes, and within ${GAPS_TOLERANCE_DB} dB after ${(settle / 1000).toFixed(2)}s.`,
+    '          Treat this as a PESSIMISTIC UPPER BOUND. Measured on a real render,',
+    "          sidechaincompress recovers FASTER than the model: a predicted 0.67 dB",
+    '          shortfall at a 1.82s gap delivered 0.05-0.11 dB. Only a decode of the',
+    '          isolated bed settles it — the mixed file cannot, because speech masks',
+    '          the bed it is ducking.',
   );
   return lines;
 }

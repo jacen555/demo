@@ -1729,6 +1729,31 @@ describe('remux-music mix parameter pin', () => {
       'and it must say that verifying a dBTP target requires decoding the output, which this tool does not do',
     );
   });
+
+  // A MODELLED NUMBER SITTING NEXT TO MEASURED ONES READS AS MEASURED. The one-pole
+  // release predicts the bed is 0.66 dB under the gaps level at a 1.83s gap. A real
+  // render delivered 0.05-0.11 dB at 1.82s — ffmpeg's sidechaincompress recovers
+  // materially faster than the model. The prediction is safe in direction (it warns
+  // about a problem smaller than stated) but it was printed as fact, so an operator
+  // tuning --duck-release by it would be tuning against a number nothing measured.
+  test('remuxMusicHelp_gapsShortfall_isMarkedModelledAndNotPresentedAsMeasured', (t) => {
+    const dir = project(t);
+
+    const r = runScript('remux-music.mjs', ['--help'], dir);
+
+    assert.equal(r.code, EXIT.OK, `--help must succeed, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /MODELLED, NOT MEASURED/, 'the shortfall must be labelled as modelled');
+    assert.match(
+      r.all,
+      /recovers FASTER than the one-pole model/,
+      'the measured divergence from the model must be stated, not left for the operator to discover',
+    );
+    assert.match(
+      r.all,
+      /NOT the coefficient to tune by this number/,
+      'and it must say release is not the knob to tune by a modelled figure',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
