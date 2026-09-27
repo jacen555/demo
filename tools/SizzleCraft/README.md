@@ -35,15 +35,17 @@ place to fix a bug.
 | `remux-verify.mjs` | S8/S9 | The video-stream verdict for the cheap remux path. Parses ffmpeg's `MD5=` line rather than comparing raw strings — equal-but-unparsed output is not evidence either digest was computed. |
 | `write-storyboard.mjs` | S2 | Emits `storyboard.html`. Lede text comes from `project.lede`. |
 | `voice.mjs` | S3 | TTS synthesis via `msedge-tts` → per-segment MP3. |
-| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate gap audio assets. |
+| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate gap audio assets. `silence-gen` takes its frame maths from `silent-segment.mjs` so it cannot drift from the silence `concat-audio` generates. |
+| `silent-segment.mjs` | — | **What a deliberately silent segment is**, in one place: the `segments[].silence` declaration, its validation, its authored duration, the frame-aligned silence generator, and the calibration builder that keeps zero-word segments out of the word-rate maths. Side-effect free, so it is unit-tested directly. |
 | `silence-scan.mjs` | S4 | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5). |
-| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. |
-| `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. |
+| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip. |
+| `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one. |
+| `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, and the threshold solve. Side-effect free, so it is unit-tested directly. |
 | `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
 | `frame-capture.mjs` | S6 | Headless-browser frame capture with dedup. **The long pole.** |
 | `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
-| `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). |
-| `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. |
+| `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). Ducks from the shared model in `envelope-ducking.mjs`, so the synthesised and in-graph ducks cannot drift apart. |
+| `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. Optional in-graph sidechain duck for a licensed bed (`--duck-db`). |
 | `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
 | `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
 | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
@@ -52,6 +54,63 @@ Stage numbers refer to the pipeline contract in
 [`references/pipeline-contract.md`](../../.github/skills/demo-recording/references/pipeline-contract.md).
 
 **`write-script.mjs` (S1) is deliberately not here** — see below.
+
+## Deliberately silent segments
+
+A segment can carry no narration at all — an intro slide, a gap between beats, an
+intermission where the music bed continues and the voice stops. It is **declared**, never
+inferred:
+
+```json
+{
+  "id": "intermission",
+  "startMs": 4000,
+  "endMs": 6000,
+  "voiceoverText": "",
+  "silence": { "caption": "[music]" }
+}
+```
+
+**Why a declaration and not just empty text.** Before this existed, every duration in the
+engine was *produced by TTS*, so a segment with nothing to say had no clip and no
+duration — and looked exactly like a segment whose voice stage had not run yet. Both are
+"no `audio`". Those two states need opposite handling: a project that forgot to run the
+voice stage must fail, an intermission must render. The declaration separates them, and
+the old rule is untouched:
+
+| `silence` | `audio` | Meaning |
+|---|---|---|
+| present | present | A silent segment, synthesised. Its clip is generated digital silence. |
+| present | absent | A silent segment; the voice stage has not run. |
+| absent | absent | **The voice stage has not run. Still fails, exactly as before.** |
+
+**The duration is the window.** `endMs - startMs` is the authored duration and there is
+deliberately no `silence.durationMs` — two sources of truth for one number are free to
+drift apart, which is the defect class this engine keeps re-shipping.
+
+**What each stage does with one:**
+
+- **voice (S3)** never sends it to TTS (synthesising `""` returns no word boundaries and
+  fails four times with backoff). It generates the clip at the authored length, probes it,
+  and reflows the timeline onto the probed value. No inter-segment gap is inserted at a
+  seam touching a silent segment, and no lead-in before a leading one — the authored
+  silence *is* the pause.
+- **concat-audio (S4)** fills the window with generated digital silence so the segment
+  occupies its time in the voice track. This is the load-bearing one: omitting it moved
+  every later segment earlier with no error.
+- **write-subtitles (S10)** emits the authored `caption` as one cue spanning the window.
+  There are no measured word boundaries to caption from, so the cue text must be authored;
+  a blank one is refused rather than rendered as an empty caption box.
+- **write-chapters (S11)** gives it a chapter like any other segment.
+- **calibration** excludes it from the per-segment and aggregate word rate. A rate over
+  zero words is not a slow rate — it is `NaN`, which `JSON.stringify` writes as `null`.
+- **validate-timing** reports it as `silent` rather than `n/a`, and checks the declaration.
+
+**One rounding caveat, disclosed at the point of use.** Generated silence is frame-aligned
+to 24 ms, so a filled window lands within 12 ms of its authored length (a 2000 ms window
+becomes 1992 ms). `voice` reflows the timeline onto the real value, so a full pipeline run
+stays consistent; a standalone `concat-audio` prints the accumulated delta and tells you to
+re-run `voice` to reflow.
 
 ## Configuration precedence
 
@@ -288,8 +347,107 @@ against, and it is the signal fed into the limiter whose ceiling *is* pinned —
 voice-only change moved the delivered mix while a settled pin went on reporting valid,
 which is exactly the defect `--ceiling` had. The incident behind this whole feature was a
 voice `1.40` / music `0.85` rebalance that shipped a bed 24 dB above target. It is now
-pinned; `--voice-gain`, `--music-gain` and `--ceiling` are the confirmed set. Nothing
-mechanical caught that error, and nothing mechanical would catch the next one.
+pinned. The confirmed set is `--voice-gain`, `--music-gain`, `--ceiling` and the four duck
+knobs `--duck-db`, `--duck-ratio`, `--duck-attack`, `--duck-release`. Nothing mechanical
+caught that error, and nothing mechanical would catch the next one.
+
+**A conditional pinned knob is recorded as absent, not omitted.** The duck is opt-in, so
+on a run without `--duck-db` its knobs have no value — but a pinned parameter must still
+be accounted for or the pin records a partial set. `mix.declareAbsent()` writes
+`NOT_IN_FORCE` (`0`) for them, and `mix.use()` refuses a knob declared that way, so "not in
+force" cannot be claimed for a value that is in force. **Turning ducking on is therefore a
+changed pinned parameter** and demands a fresh confirmation — which is correct, because
+switching the duck on moves the delivered mix.
+
+> **Adding the duck knobs invalidated every existing pin**, exactly as `--ceiling` did.
+> Each project needs **one** more `--confirm-gain`. That is the mechanism working rather
+> than an obstacle: the set grew, and the pin failed loudly instead of quietly certifying
+> a set it no longer covers.
+
+### Sidechain ducking for a file-sourced bed
+
+`make-music` bakes a duck into the bed it synthesises. A **licensed track has no such
+step**, so before this a file-sourced bed played flat: one gain served two knobs 11 dB
+apart, and `musicInGapsDb` had **no effect at all** for any project using one. Since the
+music-sources work, a licensed track is the expected path.
+
+`remux-music --duck-db <dB>` ducks it **in the filter graph**, with `sidechaincompress`:
+
+```powershell
+# 1. measure the narration (bind the envelope to the audio it describes)
+node src/vo-envelope.mjs --apply --replace
+
+# 2. plan the duck — prints the solved threshold and the tolerance, writes nothing
+node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
+  --music-gain 0.117 --voice-gain 1.40 --ceiling 2.0 `
+  --duck-db 11 --duck-envelope vo-envelope.json
+
+# 3. apply, confirming the pinned set (the duck knobs are all pinned)
+node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
+  --music-gain 0.117 --voice-gain 1.40 --ceiling 2.0 `
+  --duck-db 11 --duck-envelope vo-envelope.json --apply --confirm-gain
+```
+
+**Set the levels with two knobs, not one.** `--music-gain` puts the bed at your
+`musicInGapsDb`; `--duck-db` is the **difference** down to `musicUnderSpeechDb`. For
+−30 and −41 that is `--duck-db 11`.
+
+> **`musicGain` must be RE-DERIVED once ducking works.** A value tuned while the bed
+> played flat is compensating for the duck's absence — it is low so that narration stays
+> intelligible. With a duck in the graph that same value puts the bed far below the gaps
+> level. Re-derive it from the track's measured RMS and your gaps target.
+
+**Why `sidechaincompress`, and what was rejected.**
+
+| Approach | Verdict |
+|---|---|
+| Piecewise `volume` expression driven by the envelope | **Rejected.** ~3,042 numeric literals in `-filter_complex` for a real envelope. The registry audit refuses undeclared numbers by design; the two cannot coexist. |
+| Pre-graph PCM ducking (decode, curve in JS, mix the ducked WAV) | **Rejected.** The duck parameters would never appear in `-filter_complex`, so audit rule 5 would stop a *correct* run. The remedy would be an exemption in a guard one day old. |
+| In-graph `sidechaincompress`, threshold solved from the envelope | **Shipped.** Constant graph footprint whatever the envelope says. |
+
+**The threshold is solved, not guessed.** A compressor's depth is
+`(level − threshold) × (1 − 1/ratio)`, so a fixed threshold delivers whatever depth the
+narration happens to land on. `remux-music` measures the speech level in the envelope and
+solves the threshold backwards from `--duck-db`. That is why the envelope must describe
+the narration in play, and why a stale one stops the run.
+
+#### The gaps level is APPROACHED, not reached — and by how much
+
+A one-pole release closes on its target asymptotically and never arrives. At the defaults
+(`--duck-db 11`, `--duck-release 800`):
+
+| Gap | Bed is still short of the gaps level by |
+|---|---|
+| 0.50 s | 4.21 dB |
+| 1.00 s | 2.00 dB |
+| 1.51 s | 1.00 dB |
+| **1.83 s** (a measured inter-segment gap) | **0.66 dB** |
+| 3.31 s | 0.10 dB |
+| 4.00 s | 0.04 dB |
+
+So a real inter-segment gap honours `musicInGapsDb` to within about **0.7 dB**, and a
+**silent segment** — an intro slide, an intermission — sits on it properly, because the
+release keeps riding up and **nothing caps how long the excursion may last**. There is
+deliberately no hold and no hysteresis: a hold long enough to stop word-gap pumping and a
+cap on excursion length are the same mechanism at two timescales, and the second one
+breaks the intermission case. `sidechaincompress` cannot express a hold either, so adding
+one would put the model and the graph out of agreement.
+
+The plan prints this figure **for the release actually in force, against the gaps measured
+in your envelope** — not the table above. Shorten `--duck-release` to close it further, at
+the cost of more audible movement across word gaps.
+
+**Two further limits, stated rather than implied.**
+
+- The solve lands the depth on the **average** speech level. Speech is not constant-level,
+  so a syllable *N* dB louder ducks `N × (1 − 1/ratio)` dB deeper — 0.75·*N* at the default
+  ratio 4. The depth is a **centre, not a clamp**; lower `--duck-ratio` narrows the spread.
+- **Nothing here has been measured against a real render.** The figures above are computed
+  from the one-pole model the tests pin; whether ffmpeg's `attack`/`release` coefficients
+  map onto that model exactly is **not verified in this repo**. Verify by decoding the
+  output and measuring — and **measure inside true gaps, not near their boundaries**. A
+  first attempt at this sampled 0.1 s from a boundary, measured narration, and read the
+  result as "ducking barely worked".
 
 #### `--ceiling`, dBFS and dBTP
 
@@ -349,10 +507,53 @@ been between proven lineage and a reproducible deliverable.
 
 Two notes on the recovery. `remix` is the reflow path that does *not* re-synthesise —
 it reuses the `segment_*.mp3` clips on disk byte-for-byte and only changes pacing. And
-`vo-envelope.json` is the one artefact derived from audio *content*; it is recomputed on
-every run and never compared against a stored value, so nothing breaks, but it describes
-whichever audio was on disk when it last ran — regenerate it if you restore clips and
-intend to re-render.
+`vo-envelope.json` is the one artefact derived from audio *content*, so it is **bound to
+the audio it measured**: it records a `measuredFrom` fingerprint of the voice track, and
+every consumer refuses an envelope that describes different audio. Restore the clips that
+produced a shipped render and the envelope is valid again — the same separability
+`textHash` has. Re-measure it with `node src/vo-envelope.mjs --apply --replace` if you
+restore audio it was not measured from.
+
+### The envelope is bound to the audio it describes
+
+`vo-envelope.json` had no binding to the narration it measured. A measured instance:
+
+| | |
+|---|---|
+| envelope `durationMs` | 291,984 (14,600 hops present) |
+| timeline `durationMs` | 276,528 (13,826 hops expected) |
+| drift | **15,456 ms** |
+
+15.5 seconds stale, from a cut two rounds old — and the file parsed perfectly. A duck
+calibrated against it drifts further out of alignment the longer the video runs, with
+nothing reporting it. This is a defect class this engine has shipped more than once: a
+generated artefact with no guard tying it to the thing it describes.
+
+`vo-envelope --apply` now writes `measuredFrom: { file, bytes, sha256 }` — **a fingerprint
+of the INPUT**, for the reason stated above: a fingerprint over the input is separable from
+the artefact it certifies, and one over the artefact would prove only that nobody edited
+it. `make-music` and `remux-music` both check it and **refuse** rather than calibrate
+against it.
+
+Four states are kept apart, because they are different situations for the operator:
+
+| State | Meaning |
+|---|---|
+| `current` | The recorded fingerprint matches the voice track on disk. |
+| `stale` | Present, readable, does not match. The refusal **names the fields that differ**. |
+| `unbound` | No binding at all — an envelope predating this check. **Absence is not permission.** |
+| `unreadable` | A binding is present but is not a binding. |
+
+A refusal states **only that the two differ**. It does not say who changed either file or
+when: mtimes are not provenance, and naming an unprovable cause is the mistake that got a
+`stamp-lineage` tool withdrawn (above). Nothing is silently re-measured — the refusal
+prints the command to run.
+
+**What it does not detect** is in `src/envelope-ducking.mjs`, in full: an envelope measured
+from the right audio whose RMS values were then edited; a timeline re-cut that leaves the
+voice audio untouched (deliberate — the envelope describes the *audio*); which stage wrote
+either file; and a swap between the check and the read, which is narrowed by checking at
+the point of use, not closed.
 
 ## How to run
 
@@ -379,6 +580,10 @@ node src/encode-mp4.mjs                        # then: --apply --replace
 node src/vo-envelope.mjs                       # then: --apply --replace
 node src/make-music.mjs --out bed.wav --seconds 240 --preset bright   # then: --apply
 node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply --confirm-gain
+
+# a licensed bed, ducked under narration (see "Sidechain ducking" above)
+node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
+  --duck-db 11 --duck-envelope vo-envelope.json      # then: --apply --confirm-gain
 
 # pure helpers
 node src/canonical-json.mjs fixed-key-order-json-utf8-v1 < input.json

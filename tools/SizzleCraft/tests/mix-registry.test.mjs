@@ -24,7 +24,7 @@ import { CliError, EXIT } from '../src/cli-support.mjs';
 import { MIX_PARAMETERS, createMixAudit } from '../src/mix-parameters.mjs';
 import { classifyGainPin } from '../src/gain-pin.mjs';
 
-/** Declares the set remux-music declares, at the shipped defaults. */
+/** Declares the set remux-music declares, at the shipped defaults, with ducking OFF. */
 function declaredMix() {
   const mix = createMixAudit();
   mix.declare('voiceGain', { value: 1.14 });
@@ -32,6 +32,8 @@ function declaredMix() {
   mix.declare('ceiling', { value: 1, rendered: 0.891251 });
   mix.declare('crossfade', { value: 3 });
   mix.declare('videoSeconds', { value: 38.5 });
+  // Ducking is opt-in, and a pinned knob must be accounted for on every run either way.
+  for (const name of ['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']) mix.declareAbsent(name);
   return mix;
 }
 
@@ -62,10 +64,14 @@ describe('mix parameter registry', () => {
     // A voice rebalance is also not the frame-by-frame churn that would train an operator
     // to pass --confirm-gain reflexively (the reason videoSeconds stays unpinned). It is
     // deliberate, rare, and worth a confirmation.
+    // The duck knobs joined this set when file-sourced ducking arrived. Each one moves
+    // the delivered bed level at the ends of its range — --duck-release at 9000 ms never
+    // returns the bed to the gaps level at all — so calling any of them a "transition
+    // shape" knob of the kind --crossfade is would be the voiceGain mistake repeated.
     assert.deepEqual(
       pinned.slice().sort(),
-      ['ceiling', 'musicGain', 'voiceGain'],
-      'every knob that moves the delivered level — both bus gains and the limiter — must be pinned',
+      ['ceiling', 'duckAttack', 'duckDb', 'duckRatio', 'duckRelease', 'musicGain', 'voiceGain'],
+      'every knob that moves the delivered level — both bus gains, the limiter and the duck — must be pinned',
     );
   });
 
@@ -105,6 +111,8 @@ describe('mix parameter registry', () => {
     mix.declare('voiceGain', { value: 1.14 });
     mix.declare('musicGain', { value: 1.5 });
     mix.declare('ceiling', { value: 2, rendered: 0.794328 });
+    // pinnedValues refuses a partial set, so the conditional knobs are accounted for too.
+    for (const name of ['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']) mix.declareAbsent(name);
 
     assert.equal(mix.use('ceiling'), '0.794328', 'the graph carries the linear limit');
     assert.equal(mix.pinnedValues().ceiling, 2, 'the pin records the dB the operator actually typed');
@@ -123,7 +131,17 @@ describe('mix parameter registry', () => {
   });
 
   test('pinnedValues_everyPinnedParameterDeclared_returnsExactlyThatSet', () => {
-    assert.deepEqual(declaredMix().pinnedValues(), { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 });
+    assert.deepEqual(declaredMix().pinnedValues(), {
+      voiceGain: 1.14,
+      musicGain: 1.5,
+      ceiling: 1,
+      // NOT_IN_FORCE. Recorded rather than omitted, so turning ducking on is a changed
+      // pinned parameter and demands a fresh confirmation.
+      duckDb: 0,
+      duckRatio: 0,
+      duckAttack: 0,
+      duckRelease: 0,
+    });
   });
 
   // THE WRITE SHAPE AND THE READ SHAPE MUST BE THE SAME SHAPE. `pinnedValues()` produces

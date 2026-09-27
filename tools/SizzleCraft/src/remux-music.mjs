@@ -46,6 +46,25 @@ import { videoStreamVerdict } from './remux-verify.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
 import { MIX_PARAMETERS, createMixAudit } from './mix-parameters.mjs';
 import { probeDurationSeconds } from './audio-probe.mjs';
+import {
+  SPEECH_RMS_THRESHOLD,
+  REFERENCE_ATTACK_MS,
+  REFERENCE_RELEASE_MS,
+  fingerprintVoice,
+  classifyEnvelopeLineage,
+  describeEnvelopeRefusal,
+  measureSpeech,
+  calibrateDuckThreshold,
+  achievedDuckDb,
+  recoveryShortfallDb,
+  timeToWithinDb,
+} from './envelope-ducking.mjs';
+
+/** The duck knobs, in the order they are declared. Absent together, present together. */
+const DUCK_PARAMETERS = Object.freeze(['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']);
+
+/** How close to the gaps level the plan reports the bed getting, in dB. */
+const GAPS_TOLERANCE_DB = 0.1;
 
 const TIMING_NAME = 'timing.json';
 
@@ -178,6 +197,32 @@ Options
   --music-gain <n>      linear music gain, ${GAIN_MIN}..${GAIN_MAX} (default: 1.50)
   --crossfade <sec>     crossfade at each loop wrap, 0.1..30 (default: 3)
   --no-loop             refuse rather than loop a music bed shorter than the video
+
+  Sidechain ducking (file-sourced music). Without --duck-db the bed plays flat and the
+  graph is byte-for-byte what it always was.
+  --duck-db <dB>        how far the bed drops under narration, 0..40 (default: 0 = off).
+                        Set --music-gain so the bed sits at your gaps level; --duck-db is
+                        the DIFFERENCE down to your under-speech level. For
+                        musicInGapsDb -30 and musicUnderSpeechDb -41 that is 11.
+  --duck-envelope <f>   vo-envelope.json, REQUIRED with --duck-db. The sidechain threshold
+                        is solved against the narration level measured in it, so it must
+                        describe the narration actually in play — a stale envelope is
+                        refused, not worked around.
+  --duck-ratio <n>      sidechain compression ratio, 1.5..20 (default: 4). Lower narrows
+                        how far the delivered depth strays from --duck-db on a syllable
+                        louder or quieter than average.
+  --duck-attack <ms>    1..2000 (default: ${REFERENCE_ATTACK_MS})
+  --duck-release <ms>   1..9000 (default: ${REFERENCE_RELEASE_MS})
+
+                        THE GAPS LEVEL IS APPROACHED, NOT REACHED. A one-pole release
+                        closes on its target asymptotically, so the bed is always some
+                        distance short when narration resumes. At the defaults and a
+                        1.83 s gap that distance is 0.66 dB; it falls under 0.10 dB after
+                        3.3 s, which is why a silent segment sits at the gaps level
+                        properly. The plan prints the figure for the release actually in
+                        force, against the gaps measured in YOUR envelope. Shorten
+                        --duck-release to close it further, at the cost of more audible
+                        movement across word gaps.
   --confirm-gain        confirm the pinned mix parameters (${PINNED_FLAGS}) for the current
                         music source (bug-ledger 16). Required on first use, whenever the
                         source or any pinned parameter changes, and once for every pin
@@ -215,6 +260,11 @@ await runCli(async () => {
         'voice-gain': { type: 'string' },
         'music-gain': { type: 'string' },
         crossfade: { type: 'string' },
+        'duck-db': { type: 'string' },
+        'duck-envelope': { type: 'string' },
+        'duck-ratio': { type: 'string' },
+        'duck-attack': { type: 'string' },
+        'duck-release': { type: 'string' },
         'no-loop': { type: 'boolean' },
         'confirm-gain': { type: 'boolean' },
         ceiling: { type: 'string' },
@@ -293,6 +343,96 @@ await runCli(async () => {
   // Pinned as the dB the operator typed, rendered as the linear limit the graph carries —
   // a refusal that quoted 0.794328 back at someone who typed 2.0 would be no use.
   mix.declare('ceiling', { value: ceilingBelowFs, rendered: ceilingLinear });
+
+  // ---- THE SIDECHAIN DUCK ------------------------------------------------------------
+  //
+  // Before this, a file-sourced bed played FLAT: one gain served two knobs 11 dB apart,
+  // so `musicInGapsDb` had no effect at all for any project using a licensed track.
+  //
+  // WHY IN-GRAPH, AND WHY NOT THE ALTERNATIVES.
+  //  - A piecewise `volume` expression driven by the envelope measures out at ~3,042
+  //    numeric literals in -filter_complex for a real envelope. The registry audit refuses
+  //    undeclared numbers by design, so that shape and this guard cannot both exist.
+  //  - Ducking the bed in PCM before the graph would mirror make-music exactly, and would
+  //    put the duck parameters nowhere in -filter_complex — so audit rule 5 (a pinned
+  //    value declared but never reaching the graph) would stop a CORRECT run. The fix for
+  //    that would be an exemption in a guard one day old. Refused.
+  // `sidechaincompress` keeps the graph footprint constant whatever the envelope says.
+  //
+  // DECLARED BEFORE THE PIN, because the pin covers all four. Parsing a pinned knob after
+  // the pin check is exactly how --ceiling once reached the mix unconfirmed.
+  const duckDb = parseBoundedNumber(values['duck-db'] ?? '0', { name: '--duck-db', min: 0, max: 40 });
+  const ducking = duckDb > 0;
+
+  let duck = null;
+  if (!ducking) {
+    // Recorded as NOT IN FORCE rather than omitted, so "ducking was off" is a fact the
+    // pin carries and switching it on later reads as a changed pinned parameter.
+    for (const name of DUCK_PARAMETERS) mix.declareAbsent(name);
+  } else {
+    if (values['duck-envelope'] === undefined) {
+      throw new CliError(
+        '--duck-db needs --duck-envelope <vo-envelope.json>.\n' +
+        'The sidechain threshold is SOLVED against the narration level measured in the envelope, so\n' +
+        'without one the depth would be whatever a guessed threshold happened to produce — which is\n' +
+        'the behaviour this flag exists to replace. Produce one with:\n' +
+        '  node src/vo-envelope.mjs --apply',
+      );
+    }
+
+    const duckRatio = parseBoundedNumber(values['duck-ratio'] ?? '4', { name: '--duck-ratio', min: 1.5, max: 20 });
+    const duckAttack = parseBoundedNumber(values['duck-attack'] ?? String(REFERENCE_ATTACK_MS), {
+      name: '--duck-attack', min: 1, max: 2000,
+    });
+    const duckRelease = parseBoundedNumber(values['duck-release'] ?? String(REFERENCE_RELEASE_MS), {
+      name: '--duck-release', min: 1, max: 9000,
+    });
+
+    const envelopePath = requireExistingFile(projectDir, values['duck-envelope'], 'duck envelope');
+    const envelope = readDuckEnvelope(envelopePath);
+
+    // THE ENVELOPE MUST DESCRIBE THE NARRATION BEING MIXED. It sets the level the
+    // threshold is solved against, so a stale one mis-places every gain change by however
+    // far the two have diverged and nothing downstream measures that.
+    const voiceFingerprint = await fingerprintVoice(voice, path.basename(voice));
+    const lineage = classifyEnvelopeLineage(envelope, voiceFingerprint);
+    if (lineage.state !== 'current') {
+      throw new CliError(
+        describeEnvelopeRefusal(lineage, { envelopePath, voicePath: path.basename(voice) }),
+        EXIT.FAILED,
+      );
+    }
+
+    const speech = measureSpeech({ rms: envelope.rms, hopMs: Number(envelope.hopMs) || 20 });
+    if (speech.speechRms === null) {
+      throw new CliError(
+        `${envelopePath} has no frame above the speech threshold (${SPEECH_RMS_THRESHOLD}), so there is no\n` +
+        'narration level to solve the duck against. Ducking silence would reduce to a constant gain,\n' +
+        'which --music-gain already is.',
+        EXIT.FAILED,
+      );
+    }
+
+    const threshold = calibrateDuckThreshold({
+      speechRms: speech.speechRms, voiceGain, duckDb, ratio: duckRatio,
+    });
+
+    // Pinned as the dB the operator asked for, rendered as the threshold that delivers it
+    // — the --ceiling shape. Pinning the solved threshold instead would demand a fresh
+    // confirmation every time the narration was re-synthesised, and a confirmation that
+    // fires constantly stops being one.
+    mix.declare('duckDb', { value: duckDb, rendered: threshold });
+    mix.declare('duckRatio', { value: duckRatio });
+    mix.declare('duckAttack', { value: duckAttack });
+    mix.declare('duckRelease', { value: duckRelease });
+
+    duck = {
+      db: duckDb, ratio: duckRatio, attack: duckAttack, release: duckRelease,
+      threshold, speech,
+      achievedDb: achievedDuckDb({ threshold, speechRms: speech.speechRms, voiceGain, ratio: duckRatio }),
+      envelopePath,
+    };
+  }
 
   // THE GAIN PIN (bug-ledger entry 16).
   //
@@ -394,10 +534,29 @@ await runCli(async () => {
     musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];`;
   }
 
+  // The voice bus forks only when the duck needs a sidechain tap, so a run without
+  // --duck-db produces the graph this stage has always produced, character for character.
+  const voiceFilter = ducking
+    ? `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,asplit=2[vo][vosc];`
+    : `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];`;
+
+  // `apad` ON THE SIDECHAIN, and it is load-bearing. sidechaincompress ends its output
+  // when EITHER input ends, so a narration track shorter than the trimmed bed would cut
+  // the bed off at the last word — silently, for the whole tail. That is bug-ledger 15's
+  // shape exactly. Padding the detector leg with silence makes the music the input that
+  // decides the length, which is what the trim already sets. The mix leg is NOT padded,
+  // so amix duration=longest is unaffected.
+  const duckFilter = ducking
+    ? `[vosc]apad[vop];` +
+      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
+      `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}[mud];`
+    : '';
+
   const filter =
-    `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
+    voiceFilter +
     musicFilter +
-    `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
+    duckFilter +
+    `[vo][${ducking ? 'mud' : 'mu'}]amix=inputs=2:duration=longest:normalize=0[mx];` +
     `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
 
   // FAIL CLOSED ON AN UNREGISTERED VALUE. Anything interpolated into the graph without
@@ -426,6 +585,7 @@ await runCli(async () => {
     console.log(`  video   ${video}`);
     console.log(`  voice   ${voice}  (gain ${voiceGain})`);
     console.log(`  music   ${music}  (gain ${musicGain})`);
+    for (const line of describeDuckPlan(duck)) console.log(line);
     console.log(`  gain    ${describeGainPinPlan(pin, current, confirmed)}`);
     if (undecidable !== null) {
       console.log(`  loop    UNDECIDED — could not read durations (${undecidable}).`);
@@ -501,4 +661,73 @@ function resolveFfmpeg(projectDir, override) {
   const ff = fs.readFileSync(pointer, 'utf8').trim();
   if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
   return ff;
+}
+
+/**
+ * Reads the envelope the duck is calibrated from, validating the one field it depends on.
+ *
+ * An envelope whose `rms` is absent, empty or non-numeric produced NaN gains in the
+ * synthesised path; here it would produce a NaN threshold interpolated into a filter
+ * graph. Both are refused rather than rendered.
+ */
+function readDuckEnvelope(envelopePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(envelopePath, 'utf8'));
+  } catch (err) {
+    throw new CliError(`${envelopePath} could not be read as an envelope — ${err.message}`, EXIT.FAILED);
+  }
+  if (!Array.isArray(parsed?.rms) || parsed.rms.length === 0) {
+    throw new CliError(
+      `${envelopePath} must contain a non-empty "rms" array of envelope samples`, EXIT.FAILED,
+    );
+  }
+  const bad = parsed.rms.findIndex((v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0);
+  if (bad !== -1) {
+    throw new CliError(
+      `${envelopePath} "rms"[${bad}] is ${JSON.stringify(parsed.rms[bad])} — every envelope sample must be a ` +
+      'finite non-negative number', EXIT.FAILED,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * The duck's plan lines.
+ *
+ * THE TOLERANCE IS PRINTED WHERE THE DECISION IS MADE. A one-pole release approaches the
+ * gaps level and never arrives, so the honest figure is how far short the bed still is
+ * when narration resumes — computed for the release ACTUALLY IN FORCE, against the gaps
+ * measured in THIS project's envelope, not a constant from someone else's render.
+ */
+function describeDuckPlan(duck) {
+  if (duck === null) return ['  duck    none (no --duck-db) — the bed plays flat, as it always has'];
+
+  const { db, ratio, attack, release, threshold, speech, achievedDb, envelopePath } = duck;
+  const speechDb = (20 * Math.log10(speech.speechRms)).toFixed(1);
+  const lines = [
+    `  duck    -${db} dB under narration, in-graph sidechaincompress`,
+    `          envelope ${envelopePath} — CURRENT (${speech.speechFrames} speech frames, level ${speechDb} dBFS)`,
+    `          threshold ${threshold} solved for that level; ratio ${ratio}, attack ${attack} ms, release ${release} ms`,
+    `          solved depth ${achievedDb.toFixed(2)} dB at the AVERAGE speech level; a syllable N dB louder`,
+    `          ducks N x ${(1 - 1 / ratio).toFixed(2)} dB deeper, so the depth is a centre, not a clamp`,
+  ];
+
+  if (speech.gaps.count === 0) {
+    lines.push(
+      '          NO GAP of 500 ms or more in this envelope — the bed never returns to the gaps',
+      '          level anywhere in this video, so --music-gain alone does not describe it',
+    );
+    return lines;
+  }
+
+  const atMedian = recoveryShortfallDb({ duckDb: db, releaseMs: release, gapMs: speech.gaps.medianMs });
+  const settle = timeToWithinDb({ duckDb: db, releaseMs: release, withinDb: GAPS_TOLERANCE_DB });
+  lines.push(
+    `          gaps level is APPROACHED, NOT REACHED: across this envelope's median gap of`,
+    `          ${(speech.gaps.medianMs / 1000).toFixed(2)}s (${speech.gaps.count} gaps >= 0.5s) the bed is still ${atMedian.toFixed(2)} dB under it when`,
+    `          narration resumes. It is within ${GAPS_TOLERANCE_DB} dB after ${(settle / 1000).toFixed(2)}s, so a silent segment`,
+    '          sits at the gaps level properly. Shorten --duck-release to close the gap.',
+  );
+  return lines;
 }

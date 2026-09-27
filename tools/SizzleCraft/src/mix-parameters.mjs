@@ -138,6 +138,49 @@ export const MIX_PARAMETERS = Object.freeze([
     // fires constantly stops being a confirmation.
     pinned: false,
   }),
+  // ---- the sidechain duck (file-sourced music) ------------------------------------
+  //
+  // These four are declared AFTER the originals so that `pinnedValues`, which reports the
+  // first pinned parameter it finds undeclared, keeps naming `--ceiling` in the case the
+  // existing suite pins.
+  //
+  // ALL FOUR ARE PINNED, and the test for "is it really a level knob?" is what each one
+  // does at the ends of its range rather than what it is called:
+  //   --duck-db      IS the level. It is the whole feature.
+  //   --duck-ratio   sets how far the delivered depth strays from --duck-db when a
+  //                  syllable is louder or quieter than the average it was solved for.
+  //   --duck-attack  at 2000 ms the duck never engages inside a phrase, so the bed sits
+  //                  a full --duck-db too loud under narration.
+  //   --duck-release at 9000 ms the bed never returns to the gaps level at all — ~7.7 dB
+  //                  below it across a measured 1.83 s gap.
+  // The last two look like "transition shape" knobs of the kind --crossfade is, and they
+  // are not: a crossfade changes how a wrap is JOINED, while these change the level that
+  // is actually delivered for most of the running time. Calling them shape knobs and
+  // leaving them unpinned would be limit (e) above, committed knowingly.
+  Object.freeze({
+    name: 'duckDb',
+    flag: '--duck-db',
+    summary: 'how far the bed drops under narration, in dB',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckRatio',
+    flag: '--duck-ratio',
+    summary: 'the sidechain compression ratio the duck threshold is solved against',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckAttack',
+    flag: '--duck-attack',
+    summary: 'how fast the bed ducks when narration starts, in ms',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckRelease',
+    flag: '--duck-release',
+    summary: 'how fast the bed returns to the gaps level, in ms',
+    pinned: true,
+  }),
 ]);
 
 const BY_NAME = new Map(MIX_PARAMETERS.map((parameter) => [parameter.name, parameter]));
@@ -154,7 +197,22 @@ const STRUCTURAL_LITERALS = Object.freeze([
   'atrim=0:', // the trim always starts at the head of the bed
   'inputs=2', // amix takes exactly two buses: voice and music
   'normalize=0', // amix must not halve both buses
+  'asplit=2', // the voice bus forks in two: one leg to the mix, one to the sidechain
 ]);
+
+/**
+ * What the pin records for a pinned knob that was NOT IN FORCE on this run.
+ *
+ * Zero, and specifically a number, because `classifyGainPin` reads a recorded value that
+ * is not a finite number as "this pin does not cover that parameter" and demands a fresh
+ * confirmation forever. A sentinel of `null` would therefore make a pin written with
+ * ducking switched off permanently unconfirmable.
+ *
+ * Zero also reads correctly on its own terms for every knob that can be absent: 0 dB of
+ * duck, 0 ms of attack, 0 ms of release, ratio 0 — none of them a setting anything could
+ * run at, all of them plainly "this was not applied".
+ */
+export const NOT_IN_FORCE = 0;
 
 /**
  * THE ONE NUMERIC GRAMMAR. `declare` may only render this, and `audit` may only read
@@ -248,7 +306,39 @@ export function createMixAudit() {
         EXIT.FAILED,
       );
     }
-    declared.set(name, { parameter, value, rendered: text, uses: 0 });
+    declared.set(name, { parameter, value, rendered: text, uses: 0, inForce: true });
+  }
+
+  /**
+   * Declares that a pinned knob is NOT IN FORCE on this run.
+   *
+   * Every pinned parameter must be accounted for on every run — `pinnedValues` refuses a
+   * partial set, and `audit` refuses a pinned value that never reached the graph. A
+   * CONDITIONAL knob such as the sidechain duck satisfies neither: on a run without
+   * ducking it has no value and touches no filter. Before this existed, the only way to
+   * ship one was to declare it `pinned: false`, which is limit (e) — the knob would move
+   * the delivered level with the pin reporting valid.
+   *
+   * So absence becomes a declared, recorded state rather than an unrepresentable one. The
+   * pin stores NOT_IN_FORCE, which means turning ducking ON later is a CHANGED pinned
+   * parameter and demands a fresh confirmation, exactly as it should: switching the duck
+   * on moves the delivered mix.
+   *
+   * It is not an escape hatch. A parameter declared absent may not then be interpolated —
+   * `use` refuses it — so "not in force" cannot be claimed for a value that is in force.
+   */
+  function declareAbsent(name) {
+    const parameter = BY_NAME.get(name);
+    if (parameter === undefined) {
+      throw new CliError(
+        `"${name}" was declared not-in-force but is not in MIX_PARAMETERS (src/mix-parameters.mjs)`,
+        EXIT.FAILED,
+      );
+    }
+    if (declared.has(name)) {
+      throw new CliError(`${parameter.flag} was declared twice — only one value of it reaches the graph`, EXIT.FAILED);
+    }
+    declared.set(name, { parameter, value: NOT_IN_FORCE, rendered: null, uses: 0, inForce: false });
   }
 
   /**
@@ -262,6 +352,14 @@ export function createMixAudit() {
     if (entry === undefined) {
       const known = BY_NAME.has(name) ? 'declared for this run' : 'declared in MIX_PARAMETERS';
       throw new CliError(`"${name}" reached the mix graph without being ${known}`, EXIT.FAILED);
+    }
+    if (!entry.inForce) {
+      throw new CliError(
+        `${entry.parameter.flag} was declared NOT IN FORCE for this run and then taken from the registry.\n` +
+          'A knob cannot both be recorded as unapplied and be interpolated into the filter graph — the pin\n' +
+          'would certify a run that did not happen. Declare it with a value, or do not use it.',
+        EXIT.FAILED,
+      );
     }
     entry.uses += 1;
     return entry.rendered;
@@ -299,7 +397,7 @@ export function createMixAudit() {
    */
   function audit(graph) {
     for (const [, entry] of declared) {
-      if (entry.parameter.pinned && entry.uses === 0) {
+      if (entry.parameter.pinned && entry.inForce && entry.uses === 0) {
         throw new CliError(
           `${entry.parameter.flag} is pinned and was declared as ${entry.value}, but never reached the ` +
             'mix graph — the pin would record a value that was not applied',
@@ -315,6 +413,10 @@ export function createMixAudit() {
     const budget = new Map();
     const flagsFor = new Map();
     for (const [, entry] of declared) {
+      // An absent declaration renders nothing and is used never, so it contributes no
+      // budget. Including it would seed the map with a `null` key for a value the graph
+      // cannot contain.
+      if (!entry.inForce) continue;
       budget.set(entry.rendered, (budget.get(entry.rendered) ?? 0) + entry.uses);
       flagsFor.set(entry.rendered, [...(flagsFor.get(entry.rendered) ?? []), entry.parameter.flag]);
     }
@@ -384,7 +486,7 @@ export function createMixAudit() {
     }
   }
 
-  return { declare, use, pinnedValues, audit };
+  return { declare, declareAbsent, use, pinnedValues, audit };
 }
 
 /** True for a value that can be read as a lock's recorded mix set. */

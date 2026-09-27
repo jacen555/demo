@@ -10,6 +10,16 @@
 //   preset       (optional) = named bed, see BEDS below. Defaults to 'warm'.
 import fs from 'node:fs';
 import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
+import {
+  SPEECH_RMS_THRESHOLD,
+  REFERENCE_ATTACK_MS,
+  REFERENCE_RELEASE_MS,
+  REFERENCE_DUCK_GAIN,
+  duckGainTrajectory,
+  fingerprintVoice,
+  classifyEnvelopeLineage,
+  describeEnvelopeRefusal,
+} from './envelope-ducking.mjs';
 
 const USAGE = `
 make-music — synthesise the ambient bed (pipeline stage S8). Nothing sampled or licensed.
@@ -22,6 +32,8 @@ Options
   --out <file>        output WAV (default: music.wav)
   --seconds <number>  duration in seconds, 0..7200 (default: 251.2)
   --envelope <file>   voiceover RMS envelope, used to sidechain-duck the bed under speech
+  --voice <file>      the narration the envelope must have been measured from
+                      (default: whatever the envelope records, else voiceover.mp3)
   --preset <name>     named bed: warm (I-V-ii-IV in F) or bright (vi-IV-I-V in G)
   --project <dir>     project root; no path may escape it (default: current directory)
   --apply             actually write. Without it nothing is written.
@@ -39,6 +51,7 @@ const cli = (() => {
         out: { type: 'string' },
         seconds: { type: 'string' },
         envelope: { type: 'string' },
+        voice: { type: 'string' },
         preset: { type: 'string' },
       },
     });
@@ -60,6 +73,59 @@ try {
 } catch (err) {
   console.error(`error: ${err.message}`);
   process.exit(err.exitCode ?? EXIT.FAILED);
+}
+
+// ---- envelope lineage ------------------------------------------------------------------------
+// THE ENVELOPE MUST DESCRIBE THE NARRATION ACTUALLY IN PLAY. A stale one parses perfectly
+// and ducks against a cut that no longer exists, drifting further out of alignment the
+// longer the bed runs, with nothing reporting it (see envelope-ducking.mjs).
+//
+// Checked HERE, before the preset line and before synthesis, so a stale envelope costs
+// seconds rather than minutes of pad generation. It is checked AGAIN at the read below,
+// which is the authoritative one: this is a pre-flight, not a substitute.
+let voiceFingerprint = null;
+if (envPath) {
+  try {
+    voiceFingerprint = await resolveVoiceFingerprint();
+    assertEnvelopeCurrent(JSON.parse(fs.readFileSync(envPath, 'utf8')));
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      console.error(`error: ${envPath} is not valid JSON — ${err.message}`);
+      process.exit(EXIT.USAGE);
+    }
+    console.error(`error: ${err.message}`);
+    process.exit(err.exitCode ?? EXIT.USAGE);
+  }
+}
+
+/**
+ * Resolves which narration the envelope has to match.
+ *
+ * `--voice` wins; otherwise the file the envelope itself names; otherwise the pipeline
+ * default. Reading the name out of the envelope is a convenience, NOT the check — the
+ * check is over content, so an envelope naming a file cannot talk its way past anything.
+ */
+async function resolveVoiceFingerprint() {
+  let named = cli.values.voice;
+  if (!named) {
+    try {
+      named = JSON.parse(fs.readFileSync(envPath, 'utf8'))?.measuredFrom?.file;
+    } catch {
+      named = undefined; // handled by the parse below, which reports it properly
+    }
+  }
+  const voiceName = typeof named === 'string' && named !== '' ? named : 'voiceover.mp3';
+  const voicePath = requireExistingFile(cli.projectDir, voiceName, 'voice track the envelope was measured from');
+  return fingerprintVoice(voicePath, voiceName);
+}
+
+/** Refuses anything but a current envelope, keeping stale/unbound/unreadable distinct. */
+function assertEnvelopeCurrent(parsed) {
+  const verdict = classifyEnvelopeLineage(parsed, voiceFingerprint);
+  if (verdict.state === 'current') return;
+  throw new CliError(
+    describeEnvelopeRefusal(verdict, { envelopePath: envPath, voicePath: voiceFingerprint.file }),
+  );
 }
 
 const SR = 48000;
@@ -315,7 +381,7 @@ console.log(`raw peak ${peak.toFixed(3)} -> normalising x${norm.toFixed(4)} (tar
 
 // ---- sidechain ducking off the voiceover envelope ---------------------------------------------
 // Music sits well under narration and lifts back up in the inter-segment gaps.
-const DUCK = 0.42;          // ≈ -7.5 dB under speech
+const DUCK = REFERENCE_DUCK_GAIN;   // ≈ -7.5 dB under speech
 const HOP_MS = 20;
 let duckGain = null;
 if (envPath) {
@@ -329,6 +395,10 @@ if (envPath) {
     } catch (err) {
       throw new CliError(`${envPath} is not valid JSON — ${err.message}`);
     }
+    // THE AUTHORITATIVE LINEAGE CHECK. The pre-flight above fails fast; this one is over
+    // the bytes actually about to be ducked against, so an envelope swapped between the
+    // two is caught rather than trusted.
+    assertEnvelopeCurrent(parsed);
     // An empty or non-numeric envelope produced an empty gain array, which indexed to
     // `undefined`, multiplied every sample to NaN, and wrote a WAV of NaN floats while
     // reporting success — replacing a good bed with garbage. The ducking curve is the
@@ -347,20 +417,20 @@ if (envPath) {
     }
     return parsed;
   });
-  const rms = env.rms, thresh = 0.004;
-  // one-pole smoothing: duck fast, recover gently, so it never pumps
-  const atk = Math.exp(-HOP_MS / 150), rel = Math.exp(-HOP_MS / 800);
-  const g = new Float32Array(rms.length);
-  let cur = 1;
-  for (let k = 0; k < rms.length; k++) {
-    const target = rms[k] > thresh ? DUCK : 1.0;
-    const c = target < cur ? atk : rel;
-    cur = target + (cur - target) * c;
-    g[k] = cur;
-  }
+  // ONE MODEL, BOTH DUCKING PATHS. This loop used to live here and remux-music now ducks
+  // in the ffmpeg graph from the same envelope; two copies of "duck fast, recover gently"
+  // is two behaviours waiting to drift apart, so both read the same function.
+  const g = duckGainTrajectory({
+    rms: env.rms,
+    hopMs: HOP_MS,
+    duckGain: DUCK,
+    attackMs: REFERENCE_ATTACK_MS,
+    releaseMs: REFERENCE_RELEASE_MS,
+    threshold: SPEECH_RMS_THRESHOLD,
+  });
   duckGain = g;
   const ducked = g.reduce((a, b) => a + (b < 0.7 ? 1 : 0), 0);
-  console.log(`ducking from ${rms.length} envelope frames — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
+  console.log(`ducking from ${env.rms.length} envelope frames — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
 } else {
   console.log('no envelope supplied — flat music level');
 }

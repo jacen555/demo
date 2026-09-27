@@ -363,6 +363,21 @@ describe('drift tolerance validation', () => {
 // make-music: an empty envelope produced undefined gains, NaN samples, and a
 // "success" that replaced a good bed with silence-shaped garbage.
 // ---------------------------------------------------------------------------
+
+/**
+ * The input fingerprint an envelope must carry to be usable.
+ *
+ * An envelope is bound to the audio it MEASURED, so a consumer can tell whether it still
+ * describes the narration in play — a stale one parses perfectly and ducks against a cut
+ * that no longer exists. Computed here rather than pasted, so these fixtures stay valid
+ * envelopes instead of becoming a second, divergent idea of one.
+ */
+const boundTo = (voice) => ({
+  file: 'voiceover.mp3',
+  bytes: voice.length,
+  sha256: crypto.createHash('sha256').update(voice).digest('hex'),
+});
+
 describe('envelope input validation', () => {
   test('makeMusic_envelopeWithEmptyRms_refusesBeforeWriting', (t) => {
     const dir = makeProject(t, { 'env.json': JSON.stringify({ rms: [] }) });
@@ -389,7 +404,11 @@ describe('envelope input validation', () => {
 
   test('makeMusic_validEnvelope_writesFiniteSamples', (t) => {
     const rms = Array.from({ length: 120 }, (_, i) => (i % 20 < 10 ? 0.2 : 0.001));
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 2400 }) });
+    const voice = Buffer.from('narration bytes');
+    const dir = makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 2400, measuredFrom: boundTo(voice) }),
+    });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assert.equal(r.code, EXIT.OK, r.all);
@@ -694,7 +713,14 @@ describe('present-but-invalid is not absent', () => {
     // make-music reads the envelope after synthesising the pad, so deleting it once the
     // preset line appears lands inside a multi-second window, well before the read.
     const rms = Array.from({ length: 600 }, (_, i) => (i % 20 < 10 ? 0.2 : 0.001));
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 12000 }) });
+    // The envelope must be BOUND to a voice track on disk, or the lineage pre-flight
+    // refuses it before the preset line and the deletion below never lands in the window
+    // this test exists to open.
+    const voice = Buffer.from('narration bytes');
+    const dir = makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 12000, measuredFrom: boundTo(voice) }),
+    });
     const envPath = path.join(dir, 'env.json');
 
     const r = await runScriptDeletingOnMarker(

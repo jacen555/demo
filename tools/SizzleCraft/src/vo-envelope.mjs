@@ -1,5 +1,11 @@
 import fs from 'node:fs';
 import { EXIT, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import {
+  fingerprintVoice,
+  envelopeBindingRecord,
+  classifyEnvelopeLineage,
+  describeEnvelopeState,
+} from './envelope-ducking.mjs';
 
 const USAGE = `
 vo-envelope — measure the narration amplitude envelope used to sidechain-duck the music
@@ -17,6 +23,12 @@ Options
   --replace         permit overwriting an existing --out
   --help            show this message
 
+The envelope records a fingerprint of the VOICE AUDIO it was measured from, under
+"measuredFrom". Every consumer checks it and refuses an envelope that describes different
+audio, because a duck calibrated against a stale envelope drifts further out of alignment
+the longer the video runs and nothing downstream measures that. The plan reports the state
+of an envelope already on disk; it never silently re-measures one.
+
 Exit codes: 0 success/plan · 1 measurement failed · 2 bad usage or refused overwrite
 `.trimStart();
 
@@ -26,13 +38,36 @@ await runCli(async () => {
     options: { voice: { type: 'string' }, out: { type: 'string' } },
   });
 
-  const voicePath = requireExistingFile(projectDir, values.voice ?? 'voiceover.mp3', 'voice track');
+  const voiceName = values.voice ?? 'voiceover.mp3';
+  const voicePath = requireExistingFile(projectDir, voiceName, 'voice track');
   const outPath = resolveOutput(projectDir, values.out ?? 'vo-envelope.json', { apply, replace, label: 'output' });
+
+  // Taken from the INPUT, streamed, on BOTH paths: the plan needs it to report whether an
+  // envelope already on disk still describes this audio, and the apply path needs it to
+  // write the binding. See envelope-ducking.mjs for why the fingerprint is over the input
+  // rather than over the artefact it certifies.
+  const fingerprint = await fingerprintVoice(voicePath, voiceName);
 
   if (!apply) {
     console.log('plan: measure the narration amplitude envelope');
-    console.log(`  source ${voicePath} (${fs.statSync(voicePath).size} bytes)`);
+    console.log(`  source ${voicePath} (${fingerprint.bytes} bytes, sha256 ${fingerprint.sha256.slice(0, 12)})`);
     console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
+
+    // REPORTED, NEVER ACTED ON. This stage writes nothing without --apply, and quietly
+    // re-measuring a stale envelope here would be the silent repair the consumers exist
+    // to refuse.
+    if (fs.existsSync(outPath)) {
+      let existing = null;
+      try {
+        existing = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+      } catch (err) {
+        console.log(`  existing UNREADABLE — ${outPath} is not valid JSON (${err.message})`);
+      }
+      if (existing !== null) {
+        console.log(`  existing ${describeEnvelopeState(classifyEnvelopeLineage(existing, fingerprint))}`);
+      }
+    }
+
     planFooter();
     return EXIT.OK;
   }
@@ -57,8 +92,11 @@ await runCli(async () => {
       }
       return { durationMs: Math.round(buf.duration * 1000), hopMs: 20, rms };
     }, b64);
-    fs.writeFileSync(outPath, JSON.stringify(env));
+    // The binding is written from the fingerprint taken BEFORE the decode, so it names
+    // the bytes that were actually measured.
+    fs.writeFileSync(outPath, JSON.stringify({ ...env, measuredFrom: envelopeBindingRecord(fingerprint) }));
     console.log(`envelope: ${env.rms.length} frames over ${env.durationMs}ms -> ${outPath}`);
+    console.log(`  measured from ${fingerprint.file} (sha256 ${fingerprint.sha256.slice(0, 12)})`);
   } finally {
     await b.close();
   }

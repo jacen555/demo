@@ -20,7 +20,27 @@ import { fileURLToPath } from 'node:url';
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
 import { normalizeEndCardFields } from '../src/end-card.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from '../src/gain-pin.mjs';
+import { MIX_PARAMETERS, NOT_IN_FORCE } from '../src/mix-parameters.mjs';
 import { assertCleanExit } from './_helpers.mjs';
+
+/**
+ * What a pin records for the CONDITIONAL pinned parameters when they are not in force.
+ *
+ * The sidechain duck is opt-in, so on a run without --duck-db its knobs have no value —
+ * but a pinned parameter must still be accounted for, or the pin records a partial set.
+ * `mix-parameters.declareAbsent` writes NOT_IN_FORCE for exactly this, and these fixtures
+ * have to record what the tool records or they stop describing it.
+ *
+ * DERIVED FROM THE REGISTRY, not written out: when the next conditional knob is added,
+ * these fixtures must not quietly go on asserting a settled pin over a set that no longer
+ * covers everything. That is the defect the pin exists to stop, and a hand-written
+ * fixture is exactly how it would be reintroduced inside its own tests.
+ */
+const NOT_IN_FORCE_MIX = Object.freeze(
+  Object.fromEntries(
+    MIX_PARAMETERS.filter((p) => p.pinned && p.name.startsWith('duck')).map((p) => [p.name, NOT_IN_FORCE]),
+  ),
+);
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -845,7 +865,7 @@ describe('remux-music safety', () => {
       JSON.stringify({
         source: 'music.wav',
         sha256,
-        mix: { voiceGain: 1.14, musicGain, ceiling: 1 },
+        mix: { voiceGain: 1.14, musicGain, ceiling: 1, ...NOT_IN_FORCE_MIX },
         evidence: 'operator-confirmed',
       }),
     );
@@ -987,7 +1007,7 @@ describe('gain pin classifier', () => {
   const current = {
     source: 'music.wav',
     sha256: 'b'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
   };
   // Named `confirmed`, so it must actually BE confirmed. Without `evidence` this is the
   // self-pinned shape, and a fixture that quietly supplies the defective form is
@@ -995,7 +1015,7 @@ describe('gain pin classifier', () => {
   const confirmed = {
     source: 'music.wav',
     sha256: 'b'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     evidence: 'operator-confirmed',
   };
 
@@ -1055,7 +1075,7 @@ describe('gain pin classifier', () => {
     const noEvidence = {
       source: 'music.wav',
       sha256: 'b'.repeat(64),
-      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     };
 
     const v = classifyGainPin(noEvidence, current);
@@ -1095,7 +1115,7 @@ describe('gain pin classifier', () => {
   const unconfirmed = {
     source: 'music.wav',
     sha256: 'a'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
   };
   const pinLineOf = (text, sha) => text.split('\n').find((l) => l.includes(sha.slice(0, 12)));
 
@@ -1168,8 +1188,8 @@ describe('remux-music gain pin', () => {
     evidence = 'operator-confirmed' } = {}) =>
     fs.writeFileSync(
       lockFile(dir),
-      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling } }
-        : { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling }, evidence }),
+      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling, ...NOT_IN_FORCE_MIX } }
+        : { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling, ...NOT_IN_FORCE_MIX }, evidence }),
     );
 
   const remux = (dir, extra = []) =>
@@ -1304,14 +1324,14 @@ describe('gain pin mix parameter coverage', () => {
   const applying = (mix = {}) => ({
     source: 'music.wav',
     sha256: SHA,
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX, ...mix },
   });
 
   /** A pin that genuinely covers every registered parameter and records a confirmation. */
   const settled = (over = {}) => ({
     source: 'music.wav',
     sha256: SHA,
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     evidence: 'operator-confirmed',
     ...over,
   });
@@ -1442,7 +1462,7 @@ describe('gain pin mix parameter coverage', () => {
     const partial = {
       source: 'music.wav',
       sha256: SHA,
-      mix: { voiceGain: 1.14, musicGain: 1.5 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ...NOT_IN_FORCE_MIX },
       evidence: 'operator-confirmed',
     };
 
@@ -1507,7 +1527,7 @@ describe('gain pin mix parameter coverage', () => {
   });
 
   test('describeGainPinRefusal_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
-    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX } };
 
     const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
 
@@ -1520,7 +1540,7 @@ describe('gain pin mix parameter coverage', () => {
     const noEvidence = {
       source: 'music.wav',
       sha256: 'a'.repeat(64),
-      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     };
 
     const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
@@ -1531,7 +1551,7 @@ describe('gain pin mix parameter coverage', () => {
   });
 
   test('describeGainPinPlan_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
-    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX } };
 
     const line = describeGainPinPlan(classifyGainPin(noEvidence, applying()), applying(), false);
 
@@ -1601,7 +1621,7 @@ describe('remux-music mix parameter pin', () => {
       JSON.stringify({
         source: 'music.wav',
         sha256: MUSIC_SHA,
-        mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+        mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX, ...mix },
         evidence: 'operator-confirmed',
       }),
     );
