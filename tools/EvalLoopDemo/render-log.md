@@ -268,6 +268,8 @@ file source should duck like a generated one, and this will recur for **every** 
 using a licensed track rather than the synth bed, which is now the expected path.
 
 
+### Audio verification — whole-file, not windows
+
 Bug-ledger 16 was shipped once at roughly 10 dB hot with every window check green, because
 window checks measure whether a bed is **present**, not whether it is at the right **level**.
 Measured by decoding this cut:
