@@ -2,13 +2,13 @@
 
 voice=en-US-AndrewNeural
 rate=+20%
-voiceoverMs=281712
-timingMs=281712
-contentMs=281712
+voiceoverMs=276528
+timingMs=276528
+contentMs=276528
 leadInMs=1920
 outroMs=0
 perceivedGapTargetMs=1500
 insertedGapsMs=1416,1416,1416,1416,1416,1416,1416
 driftMs=0
-observedEffWps=3.529
+observedEffWps=3.519
 status=pass

@@ -2,10 +2,10 @@
   "voiceId": "en-US-AndrewNeural",
   "roundedSpeed": 1.2,
   "aggregate": {
-    "words": 950,
-    "speechMs": 269195,
-    "observedEffWps": 3.529,
-    "observedSafeWps": 2.941
+    "words": 929,
+    "speechMs": 264011,
+    "observedEffWps": 3.519,
+    "observedSafeWps": 2.932
   },
   "segments": [
     {
@@ -73,12 +73,12 @@
     },
     {
       "id": "loop",
-      "words": 139,
-      "chars": 829,
-      "clipMs": 40056,
-      "speechMs": 39972,
-      "effWps": 3.477,
-      "textHash": "86324204356057afea708a8b8719125b4e2e479a0d36922e176f06a68f059370"
+      "words": 118,
+      "chars": 693,
+      "clipMs": 34872,
+      "speechMs": 34788,
+      "effWps": 3.392,
+      "textHash": "c0fa262dfb5a0fda2c21fee94dc3796236cd026c3216759630bfd6c1e52e5274"
     }
   ]
 }

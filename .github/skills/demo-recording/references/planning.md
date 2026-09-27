@@ -67,11 +67,52 @@ The discipline:
   comparisons that would land badly.
 - **Where will it be watched?** Platform, aspect ratio, embedded or standalone.
 
-### C. Evidence — the mandatory group
+### C. Register and point of view — the second mandatory group
+
+**Never assume these. They were assumed on the project this section was written from, and
+the assumption was wrong three times.**
+
+§A asks who is watching; that is *seniority*, not a depth setting. §B's `Emphasis` and
+`Framing` are about **content selection**. Neither asks what *voice* the thing is in, and
+that is the expensive gap: getting evidence wrong produces a **false** video, but getting
+register wrong produces one that has to be **rewritten** — and every rewrite costs a full
+render cycle.
+
+**Register — weight three axes, do not pick one.** Real videos are blends:
+
+- **Technical depth** — does the viewer see real artifacts (JSON, code, reports), or
+  abstractions of them? *Discovered late on the reference project: swapping a summary card
+  grid for the actual JSON object was a clear improvement, and it was found in review
+  rather than decided at intake.*
+- **Educational** — should the viewer be able to **do** the thing afterwards, or merely
+  **recognise** it? These are different scripts, not different emphases.
+- **Entertainment** — how much runtime may be spent on delight that carries no
+  information? **A number above zero has to be said out loud**, because the coherence
+  principle (§7) otherwise argues every flourish away individually.
+
+**Point of view — ask all three:**
+
+- **Whose voice?** *"We built this and here is what we learned"* / neutral explainer /
+  *"here is how you would do this."* This changes every sentence and is the single most
+  expensive thing to retrofit.
+- **What should the viewer feel at the end?** Impressed, equipped, reassured, or persuaded
+  to act. *The reference project's ending was rewritten three times — caveat-as-thesis,
+  then caveat-reframed-as-win, then caveat removed entirely — because this was never
+  pinned. Almost none of that churn was driven by new information.*
+- **Is the author on screen or in the credits?** Settles the end-card question at intake
+  rather than at mix time, which is where it surfaced.
+
+> **Why this is mandatory rather than "answerable from context."** The intake's
+> three-question limit is good discipline, but register and POV should be **among the
+> first three asked**. They look inferable from the brief and they are not: "engineering
+> leadership" is compatible with a neutral explainer, a war story, and a tutorial, and the
+> three share no sentences.
+
+### D. Evidence — the mandatory group
 
 See §4. Every figure needs a source before it reaches a script.
 
-### D. Series and continuity
+### E. Series and continuity
 
 - **Standalone, or part of a set?** If a set: which part, and is it authored before or
   after its siblings?
@@ -82,7 +123,7 @@ See §4. Every figure needs a source before it reaches a script.
 - **Continuity values that must match:** voice, speed, perceived gap, narration loudness.
   Mismatched loudness between parts is very obvious on back-to-back playback.
 
-### E. Accessibility
+### F. Accessibility
 
 See §3 — these are planning-time constraints, not post-production additions.
 
@@ -92,14 +133,14 @@ See §3 — these are planning-time constraints, not post-production additions.
 - **Flashing / rapid-cut** check on animated transitions
 - **Caption and transcript plan**
 
-### F. Assets
+### G. Assets
 
 - **What visuals already exist?** Screenshots, HTML, CSVs, diagrams, dashboards,
   recordings. Ask before designing a storyboard around something that would have to be
   built.
 - **Anything that must appear?**
 
-### G. Narration craft
+### H. Narration craft
 
 - **Pronunciation glossary** — list acronyms, jargon, product names, and how each should
   be read (spelled out, as a word, or phonetically respelled). Building this as a planning
@@ -113,7 +154,7 @@ See §3 — these are planning-time constraints, not post-production additions.
   better than a legacy one, and that gap is larger than the cost of an inconsistent —
   but good — voice between parts.
 
-### H. Downstream reuse
+### I. Downstream reuse
 
 - **Will this material also become slides, a doc, or a reference page?**
 - **If so — as what mode?** Per Diátaxis, a tutorial-style walkthrough and a reference doc
@@ -121,7 +162,7 @@ See §3 — these are planning-time constraints, not post-production additions.
   documentation. Plan for reuse, but do not assume a downstream format is a trivial
   derivative of the script.
 
-### I. Sign-off
+### J. Sign-off
 
 - **Who must approve the script and the final cut?** Distinct from the render approval
   gate in `SKILL.md`, which is about spending render time; this is about who owns the
@@ -252,7 +293,7 @@ is cheap to fix while it is still text and expensive once it is in a rendered vi
   which the authors attribute to enthusiasm rather than speed `[VERIFIED]` — relevant for
   a human read, less controllable with TTS.
 - **Acronyms and jargon are genuinely ambiguous to a TTS engine.** Decide per term whether
-  it is spoken as a word or spelled out, and record it in the glossary (§2.G).
+  it is spoken as a word or spelled out, and record it in the glossary (§2.H).
 - **Write numbers the way they should be read.** This is the most common source of an
   otherwise-perfect render needing a redo.
 - **This is not a stack where SSML `<break>` can fix pacing** — see bug ledger entry 10.
@@ -308,12 +349,39 @@ Mayer's cognitive theory of multimedia learning `[VERIFIED]`. The ones that are
 | **Signaling** | Plan how attention is directed — highlights, callouts, narration cues |
 | **Redundancy** | **Do not put narration text on screen as bullets while narrating it.** Visuals should complement, not duplicate. This constrains storyboarding directly |
 | **Segmenting** | Decide chapter boundaries at planning time (§2.B) |
-| **Pre-training** | Decide what must be introduced before the walkthrough (§2.A, §2.D) |
+| **Pre-training** | Decide what must be introduced before the walkthrough (§2.A, §2.E) |
 | **Modality** | Prefer narration + graphic over on-screen text + graphic |
 | **Personalization** | Conversational register beats formal |
-| **Voice** | Quality of the speaking voice matters — see the tier question in §2.G |
+| **Voice** | Quality of the speaking voice matters — see the tier question in §2.H |
 
 Note the tension between **redundancy** (don't duplicate narration on screen) and the
 **G226 accessibility requirement** (narration must cover everything visually essential).
 They resolve in the same direction: *narration carries the meaning, visuals illustrate it*
 — rather than visuals carrying meaning that narration merely echoes.
+
+### ⏱️ Temporal contiguity — "should the diagram come before the narration?"
+
+A real question from a real review, and the answer is more specific than the question
+assumes. **Narration and the visual it refers to should be simultaneous, not successive.**
+
+- Showing a complete diagram and *then* explaining it forces the viewer to hold it in
+  working memory, and measurably hurts comprehension.
+- **Signalling is what makes synchrony possible**: highlight each element *as it is
+  narrated*. This is why an attention cue must be replaced rather than deleted when its
+  implementation is wrong — the cue is load-bearing, the blackout was not.
+- **The practical rule:** *establish the structure briefly, then signal each element in
+  sync with its narration.* A short establishing beat for context is fine. A long lead, or
+  revealing everything before narrating any of it, is not.
+
+> **Both directions are errors, and the common one is the second.** Measured on the
+> reference project: two segments were landing their **last** structural reveal at 97% and
+> 98% of their window, so every element arrived after the sentence describing it had
+> passed. That is successive presentation — the failure this principle names. "Show them
+> earlier" was the correct fix there, but only **up to synchrony**; pushed further it
+> becomes the working-memory error instead.
+>
+> Cheap way to catch it: compare each segment's last structural reveal against its window.
+> Anything near 100% is describing content the viewer has not seen yet.
+
+Sources: Mayer, *Multimedia Learning*, ch. 8 (temporal contiguity); *Cambridge Handbook of
+Multimedia Learning*, ch. 12 (signalling).

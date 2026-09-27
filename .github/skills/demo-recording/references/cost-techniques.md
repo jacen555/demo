@@ -120,6 +120,33 @@ hit it in production:
 **Why `[INFERRED]`:** AAC encoder delay/priming accumulates per segment, so audio
 drifts progressively.
 
+#### So cache at the FRAME level, and encode whole
+
+"Render each segment to its own MP4 and concat them" is the intuitive reading of
+*"reuse the segments that didn't change"*, and it is **the wrong architecture** for
+exactly the reason above. It is worth stating the right shape next to the warning,
+because the trap is easy to walk into while doing something sensible.
+
+| | |
+|---|---|
+| ❌ per-segment **MP4s**, concatenated | reintroduces audio seams and progressive drift |
+| ✅ per-segment **frames**, encoded in one pass | identical saving, no audio ever split |
+
+The voiceover is a single continuous track with solved inter-segment gaps and a
+measured lead-in. Cutting and rejoining it per segment throws that away, and it is
+what currently holds A/V alignment steady. **Nothing about reusing work requires
+touching it.**
+
+The correct pipeline is unchanged in shape — only S6 becomes incremental:
+
+1. reuse **frames** for segments whose inputs are unchanged;
+2. capture only the dirty segments;
+3. encode the full frame sequence in **one** pass (S7 as today);
+4. mux the single continuous audio track, untouched (S8/S9 as today).
+
+Capture was **84% of a 1080p PNG render** and 47% of a 4K JPEG one, so this
+captures nearly all of the available saving while leaving the audio path alone.
+
 **This validates the existing architecture.** Keeping video muted and the narration
 as one continuous track — which is what makes the ~4-minute audio-only remux safe —
 is exactly the prescribed shape. Do not break it in pursuit of segment-level video
@@ -256,6 +283,14 @@ so the mechanism is inferred while the rate is measured.)*
 
 ### Proposed but unmeasured — do not quote alongside the above
 
+- **Segment-level incremental capture** — reuse frames for unchanged segments instead of
+  re-capturing all of them. Three of the four pieces already exist; the blocker is that
+  the resume fingerprint hashes the whole `video-auto.html`, so a one-word edit anywhere
+  invalidates everything. Full design, including the failure mode where a narration edit
+  silently misaligns later segments: **`incremental-capture.md`**. Bounded by the capture
+  share below — it cannot beat 84% (1080p/PNG) or 47% (4K/JPEG) of a render, and a
+  **global styling change legitimately dirties every segment**, so it saves nothing on
+  rounds like that one.
 - **A RAM disk for the frame store**, now viable *because* of the JPEG finding: PNG
   frames were 14.5 GB, JPEG at 4K is **~1.25 GB** for a whole video. Would take
   disk I/O out of capture and encode. Only helps with headroom; never a default.

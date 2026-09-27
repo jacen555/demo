@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "durationMs": 281712,
+  "durationMs": 276528,
   "endCard": {
     "enabled": false
   },
@@ -365,7 +365,11 @@
           "atMs": 17127,
           "semanticClass": "body",
           "target": "hard-node-s1",
-          "action": "spotlight"
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
         }
       ],
       "claims": [
@@ -897,7 +901,7 @@
         "title": "One scenario, field by field",
         "subtitle": "Real object from scenarios.json — id: outlook-ios-not-receiving",
         "caption": "scenarios.json — phrasings elided; internal ids removed",
-        "note": "The real scenario object from scenarios.json, rendered as syntax-highlighted JSON. Six fields are outlined and the rest dimmed, one at a time, each landing on the word that names it: opening, targetPath, the facts array, the second fact, answerPool, assertions. Internal ids and the taxonomy description are removed; the 13 alternative phrasings are elided to a count, since they derive from real support data.",
+        "note": "The real scenario object from scenarios.json, rendered as syntax-highlighted JSON. Six fields are outlined and the rest dimmed, one at a time, each landing on the word that names it: opening, targetPath, the facts array, the second fact, answerPool, assertions. Four authored facts are shown. Internal ids are removed and the 13 alternative phrasings are elided to a count, since they derive from real support data; the taxonomy description is kept to its first sentence and placed last.",
         "json": {
           "id": "outlook-ios-not-receiving",
           "kind": "l5-descent",
@@ -910,9 +914,11 @@
           "facts": [
             "I am using the mail app on my iPhone.",
             "I can still send messages, nothing new ever arrives.",
-            "I checked junk and the mailbox is not full."
+            "I checked junk and the mailbox is not full.",
+            "I still have space left in my inbox."
           ],
           "answerPool": "13 alternative phrasings (elided)",
+          "description": "This node addresses issues where users of Outlook for iOS are unable to receive any incoming emails, despite verifying common causes like spam filters, inbox capacity, or account settings.",
           "assertions": [
             "l5Exact",
             "structureLevelsPopulated",
@@ -942,7 +948,7 @@
           },
           {
             "path": "assertions",
-            "atMs": 44611
+            "atMs": 45292
           }
         ]
       },
@@ -3722,93 +3728,94 @@
       },
       "triggers": [
         {
-          "id": "dimensions-t0",
-          "atMs": 2890,
-          "semanticClass": "list",
+          "atMs": 260,
           "target": "dimensions-node-d1",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t1",
-          "atMs": 6745,
-          "semanticClass": "list",
+          "atMs": 520,
           "target": "dimensions-node-d2",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t2",
-          "atMs": 11561,
-          "semanticClass": "list",
+          "atMs": 780,
           "target": "dimensions-node-d3",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t3",
-          "atMs": 19750,
-          "semanticClass": "quote",
+          "atMs": 2869,
+          "target": "dimensions-node-d1",
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
+        },
+        {
+          "atMs": 6095,
+          "target": "dimensions-node-d2",
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
+        },
+        {
+          "atMs": 10151,
+          "target": "dimensions-node-d3",
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
+        },
+        {
+          "atMs": 18378,
           "target": "dimensions-node-e1",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t4",
-          "atMs": 21676,
-          "semanticClass": "quote",
+          "atMs": 19944,
           "target": "dimensions-node-e2",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-e0",
-          "atMs": 21926,
-          "semanticClass": "chart",
+          "atMs": 20204,
           "target": "dimensions-edge-0",
           "action": "drawEdge"
         },
         {
-          "id": "dimensions-t5",
-          "atMs": 24086,
-          "semanticClass": "card",
+          "atMs": 21877,
           "target": "dimensions-node-e3",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-e1",
-          "atMs": 24336,
-          "semanticClass": "chart",
+          "atMs": 22137,
           "target": "dimensions-edge-1",
           "action": "drawEdge"
         },
         {
-          "id": "dimensions-t6",
-          "atMs": 29384,
-          "semanticClass": "quote",
+          "atMs": 26658,
           "target": "dimensions-node-g1",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t7",
-          "atMs": 34599,
-          "semanticClass": "stat",
-          "target": "dimensions-node-k1",
-          "action": "revealNode"
-        },
-        {
-          "id": "dimensions-t8",
-          "atMs": 34599,
-          "semanticClass": "stat",
+          "atMs": 30871,
           "target": "dimensions-node-k2",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t9",
-          "atMs": 34599,
-          "semanticClass": "stat",
+          "atMs": 31221,
           "target": "dimensions-node-k3",
           "action": "revealNode"
         },
         {
-          "id": "dimensions-t10",
-          "atMs": 34599,
-          "semanticClass": "stat",
+          "atMs": 33067,
+          "target": "dimensions-node-k1",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 34150,
           "target": "dimensions-node-k4",
           "action": "revealNode"
         }
@@ -4487,57 +4494,55 @@
       },
       "triggers": [
         {
-          "id": "twotier-t0",
-          "atMs": 1775,
-          "semanticClass": "label",
+          "atMs": 240,
           "target": "twotier-node-lane_ui",
           "action": "revealNode"
         },
         {
-          "id": "twotier-t0b",
-          "atMs": 2535,
-          "semanticClass": "label",
-          "target": "twotier-node-ui_end",
-          "action": "revealNode"
-        },
-        {
-          "id": "twotier-t1",
-          "atMs": 5577,
-          "semanticClass": "chart",
-          "target": "twotier-edge-uilane",
-          "action": "flowEdge",
-          "payload": {
-            "particles": 2
-          }
-        },
-        {
-          "id": "twotier-t2",
-          "atMs": 12928,
-          "semanticClass": "label",
+          "atMs": 480,
           "target": "twotier-node-lane_api",
           "action": "revealNode"
         },
         {
-          "id": "twotier-t2b",
-          "atMs": 13688,
-          "semanticClass": "label",
+          "atMs": 700,
+          "target": "twotier-node-ui_end",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 860,
           "target": "twotier-node-api_end",
           "action": "revealNode"
         },
         {
-          "id": "twotier-t3",
-          "atMs": 14702,
-          "semanticClass": "chart",
-          "target": "twotier-edge-apilane",
-          "action": "flowEdge",
+          "atMs": 3853,
+          "target": "twotier-edge-uilane",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 3853,
+          "target": "twotier-node-lane_ui",
+          "action": "emphasize",
           "payload": {
-            "particles": 9
+            "hold": true,
+            "scale": 1.06
           }
         },
         {
-          "id": "twotier-t4",
-          "atMs": 19752,
-          "semanticClass": "card",
+          "atMs": 10086,
+          "target": "twotier-edge-apilane",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 10086,
+          "target": "twotier-node-lane_api",
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
+        },
+        {
+          "atMs": 15452,
           "target": "twotier-node-gate",
           "action": "revealNode"
         }
@@ -5051,7 +5056,11 @@
           "atMs": 18268,
           "semanticClass": "body",
           "target": "blindspot-node-t3",
-          "action": "spotlight"
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
         }
       ],
       "claims": [
@@ -5451,136 +5460,128 @@
       "id": "loop",
       "title": "The comparison exists before the pull request does",
       "startMs": 241656,
-      "endMs": 281712,
+      "endMs": 276528,
       "plannedDurationMs": 39321,
-      "voiceoverText": "We deploy the pull-request branch, point the harness at it, and run it three times. Then the same suite against main, and we diff the two. The comparison exists before the review does. On one real change, routing got clearly better. Cases reaching the right support area went from twenty-seven to thirty-five out of sixty-seven. Cases where the interview came back with nothing were almost halved. Twenty-six fewer failed assertions. And then the harness flagged something the totals would have buried. A prompt-injection probe — one that exists to be refused — had quietly started getting answered. Every headline number said this build was better. It was also less safe, and one line caught it. Not in production. Not in review. Before the pull request was ever opened. That is what this buys. Run it against your branch first.",
+      "voiceoverText": "We deploy the pull-request branch, point the harness at it, and run it three times. Then the same suite against main, and we diff the two. The comparison exists before the review does. On one real change, routing got clearly better. Cases reaching the right support area went from twenty-seven to thirty-five out of sixty-seven. Cases where the interview came back with nothing were almost halved. Twenty-six fewer failed assertions. And when something regresses, we see it immediately — in the same report, on the same run, while the change is still a branch. Not in production. Not in review. Before the pull request was ever opened. That is what this buys. Run it against your branch first.",
       "visual": {
         "mode": "diagram",
         "kicker": "The payoff",
         "title": "The comparison exists before the pull request does",
-        "subtitle": "Every headline number said better. One line said less safe.",
-        "note": "**The loop builds first** — deploy, run x3, read the delta, fix, re-run — and completes one revolution, with the 'open the pull request' marker attaching on the way OUT. Then three metric rows animate up. Beat. Then the flagged panel slides in, retitled CAUGHT BEFORE THE PULL REQUEST because the probe getting through is the harness succeeding, not the product failing. Finally the closing triad lands ONE BEAT AT A TIME with the narration — not in production, not in review, before the pull request was ever opened. NO END CARD. These rows are rendered natively, never cropped from the source report, which carries a deployment endpoint and pull-request ids in its own markup.",
+        "subtitle": "A regression shows up in the same report, on the same run.",
+        "note": "The loop builds as it is narrated — deploy, run x3, read the delta, fix, re-run — and closes back on the suite. \"Open the pull request\" sits outside the cycle to the right, drawn from \"fix\", so it reads as the output of fixing rather than a step inside the loop. The three measured deltas land one per sentence on the left. The claim panel \"REGRESSIONS SURFACE ON THE SAME RUN\" is marked with a sustained outline as the narration reaches it, then the closing triad lands as three separate beats.",
         "viewBox": "0 0 1600 520",
         "nodes": [
           {
             "id": "n1",
             "label": "deploy the branch",
-            "x": 60,
-            "y": 20,
-            "w": 270,
-            "h": 74
+            "x": 36,
+            "y": 14,
+            "w": 250,
+            "h": 76
           },
           {
             "id": "n2",
             "label": "run the suite × 3",
-            "x": 390,
-            "y": 20,
-            "w": 270,
-            "h": 74
+            "x": 326,
+            "y": 14,
+            "w": 250,
+            "h": 76
           },
           {
             "id": "n3",
             "label": "read the delta",
-            "x": 720,
-            "y": 20,
-            "w": 270,
-            "h": 74
+            "x": 616,
+            "y": 14,
+            "w": 250,
+            "h": 76
           },
           {
             "id": "n4",
             "label": "fix",
-            "x": 1050,
-            "y": 20,
-            "w": 200,
-            "h": 74
+            "x": 906,
+            "y": 14,
+            "w": 170,
+            "h": 76
           },
           {
             "id": "n5",
             "label": "re-run",
-            "x": 1050,
-            "y": 112,
-            "w": 200,
-            "h": 74
+            "x": 906,
+            "y": 124,
+            "w": 170,
+            "h": 70
           },
           {
             "id": "marker",
-            "label": "→ open the pull request",
-            "x": 700,
-            "y": 112,
-            "w": 290,
-            "h": 74
+            "label": "open the pull request",
+            "x": 1200,
+            "y": 14,
+            "w": 364,
+            "h": 76
           },
           {
             "id": "m1",
-            "label": "right support area   27.0 → 35.0  of 67",
-            "x": 60,
-            "y": 215,
-            "w": 620,
-            "h": 52
+            "label": "right support area   27 → 35  of 67",
+            "x": 36,
+            "y": 240,
+            "w": 690,
+            "h": 56
           },
           {
             "id": "m2",
             "label": "came back with nothing — almost halved",
-            "x": 60,
-            "y": 272,
-            "w": 620,
-            "h": 52
+            "x": 36,
+            "y": 306,
+            "w": 690,
+            "h": 56
           },
           {
             "id": "m3",
-            "label": "assertions failed   − 26.0",
-            "x": 60,
-            "y": 329,
-            "w": 620,
-            "h": 52
+            "label": "assertions failed   − 26",
+            "x": 36,
+            "y": 372,
+            "w": 690,
+            "h": 56
           },
           {
             "id": "m4",
             "label": "3 runs per arm",
-            "x": 60,
-            "y": 386,
-            "w": 620,
-            "h": 52
-          },
-          {
-            "id": "c1",
-            "label": "CAUGHT BEFORE THE PULL REQUEST",
-            "x": 760,
-            "y": 215,
-            "w": 780,
+            "x": 36,
+            "y": 438,
+            "w": 690,
             "h": 56
           },
           {
-            "id": "c2",
-            "label": "prompt-injection probe (must be refused)   3 of 3  →  1 of 3",
-            "x": 760,
-            "y": 278,
-            "w": 780,
-            "h": 74
+            "id": "c1",
+            "label": "REGRESSIONS SURFACE ON THE SAME RUN",
+            "x": 790,
+            "y": 240,
+            "w": 774,
+            "h": 60
           },
           {
             "id": "t1",
             "label": "Not in production.",
-            "x": 760,
-            "y": 366,
-            "w": 780,
-            "h": 44
+            "x": 790,
+            "y": 330,
+            "w": 774,
+            "h": 50
           },
           {
             "id": "t2",
             "label": "Not in review.",
-            "x": 760,
-            "y": 417,
-            "w": 780,
-            "h": 44
+            "x": 790,
+            "y": 390,
+            "w": 774,
+            "h": 50
           },
           {
             "id": "t3",
             "label": "Before the pull request was ever opened.",
-            "x": 760,
-            "y": 468,
-            "w": 780,
-            "h": 44
+            "x": 790,
+            "y": 450,
+            "w": 774,
+            "h": 50
           }
         ],
         "edges": [
@@ -5605,176 +5606,11 @@
             "to": "n2"
           },
           {
-            "from": "n3",
+            "from": "n4",
             "to": "marker"
           }
         ]
       },
-      "triggers": [
-        {
-          "id": "loop-t0",
-          "atMs": 288,
-          "semanticClass": "card",
-          "target": "loop-node-n1",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-t1",
-          "atMs": 2594,
-          "semanticClass": "card",
-          "target": "loop-node-n2",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-e0",
-          "atMs": 2844,
-          "semanticClass": "chart",
-          "target": "loop-edge-0",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-t2",
-          "atMs": 4899,
-          "semanticClass": "card",
-          "target": "loop-node-n3",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-e1",
-          "atMs": 5149,
-          "semanticClass": "chart",
-          "target": "loop-edge-1",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-t3",
-          "atMs": 5764,
-          "semanticClass": "card",
-          "target": "loop-node-n4",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-e2",
-          "atMs": 6014,
-          "semanticClass": "chart",
-          "target": "loop-edge-2",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-t4",
-          "atMs": 6339,
-          "semanticClass": "card",
-          "target": "loop-node-n5",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-e3",
-          "atMs": 6589,
-          "semanticClass": "chart",
-          "target": "loop-edge-3",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-e4",
-          "atMs": 6589,
-          "semanticClass": "chart",
-          "target": "loop-edge-4",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-t5",
-          "atMs": 7204,
-          "semanticClass": "chart",
-          "target": "loop-node-n2",
-          "action": "pulsePath",
-          "payload": {
-            "chain": [
-              "loop-node-n1",
-              "loop-node-n2",
-              "loop-node-n3",
-              "loop-node-n4",
-              "loop-node-n5"
-            ]
-          }
-        },
-        {
-          "id": "loop-t6",
-          "atMs": 7492,
-          "semanticClass": "label",
-          "target": "loop-node-marker",
-          "action": "revealNode"
-        },
-        {
-          "id": "loop-e5",
-          "atMs": 7742,
-          "semanticClass": "chart",
-          "target": "loop-edge-5",
-          "action": "drawEdge"
-        },
-        {
-          "id": "loop-t7",
-          "atMs": 10951,
-          "semanticClass": "stat",
-          "target": "loop-node-m1",
-          "action": "rise"
-        },
-        {
-          "id": "loop-t8",
-          "atMs": 14985,
-          "semanticClass": "stat",
-          "target": "loop-node-m2",
-          "action": "rise"
-        },
-        {
-          "id": "loop-t9",
-          "atMs": 17290,
-          "semanticClass": "stat",
-          "target": "loop-node-m3",
-          "action": "rise"
-        },
-        {
-          "id": "loop-t10",
-          "atMs": 18443,
-          "semanticClass": "label",
-          "target": "loop-node-m4",
-          "action": "rise"
-        },
-        {
-          "id": "loop-t11",
-          "atMs": 20749,
-          "semanticClass": "card",
-          "target": "loop-node-c1",
-          "action": "left"
-        },
-        {
-          "id": "loop-t12",
-          "atMs": 23054,
-          "semanticClass": "stat",
-          "target": "loop-node-c2",
-          "action": "left"
-        },
-        {
-          "id": "loop-t13",
-          "atMs": 30835,
-          "semanticClass": "body",
-          "target": "loop-node-t1",
-          "action": "pop"
-        },
-        {
-          "id": "loop-t14",
-          "atMs": 31987,
-          "semanticClass": "body",
-          "target": "loop-node-t2",
-          "action": "pop"
-        },
-        {
-          "id": "loop-t15",
-          "atMs": 32852,
-          "semanticClass": "body",
-          "target": "loop-node-t3",
-          "action": "pop"
-        }
-      ],
       "claims": [
         {
           "claimId": "c-win",
@@ -5785,18 +5621,11 @@
             "report-1602086-vs-1601897.html:Assertions failed delta -26.0",
             "report-1602086-vs-1601897.html:3 runs per arm"
           ]
-        },
-        {
-          "claimId": "c-caveat",
-          "type": "direct",
-          "provenanceIds": [
-            "report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -> 1/3"
-          ]
         }
       ],
       "audio": {
         "file": "segment_08.mp3",
-        "durationMs": 40056,
+        "durationMs": 34872,
         "headMs": 84,
         "tailMs": 0,
         "words": [
@@ -5807,688 +5636,699 @@
           },
           {
             "word": "deploy",
-            "startMs": 241834,
+            "startMs": 241835,
             "endMs": 242118
           },
           {
             "word": "the",
             "startMs": 242129,
-            "endMs": 242223
+            "endMs": 242224
           },
           {
             "word": "pull-request",
-            "startMs": 242233,
-            "endMs": 242800
+            "startMs": 242234,
+            "endMs": 242801
           },
           {
             "word": "branch",
-            "startMs": 242811,
-            "endMs": 243230
+            "startMs": 242812,
+            "endMs": 243232
           },
           {
             "word": "point",
-            "startMs": 243419,
-            "endMs": 243629
+            "startMs": 243422,
+            "endMs": 243632
           },
           {
             "word": "the",
-            "startMs": 243640,
-            "endMs": 243693
+            "startMs": 243643,
+            "endMs": 243695
           },
           {
             "word": "harness",
-            "startMs": 243703,
-            "endMs": 244049
+            "startMs": 243705,
+            "endMs": 244052
           },
           {
             "word": "at",
-            "startMs": 244059,
-            "endMs": 244175
+            "startMs": 244062,
+            "endMs": 244178
           },
           {
             "word": "it",
-            "startMs": 244185,
-            "endMs": 244291
+            "startMs": 244188,
+            "endMs": 244294
           },
           {
             "word": "and",
-            "startMs": 244543,
-            "endMs": 244648
+            "startMs": 244547,
+            "endMs": 244652
           },
           {
             "word": "run",
-            "startMs": 244658,
-            "endMs": 244805
+            "startMs": 244662,
+            "endMs": 244809
           },
           {
             "word": "it",
-            "startMs": 244815,
-            "endMs": 244900
+            "startMs": 244819,
+            "endMs": 244904
           },
           {
             "word": "three",
-            "startMs": 244910,
-            "endMs": 245109
+            "startMs": 244914,
+            "endMs": 245114
           },
           {
             "word": "times",
-            "startMs": 245120,
-            "endMs": 245603
+            "startMs": 245125,
+            "endMs": 245608
           },
           {
             "word": "Then",
-            "startMs": 245960,
-            "endMs": 246033
+            "startMs": 245965,
+            "endMs": 246039
           },
           {
             "word": "the",
-            "startMs": 246044,
-            "endMs": 246107
+            "startMs": 246049,
+            "endMs": 246112
           },
           {
             "word": "same",
-            "startMs": 246117,
-            "endMs": 246348
+            "startMs": 246123,
+            "endMs": 246354
           },
           {
             "word": "suite",
-            "startMs": 246359,
-            "endMs": 246642
+            "startMs": 246365,
+            "endMs": 246648
           },
           {
             "word": "against",
-            "startMs": 246652,
-            "endMs": 246925
+            "startMs": 246658,
+            "endMs": 246932
           },
           {
             "word": "main",
-            "startMs": 246936,
-            "endMs": 247220
+            "startMs": 246943,
+            "endMs": 247226
           },
           {
             "word": "and",
-            "startMs": 247482,
-            "endMs": 247545
+            "startMs": 247489,
+            "endMs": 247552
           },
           {
             "word": "we",
-            "startMs": 247555,
-            "endMs": 247681
+            "startMs": 247562,
+            "endMs": 247688
           },
           {
             "word": "diff",
-            "startMs": 247692,
-            "endMs": 247859
+            "startMs": 247700,
+            "endMs": 247867
           },
           {
             "word": "the",
-            "startMs": 247870,
-            "endMs": 247944
+            "startMs": 247878,
+            "endMs": 247952
           },
           {
             "word": "two",
-            "startMs": 247954,
-            "endMs": 248216
+            "startMs": 247962,
+            "endMs": 248224
           },
           {
             "word": "The",
-            "startMs": 248563,
-            "endMs": 248605
+            "startMs": 248571,
+            "endMs": 248614
           },
           {
             "word": "comparison",
-            "startMs": 248615,
-            "endMs": 249119
+            "startMs": 248624,
+            "endMs": 249128
           },
           {
             "word": "exists",
-            "startMs": 249130,
-            "endMs": 249549
+            "startMs": 249139,
+            "endMs": 249559
           },
           {
             "word": "before",
-            "startMs": 249560,
-            "endMs": 249854
+            "startMs": 249570,
+            "endMs": 249864
           },
           {
             "word": "the",
-            "startMs": 249865,
-            "endMs": 249927
+            "startMs": 249875,
+            "endMs": 249937
           },
           {
             "word": "review",
-            "startMs": 249938,
-            "endMs": 250200
+            "startMs": 249948,
+            "endMs": 250211
           },
           {
             "word": "does",
-            "startMs": 250211,
-            "endMs": 250599
+            "startMs": 250222,
+            "endMs": 250610
           },
           {
             "word": "On",
-            "startMs": 250946,
-            "endMs": 251082
+            "startMs": 250957,
+            "endMs": 251094
           },
           {
             "word": "one",
-            "startMs": 251093,
-            "endMs": 251271
+            "startMs": 251105,
+            "endMs": 251283
           },
           {
             "word": "real",
-            "startMs": 251282,
-            "endMs": 251460
+            "startMs": 251293,
+            "endMs": 251472
           },
           {
             "word": "change",
-            "startMs": 251471,
-            "endMs": 251921
+            "startMs": 251483,
+            "endMs": 251934
           },
           {
             "word": "routing",
-            "startMs": 252132,
-            "endMs": 252363
+            "startMs": 252145,
+            "endMs": 252376
           },
           {
             "word": "got",
-            "startMs": 252373,
-            "endMs": 252531
+            "startMs": 252386,
+            "endMs": 252544
           },
           {
             "word": "clearly",
-            "startMs": 252541,
-            "endMs": 252845
+            "startMs": 252555,
+            "endMs": 252859
           },
           {
             "word": "better",
-            "startMs": 252857,
-            "endMs": 253171
+            "startMs": 252870,
+            "endMs": 253185
           },
           {
             "word": "Cases",
-            "startMs": 253518,
-            "endMs": 253832
+            "startMs": 253532,
+            "endMs": 253847
           },
           {
             "word": "reaching",
-            "startMs": 253843,
-            "endMs": 254126
+            "startMs": 253858,
+            "endMs": 254142
           },
           {
             "word": "the",
-            "startMs": 254136,
-            "endMs": 254200
+            "startMs": 254152,
+            "endMs": 254215
           },
           {
             "word": "right",
-            "startMs": 254210,
-            "endMs": 254421
+            "startMs": 254225,
+            "endMs": 254436
           },
           {
             "word": "support",
-            "startMs": 254431,
-            "endMs": 254798
+            "startMs": 254446,
+            "endMs": 254815
           },
           {
             "word": "area",
-            "startMs": 254808,
-            "endMs": 255124
+            "startMs": 254825,
+            "endMs": 255140
           },
           {
             "word": "went",
-            "startMs": 255134,
-            "endMs": 255312
+            "startMs": 255151,
+            "endMs": 255329
           },
           {
             "word": "from",
-            "startMs": 255323,
-            "endMs": 255470
+            "startMs": 255340,
+            "endMs": 255487
           },
           {
             "word": "twenty-seven",
-            "startMs": 255481,
-            "endMs": 256026
+            "startMs": 255498,
+            "endMs": 256043
           },
           {
             "word": "to",
-            "startMs": 256037,
-            "endMs": 256132
+            "startMs": 256055,
+            "endMs": 256149
           },
           {
             "word": "thirty-five",
-            "startMs": 256142,
-            "endMs": 256835
+            "startMs": 256160,
+            "endMs": 256854
           },
           {
             "word": "out",
-            "startMs": 256897,
-            "endMs": 257087
+            "startMs": 256916,
+            "endMs": 257106
           },
           {
             "word": "of",
-            "startMs": 257097,
-            "endMs": 257159
+            "startMs": 257116,
+            "endMs": 257179
           },
           {
             "word": "sixty-seven",
-            "startMs": 257171,
-            "endMs": 257800
+            "startMs": 257190,
+            "endMs": 257820
           },
           {
             "word": "Cases",
-            "startMs": 258147,
-            "endMs": 258440
+            "startMs": 258167,
+            "endMs": 258461
           },
           {
             "word": "where",
-            "startMs": 258451,
-            "endMs": 258556
+            "startMs": 258472,
+            "endMs": 258577
           },
           {
             "word": "the",
-            "startMs": 258566,
-            "endMs": 258640
+            "startMs": 258587,
+            "endMs": 258661
           },
           {
             "word": "interview",
-            "startMs": 258651,
-            "endMs": 259008
+            "startMs": 258672,
+            "endMs": 259029
           },
           {
             "word": "came",
-            "startMs": 259018,
-            "endMs": 259259
+            "startMs": 259039,
+            "endMs": 259281
           },
           {
             "word": "back",
-            "startMs": 259270,
-            "endMs": 259543
+            "startMs": 259291,
+            "endMs": 259565
           },
           {
             "word": "with",
-            "startMs": 259553,
-            "endMs": 259669
+            "startMs": 259575,
+            "endMs": 259691
           },
           {
             "word": "nothing",
-            "startMs": 259679,
-            "endMs": 260057
+            "startMs": 259701,
+            "endMs": 260079
           },
           {
             "word": "were",
-            "startMs": 260172,
-            "endMs": 260320
+            "startMs": 260195,
+            "endMs": 260343
           },
           {
             "word": "almost",
-            "startMs": 260330,
-            "endMs": 260624
+            "startMs": 260353,
+            "endMs": 260647
           },
           {
             "word": "halved",
-            "startMs": 260634,
-            "endMs": 261002
+            "startMs": 260657,
+            "endMs": 261026
           },
           {
             "word": "Twenty-six",
-            "startMs": 261348,
-            "endMs": 261862
+            "startMs": 261373,
+            "endMs": 261887
           },
           {
             "word": "fewer",
-            "startMs": 261873,
-            "endMs": 262251
+            "startMs": 261898,
+            "endMs": 262277
           },
           {
             "word": "failed",
-            "startMs": 262261,
-            "endMs": 262513
+            "startMs": 262287,
+            "endMs": 262539
           },
           {
             "word": "assertions",
-            "startMs": 262523,
-            "endMs": 263112
+            "startMs": 262549,
+            "endMs": 263138
           },
           {
             "word": "And",
-            "startMs": 263458,
-            "endMs": 263521
+            "startMs": 263484,
+            "endMs": 263548
           },
           {
-            "word": "then",
-            "startMs": 263531,
-            "endMs": 263626
-          },
-          {
-            "word": "the",
-            "startMs": 263637,
-            "endMs": 263699
-          },
-          {
-            "word": "harness",
-            "startMs": 263709,
-            "endMs": 264067
-          },
-          {
-            "word": "flagged",
-            "startMs": 264077,
-            "endMs": 264393
+            "word": "when",
+            "startMs": 263558,
+            "endMs": 263674
           },
           {
             "word": "something",
-            "startMs": 264403,
-            "endMs": 264676
+            "startMs": 263684,
+            "endMs": 264041
+          },
+          {
+            "word": "regresses",
+            "startMs": 264052,
+            "endMs": 264631
+          },
+          {
+            "word": "we",
+            "startMs": 264840,
+            "endMs": 264988
+          },
+          {
+            "word": "see",
+            "startMs": 264998,
+            "endMs": 265271
+          },
+          {
+            "word": "it",
+            "startMs": 265282,
+            "endMs": 265376
+          },
+          {
+            "word": "immediately",
+            "startMs": 265387,
+            "endMs": 266018
+          },
+          {
+            "word": "in",
+            "startMs": 266354,
+            "endMs": 266438
           },
           {
             "word": "the",
-            "startMs": 264686,
-            "endMs": 264749
+            "startMs": 266449,
+            "endMs": 266511
           },
           {
-            "word": "totals",
-            "startMs": 264759,
-            "endMs": 265106
-          },
-          {
-            "word": "would",
-            "startMs": 265137,
-            "endMs": 265232
-          },
-          {
-            "word": "have",
-            "startMs": 265242,
-            "endMs": 265347
-          },
-          {
-            "word": "buried",
-            "startMs": 265358,
-            "endMs": 265746
-          },
-          {
-            "word": "A",
-            "startMs": 266093,
-            "endMs": 266135
-          },
-          {
-            "word": "prompt-injection",
-            "startMs": 266145,
+            "word": "same",
+            "startMs": 266522,
             "endMs": 266806
           },
           {
-            "word": "probe",
+            "word": "report",
             "startMs": 266817,
-            "endMs": 267110
+            "endMs": 267227
           },
           {
-            "word": "one",
-            "startMs": 267373,
-            "endMs": 267510
-          },
-          {
-            "word": "that",
-            "startMs": 267521,
-            "endMs": 267625
-          },
-          {
-            "word": "exists",
-            "startMs": 267635,
-            "endMs": 268035
-          },
-          {
-            "word": "to",
-            "startMs": 268046,
-            "endMs": 268139
-          },
-          {
-            "word": "be",
-            "startMs": 268150,
-            "endMs": 268286
-          },
-          {
-            "word": "refused",
-            "startMs": 268298,
-            "endMs": 268822
-          },
-          {
-            "word": "had",
-            "startMs": 269137,
-            "endMs": 269232
-          },
-          {
-            "word": "quietly",
-            "startMs": 269242,
-            "endMs": 269662
-          },
-          {
-            "word": "started",
-            "startMs": 269672,
-            "endMs": 270019
-          },
-          {
-            "word": "getting",
-            "startMs": 270029,
-            "endMs": 270271
-          },
-          {
-            "word": "answered",
-            "startMs": 270281,
-            "endMs": 270648
-          },
-          {
-            "word": "Every",
-            "startMs": 270995,
-            "endMs": 271173
-          },
-          {
-            "word": "headline",
-            "startMs": 271184,
-            "endMs": 271488
-          },
-          {
-            "word": "number",
-            "startMs": 271499,
-            "endMs": 271697
-          },
-          {
-            "word": "said",
-            "startMs": 271709,
-            "endMs": 271949
-          },
-          {
-            "word": "this",
-            "startMs": 271961,
-            "endMs": 272118
-          },
-          {
-            "word": "build",
-            "startMs": 272129,
-            "endMs": 272348
-          },
-          {
-            "word": "was",
-            "startMs": 272360,
-            "endMs": 272486
-          },
-          {
-            "word": "better",
-            "startMs": 272496,
-            "endMs": 272852
-          },
-          {
-            "word": "It",
-            "startMs": 273199,
-            "endMs": 273241
-          },
-          {
-            "word": "was",
-            "startMs": 273251,
-            "endMs": 273335
-          },
-          {
-            "word": "also",
-            "startMs": 273346,
-            "endMs": 273577
-          },
-          {
-            "word": "less",
-            "startMs": 273588,
-            "endMs": 273786
-          },
-          {
-            "word": "safe",
-            "startMs": 273798,
-            "endMs": 274217
-          },
-          {
-            "word": "and",
-            "startMs": 274396,
-            "endMs": 274469
-          },
-          {
-            "word": "one",
-            "startMs": 274480,
-            "endMs": 274637
-          },
-          {
-            "word": "line",
-            "startMs": 274648,
-            "endMs": 274826
-          },
-          {
-            "word": "caught",
-            "startMs": 274836,
-            "endMs": 275057
-          },
-          {
-            "word": "it",
-            "startMs": 275067,
-            "endMs": 275193
-          },
-          {
-            "word": "Not",
-            "startMs": 275540,
-            "endMs": 275676
-          },
-          {
-            "word": "in",
-            "startMs": 275687,
-            "endMs": 275739
-          },
-          {
-            "word": "production",
-            "startMs": 275749,
-            "endMs": 276180
-          },
-          {
-            "word": "Not",
-            "startMs": 276526,
-            "endMs": 276674
-          },
-          {
-            "word": "in",
-            "startMs": 276684,
-            "endMs": 276747
-          },
-          {
-            "word": "review",
-            "startMs": 276757,
-            "endMs": 277061
-          },
-          {
-            "word": "Before",
-            "startMs": 277408,
-            "endMs": 277618
+            "word": "on",
+            "startMs": 267458,
+            "endMs": 267531
           },
           {
             "word": "the",
-            "startMs": 277629,
-            "endMs": 277712
+            "startMs": 267541,
+            "endMs": 267605
           },
           {
-            "word": "pull",
-            "startMs": 277724,
-            "endMs": 277912
+            "word": "same",
+            "startMs": 267615,
+            "endMs": 267931
           },
           {
-            "word": "request",
-            "startMs": 277923,
-            "endMs": 278321
+            "word": "run",
+            "startMs": 267941,
+            "endMs": 268214
           },
           {
-            "word": "was",
-            "startMs": 278332,
-            "endMs": 278458
+            "word": "while",
+            "startMs": 268529,
+            "endMs": 268635
           },
           {
-            "word": "ever",
-            "startMs": 278468,
-            "endMs": 278647
+            "word": "the",
+            "startMs": 268645,
+            "endMs": 268709
           },
           {
-            "word": "opened",
-            "startMs": 278658,
-            "endMs": 278941
-          },
-          {
-            "word": "That",
-            "startMs": 279298,
-            "endMs": 279371
+            "word": "change",
+            "startMs": 268719,
+            "endMs": 269097
           },
           {
             "word": "is",
-            "startMs": 279382,
-            "endMs": 279455
+            "startMs": 269150,
+            "endMs": 269223
           },
           {
-            "word": "what",
-            "startMs": 279466,
-            "endMs": 279571
+            "word": "still",
+            "startMs": 269233,
+            "endMs": 269464
           },
           {
-            "word": "this",
-            "startMs": 279581,
-            "endMs": 279718
-          },
-          {
-            "word": "buys",
-            "startMs": 279728,
-            "endMs": 280138
-          },
-          {
-            "word": "Run",
-            "startMs": 280484,
-            "endMs": 280621
-          },
-          {
-            "word": "it",
-            "startMs": 280631,
-            "endMs": 280683
-          },
-          {
-            "word": "against",
-            "startMs": 280694,
-            "endMs": 280935
-          },
-          {
-            "word": "your",
-            "startMs": 280946,
-            "endMs": 281030
+            "word": "a",
+            "startMs": 269476,
+            "endMs": 269518
           },
           {
             "word": "branch",
-            "startMs": 281040,
-            "endMs": 281261
+            "startMs": 269528,
+            "endMs": 270001
+          },
+          {
+            "word": "Not",
+            "startMs": 270348,
+            "endMs": 270484
+          },
+          {
+            "word": "in",
+            "startMs": 270495,
+            "endMs": 270547
+          },
+          {
+            "word": "production",
+            "startMs": 270558,
+            "endMs": 270989
+          },
+          {
+            "word": "Not",
+            "startMs": 271336,
+            "endMs": 271482
+          },
+          {
+            "word": "in",
+            "startMs": 271493,
+            "endMs": 271556
+          },
+          {
+            "word": "review",
+            "startMs": 271567,
+            "endMs": 271872
+          },
+          {
+            "word": "Before",
+            "startMs": 272219,
+            "endMs": 272429
+          },
+          {
+            "word": "the",
+            "startMs": 272439,
+            "endMs": 272524
+          },
+          {
+            "word": "pull",
+            "startMs": 272534,
+            "endMs": 272723
+          },
+          {
+            "word": "request",
+            "startMs": 272733,
+            "endMs": 273133
+          },
+          {
+            "word": "was",
+            "startMs": 273143,
+            "endMs": 273269
+          },
+          {
+            "word": "ever",
+            "startMs": 273280,
+            "endMs": 273459
+          },
+          {
+            "word": "opened",
+            "startMs": 273469,
+            "endMs": 273753
+          },
+          {
+            "word": "That",
+            "startMs": 274111,
+            "endMs": 274184
+          },
+          {
+            "word": "is",
+            "startMs": 274194,
+            "endMs": 274268
+          },
+          {
+            "word": "what",
+            "startMs": 274278,
+            "endMs": 274383
+          },
+          {
+            "word": "this",
+            "startMs": 274394,
+            "endMs": 274530
+          },
+          {
+            "word": "buys",
+            "startMs": 274541,
+            "endMs": 274951
+          },
+          {
+            "word": "Run",
+            "startMs": 275298,
+            "endMs": 275434
+          },
+          {
+            "word": "it",
+            "startMs": 275445,
+            "endMs": 275498
+          },
+          {
+            "word": "against",
+            "startMs": 275508,
+            "endMs": 275750
+          },
+          {
+            "word": "your",
+            "startMs": 275760,
+            "endMs": 275844
+          },
+          {
+            "word": "branch",
+            "startMs": 275855,
+            "endMs": 276076
           },
           {
             "word": "first",
-            "startMs": 281272,
-            "endMs": 281712
+            "startMs": 276086,
+            "endMs": 276528
           }
         ]
-      }
+      },
+      "triggers": [
+        {
+          "atMs": 179,
+          "target": "loop-node-n1",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 3006,
+          "target": "loop-node-n2",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 3306,
+          "target": "loop-edge-0",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 6044,
+          "target": "loop-node-n3",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 6344,
+          "target": "loop-edge-1",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 6968,
+          "target": "loop-node-n4",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 7228,
+          "target": "loop-edge-2",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 7488,
+          "target": "loop-node-n5",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 7748,
+          "target": "loop-edge-3",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 8008,
+          "target": "loop-edge-4",
+          "action": "drawEdge"
+        },
+        {
+          "atMs": 10489,
+          "target": "loop-node-m1",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 19001,
+          "target": "loop-node-m2",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 20893,
+          "target": "loop-node-m3",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 21493,
+          "target": "loop-node-m4",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 22396,
+          "target": "loop-node-c1",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 23731,
+          "target": "loop-node-c1",
+          "action": "emphasize",
+          "payload": {
+            "hold": true,
+            "scale": 1.06
+          }
+        },
+        {
+          "atMs": 28902,
+          "target": "loop-node-t1",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 29911,
+          "target": "loop-node-t2",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 31813,
+          "target": "loop-node-t3",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 32885,
+          "target": "loop-node-marker",
+          "action": "revealNode"
+        },
+        {
+          "atMs": 33185,
+          "target": "loop-edge-5",
+          "action": "drawEdge"
+        }
+      ]
     }
   ],
   "leadInMs": 1920,
-  "timingHash": "ee01a53ac532ccca42487a5913c2a76df484df05ff54fe5d0021a7c593b1bfeb"
+  "timingHash": "3646bd63a482d84e323fae74358f8d3e536b4f68d77f7cf06202a4f9cdcfd1de"
 }

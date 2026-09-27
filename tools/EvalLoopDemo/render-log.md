@@ -209,7 +209,67 @@ reproducible.
 > stage that records the proof also regenerates the inputs. Worth checking before re-running
 > any stage purely to satisfy a checker.
 
+### ⚠️ The music gain drifted 24 dB, and the guard I built did not stop it
+
+Shipped at `--music-gain 0.85`. `knobs.json` recorded the **derived** value as `0.055`
+(`musicUnderSpeechDb − track RMS` = −36 − −11.4 = −24.6 dB). Measured in a narration-free
+gap, the bed was at **−12.0 dB against a −36 dB target.**
+
+**How it drifted.** A review asked for *"music 1.50 → 0.85, about −4.9 dB"*, believing the
+current value was 1.50. It was not — 1.50 was the **generated** bed's gain from the sibling
+project, and this project had been on a licensed file source for several rounds. The
+arithmetic in the instruction was right; its baseline was wrong. I applied the absolute
+number without re-deriving it, so a requested ~5 dB **cut** landed as a ~5 dB **rise**, on
+top of a value already ~18 dB above target.
+
+> **An absolute gain instruction carries a hidden assumption about the current value.**
+> *"Set the gain to 0.85"* cannot be checked against anything. *"Put the bed at −41 dB"* is
+> verifiable by decoding one silent window. Ask for the **target level**, not the knob
+> value — this is bug-ledger 16 wearing a third face.
+
+**Why the pin did not catch it — and this is the uncomfortable part.** The gain pin
+requires confirmation whenever the gain changes, and it *did* ask. I passed
+`--confirm-gain`. The tool printed, accurately:
+
+```
+this records your acceptance, NOT a measurement
+```
+
+and I accepted a number I had not measured. **The gate worked exactly as designed and I
+walked through it.** `evidence: "operator-confirmed"` was a true description of a
+worthless confirmation.
+
+That is the strongest argument yet for the measured pin the engine cannot currently
+support: a confirmation step defends against *forgetting*, not against *being wrong*. The
+only thing that caught this was a user listening to the result.
+
+**Corrected and verified by decoding**, not by trusting the knob:
+
+| | |
+|---|---|
+| bed in three narration-free gaps | **−42.1 / −40.9 / −41.7 dB** |
+| integrated loudness | **−14.4 LUFS** (was −10.0) |
+| true peak | **−1.8 dBTP** (ceiling −1.0) |
+
+`voiceGain` left at 1.40 — the lift was explicitly requested, and changing it silently
+while fixing the bed would have made the result unattributable.
+
+### 🔴 `musicInGapsDb` is not honoured for file sources
+
+`make-music.mjs` bakes sidechain ducking in from `vo-envelope.json`. `remux-music.mjs` has
+**no sidechain path for a file input**, so a licensed track plays flat and **one gain has
+to serve two targets 6 dB apart** (`musicUnderSpeechDb` −41, `musicInGapsDb` −30).
+Under-speech is the one chosen, so gaps and the lead-in sit ~6 dB below where they should
+be, and every further cut to fix the speech passages thins them further.
+
+**Do not tune `musicInGapsDb` on this project expecting an effect.** It is a knob the code
+cannot currently honour — a promise the engine does not keep. Filed as engine feedback: a
+file source should duck like a generated one, and this will recur for **every** project
+using a licensed track rather than the synth bed, which is now the expected path.
+
+
 ### Audio verification — whole-file, not windows
+
 Bug-ledger 16 was shipped once at roughly 10 dB hot with every window check green, because
 window checks measure whether a bed is **present**, not whether it is at the right **level**.
 Measured by decoding this cut:

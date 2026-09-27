@@ -77,7 +77,22 @@ for (const [label, p] of [['timing.json', path.join(dir, 'timing.json')], ['fram
 }
 
 const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
-const fps = timing.project?.fps ?? 30;
+
+// FPS COMES FROM THE CAPTURE, NOT THE PROJECT. A draft renders at a different frame rate
+// from the production config, so indexing frames by `timing.project.fps` mis-addresses
+// every sample on any run that was not captured at the configured rate — which reads as a
+// missing capture rather than as the wrong arithmetic it is. The capture records what it
+// actually did; believe that.
+let fps = timing.project?.fps ?? 30;
+let fpsSource = 'timing.project.fps';
+try {
+  const meta = JSON.parse(fs.readFileSync(path.join(framesDir, '.capture-meta.json'), 'utf8'));
+  if (Number.isFinite(meta.fps) && meta.fps > 0) {
+    fps = meta.fps;
+    fpsSource = `frames/.capture-meta.json (${meta.width}x${meta.height} ${meta.frameFormat})`;
+  }
+} catch { /* no metadata: fall back to the project config and say so */ }
+
 const segs = timing.segments ?? [];
 if (segs.length === 0) {
   console.error('error: timing.json has no segments');
@@ -107,7 +122,8 @@ const collisions = [];
 const staticSegs = [];
 let missing = 0;
 
-console.log(`sampling ${samples} point(s) per segment across ${segs.length} segments at ${fps} fps\n`);
+console.log(`sampling ${samples} point(s) per segment across ${segs.length} segments at ${fps} fps`);
+console.log(`  fps source: ${fpsSource}\n`);
 console.log('segment        at            frame  hash');
 
 for (const s of segs) {
