@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { EXIT, CliError, guard, parseBoundedNumber } from './cli-support.mjs';
 
 const projectDir = process.cwd();
 const argv = process.argv.slice(2);
@@ -30,10 +31,18 @@ const opt = (n, d) => {
   return i !== -1 && argv[i + 1] ? argv[i + 1] : d;
 };
 
-const MAX_LINE = Number(opt('max-line', 42));
+// VALIDATE, DO NOT COERCE. `Number('abc')` is NaN, and every comparison against NaN is
+// false — so a bad --max-line disabled the over-width check AND the wrappability check
+// while the report cheerfully said "all within". Measured: `--max-line abc` reported
+// "limit NaN, all within" on a run whose longest line was 120 characters. That is a check
+// that cannot fail, in the file whose wrapping bug this same round fixed.
+const num = (name, dflt, min, max) => guard(() =>
+  parseBoundedNumber(String(opt(name, dflt)), { name: `--${name}`, min, max }));
+
+const MAX_LINE = num('max-line', 42, 10, 120);
 const MAX_LINES = 2;
-const MAX_CPS = Number(opt('max-cps', 20));
-const MIN_CUE_MS = Number(opt('min-cue', 900));
+const MAX_CPS = num('max-cps', 20, 5, 60);
+const MIN_CUE_MS = num('min-cue', 900, 100, 10000);
 
 const safeFileBase = (name, fallback) => {
   const base = path.basename(String(name ?? '')).replace(/[^A-Za-z0-9._-]+/g, '').replace(/^[-.]+|[-.]+$/g, '');
@@ -187,8 +196,24 @@ const vtt = 'WEBVTT\n\n' + cues.map((c, i) =>
 const srt = cues.map((c, i) =>
   `${i + 1}\n${stamp(c.startMs, ',')} --> ${stamp(c.endMs, ',')}\n${wrap(c.text)}\n`).join('\n');
 
-fs.writeFileSync(path.join(projectDir, `${projectName}.vtt`), vtt);
-fs.writeFileSync(path.join(projectDir, `${projectName}.srt`), srt);
+// PLAN BY DEFAULT, like every other writing stage in this engine. A bare run used to
+// overwrite both sidecars, which is how a good pair was silently replaced by output from
+// an experimental flag. --apply writes; --replace permits overwriting.
+const apply = flag('apply');
+const replace = flag('replace');
+const vttPath = path.join(projectDir, `${projectName}.vtt`);
+const srtPath = path.join(projectDir, `${projectName}.srt`);
+const existing = [vttPath, srtPath].filter(p => fs.existsSync(p));
+
+if (apply && existing.length && !replace) {
+  console.error(`error: ${existing.map(p => path.basename(p)).join(' and ')} already exist(s). `
+    + 'Pass --replace to overwrite, or choose another --name.');
+  process.exit(EXIT.USAGE);
+}
+if (apply) {
+  fs.writeFileSync(vttPath, vtt);
+  fs.writeFileSync(srtPath, srt);
+}
 
 // Reading speed is reported against DISPLAY duration, which is what a viewer actually has.
 const cpsOf = c => c.text.length / ((c.endMs - c.startMs) / 1000);
@@ -201,7 +226,7 @@ const longest = Math.max(...cues.map(c => c.text.length));
 const longestLine = Math.max(...cues.map(c => Math.max(...wrap(c.text).split('\n').map(l => l.length))));
 const wideLines = cues.filter(c => wrap(c.text).split('\n').some(l => l.length > MAX_LINE)).length;
 const median = [...cues.map(cpsOf)].sort((a, b) => a - b)[Math.floor(cues.length / 2)];
-console.log(`wrote ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries`);
+console.log(`${apply ? 'wrote' : 'plan:'} ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries`);
 console.log(`  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ', all within'}) · longest cue ${longest} chars · median ${median.toFixed(1)} cps · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`);
 
 // Narration rate sets a FLOOR on caption reading speed, and no amount of re-splitting
@@ -226,12 +251,27 @@ if (flag('embed')) {
   const src = `${projectName}-with-music.mp4`;
   const out = `${projectName}-with-music-subtitled.mp4`;
   if (!fs.existsSync(path.join(projectDir, src))) throw new Error(`not found: ${src} — run S9 first`);
-  execFileSync(ff, ['-y', '-hide_banner', '-loglevel', 'error',
-    '-i', src, '-i', `${projectName}.srt`,
-    '-map', '0', '-map', '1', '-c', 'copy', '-c:s', 'mov_text',
-    '-metadata:s:s:0', 'language=eng',
-    out], { stdio: 'inherit' });
-  console.log(`wrote ${out} — soft mov_text track, video and audio copied untouched`);
-  console.log('  soft subtitles can be turned OFF by the viewer. Burned-in hardsubs cannot,');
-  console.log('  so they are deliberately not the default.');
+  if (!apply) {
+    console.log(`\nplan: would embed ${projectName}.srt into ${src} as a soft mov_text track`);
+    console.log(`  output ${out}${fs.existsSync(path.join(projectDir, out)) ? ' — EXISTS, would need --replace' : ''}`);
+  } else {
+    if (fs.existsSync(path.join(projectDir, out)) && !replace) {
+      console.error(`error: ${out} already exists. Pass --replace to overwrite it.`);
+      process.exit(EXIT.USAGE);
+    }
+    // -n, not -y: the overwrite decision belongs to --replace, checked above, not to a
+    // flag that makes ffmpeg clobber whatever it finds.
+    execFileSync(ff, [replace ? '-y' : '-n', '-hide_banner', '-loglevel', 'error',
+      '-i', src, '-i', `${projectName}.srt`,
+      '-map', '0', '-map', '1', '-c', 'copy', '-c:s', 'mov_text',
+      '-metadata:s:s:0', 'language=eng',
+      out], { stdio: 'inherit' });
+    console.log(`wrote ${out} — soft mov_text track, video and audio copied untouched`);
+    console.log('  soft subtitles can be turned OFF by the viewer. Burned-in hardsubs cannot,');
+    console.log('  so they are deliberately not the default.');
+  }
+}
+
+if (!apply) {
+  console.log('\nnothing was written. Re-run with --apply to write the sidecars.');
 }

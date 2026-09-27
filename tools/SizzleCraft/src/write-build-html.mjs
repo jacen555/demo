@@ -698,8 +698,14 @@ ${bg ? '' : theme.anim}
 .codecap{margin-top:calc(var(--fit) * 1.4vh);font-size:calc(var(--fit) * 1.7vh);opacity:.75;text-align:left}
 .dnode rect{fill:var(--color-card-bg);stroke:var(--ca,var(--color-accent-1));stroke-width:3}
 /* Sustained signalling mark. Thicker stroke plus a halo, so it is distinguishable without
-   relying on hue (WCAG 1.4.1) and without dimming the rest of the frame. */
+   relying on hue (WCAG 1.4.1) and without dimming the rest of the frame.
+   emphasize accepts ANY target, not only diagram nodes, so the non-SVG case needs its
+   own treatment — otherwise a held mark on a card or a title silently got the scale tween
+   and none of the outline this is documented as providing. */
 .is-marked rect{stroke-width:9;filter:drop-shadow(0 0 10px rgba(0,0,0,.28))}
+.is-marked:not(:has(rect)){outline:calc(var(--fit) * 0.34vh) solid currentColor;
+  outline-offset:calc(var(--fit) * 0.6vh);border-radius:calc(var(--fit) * 0.8vh);
+  filter:drop-shadow(0 0 10px rgba(0,0,0,.28))}
 .is-marked{transition:filter .3s ease}
 .dnode foreignObject{overflow:hidden}
 .nodelabel{width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 14px;color:var(--color-text-primary);font-family:var(--font-display);font-weight:700;font-size:22px;line-height:1.12;overflow-wrap:anywhere;word-break:break-word;hyphens:auto}
