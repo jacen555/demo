@@ -678,8 +678,13 @@ ${bg ? '' : theme.anim}
    is being discussed, because the box and the contrast difference carry it. */
 .codewrap{width:100%;max-width:92%;margin:0}
 .codeblock{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
-  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;white-space:pre;
-  overflow:hidden;max-height:calc(var(--fit) * 62vh);margin:0;padding:calc(var(--fit) * 2.2vh);
+  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;
+  /* pre-WRAP, not pre. A long string value used to run past the panel and be clipped by
+     overflow:hidden — content on screen, cut off mid-sentence, with nothing reporting it.
+     Wrapping keeps every character visible; the hanging indent keeps a wrapped
+     continuation visually subordinate to the key it belongs to. */
+  white-space:pre-wrap;overflow-wrap:anywhere;text-indent:0 hanging each-line;
+  overflow:hidden;max-height:calc(var(--fit) * 68vh);margin:0;padding:calc(var(--fit) * 2.2vh);
   border-radius:calc(var(--fit) * 1vh);background:var(--code-bg,#f6f7f9);
   border:1px solid var(--code-br,#d6dae0);color:var(--code-fg,#1b1f24)}
 .j-key{color:var(--code-key,#8250df);font-weight:600}
