@@ -248,4 +248,20 @@ domains:
       with the demo-recording skill, which owns the cost routing and the render approval
       gate. S1/S2 need no dependencies; S3 onward needs npm install in BOTH domains.
       No render has been run — nothing below S2 has executed.
+  - id: video-coach-backtest
+    kind: spike
+    language: node
+    path: spike/video-coach-backtest
+    source: spike/video-coach-backtest/src
+    tests: none
+    project: spike/video-coach-backtest/package.json
+    build: none
+    test_cmd: none
+    tier: 0
+    builder: researcher
+    reviewer: none
+    checklist: none
+    question: 'Would a pre-render content coach, given only a round''s pre-render artifacts (script, timing, storyboard, stills), have caught at least half of the objective defects the user reported across the EvalLoopDemo review rounds, with the user agreeing with at least 4 in 5 of its blocking findings?'
+    status: active
+    notes: ''
 
