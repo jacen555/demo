@@ -52,14 +52,25 @@ await main(async () => {
   if (!values['rubric-parts']) throw new UsageError(`--rubric-parts is required\n\n${USAGE}`);
 
   const work = path.resolve(values.work ?? path.join(os.tmpdir(), 'vcb', 'work'));
-  const manifests = [];
+  // Each round folder holds a manifest (extracted) or a not-extracted record, never both.
+  const records = [];
   for (const round of ALL_ROUNDS) {
-    const file = path.join(work, round.id, 'manifest.json');
-    if (await pathExists(file)) manifests.push(JSON.parse(await fs.readFile(file, 'utf8')));
+    const [manifest, skipped] = ['manifest.json', 'not-extracted.json'].map((f) => path.join(work, round.id, f));
+    const has = [await pathExists(manifest), await pathExists(skipped)];
+    if (has[0] && has[1]) throw new Error(`${path.join(work, round.id)} holds both a manifest and a not-extracted record`);
+    if (has[0] || has[1]) records.push(JSON.parse(await fs.readFile(has[0] ? manifest : skipped, 'utf8')));
   }
+  const manifests = records.filter((m) => m.extracted !== false);
   if (!manifests.length) throw new UsageError(`no round manifests under ${work}; run extract-inputs.mjs --apply first`);
+  const freshFile = path.join(work, 'freshness.json');
+  const fresh = (await pathExists(freshFile)) ? JSON.parse(await fs.readFile(freshFile, 'utf8')) : null;
 
-  const sections = manifests.map((m) => (m.kind === 'commit-backed' ? roundSection(m) : reconstructedSection(m)));
+  const isCommit = (m) => m.kind === 'commit-backed';
+  const sections = [
+    ...records.filter(isCommit).map(roundSection),
+    ...(fresh ? [freshnessSection(fresh, manifests)] : []),
+    ...records.filter((m) => !isCommit(m)).map((m) => (m.extracted === false ? notExtractedSection(m) : reconstructedSection(m))),
+  ];
   const text = [header(), environment(manifests), await rubricSection(values), ...sections].join('\n');
   const dest = path.join(SPIKE_DIR, 'inputs.md');
   if (!values.apply) {
@@ -69,7 +80,10 @@ await main(async () => {
   }
   if ((await pathExists(dest)) && !values.replace) throw new UsageError(`${dest} exists; pass --replace to overwrite it`);
   await fs.writeFile(dest, text);
-  console.log(`wrote ${dest} (rounds: ${manifests.map((m) => m.round).join(', ')})`);
+  const skippedIds = records.filter((m) => m.extracted === false).map((m) => m.round);
+  console.log(
+    `wrote ${dest} (rounds: ${manifests.map((m) => m.round).join(', ')}${skippedIds.length ? `; not extracted: ${skippedIds.join(', ')}` : ''}${fresh ? '; with freshness' : ''})`,
+  );
   return EXIT.OK;
 });
 
@@ -206,7 +220,7 @@ ${state}
 state's observed files. It is used only if that generator first reproduces a real file byte for byte from
 that file's own data files (README, "Regenerated files").
 
-${table(['File', 'Generator', 'Proof', 'Regenerated', 'Used by'], m.regeneration.map((f) => [code(f.file), `${code(base(f.generator))} ${code(f.generatorBlob)}`, proofCell(f), regeneratedCell(f), f.proof.provenAt ? `pass ${f.passes.join(', ')}` : '**no pass**']))}
+${regenerationTable(m)}
 
 **Written over the export.**
 
@@ -228,6 +242,94 @@ ${table(['Stage', 'Command', 'Exit'], m.stages.map((s) => [s.label, code(s.comma
 
 ${table(['Pass', 'File', 'Git blob', 'SHA-256', 'Bytes', 'Note'], m.files.map((f) => [f.pass, code(`${m.round}/${f.file}`), code(f.blob), code(f.sha256), f.bytes, f.width ? `${f.width}×${f.height}` : (f.generated ?? f.note ?? '')]))}
 `;
+}
+
+function regenerationTable(m) {
+  const base = (p) => path.posix.basename(p);
+  return table(['File', 'Generator', 'Proof', 'Regenerated', 'Used by'], m.regeneration.map((f) => [code(f.file), `${code(base(f.generator))} ${code(f.generatorBlob)}`, proofCell(f), regeneratedCell(f), f.proof.provenAt ? `pass ${f.passes.join(', ')}` : '**no pass**']));
+}
+
+// A reconstructed round the protocol does not extract is still reported: why it was left
+// out, and the same evidence an extracted round's section gives (README, "Amendment 6", 1).
+function notExtractedSection(m) {
+  const state = m.method === 'restore-fields' ? restoreFieldsPart(m) : snapshotRulePart(m);
+  const regen = m.regeneration.length
+    ? `
+**Regenerated files.** The same proof an extracted round's files are given (README, "Regenerated files").
+A round whose script.md has no proven generator has no pass 1, so it is not extracted (README,
+"Amendments", 1).
+
+${regenerationTable(m)}
+`
+    : '';
+  return `## Round ${m.round} (reconstructed: ${m.method}): not extracted
+
+**Not extracted:** ${m.why.join('; ')}. No input set was made for it, so it has no coach run and is not
+scored.
+
+${state}
+${regen}`;
+}
+
+// Are the commit-backed rounds' generated inputs what their own pipeline makes from their
+// own data? The inputs are the committed files either way (README, "Amendment 6", 2).
+function freshnessSection(fresh, manifests) {
+  const s8 = (x) => (x ? x.slice(0, 8) : null);
+  const byRound = new Map(manifests.map((m) => [m.round, m]));
+  for (const r of fresh.rounds) {
+    const m = byRound.get(r.round);
+    if (m && m.commit !== r.commit) throw new Error(`freshness.json checked ${r.round} at ${r.commit}, but it was extracted at ${m.commit}`);
+  }
+  const dataFiles = Object.keys(fresh.rounds[0]?.data ?? {});
+  const rows = fresh.rounds.flatMap((r) =>
+    r.files.map((f) => [r.round, code(f.file), `${code(path.posix.basename(f.generator))} ${code(s8(f.generatorBlob))}`, code(f.committed), f.made ? code(f.made) : `failed (${f.error})`, f.reproduces ? 'yes' : '**no**']),
+  );
+  const details = fresh.rounds.flatMap((r) =>
+    r.files
+      .filter((f) => !f.reproduces)
+      .map((f) => {
+        const size = (l) => `${l.committedOnly} line(s) only in the committed file, ${l.madeOnly} only in the one made`;
+        const own = f.lines ? `${size(f.lines)}:\n\n${excerptBlock(f.lines)}` : 'no file was made.';
+        let search = '';
+        if (f.search) {
+          const tried = `${f.search.tried} single change(s) to the state's data were tried`;
+          if (f.search.exact.length) {
+            search = `\n\n${tried}. Reproduced byte for byte by: ${f.search.exact.map((e) => `${e.change} (from ${e.from})`).join('; ')}.`;
+          } else if (f.search.closest) {
+            const c = f.search.closest;
+            search = `\n\n${tried}, and none reproduces it. The closest is ${c.change} (from ${c.from}): ${size(c.lines)}:\n\n${excerptBlock(c.lines)}`;
+          } else {
+            search = `\n\n${tried}, and none makes a file.`;
+          }
+        }
+        return `**${r.round} ${code(f.file)}.** Made from the state's own data: ${own}${search}`;
+      }),
+  );
+  return `## Freshness of the commit-backed rounds
+
+From \`freshness.json\`, which \`src/check-freshness.mjs\` writes beside the round folders (node
+${code(fresh.node)}). At each round's pre-fix state, both generators were run on the state's own committed
+data files, and what they made was compared with the state's committed file. A round's inputs are its
+committed files whatever this finds: it records which of them the round's own pipeline would not have made.
+
+${table(['Round', 'File', 'Generator', 'Committed', 'Made', 'Reproduces'], rows)}
+
+The data files each state holds:
+
+${table(['Round', ...dataFiles.map(code)], fresh.rounds.map((r) => [r.round, ...dataFiles.map((d) => code(r.data[d]) )]))}
+
+A candidate change is one data file replaced by another version of it (from a commit up to the state, or a
+session checkpoint up to the round's), an observed file removed, or timing.json replaced by the rebuilt
+timeline of a reconstructed round based on the same commit. The generators are always the state's.
+${details.length ? `\n${details.join('\n\n')}\n` : '\nEvery file reproduces.\n'}`;
+}
+
+// Excerpts are shown as code, in a fence longer than any backtick run inside them.
+function excerptBlock(lines) {
+  const body = lines.pairs.flatMap((p) => [`committed: ${p.committed ?? '(no line)'}`, `made:      ${p.made ?? '(no line)'}`]);
+  const longest = Math.max(0, ...body.map((l) => Math.max(0, ...[...l.matchAll(/`+/g)].map((x) => x[0].length))));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${body.join('\n')}\n${fence}`;
 }
 
 function restoreFieldsPart(m) {
@@ -263,9 +365,13 @@ function snapshotRulePart(m) {
   const noop = rec.noop.length
     ? ` The script changes ${rec.noop.map(code).join(', ')} in no checkpoint, so ${rec.noop.length === 1 ? 'it cannot' : 'they cannot'} mark a state and ${rec.noop.length === 1 ? 'is' : 'are'} left out.`
     : '';
-  return `- **State:** checkpoint #${m.state.index} (${code(m.state.commit)}): the latest session checkpoint holding none of the
+  const state = m.state
+    ? `- **State:** checkpoint #${m.state.index} (${code(m.state.commit)}): the latest session checkpoint holding none of the
   edits ${code(rec.script.path)} (${code(rec.script.blob)}, at the lineage tip) makes, where the next one holds them
-  all. Run on a checkpoint's timing.json, the script changes a field exactly when that field's edit is not there yet.
+  all.`
+    : `- **State:** none. No session checkpoint holding none of the edits ${code(rec.script.path)} (${code(rec.script.blob)},
+  at the lineage tip) makes is followed by one holding them all.`;
+  return `${state} Run on a checkpoint's timing.json, the script changes a field exactly when that field's edit is not there yet.
 - **Fields:** ${rec.live.length} of ${rec.fields.length} change in some checkpoint.${noop}
 - **Transitions** (a *none* checkpoint followed by an *all* one): after ${rec.transitions.map((i) => `#${i}`).join(', ') || 'none'}.
   The method **${rec.holds ? 'holds' : 'does not hold'}** (it needs exactly one).

@@ -111,17 +111,30 @@ await main(async () => {
     console.log(`    work ${path.join(work, p.round.id)}${(await pathExists(path.join(work, p.round.id))) ? ' (exists)' : ''}`);
     console.log(`    out  ${path.join(out, p.round.id)}${(await pathExists(path.join(out, p.round.id))) ? ' (exists)' : ''}`);
   }
-  const broken = plans.filter((p) => !p.holds);
+  // A commit-backed round that does not hold means the round table is wrong, and a state
+  // without both lockfiles stops the extraction (README, "Amendments", 5). Any other
+  // reconstructed round that does not hold is a result, not a fault: it is not extracted,
+  // and its record says why (README, "Amendments", 1, and "Amendment 6", 1).
+  const broken = plans.filter((p) => p.round.kind === 'commit-backed' && !p.holds);
   if (broken.length) {
     throw new Error(`round table disagrees with the protocol for: ${broken.map((p) => p.round.id).join(', ')}`);
   }
+  const unlocked = plans.filter((p) => p.missingLocks?.length);
+  if (unlocked.length) {
+    const which = unlocked.map((p) => `${p.round.id} (${p.missingLocks.join(', ')})`).join('; ');
+    throw new Error(`no package-lock.json at the state of: ${which}. The extraction stops (README, "Amendments", 5)`);
+  }
+  for (const p of plans.filter((x) => !x.holds)) console.log(`\n${p.round.id}: not extracted: ${notExtractedWhy(p).join('; ')}`);
   if (!values.apply) {
     console.log('\nplan only — nothing written. Re-run with --apply to extract.');
     return EXIT.OK;
   }
 
   const tools = await toolVersions();
-  for (const p of plans) await extractRound(repo, p, { out, work, replace: values.replace, tools, lineageTip });
+  for (const p of plans) {
+    if (p.holds) await extractRound(repo, p, { out, work, replace: values.replace, tools, lineageTip });
+    else await recordNotExtracted(p, { out, work, replace: values.replace, lineageTip });
+  }
   console.log(`\ndone. Next: node src/write-ledger.mjs --work ${work} ... --apply`);
   return EXIT.OK;
 });
@@ -546,7 +559,7 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
     tools: { ...tools, ...(await browserVersions(engineDir)) },
     files,
   };
-  await fs.writeFile(path.join(workRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await fs.writeFile(path.join(workRoot, 'manifest.json'), recordJson(manifest));
   console.log(`    collected ${files.length} files into ${outRoot}`);
 }
 
@@ -554,6 +567,63 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
 function withoutBuffers(rec) {
   const { timing, ...rest } = rec;
   return timing ? { ...rest, timing: { sha256: sha256(timing.buf), bytes: timing.buf.length } } : rest;
+}
+
+// A record is JSON with no raw bytes in it: a Buffer that reached one would be written out
+// as an array of numbers.
+function recordJson(value) {
+  return `${JSON.stringify(
+    value,
+    (key, v) => {
+      if (v && v.type === 'Buffer' && Array.isArray(v.data)) throw new Error(`a Buffer reached the record at "${key}"`);
+      return v;
+    },
+    2,
+  )}\n`;
+}
+
+function notExtractedWhy(p) {
+  const why = [];
+  if (!p.rec.holds) why.push(`the ${p.round.method} method does not hold`);
+  const script = p.regen?.files.find((f) => f.file === 'script.md');
+  if (script && !script.buf) {
+    why.push(
+      script.proof.provenAt
+        ? `script.md could not be regenerated (${script.regenerated.error})`
+        : 'no generator of script.md is proven at its state (README, "Amendments", 1)',
+    );
+  }
+  if (!why.length) throw new Error(`${p.round.id} does not hold, and no reason for it was found`);
+  return why;
+}
+
+// A round the protocol does not extract leaves its evidence and no input set: the record
+// takes the manifest's place, and write-ledger.mjs reports it.
+async function recordNotExtracted(p, { out, work, replace, lineageTip }) {
+  const { round } = p;
+  const workRoot = path.join(work, round.id);
+  const outRoot = path.join(out, round.id);
+  await prepareFreshDir(workRoot, replace);
+  if (await pathExists(outRoot)) {
+    // prepareFreshDir refuses unless --replace is given and the folder is this tool's.
+    await prepareFreshDir(outRoot, replace);
+    await fs.rm(outRoot, { recursive: true });
+  }
+  const record = {
+    round: round.id,
+    kind: round.kind,
+    method: round.method,
+    extracted: false,
+    why: notExtractedWhy(p),
+    commit: p.stateCommit ?? null,
+    lineage: { ref: LINEAGE_REF, tip: lineageTip },
+    state: p.state ? { commit: p.state.commit, index: p.state.index, timingSha256: sha256(p.state.timing) } : null,
+    reconstruction: withoutBuffers(p.rec),
+    regeneration: p.regen ? p.regen.files.map(({ buf, ...f }) => f) : [],
+  };
+  const file = path.join(workRoot, 'not-extracted.json');
+  await fs.writeFile(file, recordJson(record));
+  console.log(`\n== ${round.id}: not extracted; the record is ${file}`);
 }
 
 async function browserVersions(engineDir) {

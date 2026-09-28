@@ -124,6 +124,7 @@ first fix commit that changed any input file (`timing.json`, `script.md`,
     start of round 6's fix and the first state that contains 6c's edits. That suggests the
     author found 6c's defect without a user report. The log decides it under the rule
     above. Its inputs are extracted regardless, so the extraction cannot depend on the key.
+    - *Not extracted after all, under "Amendments", item 1: see "Amendment 6", item 1.*
 - **How a reconstructed checkpoint round is chosen.** Its pre-fix state is the latest
   snapshot that contains none of that round's scripted edits, provided the next snapshot
   contains them. The check is recorded in `inputs.md`.
@@ -237,6 +238,76 @@ review script's first error line into a helper.
    `package-lock.json`, and #1–#2 have no engine one. A state without both stops the
    extraction with an error. `npm install` is never used instead, because it would resolve
    today's versions, not the round's.
+
+### Amendment 6 (2026-09-28, after the first plan run of the reconstructed rounds)
+
+The first plan run of r6c, r2 and r3 applied items 1–5 as written, and they are unchanged.
+This amendment was written after that run, and before any reconstructed round was
+extracted, before the answer key existed, and before any coach run. It adds no rule. It
+records one outcome of item 1, applies item 1's test to the commit-backed rounds, and
+changes how the code records an exclusion.
+
+1. **r6c is not extracted, under item 1.** Its method holds. But neither generator is
+   proven at its state (`fc8dece`), and item 1's fallback to an earlier checkpoint is for
+   snapshot rounds only. With no proven `script.md`, r6c is not extracted. It has no coach
+   run and is not scored. So "its inputs are extracted regardless" (under "Why r6c needs
+   rebuilding") does not happen. What that sentence protected still holds: the rule that
+   leaves r6c out was committed before the key existed.
+   - **Why the proof fails.** `fc8dece`'s own `script.md` (`663d1142`) is stale. At that
+     state, `qc/record-silence.mjs` had rewritten `silence-observed.json` in a new shape.
+     The new shape lacks the fields `write-script.mjs` (`0bfacee4`) reads: `leadIn.targetMs`,
+     `leadIn.decodedMs`, and the gaps' `decodedMinMs`, `decodedMaxMs` and `targetMs`. So
+     the generator writes `NaN` five times into the "Measured pacing" line, where the
+     committed file has numbers.
+   - With `silence-observed.json` from `64f2cff` in its place, the state's generator and
+     other data files reproduce `663d1142` byte for byte. The narration is not stale; only
+     that line is.
+   - **No fallback is added.** A fallback for restore-fields rounds, written now, would be
+     post hoc. It would not help either: a proven generator run on the state's own data
+     would still write the `NaN` line into r6c's `script.md`.
+   - **What changed in the code.** `extract-inputs.mjs` used to stop the whole run when any
+     round did not hold. A reconstructed round that does not hold now leaves a record,
+     `not-extracted.json`, in place of a manifest, and `write-ledger.mjs` reports it. A
+     commit-backed round that does not hold still stops the run, and so does a missing
+     lockfile (item 5). This changes how an exclusion is recorded, not which rounds are
+     excluded.
+2. **The commit-backed rounds, given the same test.** Item 1 proves a generator before a
+   reconstructed round uses what it makes. The commit-backed rounds use their committed
+   files and never had that check. `src/check-freshness.mjs` now applies it:
+   - at each pre-fix state, both generators run on the state's own committed data files,
+     and what they make is compared with the committed file;
+   - where a file is not reproduced, each single change to the data is tried: another
+     version of one data file, an observed file removed, or a reconstructed round's
+     rebuilt timeline on the same commit;
+   - `inputs.md` records the result, under "Freshness of the commit-backed rounds".
+
+   What it found:
+   - **r4, r5 and r6:** both files reproduce.
+   - **r7 `script.md`:** stale in the pacing line only, for the reason in item 1. Three
+     older versions of `silence-observed.json` reproduce it byte for byte, one from
+     `64f2cff` and two from checkpoints. So r7's pacing line reports an earlier render's
+     measurements.
+   - **r7 `storyboard.html`:** stale in two lines.
+     - It shows the `loop` subtitle from before 6c, its `9e20f3c` value ("Every headline
+       number said better. One line said less safe."). `fc8dece`'s timeline has 6c's
+       fix: "A regression shows up in the same report, on the same run."
+     - It has a claim, `c-caveat`, that `fc8dece`'s timeline does not.
+     - No single change tried reproduces it. The closest is r6c's rebuilt timeline, which
+       leaves only the `c-caveat` claim.
+   - **The r7 inputs stay the committed files** the author reviewed with. So r7's pass-2
+     storyboard shows a subtitle that 6c had already replaced in its own timeline, and so
+     in its stills. A coach finding about either stale file is judged like any other
+     unmatched finding, as with C-12.
+3. **r6c's reconstruction is corroborated, not scored.** Between checkpoints #34 and #35, a
+   storyboard was made from a timeline that no commit or checkpoint holds. It was not made
+   again before `fc8dece`, so it is r7's.
+   - That storyboard corroborates the subtitle r6c restores. The storyboard renders no
+     `note`, so it says nothing about r6c's other two fields.
+   - Apart from `c-caveat`, it also corroborates the assumption that every other edit in
+     `fc8dece` precedes 6c.
+   - Whether `c-caveat` was removed before or after 6c cannot be settled from the
+     repository.
+   - None of this makes r6c scoreable. It has no input set.
 
 ### Scoring (defined before results)
 
@@ -411,14 +482,26 @@ writes only under `--apply`.
    to those rounds; `--work <dir>` and `--out <dir>` move the two folders. Because a round
    folder is never rebuilt without `--replace`, the reconstructed rounds can be extracted
    after r4–r7 without touching them: `--round r6c --round r2 --round r3`.
-2. **Assemble the rubric** from its transport pieces, which are kept outside the
+
+   A reconstructed round that does not hold is not extracted. It gets no input set, and
+   its work folder holds `not-extracted.json`, which says why, in place of a manifest
+   ("Amendment 6", 1). A commit-backed round that does not hold, or a state without both
+   lockfiles, stops the run.
+2. **Check the commit-backed rounds' freshness.** It writes `<tmp>/vcb/work/freshness.json`
+   ("Amendment 6", 2), and touches no round folder.
+
+   ```powershell
+   node src/check-freshness.mjs --apply
+   ```
+
+3. **Assemble the rubric** from its transport pieces, which are kept outside the
    repository.
 
    ```powershell
    node src/assemble-rubric.mjs --parts <pieces> --apply
    ```
 
-3. **Write the ledger**, `inputs.md`. It is the only file the extraction side writes into
+4. **Write the ledger**, `inputs.md`. It is the only file the extraction side writes into
    the repository.
 
    ```powershell
@@ -426,7 +509,8 @@ writes only under `--apply`.
    ```
 
    It names no local path. It refuses to write unless the pieces still reproduce
-   `rubric.md` byte for byte.
+   `rubric.md` byte for byte. It reports every round folder it finds, extracted or not,
+   and the freshness check if `freshness.json` exists.
 
 Nothing under `tools/` is modified, and no git worktree is created. The scorer comes
 later.
