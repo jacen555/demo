@@ -67,23 +67,40 @@ rules above did not say. None of them changes how a run is started.
    last assistant message is empty.
    - The report is therefore the `summary` of the session's `session.task_complete`
      event.
-   - The `task_complete` call's argument and its result hold the same text. The capture
-     checks that they match.
+   - The `task_complete` call's argument holds the same text, and so does the call's
+     result. The capture compares the argument with the summary, and flags the run if
+     they differ.
    - It replaces "the session's last assistant message" under "Capture". Nothing else
      about the capture changes.
 2. **What the platform adds to the message.** The message sent is logged unchanged and
-   matches the saved one. The model receives it with two blocks in front:
+   matches the saved one. The model receives it with four blocks in front:
    - the current date and time;
-   - a workspace block, holding the project, the session's name (`Coach run <n>`), the
-     session's branch and worktree path, and the orchestrating session's id.
+   - a workspace block: the project and its repository, the session's name
+     (`Coach run <n>`), the session's branch and worktree path, the branch it was based
+     on, and the orchestrating session's id;
+   - a working-context block: the working directory, and the repository's main checkout
+     with its branch;
+   - an artifacts block: the session's scratch folder, with an instruction to write notes
+     there rather than in the repository. The coach has no tool that writes.
 
-   None of these names the round, the pass or the backtest.
-3. **What the system prompt holds.** Three things:
-   - the platform's own instructions;
-   - the repository's custom instructions, including the constitution;
+   None of these names the round or the backtest. The message itself names the pass, as
+   the protocol intends.
+   - The session's name says the run is one of a numbered series. That is a weak hint that
+     the review is not live. The two frozen lines under "Neutral paths" say far more.
+   - Correction: `2ab965a` said two blocks. The log held four; I had not read to the end
+     of the prefix.
+3. **What the system prompt holds.** Run 1's, as logged:
+   - the platform's own instructions, which also list the tools, the repository's skills
+     and the app's canvases, and name the session's folder;
+   - the repository's custom instructions: the constitution, `copilot-instructions.md` and
+     the single-agent workflow. The memory-bank protocol is not among them;
+   - one user-level instruction from this machine's own setup, unrelated to the
+     repository;
    - the agent file's body, with `$ARGUMENTS` left as literal text.
 
-   The agent was started as `video-coach` with the tools `read` and `search`.
+   "Backtest" appears once in the whole system prompt, in the agent's Status line quoted
+   under "Neutral paths". The agent was started as `video-coach` with the tools `read` and
+   `search`.
 
 ## Runs
 
