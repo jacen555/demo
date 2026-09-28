@@ -55,9 +55,12 @@ are excluded from `Forge.sln` so they cannot silently break the repo build.
 ## Pattern: reviewer independence by model family
 
 Reviewers are strictly read-only (no `edit`, no `shell`) and run on a **different model
-family** from the builder — builders `claude-opus-5`, reviewers `gpt-6-sol`. The
-orchestrator pins both explicitly; relying on a default risks collapsing them into the same
-family, at which point the review is just the builder agreeing with itself.
+family** from the builder: builders on Claude, reviewers on GPT, each at the
+highest version available. The orchestrator pins the **family** and passes the resolved
+model explicitly on every dispatch. Relying on a default risks collapsing both roles into
+one family, and then the review is just the builder agreeing with itself. A version pin
+was tried first, and it drifted: by 2026-09-28 six documents named models two versions
+behind the constitution.
 
 Both roles report their model, and the reviewer fails the verdict if independence cannot be
 demonstrated.

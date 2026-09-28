@@ -94,19 +94,17 @@ kinds:
       retires per constitution §XI.
 
 # ---------------------------------------------------------------------------
-# Model pinning — constitution §VIII. The orchestrator MUST pass these explicitly.
+# Model families — constitution §VIII. Each role pins a FAMILY, not a version. The
+# orchestrator dispatches the highest-version model of that family available at dispatch
+# time and passes the resolved id explicitly. When "highest" is ambiguous, it asks the
+# user and records the answer in memory-bank/techContext.md.
 # Never rely on a default model; never run builder and reviewer in the same family.
 # ---------------------------------------------------------------------------
 models:
-  builder: claude-opus-5
-  reviewer: gpt-6-sol
-  planner: claude-opus-5
-  researcher: claude-opus-5
-  # If a pinned model is unavailable, substitute the newest model of the SAME family.
-  # builder and reviewer MUST stay in different families (constitution SS VIII).
-  families:
-    claude-opus-5: anthropic
-    gpt-6-sol: openai
+  builder: claude
+  reviewer: gpt
+  planner: claude
+  researcher: claude
 
 # ---------------------------------------------------------------------------
 # Repo-wide commands.

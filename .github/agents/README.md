@@ -85,7 +85,8 @@ In VS Code Copilot Chat, pick the agent from the agent/mode dropdown (or `@`-men
    unregistered domain is a blocking error, not an invitation to improvise.
 3. **Separation of duties** — the reviewer is **read-only** (no edit/shell) and pairs with
    a builder it did not write. Run the reviewer on a **different model family** from the
-   builder: builders `claude-opus-4.8`, reviewers `gpt-5.6-sol`.
+   builder: builders on Claude and reviewers on GPT, each at the highest version available
+   (§VIII).
 4. **Tier follows the path** — you cannot downgrade rigor by calling Tier 1 work a
    "quick experiment". Reaching for `spike/` to dodge a gate is a review FAIL.
 5. **Spikes graduate by rewrite, not by moving the folder** — the real implementation is

@@ -577,8 +577,9 @@ if ($WithAgents) {
 
 > **Domain-locked agent.** Generated from the generic ``$(if ($role -eq 'builder') { $config.Builder } else { $config.Reviewer })`` for domain
 > ``$Id`` (``$relDomain``). It is currently an unedited copy — add the domain-specific rules
-> that justified minting it, and delete this note. Model pin (constitution section VIII)
-> is unchanged: builders ``claude-opus-4.8``, reviewers ``gpt-5.6-sol``.
+> that justified minting it, and delete this note. The model families (constitution
+> section VIII) are unchanged: builders on Claude, reviewers on GPT, each the highest
+> version available at dispatch.
 
 "@
             $content = $content -replace "(?s)(^---.*?---\r?\n)", "`$1$lockNote"

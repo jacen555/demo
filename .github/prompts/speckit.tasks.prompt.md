@@ -58,7 +58,7 @@ Spec: `specs/<feature>/spec.md` · Plan: `specs/<feature>/plan.md`
 - **Files:** `<paths from the registry>`
 - **Depends on:** none | T<n>
 - **Test expectation:** <the specific behavior a test must pin — name the test if Tier 1>
-- **Builder / Reviewer:** `<builder>` (`claude-opus-4.8`) / `<reviewer>` (`gpt-5.6-sol`)
+- **Builder / Reviewer:** `<builder>` (highest Claude) / `<reviewer>` (highest GPT). The model is resolved at dispatch (§VIII)
 - **Done when:** <observable condition, not "code written">
 
 ### T2 — ...

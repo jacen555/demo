@@ -11,7 +11,8 @@ domain, each registered in [`.github/domains.yaml`](../.github/domains.yaml).
 - **Pre-edit approval** before any edit
 - **Tests for logic-bearing changes** — parsing, state machines, computation, data shaping,
   command enablement. Pure XAML layout and thin glue may be `exempt` with a justification
-- **Independent reviewer** on a different model family (`gpt-5.6-sol` vs `claude-opus-4.8`)
+- **Independent reviewer** on a different model family: a GPT reviewer for a Claude builder,
+  each at the highest version available (§VIII)
 
 ## The rules that bite here
 

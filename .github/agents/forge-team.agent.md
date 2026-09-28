@@ -77,8 +77,8 @@ and pairs with a builder it did not write. Dispatch sub-agents with the `task` t
 
 ### Step 1 — Spec, Clarify & Plan
 
-- For anything beyond a one-file change, dispatch `forge-team.planner` (model
-  `claude-opus-5`). It produces a **lightweight spec**, runs a **clarify** pass (pausing
+- For anything beyond a one-file change, dispatch `forge-team.planner` (the
+  highest-version Claude model, per §VIII). It produces a **lightweight spec**, runs a **clarify** pass (pausing
   to ask up to 3 targeted questions when a high-impact ambiguity exists), performs
   **design validation** against the constitution and the per-kind design checklists
   (`.github/checklists/<kind>-design-checklist.md`), and returns the ordered,
@@ -95,7 +95,8 @@ Before dispatching any builder, present to the user:
 2. Affected domains **and the tier, with the path that determined it**
 3. Compact spec/design summary
 4. Planned task list (from the planner)
-5. Which builder/reviewer pairs and models will run
+5. Which builder/reviewer pairs and models will run. Resolve each model to the highest
+   version of its family (§VIII); if that is ambiguous, ask the user which model to use.
 
 Ask: **"Approve implementation? Reply yes to proceed or provide changes."**
 
@@ -115,7 +116,8 @@ domains):
    - `PRE-EDIT-APPROVAL: yes` plus the approved plan summary
    - on re-runs, the reviewer's prior FINDINGS
 
-   **Pin the builder model explicitly**: `model: "claude-opus-5"` (Constitution §VIII).
+   **Pass the builder model explicitly**: the highest-version Claude model available,
+   resolved per Constitution §VIII.
    Wait for its structured report (CHANGED FILES / TIER / BUILD / TESTS / TEST-DECISION /
    TEST-FIRST-EVIDENCE / BUILDER-MODEL / CONSTITUTION-CHECK).
 
@@ -123,8 +125,8 @@ domains):
    builder. Do not invoke the reviewer on red.
 
 3. **Review** (Tier 1 and 2) — dispatch the paired `*-reviewer` with the changed
-   files/diff plus the builder's report. **Pin the reviewer model explicitly**:
-   `model: "gpt-6-sol"` — a different family from the builder. The reviewer verifies the
+   files/diff plus the builder's report. **Pass the reviewer model explicitly**: the
+      highest-version GPT model available, which is a different family from the builder. The reviewer verifies the
    change against the constitution *and* the kind design checklist, checks
    `TEST-FIRST-EVIDENCE`, and verifies model independence (`INDEPENDENCE-CHECK`). Wait for
    `VERDICT: PASS | FAIL` + FINDINGS.
@@ -164,8 +166,8 @@ graph LR
   P --> S[spec + clarify + design validation]
   S -.blocking ambiguity.-> U
   S --> A[Pre-edit approval gate]
-  A -->|approved| B["*-builder (claude-opus-5)"]
-  B -->|build+tests pass| R["*-reviewer (gpt-6-sol)"]
+  A -->|approved| B["*-builder (highest Claude)"]
+  B -->|build+tests pass| R["*-reviewer (highest GPT)"]
   B -.build/tests fail.-> B
   R -->|FAIL + findings| B
   R -->|PASS| D[Integrate & verify]

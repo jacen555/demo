@@ -122,7 +122,8 @@ cannot state it, they want a `tool/` or an `app/`, not a spike.
    is present as `_(pending)_`.
 5. **For `-WithAgents`:** review the generated pair. They start as copies of the generic
    agents — edit in the domain-specific rules that justified minting them, and keep the
-   model pins from Constitution §VIII (builder `claude-opus-4.8`, reviewer `gpt-5.6-sol`).
+   model families from Constitution §VIII: builders on Claude and reviewers on GPT, each at
+   the highest version resolved at dispatch.
 
 ## Registry row shape
 
