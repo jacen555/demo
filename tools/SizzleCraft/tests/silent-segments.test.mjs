@@ -451,6 +451,24 @@ describe('reporting a silent segment honestly', () => {
     assert.match(html, /1\.0s · 0 words/, `an unwritten segment must report zero words, not one\n`);
   });
 
+  // The storyboard is where an author approves the cue a caption reader will see. Every
+  // later stage refuses a blank cue, so rendering one here approved an empty caption box
+  // that the pipeline would reject further on.
+  for (const [scenario, caption] of [['EmptyCaption', ''], ['WhitespaceCaption', '   '], ['NullCaption', null]]) {
+    test(`writeStoryboard_silentSegmentWith${scenario}_refusesRatherThanRenderingABlankCue`, (t) => {
+      const timing = timingWith(silentMiddleSegments({ caption }), { aspectRatio: '16:9', intake: { voice: 'v', speed: 1 } });
+      const dir = makeProject(t, { 'timing.json': timing });
+
+      const plan = runScript('write-storyboard.mjs', [], dir);
+      const r = runScript('write-storyboard.mjs', ['--apply'], dir);
+
+      assertCleanExit(plan, EXIT.USAGE, 'the plan must say the apply path would refuse: ');
+      assertCleanExit(r, EXIT.USAGE, 'a blank accessibility cue must be refused: ');
+      assert.match(r.all, /segment "intermission"/, 'the refusal must name the segment');
+      assert.equal(fs.existsSync(path.join(dir, 'storyboard.html')), false, 'no storyboard may be written');
+    });
+  }
+
   test('frameCapture_segmentWithNeitherEndMsNorMeasuredDuration_namesTheSegmentItCannotPlace', (t) => {
     // Contributing 0 to the derived duration let a segment be effectively ignored without
     // any segment-specific error — the same in-band absence, one stage over.

@@ -1343,3 +1343,107 @@ describe('boundary root canonicalisation', () => {
     assert.throws(() => createBoundary(a), CliError, 'an uninspectable root must not degrade to a lexical boundary');
   });
 });
+
+// ---------------------------------------------------------------------------
+// JSON has no `undefined`, so an absent timestamp is often written as null. `Number(null)`
+// is 0, which is finite, so a null endMs was read as "ends at zero". It lost the
+// Math.max that sizes the capture, and the render stopped before that segment's
+// narration: no error, and a frame count that looked measured.
+// ---------------------------------------------------------------------------
+describe('a null timestamp is absent, not zero', () => {
+  const timingWithSecondSegment = (second) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 320, height: 240 },
+    endCard: { enabled: false },
+    segments: [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello', audio: { durationMs: 2000 } },
+      { id: 'two', voiceoverText: 'second segment', ...second },
+    ],
+  });
+
+  test('frameCapture_segmentEndMsNull_derivesItsEndFromTheMeasuredClip', (t) => {
+    const dir = makeProject(t, {
+      ...captureFiles,
+      'timing.json': timingWithSecondSegment({ startMs: 2000, endMs: null, audio: { durationMs: 2000 } }),
+    });
+
+    const r = runScript('frame-capture.mjs', [], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    // (2000 start + 2000 measured + 1000 tail) ms at 30 fps. A null read as 0 gives 90.
+    assert.match(r.all, /frames\s+150 at 30 fps/, `the capture must cover the segment whose endMs is null\n${r.all}`);
+  });
+
+  for (const [scenario, second] of [
+    ['StartMsNull', { startMs: null, audio: { durationMs: 2000 } }],
+    ['MeasuredDurationNull', { startMs: 2000, audio: { durationMs: null } }],
+  ]) {
+    test(`frameCapture_segmentWith${scenario}AndNoEndMs_namesTheSegmentItCannotPlace`, (t) => {
+      const dir = makeProject(t, { ...captureFiles, 'timing.json': timingWithSecondSegment(second) });
+
+      const r = runScript('frame-capture.mjs', [], dir);
+
+      assertCleanExit(r, EXIT.USAGE, 'a segment placed by a null must be refused, not placed at zero: ');
+      assert.match(r.all, /"two"/, 'the refusal must name the segment');
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C-3 caps each slide's hold at the NEXT segment's start, and write-build-html does not
+// run validate-timing, so that start was never checked. A missing startMs became NaN,
+// JSON wrote it as null, and Math.min(hold, null) is 0: the slide before it was switched
+// away at t=0 and the build exited 0. A numeric string is no safer, because the trigger
+// times add to it ("2000" + 500). Only a finite JSON number places a segment.
+// ---------------------------------------------------------------------------
+describe('write-build-html refuses a segment it cannot place', () => {
+  const TOO_LARGE = 987654321; // written as 1e400, which JSON.parse reads as Infinity
+  const sceneWith = (t, segments) =>
+    makeProject(t, {
+      'timing.json': timingFixture(segments, { durationMs: 4000, contentMs: 4000 }).replace(String(TOO_LARGE), '1e400'),
+      'evidence-pack/.keep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* gsap stub */',
+    });
+  const withSecond = (second) => [contiguousSegments[0], { ...contiguousSegments[1], ...second }];
+
+  test('writeBuildHtml_finiteSegmentTimes_buildsTheScene', (t) => {
+    // The control: the fixture the refusals below are built from must build.
+    const dir = sceneWith(t, withSecond({}));
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), true);
+  });
+
+  for (const [scenario, second, field] of [
+    ['startMsMissing', { startMs: undefined }, /startMs/],
+    ['endMsNull', { endMs: null }, /endMs/],
+    ['startMsNonNumericString', { startMs: 'soon' }, /startMs/],
+    ['startMsNumericString', { startMs: '2000' }, /startMs/],
+    ['endMsOverflowingToInfinity', { endMs: TOO_LARGE }, /endMs/],
+  ]) {
+    for (const [mode, args] of [['InPlan', []], ['UnderApply', ['--apply']]]) {
+      test(`writeBuildHtml_${scenario}${mode}_exitsUsageNamingTheSegmentAndWritesNothing`, (t) => {
+        const dir = sceneWith(t, withSecond(second));
+
+        const r = runScript('write-build-html.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.USAGE, `a segment with ${scenario} must be refused: `);
+        assert.match(r.all, /"two"/, 'the refusal must name the segment');
+        assert.match(r.all, field, 'and the time it cannot use');
+        assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false, 'and nothing may be written');
+      });
+    }
+  }
+
+  test('writeBuildHtml_twoSegmentsWithUnusableTimes_namesBothInOneRefusal', (t) => {
+    const dir = sceneWith(t, [{ ...contiguousSegments[0], endMs: undefined }, { ...contiguousSegments[1], startMs: null }]);
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'unusable segment times must be refused: ');
+    assert.match(r.all, /"one"[^\n]*endMs/, 'the first segment must be named with its field');
+    assert.match(r.all, /"two"[^\n]*startMs/, 'and so must the second, in the same refusal');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+});

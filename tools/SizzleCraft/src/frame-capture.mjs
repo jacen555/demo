@@ -94,9 +94,13 @@ try {
 // in-band-absence defect as the silent-segment conflation elsewhere in this engine — a
 // segment the engine cannot place must say which segment it is.
 const unplaceable = [];
+// Number(null) and Number('') are 0, so a null or blank timestamp read as the start of the
+// video. A null endMs ended its segment at 0 ms, and a null startMs placed it there, both
+// swallowed by the Math.max below. Only a number, or a numeric string, is a timestamp.
+const msOf = v => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) ? Number(v) : NaN;
 const segEndMs = (timing.segments || []).map((s, i) => {
-  if (Number.isFinite(Number(s.endMs))) return Number(s.endMs);
-  const start = Number(s.startMs), dur = Number(s.audio?.durationMs);
+  if (Number.isFinite(msOf(s.endMs))) return msOf(s.endMs);
+  const start = msOf(s.startMs), dur = msOf(s.audio?.durationMs);
   if (Number.isFinite(start) && Number.isFinite(dur)) return start + dur;
   unplaceable.push(`segments[${i}]${s?.id ? ` ("${s.id}")` : ''}`);
   return 0;
