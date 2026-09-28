@@ -313,6 +313,118 @@ changes how the code records an exclusion.
      repository.
    - None of this makes r6c scoreable. It has no input set.
 
+### Amendment 7 (2026-09-28, after reading the logs, before the answer key)
+
+Step 3 reads the session logs for the key. This amendment was written after that reading,
+and before any key entry was drafted and before any coach run. It records what the logs
+show about sources and states, and one decision the user made about what is scored. It
+changes which rounds are run, so each change says why.
+
+1. **Where the user's own words are.** The user reviewed the video in the plan session
+   ("Eval loop demo plan", `04ef1c2e`), which relayed each review to the build session
+   (`13752b3b`).
+   - The key's primary source is the plan log's user messages that the user typed: 21 of
+     its 26, the rest being relays or notifications. They are cited as P1–P26, by their
+     order among the log's user messages, with their line in the log.
+   - `ask_user` answers in either log are also the user's own words. There are 13.
+   - The build log holds none of the user's reviews. Its user messages are relays from the
+     plan session, or short commands. A relay is the plan session's reading of the user,
+     so, like a review script or a commit message, it is only a cross-check.
+2. **What a checkpoint is.** Checkpoint #k is committed between 0.06 s before and 2.2 s
+   after the build session's user message #k, and always before message #k+1. So it is
+   the state as message #k arrived, before the agent acted on it. All 44 were measured;
+   the three that precede their message do so by milliseconds.
+3. **What the user watched.** Each review answers one render. The build log gives each
+   render's command, and every file changed between the render and the checkpoint named
+   below.
+
+   | Render (UTC; build-log line) | Frame | State it was built from | Reviewed in | Fixed by |
+   |---|---|---|---|---|
+   | 09-25 02:55:05; L1860 | 1920×1080 | Checkpoints #5–#7, whose inputs are identical. Between the render and #5, no input or scene-engine file changed: only the render log, the skill's bug ledger, the audio stages and their output, `.gitignore`, the project README and the memory bank | P8, with P9, P13, P15 and P16 | r1 |
+   | 09-25 23:04:52; L3227 | 3840×2160 | #16. Between the render and #16, only the render log, `knobs.json`, the bug ledger and the audio output changed. The scene build reads none of them, and none is an input | P20, and the answer at plan L1411 | r2, r3, r4 |
+   | 09-26 17:20:38; L6035 | 3840×2160 | #27. The scene was built at L5989, after `apply-review-5`. Between the render and #27, only the render log, the audio output, the subtitles and the chapters changed. Neither subtitle nor chapter stage writes `timing.json` | P21 | r6 (and 6c) |
+   | 09-26 22:56:00; L7859 | 3840×2160 | #36, which is `fc8dece`. The command rebuilt the scene, and nothing changed between #36 and it | P26; P24, on the audio | r7 |
+
+   - No command in these windows checks out, merges, resets or restores files with git.
+   - Nobody watched a render of r3's or r4's pre-fix state. Each already holds the fixes
+     made before it for P20.
+   - r5's pre-fix state was rendered as a draft, and the user chose not to watch it: build
+     L5926, answered at 17:17 on 09-26, "Fix `many`'s pacing first, then run the 4K render
+     (Recommended)" over "Hold — I want to watch the draft first".
+   - P4 (01:29 on 09-25) is feedback on the script before the first render, so it falls
+     in no round. There, the user acted once as the kind of pre-render reviewer this spike
+     tests.
+4. **One key per reviewed render.** This is the user's decision. Rounds r2, r3 and r4 fix
+   one review, P20, in three batches. Asked how to key that, the user chose: *"One review,
+   one key: score P20 once, on r2's input. r3 and r4 aren't run. The pass/fail bar is then
+   decided by r6 and r7, with P20 reported alongside as reconstructed."*
+   - P20 is keyed once, and scored on r2's input set, which is the state the user watched
+     (item 6).
+   - r3 and r4 are not run and not scored. Their input sets stay in `inputs.md`.
+   - Rejected: a key per fix batch, which triples P20's weight in precision and scores
+     states nobody watched; and a key per round covering all of P20, which counts each of
+     P20's defects up to three times in recall.
+   - "The commit-backed result governs" is unchanged. The commit-backed rounds scored are
+     now r6 and r7, and r2 is the only reconstructed one. Two renders is a small base, so
+     the result gives the counts behind every rate.
+5. **r5 is not run and not scored.** Its defect is that segment 4's diagrams ran about
+   5.5 s ahead of the narration describing them. r2 created it, by moving those diagrams
+   earlier for P20 (`apply-review-2.mjs` sets their times), and the author's own canary
+   found it (`apply-review-5.mjs`, header). No user message reports it, so the frozen
+   rule already leaves it out of the key.
+6. **r2's input set is the state P20 watched.** The snapshot rule chose checkpoint #17.
+   - #17 differs from #16, the render's state, in two files. `write-build-html.mjs` gains
+     a per-visual `arrowSize` option, whose default emits the old markup, and r2's timeline
+     sets no `arrowSize`. `qc/apply-review-2.mjs` is created, but has not run.
+   - Measured: #16's engine and #17's engine each build a scene byte-identical to r2's
+     extracted `video-auto.html` (SHA-256 `278a7a08c39514d3…`, 154,607 bytes).
+   - r2's `script.md` and `storyboard.html` are regenerated, as "Amendments" item 1
+     requires. #16's own copies were made from #15's timeline.
+7. **r6's input set differs from its render's state by two fields.** The render's timeline
+   is #27's. r6's, at `9e20f3c`, adds `project.noGoPatterns` and `timingHash`, and changes
+   nothing else.
+   - The engine at `9e20f3c` reads `noGoPatterns` only as a guard that can refuse a build.
+     `timingHash` is written by the voice and remix stages, and read by `cli-support.mjs`.
+   - Measured: #27's timeline with #27's engine, and r6's timeline with `9e20f3c`'s
+     engine, each build a scene byte-identical to r6's extracted one (SHA-256
+     `c2c911746ac7b91c…`, 160,984 bytes).
+   - Pass 2's `timing.json` shows the coach both fields. Neither describes the video.
+8. **r7 keeps its commit's engine.** Its render was built at #36, before the engine that
+   adds `.is-marked` (first in #41). So, under "Input sets", r7 is not re-extracted.
+   - P24, "the background music needs to be a bit quieter", answers the same render: the
+     relay calls it feedback "after listening to the 4K cut". It is keyed under r7 with
+     P26.
+9. **r1's state is checkpoint #7,** taken at the relay of P8 (build message #7). Its
+   inputs are also #5's and #6's, and the render's (item 3).
+   - It is extracted after the key, under "Amendments" item 1, so its `script.md` and
+     `storyboard.html` are regenerated.
+   - Its key comes from P8, P9, P13, P15 and P16, and from the three `ask_user` answers
+     in the same window (plan L803, L919 and L1226).
+   - The user also edited a copy of the storyboard during that review
+     (`storyboard-edit.md`, in the plan session's files). The author edited the same file,
+     and the log keeps neither its first version nor a diff, so the user's own edits
+     cannot be told apart. They are not used. r1 stays descriptive only.
+10. **A fifth class: not about this video.** The reviews also hold requests for things the
+    render never attempted (chapters, subtitles), and feedback on the tooling or the
+    process (P17, P18, P22, P25, and P21's two "Feedback for the demo generation scripts"
+    items). None is a defect of the render reviewed, and none fits the four classes.
+    - They are keyed with the class *not about this video*.
+    - Like the classes other than *objective*, it is outside recall's denominator. A coach
+      finding the user matches to one counts as agreed, as any match does.
+    - The lane table under "Contamination" already says subtitles cannot change a score.
+      This does not change that.
+11. **The checkpoint at each review message.** This is the record that "Checkpoint
+    cross-check" asks for. It is kept here because `inputs.md` is written from the
+    extraction, and the review messages are not part of it.
+
+    | Review | Relayed as (build log) | Checkpoint vs the scored input set |
+    |---|---|---|
+    | P8 (plan L768) | #7, L2298 | r1's state, by the rule for r1 |
+    | P20 (plan L1375) | #16, L3422 | Its timeline, script and storyboard are #17's, the state r2 was extracted from. The engine differs only by the inert `arrowSize` option (item 6) |
+    | P21 (plan L1441) | #33, L6934 | #33 is `9e20f3c`. All four files match r6 |
+    | P24 (plan L1596) | #38, L8109 | #38 holds `fc8dece`'s four files. All match r7 |
+    | P26 (plan L1654) | #43, L8618 | Timeline, script and storyboard match r7. The engine is the later `.is-marked` one (item 8) |
+
 ### Scoring (defined before results)
 
 - **Recall** = objective defects the coach raised as **BLOCKING**, in any pass whose
