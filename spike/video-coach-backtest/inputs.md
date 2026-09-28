@@ -313,3 +313,331 @@ Checkpoint #44 (`e95da44a5de91a976997c3a5b182c51622678934`) differs from the pre
 | 2 | `r7/pass2/stills/twotier.png` | — | `673109edf03468933b093d0f617f6a6a5a396c86c342fc40b046c86ad8bb446f` | 2190766 | 3840×2160 |
 | 2 | `r7/pass2/stills/blindspot.png` | — | `74dc74eec8d76f8d605d9bcc2af162ccef7f5cf99dec51ca730d92f1faae78d1` | 2265541 | 3840×2160 |
 | 2 | `r7/pass2/stills/loop.png` | — | `122b08ce7bad458b2e4f37bd912dbf237ed34499b4b021f3e7d6fa3203adc4ae` | 2189794 | 3840×2160 |
+
+## Freshness of the commit-backed rounds
+
+From `freshness.json`, which `src/check-freshness.mjs` writes beside the round folders (node
+`v22.13.0`). At each round's pre-fix state, both generators were run on the state's own committed
+data files, and what they made was compared with the state's committed file. A round's inputs are its
+committed files whatever this finds: it records which of them the round's own pipeline would not have made.
+
+| Round | File | Generator | Committed | Made | Reproduces |
+|---|---|---|---|---|---|
+| r4 | `script.md` | `write-script.mjs` `0bfacee4` | `904cd922a499514411ef254cb4ac86c0604f1640` | `904cd922a499514411ef254cb4ac86c0604f1640` | yes |
+| r4 | `storyboard.html` | `write-storyboard.mjs` `27acc8e6` | `31f131755a7cb7b5606b118e12d91c4aaca65d22` | `31f131755a7cb7b5606b118e12d91c4aaca65d22` | yes |
+| r5 | `script.md` | `write-script.mjs` `0bfacee4` | `27073a7d16cc58552133ce8b8d152e986e5436c3` | `27073a7d16cc58552133ce8b8d152e986e5436c3` | yes |
+| r5 | `storyboard.html` | `write-storyboard.mjs` `27acc8e6` | `a7c0f2328f797b705884739381e4462c0c9162f0` | `a7c0f2328f797b705884739381e4462c0c9162f0` | yes |
+| r6 | `script.md` | `write-script.mjs` `0bfacee4` | `27073a7d16cc58552133ce8b8d152e986e5436c3` | `27073a7d16cc58552133ce8b8d152e986e5436c3` | yes |
+| r6 | `storyboard.html` | `write-storyboard.mjs` `27acc8e6` | `a7c0f2328f797b705884739381e4462c0c9162f0` | `a7c0f2328f797b705884739381e4462c0c9162f0` | yes |
+| r7 | `script.md` | `write-script.mjs` `0bfacee4` | `663d114211b4a181443cea00f31c30e4759596dd` | `0a2a804aa5e58affe8b2786ca7d722dcc69ee009` | **no** |
+| r7 | `storyboard.html` | `write-storyboard.mjs` `27acc8e6` | `077dae5c6ad0241e2130e5046ca62afff39b3fef` | `974be4a8325b06d651c9d93037590566ac713c86` | **no** |
+
+The data files each state holds:
+
+| Round | `timing.json` | `calibration-observed.json` | `silence-observed.json` |
+|---|---|---|---|
+| r4 | `f13aceb9d8c6ddd88996451036a9544bf4409b65` | `0e128d18e3ebd93803da9ad66b47b1111e757743` | `e3ff49242962a5f027a9183a9ab5ef0a82e0a829` |
+| r5 | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | `0e128d18e3ebd93803da9ad66b47b1111e757743` | `e3ff49242962a5f027a9183a9ab5ef0a82e0a829` |
+| r6 | `309a7a239cb1810d43905d65944c45271f380a1b` | `a735feddf8d3ab3a4584c23879be0e1b09d284ad` | `e3ff49242962a5f027a9183a9ab5ef0a82e0a829` |
+| r7 | `313138ed896d69d73ba60df66c67bd42f716d6f7` | `6556d78146d12f6bce0271d303c1715fa1c1f35e` | `693969e3c806d2a4ff883ed2b9d00c07a0ea6206` |
+
+A candidate change is one data file replaced by another version of it (from a commit up to the state, or a
+session checkpoint up to the round's), an observed file removed, or timing.json replaced by the rebuilt
+timeline of a reconstructed round based on the same commit. The generators are always the state's.
+
+**r7 `script.md`.** Made from the state's own data: 1 line(s) only in the committed file, 1 only in the one made:
+
+```text
+committed: > **Measured pacing** (decoded, not metadata): lead-in 2.04s against a 2.0s target; perceived inter-segment gaps 1.80–1.90s (mean 1.84s) against a 1.5s target — see render-log.md.
+made:      > **Measured pacing** (decoded, not metadata): lead-in NaNs against a NaNs target; perceived inter-segment gaps NaN–NaNs (mean 1.83s) against a NaNs target — see render-log.md.
+```
+
+31 single change(s) to the state's data were tried. Reproduced byte for byte by: silence-observed.json replaced by e3ff4924 (from commit 64f2cffd); silence-observed.json replaced by 8024355b (from checkpoint #3); silence-observed.json replaced by 96ae4b31 (from checkpoint #18).
+
+**r7 `storyboard.html`.** Made from the state's own data: 2 line(s) only in the committed file, 2 only in the one made:
+
+```text
+committed:         <div class="sub">Every headline number said better. One line said less safe.</div>
+made:              <div class="sub">A regression shows up in the same report, on the same run.</div>
+committed: …-26.0, report-1602086-vs-1601897.html:3 runs per arm</span><span class="claim direct">c-caveat · direct · report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -&gt; 1/3</span></div></div>
+made:      …-26.0, report-1602086-vs-1601897.html:3 runs per arm</span></div></div>
+```
+
+31 single change(s) to the state's data were tried, and none reproduces it. The closest is timing.json replaced by ffb41e58 (from r6c's rebuilt timeline): 1 line(s) only in the committed file, 1 only in the one made:
+
+```text
+committed: …-26.0, report-1602086-vs-1601897.html:3 runs per arm</span><span class="claim direct">c-caveat · direct · report-1602086-vs-1601897.html:Out-of-scope probes stopped being refused — scope-prompt-injection 3/3 -&gt; 1/3</span></div></div>
+made:      …-26.0, report-1602086-vs-1601897.html:3 runs per arm</span></div></div>
+```
+
+## Round r6c (reconstructed: restore-fields): not extracted
+
+**Not extracted:** no generator of script.md is proven at its state (README, "Amendments", 1). No input set was made for it, so it has no coach run and is not
+scored.
+
+- **State:** never committed. The base `fc8dece95dd903b14d9238aa266895fb01af387c`, with the 3 fields that
+  `tools/EvalLoopDemo/qc/apply-review-6c.mjs` (`0d56b230e143f882e420f2500bdcc0156751028e`) writes put back from `9e20f3cd55d709e0cacbdbd854689a17a9ff715f`.
+- **Method:** the base's timing.json (`313138ed896d69d73ba60df66c67bd42f716d6f7`) re-serialises unchanged: yes.
+  The script, run on the rebuilt file, gives back the base's byte for byte: yes.
+  Every field differs from the base: yes. The method **holds**.
+- **Rebuilt timing.json:** 156009 bytes, SHA-256 `80c07d0fd9c7de07c4160d7a6783cfef8728b95775ebc49c5112e92f0d8baea5`.
+
+| Field | Base value | Restored value | Differs |
+|---|---|---|---|
+| `segments.loop.visual.subtitle` | `520c536b30a1` | `bdc7ef787e9b` | yes |
+| `segments.loop.visual.note` | `7abc4745a0dc` | `2b1b00dadee0` | yes |
+| `segments.scenario.visual.note` | `b71aaf8ab969` | `b8f2ff214f3f` | yes |
+
+A value is shown as the first 12 hex digits of the git blob id of its canonical JSON.
+
+**Checkpoint scan.** Where the fields stand in each checkpoint from #34 on: *before* is the restored
+value, *after* the base's, *other* neither.
+
+| Checkpoint | Commit | timing.json blob | `segments.loop.visual.subtitle` | `segments.loop.visual.note` | `segments.scenario.visual.note` |
+|---|---|---|---|---|---|
+| #34 | `82fd2f320ab5179203d402c759621f010c105c16` | `309a7a239cb1810d43905d65944c45271f380a1b` | before | before | before |
+| #35 | `f7b9d626330839f12f80aa293d466b688b1ed1be` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #36 | `5e135daaca5df199715586492ed42c0b740afe02` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #37 | `4dec893bfc5243de9cc8be8f90df9b2b7a367e13` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #38 | `c9fcb9b3ad50651cb3cdd3e8e99d1ba04fcc12e9` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #39 | `c833b335c2c47b94f51c25dd78cbd175ecba3138` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #40 | `f7f6fc770248a9bd6ebea41201dea9cbe203f9ca` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #41 | `adc5f72596c3aee74179fdf90687fcfca9e67b25` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #42 | `ccedfbc0a2d73182f784df3eef2f128dbf6c17a2` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #43 | `badc190c65a0ba6bd7d190d07de19558c2847e8d` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | after | after | after |
+| #44 | `e95da44a5de91a976997c3a5b182c51622678934` | `10209fe792b4e7e0b27dc4fe87c9cb238d4a7f39` | after | after | after |
+
+**Regenerated files.** The same proof an extracted round's files are given (README, "Regenerated files").
+A round whose script.md has no proven generator has no pass 1, so it is not extracted (README,
+"Amendments", 1).
+
+| File | Generator | Proof | Regenerated | Used by |
+|---|---|---|---|---|
+| `script.md` | `write-script.mjs` `0bfacee418f90a4f1995f50a1bb9a04b43282139` | **Not proven.** At the state it makes `0a2a804aa5e58affe8b2786ca7d722dcc69ee009`, not the state's `663d114211b4a181443cea00f31c30e4759596dd`. | exit 0; differs from the state's file | **no pass** |
+| `storyboard.html` | `write-storyboard.mjs` `27acc8e6ef677dbb83d2b93c0c0c7b3d1397fc75` | **Not proven.** At the state it makes `974be4a8325b06d651c9d93037590566ac713c86`, not the state's `077dae5c6ad0241e2130e5046ca62afff39b3fef`. | exit 0; differs from the state's file | **no pass** |
+
+## Round r2 (reconstructed: snapshot-rule)
+
+- **State:** checkpoint #17 (`138e68f7e9fb04a54b14552c4668b6cdfb1b0728`): the latest session checkpoint holding none of the
+  edits `tools/EvalLoopDemo/qc/apply-review-2.mjs` (`99a581c032060ab8b05bc963b939ccd89cab09a7`, at the lineage tip) makes, where the next one holds them
+  all. Run on a checkpoint's timing.json, the script changes a field exactly when that field's edit is not there yet.
+- **Fields:** 13 of 13 change in some checkpoint.
+- **Transitions** (a *none* checkpoint followed by an *all* one): after #17.
+  The method **holds** (it needs exactly one).
+
+| Checkpoint | Commit | timing.json blob | Status | Edits present |
+|---|---|---|---|---|
+| #1 | `91ba13d88cb8fbc8597f41dacec0ed496787cebf` | — | no timing.json | — |
+| #2 | `65097f3fa41e58129ed33fa259886589c67f1020` | `c6b5335545b98fd10557ef294a4df7048249ed31` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #3 | `c8dc84c160094e434d0c94fa652678515c615b28` | `a274afc7d0e3cf4fd5dac2e648119b1a98e3362d` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #4 | `17e1f6f754d4226337dde537f2d2f3ee84e169f9` | `7060f0b6dcf86141d764e34620d52877e1204b60` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #5 | `7a9ef3c9ec67d1ca14aad6bca97896e246ff420a` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #6 | `50bc5e9f2a133d17f12e399727cdf66ec81970aa` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #7 | `b9a3c09239b75aca2c95e4c07e5434f79541011d` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #8 | `5d3f6e68c5383d5066f665b6930bf106a639b123` | `6180aef9d8e56145530ed963a433a20112720eb9` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #9 | `0efbf16a14ff2cc8f3cbc6726444b6243a51b9d2` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #10 | `7e1616180312f01b54acd7b6245b7454db148bdf` | `6fe0b874a37bfb7a446c5eee64be338a6d04da23` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #11 | `45d5439bc8c0bf3fd35b509996b8f7dc01c6ff93` | `6fe0b874a37bfb7a446c5eee64be338a6d04da23` | script fails | TypeError: Cannot read properties of undefined (reading 'triggers') |
+| #12 | `e46cd9347e30c6ccc810bb8f5a7cce18a6951b54` | `2edf48c08271b7506fc52903c730970e95c1c783` | none | 0 of 13 |
+| #13 | `8a0b91f3a64b417a7cc2659a6b00ad224fced52f` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | none | 0 of 13 |
+| #14 | `e2a1a7e4091ef02b3660bec25686da37b347d7d7` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | none | 0 of 13 |
+| #15 | `d5638003b742a9f88139cfc2dd5a74544fabcc1c` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | none | 0 of 13 |
+| #16 | `3663f210cecef4e171d4c229e1f1fab7ab328ebb` | `668d6a381c92eb58e0b0d16d398abdf51e2df457` | none | 0 of 13 |
+| #17 | `138e68f7e9fb04a54b14552c4668b6cdfb1b0728` | `668d6a381c92eb58e0b0d16d398abdf51e2df457` | none | 0 of 13 |
+| #18 | `a23f4bda37f5ef5fbb2a76da8bc657afa008f1a9` | `037599d9e9a0b487876ebd9f256870ee322e8201` | all | 13 of 13 |
+| #19 | `860b4d9b87e52e4bec0143b8bdf47844eee47e22` | `f13aceb9d8c6ddd88996451036a9544bf4409b65` | all | 13 of 13 |
+| #20 | `3ad3085d77183d1f90c3ea502cc5073681a6fddf` | `f13aceb9d8c6ddd88996451036a9544bf4409b65` | all | 13 of 13 |
+| #21 | `ac4ed7ac6989e091eecbfd6ed9dd6e6683684403` | `2dc414b969374e6621dd96ecb8ec75a34dd2e9c2` | all | 13 of 13 |
+| #22 | `31d640b351e909eb95f5f6099accfb25c9dbc758` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #23 | `8f0948cdb50c54f894f08f4c212097121d4a5b0d` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #24 | `ee224d7f061c226b8dbe1ca5a0190a8d84184f89` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #25 | `0516d0e2af5bd8554fe5431354a62ee8aa5fa7a6` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #26 | `ea7b8af1c894e5758cfa449ffa36597016043b00` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #27 | `4d4c690b4829bf267c0b2ca14a707561d3edd972` | `baba912887156d287556cd0eaa7f6191f388e01e` | all | 13 of 13 |
+| #28 | `e98b8e7a710ad0bf94363d20cbc73f31a1068e6e` | `6af7e4d0ef990555a4a2a13702f7f67a83fdc875` | all | 13 of 13 |
+| #29 | `8c7f725543216ad788d13eb9d52138553561f65f` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #30 | `dd8e25e6bd18ff74c5c8fae6132c19080e383c2e` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #31 | `4d04429e2d3415a6a0c5e3f721e8ad27d2e45cd9` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #32 | `7a0f6895f2fd6922bfed23ad5975ac2622ea4f39` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #33 | `a7f68058c216a4c6dbfbba314810f76201e7fe09` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #34 | `82fd2f320ab5179203d402c759621f010c105c16` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #35 | `f7b9d626330839f12f80aa293d466b688b1ed1be` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #36 | `5e135daaca5df199715586492ed42c0b740afe02` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #37 | `4dec893bfc5243de9cc8be8f90df9b2b7a367e13` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #38 | `c9fcb9b3ad50651cb3cdd3e8e99d1ba04fcc12e9` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #39 | `c833b335c2c47b94f51c25dd78cbd175ecba3138` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #40 | `f7f6fc770248a9bd6ebea41201dea9cbe203f9ca` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #41 | `adc5f72596c3aee74179fdf90687fcfca9e67b25` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #42 | `ccedfbc0a2d73182f784df3eef2f128dbf6c17a2` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #43 | `badc190c65a0ba6bd7d190d07de19558c2847e8d` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | all | 13 of 13 |
+| #44 | `e95da44a5de91a976997c3a5b182c51622678934` | `10209fe792b4e7e0b27dc4fe87c9cb238d4a7f39` | all | 13 of 13 |
+
+**Regenerated files.** Each is made by the generator at the state, from the round's timing.json and the
+state's observed files. It is used only if that generator first reproduces a real file byte for byte from
+that file's own data files (README, "Regenerated files").
+
+| File | Generator | Proof | Regenerated | Used by |
+|---|---|---|---|---|
+| `script.md` | `write-script.mjs` `0bfacee418f90a4f1995f50a1bb9a04b43282139` | At the state it makes `544b7ed56ab3040e30a125f4474e945da9c82336`, not the state's `90b43a10cf25928c64d7c7f4230d4dcb09effecb`. Reproduces checkpoint #15's `90b43a10cf25928c64d7c7f4230d4dcb09effecb`. Earlier checkpoints tried: #16 no, #15 yes. | exit 0; differs from the state's file | pass 1, 2 |
+| `storyboard.html` | `write-storyboard.mjs` `47e7e1da08b95731dd0f790773c43f3dc80478e4` | At the state it makes `6923b1fc5fa2d80f8c1ef7fc67cd835c0956c488`, not the state's `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36`. Reproduces checkpoint #15's `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36`. Earlier checkpoints tried: #16 no, #15 yes. | exit 0; differs from the state's file | pass 2 |
+
+**Written over the export.**
+
+| File | Why | Replaces blob | SHA-256 | Bytes |
+|---|---|---|---|---|
+| `tools/EvalLoopDemo/script.md` | regenerated | `90b43a10cf25928c64d7c7f4230d4dcb09effecb` | `e2e0d1dd804b830559c6ad8d5e11b26ef6a165c81357cfe446b875d7e80eca92` | 14382 |
+| `tools/EvalLoopDemo/storyboard.html` | regenerated | `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36` | `c0c85b17e9cd9c4142eb213108a220762054ca27e3789fdc5f7a36f4bd587b1b` | 51016 |
+
+- **Camera:** `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79`; given to the engine after its scene was built: `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79` (the engine had `1aa7b03f26e183028ca2e842ede909daac6bc189`), `cli-support.mjs` `7cece5665a1c921ed8acb4b315af259441c6ecbf` (the engine had none).
+- **Seek hook:** `window\.masterTimeline\s*=` is in `tools/EvalLoopDemo/video-auto.html` after the scene build.
+- **Passes:** 1 and 2.
+- **Export:** 68 files under `tools/SizzleCraft` and `tools/EvalLoopDemo` at `138e68f7e9fb04a54b14552c4668b6cdfb1b0728`, written from
+  git's object store. 68 of 68 re-hash to their blob ids.
+- **Browser:** playwright `1.63.0`, chromium `153.0.8010.12 (revision 1243)`, headless shell `revision 1243`.
+- **Layout audit:** clean. **End card:** off (endCard.enabled is false) — endcard.png dropped.
+
+| Engine file | Blob |
+|---|---|
+| `tools/SizzleCraft/src/write-build-html.mjs` | `0d1c2f6c937379556831b8fd0663c61a405b13e0` |
+| `tools/SizzleCraft/src/preview.mjs` | `1aa7b03f26e183028ca2e842ede909daac6bc189` |
+| `tools/SizzleCraft/src/cli-support.mjs` | — |
+| `tools/SizzleCraft/package-lock.json` | `85a4d9700098c84e001f0e3acd49050fff087911` |
+| `tools/EvalLoopDemo/package-lock.json` | `c461a17a6a251924cb7a119c0c09516a5e61cdb2` |
+
+| Stage | Command | Exit |
+|---|---|---|
+| npm ci (engine) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| npm ci (project) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| scene build | `node ../SizzleCraft/src/write-build-html.mjs --apply` | 0 |
+| camera | `node ../SizzleCraft/src/preview.mjs --apply` | 0 |
+
+**Files.** A file with a git blob is the tree's own; *regenerated* and *reconstructed* files have none.
+
+| Pass | File | Git blob | SHA-256 | Bytes | Note |
+|---|---|---|---|---|---|
+| 1 | `r2/pass1/script.md` | — | `e2e0d1dd804b830559c6ad8d5e11b26ef6a165c81357cfe446b875d7e80eca92` | 14382 | regenerated |
+| 2 | `r2/pass2/timing.json` | `668d6a381c92eb58e0b0d16d398abdf51e2df457` | `ccad3c2004ee4a7cd197eabcee6d5ad44822531123219d280b5804d7df617745` | 165966 |  |
+| 2 | `r2/pass2/script.md` | — | `e2e0d1dd804b830559c6ad8d5e11b26ef6a165c81357cfe446b875d7e80eca92` | 14382 | regenerated |
+| 2 | `r2/pass2/storyboard.html` | — | `c0c85b17e9cd9c4142eb213108a220762054ca27e3789fdc5f7a36f4bd587b1b` | 51016 | regenerated |
+| 2 | `r2/pass2/audit.txt` | — | `69462ea076e3ab4d8b5877aee134a30521d9f18b9d42595b20c3d50ae5169c7d` | 507 | stage transcript |
+| 2 | `r2/pass2/stills/hard.png` | — | `1958d5352d3ab6c08858d91bdf91fced35c4aa7cb984bc6cb1267c66123bd8f3` | 1027633 | 3840×2160 |
+| 2 | `r2/pass2/stills/scenario.png` | — | `69cd7447bc476acb790cc407db768dd28c33798115161b32de0b3dc0d14a97aa` | 2269026 | 3840×2160 |
+| 2 | `r2/pass2/stills/freeform.png` | — | `d4ca34317b0d11359b470f58dd77b388aff0a88ae94bb764ba55614985460684` | 2039943 | 3840×2160 |
+| 2 | `r2/pass2/stills/many.png` | — | `e73afe2b5febb1e0ea60e69403c8256b8d9f325326793bd299940c024446dcf0` | 2302957 | 3840×2160 |
+| 2 | `r2/pass2/stills/dimensions.png` | — | `632b0942ca1bf90402a4a2fd7592c6b0e6ace166ea2e530a1d3015cfa10fd03f` | 2165083 | 3840×2160 |
+| 2 | `r2/pass2/stills/twotier.png` | — | `082e74de167d5f1afe1bd7f2575256d398188f8b5ae06d97e428baa8ce536365` | 2242933 | 3840×2160 |
+| 2 | `r2/pass2/stills/blindspot.png` | — | `fc4c45ba8322031d114b3fd0fc14753c9db30c63a1116b0307f4850fbf4fe2a5` | 1230873 | 3840×2160 |
+| 2 | `r2/pass2/stills/loop.png` | — | `e8fd5e0276aed3763faf0c138a838e30c0f460b7c418b8d34abfc465c8ebbb28` | 1009461 | 3840×2160 |
+
+## Round r3 (reconstructed: snapshot-rule)
+
+- **State:** checkpoint #18 (`a23f4bda37f5ef5fbb2a76da8bc657afa008f1a9`): the latest session checkpoint holding none of the
+  edits `tools/EvalLoopDemo/qc/apply-review-3.mjs` (`f3de5fa64c5cd44b6e2d94e0cbb5e2731b0285d4`, at the lineage tip) makes, where the next one holds them
+  all. Run on a checkpoint's timing.json, the script changes a field exactly when that field's edit is not there yet.
+- **Fields:** 13 of 14 change in some checkpoint. The script changes `segments.loop.visual.title` in no checkpoint, so it cannot mark a state and is left out.
+- **Transitions** (a *none* checkpoint followed by an *all* one): after #18.
+  The method **holds** (it needs exactly one).
+
+| Checkpoint | Commit | timing.json blob | Status | Edits present |
+|---|---|---|---|---|
+| #1 | `91ba13d88cb8fbc8597f41dacec0ed496787cebf` | — | no timing.json | — |
+| #2 | `65097f3fa41e58129ed33fa259886589c67f1020` | `c6b5335545b98fd10557ef294a4df7048249ed31` | partial | 1 of 13: `project.fps` |
+| #3 | `c8dc84c160094e434d0c94fa652678515c615b28` | `a274afc7d0e3cf4fd5dac2e648119b1a98e3362d` | partial | 1 of 13: `project.fps` |
+| #4 | `17e1f6f754d4226337dde537f2d2f3ee84e169f9` | `7060f0b6dcf86141d764e34620d52877e1204b60` | partial | 1 of 13: `project.fps` |
+| #5 | `7a9ef3c9ec67d1ca14aad6bca97896e246ff420a` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | partial | 1 of 13: `project.fps` |
+| #6 | `50bc5e9f2a133d17f12e399727cdf66ec81970aa` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | partial | 1 of 13: `project.fps` |
+| #7 | `b9a3c09239b75aca2c95e4c07e5434f79541011d` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | partial | 1 of 13: `project.fps` |
+| #8 | `5d3f6e68c5383d5066f665b6930bf106a639b123` | `6180aef9d8e56145530ed963a433a20112720eb9` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #9 | `0efbf16a14ff2cc8f3cbc6726444b6243a51b9d2` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | partial | 1 of 13: `project.fps` |
+| #10 | `7e1616180312f01b54acd7b6245b7454db148bdf` | `6fe0b874a37bfb7a446c5eee64be338a6d04da23` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #11 | `45d5439bc8c0bf3fd35b509996b8f7dc01c6ff93` | `6fe0b874a37bfb7a446c5eee64be338a6d04da23` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #12 | `e46cd9347e30c6ccc810bb8f5a7cce18a6951b54` | `2edf48c08271b7506fc52903c730970e95c1c783` | none | 0 of 13 |
+| #13 | `8a0b91f3a64b417a7cc2659a6b00ad224fced52f` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #14 | `e2a1a7e4091ef02b3660bec25686da37b347d7d7` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #15 | `d5638003b742a9f88139cfc2dd5a74544fabcc1c` | `ca644ae32bde975cef655691eccb1bb46b0c9620` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #16 | `3663f210cecef4e171d4c229e1f1fab7ab328ebb` | `668d6a381c92eb58e0b0d16d398abdf51e2df457` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #17 | `138e68f7e9fb04a54b14552c4668b6cdfb1b0728` | `668d6a381c92eb58e0b0d16d398abdf51e2df457` | partial | 3 of 13: `project.width`, `project.height`, `project.fps` |
+| #18 | `a23f4bda37f5ef5fbb2a76da8bc657afa008f1a9` | `037599d9e9a0b487876ebd9f256870ee322e8201` | none | 0 of 13 |
+| #19 | `860b4d9b87e52e4bec0143b8bdf47844eee47e22` | `f13aceb9d8c6ddd88996451036a9544bf4409b65` | all | 13 of 13 |
+| #20 | `3ad3085d77183d1f90c3ea502cc5073681a6fddf` | `f13aceb9d8c6ddd88996451036a9544bf4409b65` | all | 13 of 13 |
+| #21 | `ac4ed7ac6989e091eecbfd6ed9dd6e6683684403` | `2dc414b969374e6621dd96ecb8ec75a34dd2e9c2` | partial | 11 of 13: `segments.loop.title`, `segments.loop.voiceoverText`, `segments.loop.visual.subtitle`, `segments.loop.visual.nodes`, `segments.loop.visual.note`, `segments.loop.triggers~`, `segments.loop.claims`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.fps` |
+| #22 | `31d640b351e909eb95f5f6099accfb25c9dbc758` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #23 | `8f0948cdb50c54f894f08f4c212097121d4a5b0d` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #24 | `ee224d7f061c226b8dbe1ca5a0190a8d84184f89` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #25 | `0516d0e2af5bd8554fe5431354a62ee8aa5fa7a6` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #26 | `ea7b8af1c894e5758cfa449ffa36597016043b00` | `3a6e8fed28b2240d2b8b8edb25d50f5768eb1770` | all | 13 of 13 |
+| #27 | `4d4c690b4829bf267c0b2ca14a707561d3edd972` | `baba912887156d287556cd0eaa7f6191f388e01e` | all | 13 of 13 |
+| #28 | `e98b8e7a710ad0bf94363d20cbc73f31a1068e6e` | `6af7e4d0ef990555a4a2a13702f7f67a83fdc875` | all | 13 of 13 |
+| #29 | `8c7f725543216ad788d13eb9d52138553561f65f` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #30 | `dd8e25e6bd18ff74c5c8fae6132c19080e383c2e` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #31 | `4d04429e2d3415a6a0c5e3f721e8ad27d2e45cd9` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #32 | `7a0f6895f2fd6922bfed23ad5975ac2622ea4f39` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #33 | `a7f68058c216a4c6dbfbba314810f76201e7fe09` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #34 | `82fd2f320ab5179203d402c759621f010c105c16` | `309a7a239cb1810d43905d65944c45271f380a1b` | all | 13 of 13 |
+| #35 | `f7b9d626330839f12f80aa293d466b688b1ed1be` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #36 | `5e135daaca5df199715586492ed42c0b740afe02` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #37 | `4dec893bfc5243de9cc8be8f90df9b2b7a367e13` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #38 | `c9fcb9b3ad50651cb3cdd3e8e99d1ba04fcc12e9` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #39 | `c833b335c2c47b94f51c25dd78cbd175ecba3138` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #40 | `f7f6fc770248a9bd6ebea41201dea9cbe203f9ca` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #41 | `adc5f72596c3aee74179fdf90687fcfca9e67b25` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #42 | `ccedfbc0a2d73182f784df3eef2f128dbf6c17a2` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #43 | `badc190c65a0ba6bd7d190d07de19558c2847e8d` | `313138ed896d69d73ba60df66c67bd42f716d6f7` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+| #44 | `e95da44a5de91a976997c3a5b182c51622678934` | `10209fe792b4e7e0b27dc4fe87c9cb238d4a7f39` | partial | 7 of 13: `segments.loop.title`, `segments.dimensions.voiceoverText`, `segments.dimensions.visual.nodes`, `segments.dimensions.claims`, `project.width`, `project.height`, `project.fps` |
+
+**Regenerated files.** Each is made by the generator at the state, from the round's timing.json and the
+state's observed files. It is used only if that generator first reproduces a real file byte for byte from
+that file's own data files (README, "Regenerated files").
+
+| File | Generator | Proof | Regenerated | Used by |
+|---|---|---|---|---|
+| `script.md` | `write-script.mjs` `0bfacee418f90a4f1995f50a1bb9a04b43282139` | At the state it makes `bf11476f963526c81c2aac4b44194328960d0429`, not the state's `38107e27a42bc983c0878a9489782026475662ce`. Reproduces checkpoint #15's `90b43a10cf25928c64d7c7f4230d4dcb09effecb`. Earlier checkpoints tried: #17 no, #15 yes. | exit 0; differs from the state's file | pass 1, 2 |
+| `storyboard.html` | `write-storyboard.mjs` `47e7e1da08b95731dd0f790773c43f3dc80478e4` | At the state it makes `38b5fb69b403b04483aa6eb630266938ecb3cded`, not the state's `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36`. Reproduces checkpoint #15's `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36`. Earlier checkpoints tried: #17 no, #15 yes. | exit 0; differs from the state's file | pass 2 |
+
+**Written over the export.**
+
+| File | Why | Replaces blob | SHA-256 | Bytes |
+|---|---|---|---|---|
+| `tools/EvalLoopDemo/script.md` | regenerated | `38107e27a42bc983c0878a9489782026475662ce` | `e18437a2adb56d53f35437d7816954e185ceb4dcb6ac1dcbd6c0ddaa53bb7447` | 14164 |
+| `tools/EvalLoopDemo/storyboard.html` | regenerated | `1e8b68f93aa4ba6c2a89bbaa8253b4b4a310ac36` | `f1317e699cbe4bae409f2e35dbab4a873909544fad53ef836faca9a6b616ede7` | 50831 |
+
+- **Camera:** `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79`; given to the engine after its scene was built: `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79` (the engine had `1aa7b03f26e183028ca2e842ede909daac6bc189`), `cli-support.mjs` `7cece5665a1c921ed8acb4b315af259441c6ecbf` (the engine had none).
+- **Seek hook:** `window\.masterTimeline\s*=` is in `tools/EvalLoopDemo/video-auto.html` after the scene build.
+- **Passes:** 1 and 2.
+- **Export:** 77 files under `tools/SizzleCraft` and `tools/EvalLoopDemo` at `a23f4bda37f5ef5fbb2a76da8bc657afa008f1a9`, written from
+  git's object store. 77 of 77 re-hash to their blob ids.
+- **Browser:** playwright `1.63.0`, chromium `153.0.8010.12 (revision 1243)`, headless shell `revision 1243`.
+- **Layout audit:** clean. **End card:** off (endCard.enabled is false) — endcard.png dropped.
+
+| Engine file | Blob |
+|---|---|
+| `tools/SizzleCraft/src/write-build-html.mjs` | `0d1c2f6c937379556831b8fd0663c61a405b13e0` |
+| `tools/SizzleCraft/src/preview.mjs` | `1aa7b03f26e183028ca2e842ede909daac6bc189` |
+| `tools/SizzleCraft/src/cli-support.mjs` | — |
+| `tools/SizzleCraft/package-lock.json` | `85a4d9700098c84e001f0e3acd49050fff087911` |
+| `tools/EvalLoopDemo/package-lock.json` | `c461a17a6a251924cb7a119c0c09516a5e61cdb2` |
+
+| Stage | Command | Exit |
+|---|---|---|
+| npm ci (engine) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| npm ci (project) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| scene build | `node ../SizzleCraft/src/write-build-html.mjs --apply` | 0 |
+| camera | `node ../SizzleCraft/src/preview.mjs --apply` | 0 |
+
+**Files.** A file with a git blob is the tree's own; *regenerated* and *reconstructed* files have none.
+
+| Pass | File | Git blob | SHA-256 | Bytes | Note |
+|---|---|---|---|---|---|
+| 1 | `r3/pass1/script.md` | — | `e18437a2adb56d53f35437d7816954e185ceb4dcb6ac1dcbd6c0ddaa53bb7447` | 14164 | regenerated |
+| 2 | `r3/pass2/timing.json` | `037599d9e9a0b487876ebd9f256870ee322e8201` | `6be1420225c88414e428c467b326d6b7309283affcc18973d1befabb0003334a` | 161760 |  |
+| 2 | `r3/pass2/script.md` | — | `e18437a2adb56d53f35437d7816954e185ceb4dcb6ac1dcbd6c0ddaa53bb7447` | 14164 | regenerated |
+| 2 | `r3/pass2/storyboard.html` | — | `f1317e699cbe4bae409f2e35dbab4a873909544fad53ef836faca9a6b616ede7` | 50831 | regenerated |
+| 2 | `r3/pass2/audit.txt` | — | `56ca8a596475ccf91066fe7d352e1a4ef72ecaef3d87e54c9512348cbfa5d8e4` | 507 | stage transcript |
+| 2 | `r3/pass2/stills/hard.png` | — | `ceb3b582ddce0027781604063ec483780bb2d617e5e6352d8c749abae316c333` | 402900 | 1920×1080 |
+| 2 | `r3/pass2/stills/scenario.png` | — | `90228ca22220c7e6367a588ed3234d9b0a7414f29207d3094b906cecf9335c26` | 767837 | 1920×1080 |
+| 2 | `r3/pass2/stills/freeform.png` | — | `bbcfecc3b39c3b0f020a9a13c0c035baec90082e5d4fee52ab8276f6b8fde5b6` | 709316 | 1920×1080 |
+| 2 | `r3/pass2/stills/many.png` | — | `8da99542837b60b1cb889f9855694ba353bb18ae642458b4968a1c613ad70e84` | 794448 | 1920×1080 |
+| 2 | `r3/pass2/stills/dimensions.png` | — | `6dc927da4e79cdc6abd6a58d7ffbef0667e1f4ad7f86e02fb742abe716a3daee` | 747886 | 1920×1080 |
+| 2 | `r3/pass2/stills/twotier.png` | — | `fd57bf574c351d68d38b3860707d2210c9eb085a3fd6f4feb569d85d652e28b2` | 758061 | 1920×1080 |
+| 2 | `r3/pass2/stills/blindspot.png` | — | `27eb7f31839594f26e50111f7da10a8e4f3f4f7b79583b0206d720deb45bc9be` | 487221 | 1920×1080 |
+| 2 | `r3/pass2/stills/loop.png` | — | `23a633a56b2195a52c4d0ffcb192ed52d7eb6c2bb024dfd92946fc95d2da8b79` | 397303 | 1920×1080 |

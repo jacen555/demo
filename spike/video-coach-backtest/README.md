@@ -168,6 +168,10 @@ first fix commit that changed any input file (`timing.json`, `script.md`,
   - **Native resolution.** The stills stay at the project's 3840×2160, because they are
     kept out of git and nothing is gained by resizing them. The viewer resizes images
     itself: a 4K still reached the orchestrator's own viewer at 2000×1125.
+    - *Recorded after the reconstructed extraction, changing no rule: r3's stills are
+      1920×1080. The camera sizes its page from `timing.json`, and r3's state (checkpoint
+      #18) sets the project to 1920×1080, as ten of the 43 checkpoints with a timeline
+      do. Nothing was resized.*
 - **`audit.txt`.** The output and exit codes of the two stages that produce the stills:
   - the scene build (`write-build-html.mjs`);
   - the preview, which runs the engine's layout audit.
