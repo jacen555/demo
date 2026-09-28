@@ -91,7 +91,7 @@ cannot state it, they want a `tool/` or an `app/`, not a spike.
 |---|---|---|
 | `-Id` | yes | kebab-case, unique. Becomes the Conventional Commit scope (§X). |
 | `-Kind` | yes | `app` \| `service` \| `lib` \| `tool` \| `script` \| `spike` |
-| `-Name` | yes | PascalCase folder/project name. |
+| `-Name` | yes | PascalCase folder/project name. A spike's folder is its `-Id` instead (`spike/<kebab-name>/`, §XI). |
 | `-Question` | for spikes | The one falsifiable question the spike answers. |
 | `-Template` | no | Override the `dotnet new` template (default per kind). |
 | `-NoTests` | no | Skip the test project. Rejected for Tier 1 kinds. |
@@ -100,7 +100,7 @@ cannot state it, they want a `tool/` or an `app/`, not a spike.
 ## What it does
 
 1. Validates the id is kebab-case and not already in `.github/domains.yaml`.
-2. Creates `<root>/<Name>/` with `src/` and (unless `-NoTests`) `tests/`.
+2. Creates `<root>/<Name>/` (`spike/<Id>/` for a spike) with `src/` and (unless `-NoTests`) `tests/`.
 3. Runs `dotnet new` for the kind's template, plus an `xunit` test project referencing it.
    For `kind: script`, writes a constitution-conformant `.ps1` starter and a Pester test
    instead.
