@@ -4,7 +4,7 @@
 > state it is actually **in**. Keep it honest — `broken` and `abandoned` are valid, useful
 > statuses. A ledger that overstates is worse than none.
 >
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-28
 
 ## Status vocabulary
 
@@ -22,9 +22,9 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 331 (330 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 434 (433 pass, 1 skip) | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. **Third pass, for the same consumer:** the gain pin became a registry that fails closed on a knob nobody declared (seven pinned); silent segments must be declared and captioned, never inferred from absence; a licensed bed is ducked in-graph by a solved `sidechaincompress` threshold, verified by decoding at ~10.4 dB of an 11 dB target; and `vo-envelope.json` is bound to the voiceover it measured. **None of the third pass has had an independent review — gap 22.** |
 | `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
-| `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42, shipped at 4K/JPEG. Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
+| `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42 at 4K/JPEG on this branch; a 4:37 four-facts cut with the ducked mix is verified on the consumer's branch and **not merged** (gap 23). Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
 | `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
 
 Add a row whenever `scaffold-domain` creates a domain. Cross-check this table against
@@ -35,6 +35,7 @@ Add a row whenever `scaffold-domain` creates a domain. Cross-check this table ag
 | Spike | Question | Status | Disposition | ADR |
 |---|---|---|---|---|
 | `playwright-ui-capture` | Can Playwright drive a real web UI while capturing deterministic, frame-accurate output suitable for the SizzleCraft pipeline — with a synthetic cursor, speed control, and zoom? | `answered` | **graduate** → `tools/SizzleCraft` (Tier 2), rewritten under the gates the spike skipped | [0003](../docs/adr/0003-drive-real-uis-with-scripted-playwright-frame-capture.md) |
+| `video-coach-backtest` | Would a pre-render content coach, given only a round's pre-render artifacts (script, timing, storyboard, stills), have caught at least half of the objective defects the user reported across the EvalLoopDemo review rounds, with the user agreeing with at least 4 in 5 of its blocking findings? | `active` | Frozen `ee835ad`; r4–r7 inputs pinned `91bb307`. Answer key, runs and scoring to come | 0006 (pending) |
 
 **A spike with `status: answered` that has neither graduated nor retired is debt**
 (Constitution §XI). Surface it here and in planning, don't let it accumulate quietly.
@@ -44,10 +45,11 @@ Add a row whenever `scaffold-domain` creates a domain. Cross-check this table ag
 | Item | State |
 |---|---|
 | Constitution (`.github/instructions/constitution.instructions.md`) | ✅ §I–§XI |
-| Domain registry (`.github/domains.yaml`) | ✅ Schema in place, **0 domains** |
+| Domain registry (`.github/domains.yaml`) | ✅ Schema in place; its domains are the rows above |
 | Orchestrator + planner | ✅ `forge-team`, `forge-team.planner` |
 | Builder/reviewer pairs | ✅ `app`, `service`, `tooling` — parameterized by domain |
 | Researcher agent | ✅ `researcher` |
+| Video coach | ⚠️ `video-coach` — pre-render content review. **Advisory only** until the backtest passes and ADR 0006 is written |
 | Design checklists | ✅ app, service, tooling, script |
 | Spec Kit prompts | ✅ specify, plan, tasks, implement, analyze |
 | `scaffold-domain` skill | ✅ SKILL.md + `New-ForgeDomain.ps1` — **verified end to end** for lib, spike, script, tool, `-WithAgents`, and `-Language node` |
@@ -251,6 +253,50 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     unsecured-sounding items would have overstated the evidence in exactly the way
     this audit spent forty rounds learning not to. Schedule the traced sweep as its
     own task; grade each sink only once its resolver is known.
+
+22. **SizzleCraft's third pass is in the tree with no independent review.**
+    - `c620c88`: its round-2 fixes followed a round-1 FAIL and were never re-reviewed.
+    - `331ddac` (silent segments), `c3f1e56` (ducking) and `34fa0e7` (the MODELLED label)
+      had no review at all; neither had the consumer's `2e5a62e`.
+
+    This is a §VIII breach on the orchestrator's side, not a policy choice. The
+    2026-09-28 audit ran on `claude-opus-5.5`, the builders' own family, so **it finds
+    defects without satisfying the gate**. A cross-family review is still owed before
+    any of these are called reviewed.
+23. **The consumer's branch has diverged from this one, and neither session can push.**
+    - `eval-loop-demo-build` holds three commits this branch lacks: `ffe3f82`, `4134283`
+      and `d47cf86`. One of them is an unreviewed 9-line engine edit to
+      `write-build-html.mjs` (code-block wrapping).
+    - This branch holds `34fa0e7`, which theirs lacks.
+    - Both linked accounts get 403 on push (EMU read-only), so reconciliation waits on
+      someone with write access.
+24. **Two silent-segment paths have been read, never run.**
+    - `voice.mjs` generates a clip for a declared-silent segment and reflows the timeline
+      (needs live TTS).
+    - `remix.mjs` applies its gap rule (needs Playwright).
+
+    The consumer's project has no silent segment, so no real render has exercised
+    either path. The first project with an intro slide or an intermission is the test.
+25. **The engine's WCAG contrast audit has never fired (C-14).** The colour regex is
+    mangled by template-literal escaping, so every red channel parses as `NaN` and no
+    ratio can fall below a threshold. Verified by execution at HEAD and on all four
+    backtest rounds' scenes. Checking the engines that drew those rounds found other
+    lanes thinner than the docs say:
+    - rendered text size is logged as advisory and never fails;
+    - graphics contrast is never measured;
+    - overflow is checked for the `.safe` box only, not for an element clipped by its
+      container;
+    - nothing checks visual events overlapping within a segment;
+    - encoded true peak is never measured, as the engine's own comment says.
+
+    The same-family audit that found C-14 raised 13 Highs in all. None is fixed; the fix
+    list waits on the user's pre-edit approval.
+26. **Is the bed 20 dB under the speech?** WCAG 2.2 SC 1.4.7 (Level AAA, written for
+    audio-only content) asks for background sound at least 20 dB below foreground
+    speech. The mix is set by its own targets: −41 dB for the bed under speech and
+    −30 dB in gaps. Whether those put the EvalLoopDemo bed 20 dB under its narration has
+    not been measured. The rubric author raised it; it is a question for the consumer,
+    not a finding.
 
 ## Next
 

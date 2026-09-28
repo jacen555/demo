@@ -534,6 +534,114 @@ field that does not exist — is a hard build failure, because the author can fi
 check that genuinely could not run reports `NOT evaluated` with its reason. Degrading the
 first into the second buries a fixable mistake in a log nobody reads.
 
+## Pattern: a set closed by construction must fail closed when it grows
+
+The gain pin recorded the knobs that existed when it was written: source, hash and
+`musicGain`. `--ceiling` arrived a round later, and the pin did not notice. **The
+enumeration was not the error. The error was that nothing could fail when the set grew.**
+The pin was correct when written and silently stale afterwards, the same shape as a
+symptom-keyed guard.
+
+The fix is a **registration point**, `mix-parameters.mjs`:
+- It declares every parameter that reaches the mix.
+- It scans the final filter graph and stops the run on any numeric token the registry
+  cannot classify.
+- A pinned parameter that is declared but never used also stops the run.
+- A lock missing any registered parameter is refused as predating the set. It is never
+  back-filled, because back-filling would certify a value nobody checked.
+
+Publish the registry's blind spots alongside it. It cannot see a change that contains no
+digit, anything outside `-filter_complex`, or whether `pinned` was set correctly. Its first
+review still found `volume=.5` escaping the scan: a leading-dot decimal that the lookbehind
+excluded. **A classify-or-refuse scanner is only as closed as its tokenizer.**
+
+## Pattern: a recorded distinction that nothing reads is worse than no record
+
+Old gain locks carried no `evidence` field, and the predicate never read one. The
+distinction existed in the *schema* and in nobody's code path, and its presence invited
+every reader to assume something checked it. **If a field exists in an artifact, something
+must read it or it must not be written.** A schema is a promise about what is checked.
+
+Its companion: **a confirmation step defends against forgetting, not against being wrong.**
+The bed shipped ~24 dB hot under a confirmed pin. Confirmation proves someone agreed; only
+a measurement proves they were right.
+
+## Pattern: silence must be declared, never inferred from absence
+
+Segment duration came from TTS. A deliberately silent segment and one not yet synthesised
+were therefore the **same state**: no clip. The survey found five crash sites and six that
+silently did the wrong thing.
+
+The fix makes silence an authored fact:
+- `silence` is declared in the timing schema, with a **required** `caption`.
+- The caption becomes the accessibility cue, e.g. `[music]`.
+- Concat fills declared silence and refuses undeclared holes.
+
+The general form is *absence is not permission*, and it recurred the same week: an
+envelope with no lineage binding is refused as UNBOUND rather than treated as current.
+
+## Pattern: a modelled number beside measured ones reads as measured
+
+The ducking plan printed a 0.67 dB gaps shortfall, taken from a one-pole model, next to
+measured levels. The consumer measured 0.05–0.11 dB, because ffmpeg's release is faster
+than the model. The number was fine *as a model*. It was wrong as a presentation, because a
+figure in a column of measurements inherits their authority. **Label the provenance on the
+line, not in a footnote.**
+
+Siblings:
+- **An instruction that names a target is checkable; one that names a setting is not.**
+  "Duck by 11 dB" can be measured against the output. "Threshold 0.02" can only be obeyed.
+  Solve the setting from the target, then measure the target.
+- **Measure the claim where it is observable.** Duck depth cannot be read from the mix,
+  because speech masks the bed it ducks. Measure it on the isolated bed, rendered through
+  the same graph.
+- **A hypothesis that looks sound needs the same measurement as one that does not.**
+  Slowing the release to reduce pumping looked like free headroom. Measured, it cost
+  2–9 dB of the gaps target.
+
+## Pattern: a lane is covered only if its check has been seen to fail
+
+The video coach's brief told its rubric author that the engine "already measures and fails
+on" five lanes, so the rubric left them alone. The engines that drew the reviewed rounds
+were checked only afterwards:
+- text contrast was never computed, because a template-literal escape mangled the colour
+  regex and every red channel parsed as `NaN` (C-14);
+- graphics contrast was never measured;
+- legibility was only logged;
+- overflow was checked for the safe box alone;
+- overlaps within a segment were not checked at all.
+
+The brief's lane list had been written without running any of those checks. From outside,
+**a check that never fires looks exactly like a check that always passes.** So before one
+component leaves a lane to another, feed that lane's check a known-bad input and watch it
+fail. The audit that found C-14 also found tests that stay green with the code they guard
+deleted (B-8, B-9). Mutation is the same move, applied to a test.
+
+## Pattern: provenance names the page read, not the work cited
+
+The rubric author read four papers' abstracts on repository records such as ERIC and
+PsychArchives. When it regenerated its source list, it swapped in each paper's DOI, kept
+the label "fetched", and declared every URL "carried forward". A DOI and a repository
+record can name the same paper, but only one of them was read, and all four "fetched"
+labels now point at the other.
+**A provenance label is a claim about an instance, not a class.** "Fetched" must name the
+exact page whose text was read. The only check is mechanical: join each claim to the tool
+log by URL, following redirects.
+
+The sibling: a promise to re-send something "unchanged" is also a claim, so diff it. The
+re-sent source tail had dropped an entry and gained journal details it never had.
+
+## Pattern: pre-register before you look — the commit order is the proof
+
+The coach backtest commits the rubric, the coach and the scoring rules first, then every
+input by hash. Only after that is the log that holds the answers read. Each committed hash
+fixes an output before the next step exists, which is all the order has to prove, so the
+outputs themselves can stay out of git.
+
+Some contamination cannot be removed. The orchestrator knew the answers when it wrote the
+brief. That goes in the protocol as a disclosure, not an argument, because a
+pre-registration that hides its leaks certifies them.
+
 ## Pattern: a deferral's grade is a claim
 
 When a report says *"found, not fixed — safe direction"*, the severity is doing as much
@@ -554,6 +662,7 @@ could not distinguish the new behaviour from the old, because the check it repla
 returned true for a directory — offered as covering the neighbour, when it was the same
 square.
 
+## Pattern: written artifacts outlive the session
 
 Agent memory resets. The repo's memory does not. So:
 

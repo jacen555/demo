@@ -1,14 +1,74 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-09-24
+> **Last updated:** 2026-09-28
 
 ## Current focus
 
-**Building the generic evaluation harness** (`libs/EvalEngine` + `tools/EvalCli`), generalized
-from a domain-specific harness in another repo. Running through the multi-agent loop:
-planner → builder → cross-family reviewer → iterate.
+**SizzleCraft's third pass, driven by its first consumer** (`tools/EvalLoopDemo`) — and an
+honest ledger of what has been independently reviewed, because most of it has not.
+Alongside it, **a pre-render video coach is being backtested** before it may block a
+render (below).
 
-## Where the harness stands
+| Commit | What | Independent review |
+|---|---|---|
+| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | Round 1 **FAIL**; round-2 fixes **never re-reviewed** |
+| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | **None** |
+| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | **None** |
+| `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | **None** |
+| `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | **None** |
+
+`c620c88` reached `main` in PR #14; the rest are local. SizzleCraft: 434 tests (433 pass,
+1 skip). A **same-family** audit (4 × `claude-opus-5.5`, one slice each) was run on
+2026-09-28 at the user's request — it finds defects, but **it does not satisfy §VIII**. A
+cross-family gate review is still owed on every row above. Its headline, verified by
+execution: **the WCAG contrast audit has never fired** (C-14 — a template-literal escape
+mangles the colour regex, so every red channel parses as `NaN`). It raised 13 Highs; no
+fix has been approved yet (progress, gap 25).
+
+### Ducking — measured by the consumer on the real project
+
+- **Depth ~10.4 dB delivered against an 11 dB solved target**, measured on the *isolated*
+  bed. Speech masks the bed in the mix, so the mixed file cannot answer this question.
+- **Gaps recover to within 0.05–0.11 dB.** The one-pole model predicted 0.67 dB — ffmpeg's
+  release is faster than the model. The plan prints the model's figure, labelled MODELLED.
+- **Release 800 ms is right.** 1500 ms leaves gaps 2.0–3.5 dB short; 2500 ms, 6.1–8.7 dB.
+  Slowing release to reduce pumping looked like free headroom and was not — measured.
+- **`--ceiling 2.0` delivers −1.1 dBTP** post-AAC; 1.0 delivers −0.3.
+- Measure gap levels **inside true gaps**, not near segment boundaries.
+
+### Video coach — it must pass a backtest before it may block
+
+The user proposed a second reviewer for **content**: a coach that reads a video's script,
+storyboard and stills before anything expensive is rendered. Decided with the user on
+2026-09-28:
+
+- **Authority.** It blocks on objective defects and advises on craft. It never approves or
+  waives; the user is the final gate.
+- **Independence.** `.github/agents/video-coach.agent.md` is generic and read-only, and
+  its knowledge comes only from the rubric named at dispatch. It runs on the GPT family,
+  because Claude wrote the storyboards.
+- **It earns the right to block.** It stays advisory until a backtest against the
+  EvalLoopDemo review rounds (`spike/video-coach-backtest`) reaches recall ≥ 50 % and
+  precision ≥ 80 % on BLOCKING findings, pooled. Both bars were fixed before any coach
+  output existed.
+- **Only learnings go in git.** The rubric, its brief and provenance, the protocol, the
+  answer key and the hash ledgers are committed. Extracted inputs, stills and coach
+  reports are output, and stay out.
+
+| Step | State |
+|---|---|
+| Freeze: rubric, coach, protocol | `ee835ad` |
+| r4–r7 inputs pinned in `inputs.md` | `91bb307` |
+| r6c, r2 and r3 extraction | **next** — must happen before the demo session's log is read |
+| Answer key, drafted from the user's own review messages | after the log is read; the user confirms it |
+| Runs on `gpt-6-sol`, `runs.md`, scoring, ADR 0006 | pending |
+
+The rubric has 27 rules, 10 of them block-eligible. It was written blind by `research` on
+`claude-sonnet-5`. Its tool log confirms the blindness, and also shows its regenerated
+source lists misstating which pages were read. The README discloses both; `rubric.md` is
+not edited.
+
+## Where the harness stands (paused since 2026-09-24)
 
 | Task | State | Tests |
 |---|---|---|
@@ -32,7 +92,7 @@ planner → builder → cross-family reviewer → iterate.
 | T15f CLI consequences of T15d | done | 442 (cli) |
 | T15e stop printing the caller's suite path | done | 1724 |
 | T16 ADR 0004 + 0005 | done | — |
-| **T17 memory bank** | **in flight** | — |
+| T17 memory bank | done (`f388b4c`) | — |
 | T15b trend report | not started | — |
 | T15c per-scenario withholding attribution | not started | — |
 | T15g `scriptedStimuli[].field` classification | not started | — |
@@ -128,8 +188,10 @@ to find it.
 - **The scripted-prefix check is wired into the conversation runner only.**
 - **`playwright-ui-capture` spike is `answered` but not graduated** — debt under §XI until
   the sibling capture script is built in `tools/SizzleCraft` under Tier 2 gates.
-- **`eval-loop-demo` is rendered and delivered** — `tools/EvalLoopDemo/EvalLoopDemo-with-music.mp4`,
-  4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
+- **`eval-loop-demo` is rendered and verified — not merged in its latest form.** This branch
+  holds the 4:42 cut. The consumer's branch holds a 4:37 four-facts cut with the ducked mix
+  (`ffe3f82`..`d47cf86`), which neither session can push. The first delivery was
+  `EvalLoopDemo-with-music.mp4`, 4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
   **42.4 min** (S6 capture is 84% of it, at 2% dedup); an audio-only change is ~30 s.
   **Perceived gaps run ~335 ms long and were accepted deliberately** — both sibling videos
   carry the identical defect, so 1.83 s is continuity-correct. Fixing `voice.mjs` to decode
@@ -147,6 +209,18 @@ to find it.
   `voice.mjs` reflows segment windows but not segment-relative trigger times.
 
 ## Watch out for
+
+- **Green is not reviewed.** I committed `c620c88` after a FAIL verdict without re-review,
+  and three feature commits with no review at all, because the suites were green. The
+  consumer had done the same three times, and their unreviewed engine changes produced 16
+  findings — so the base rate was known before I repeated it. Tests check what the author
+  thought of; review exists for what they did not. **The orchestrator is not exempt from
+  the gate it enforces.**
+- **A same-family review is not the gate.** Opus reviewing Opus finds real defects and
+  still cannot satisfy §VIII; report it as an audit, never as a verdict.
+- **The two branches diverge silently.** Each holds commits the other lacks, including a
+  consumer-side engine edit to `write-build-html.mjs`. Check `git log A..B` both ways
+  before calling either one current.
 
 - **Builders misreport their own model.** Several reported `claude-opus-4.5`, which is not an
   available model here. The dispatch is correct (`read_agent` confirms `model: claude-opus-5`);

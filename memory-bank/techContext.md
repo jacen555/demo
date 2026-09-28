@@ -92,6 +92,15 @@ Projects are added to the solution by the `scaffold-domain` skill, not by hand.
 | Planner / researcher model | `claude-opus-4.8` |
 | Substitution rule | If a pinned model is unavailable, use the newest of the **same family** — never cross families, which would collapse review independence. |
 
+## Node.js notes
+
+- Node domains run their source directly, as ESM with no build step (constitution §IV).
+  This machine has `node v22.13.0` and `npm 10.9.2`.
+- **Call `main()` last.** A top-level `await main()` placed above later `const`
+  declarations runs while they are still in the temporal dead zone. It throws only when a
+  code path reaches one of them, so a run that skips that path still passes. The
+  backtest's `write-ledger.mjs` hit this.
+
 ## Environment gaps to close
 
 - [ ] Install CSharpier as a local tool — it is the formatting authority and nothing
