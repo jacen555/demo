@@ -32,6 +32,125 @@ export const ROUNDS = Object.freeze([
   { id: 'r7', kind: 'commit-backed', commit: 'fc8dece95dd903b14d9238aa266895fb01af387c', checkpoint: 43 },
 ]);
 
+// Reconstructed rounds (README, "Input sets"): states that never existed as a commit. The
+// method for each is fixed here, before any of them is extracted and before the demo
+// session's log is read.
+//
+// restore-fields: the base commit, with the fields its review script writes put back from
+// the commit before the round. snapshot-rule: the latest session checkpoint that contains
+// none of the script's edits, provided the next checkpoint contains them.
+//
+// A field is where a review script writes authored content: what the video says or shows.
+// Timing bookkeeping is not a field. startMs, endMs, durationMs, plannedDurationMs, audio,
+// intake.*, timingHash and each trigger's atMs are rewritten by voice.mjs after every
+// narration change, so their values cannot identify a script. A trailing `~` compares a
+// trigger list without atMs and without order, because the scripts re-sort it after
+// retiming.
+export const RECONSTRUCTED = Object.freeze([
+  {
+    id: 'r6c',
+    kind: 'reconstructed',
+    method: 'restore-fields',
+    commit: 'fc8dece95dd903b14d9238aa266895fb01af387c',
+    restoreFrom: '9e20f3cd55d709e0cacbdbd854689a17a9ff715f',
+    script: 'qc/apply-review-6c.mjs',
+    // The first checkpoint scanned for a state between round 6's fix and 6c's edits.
+    checkpoint: 34,
+    fields: ['segments.loop.visual.subtitle', 'segments.loop.visual.note', 'segments.scenario.visual.note'],
+  },
+  {
+    id: 'r2',
+    kind: 'reconstructed',
+    method: 'snapshot-rule',
+    script: 'qc/apply-review-2.mjs',
+    fields: [
+      'segments.hard.visual.arrowSize',
+      'segments.hard.visual.nodes',
+      'segments.hard.visual.note',
+      'segments.many.voiceoverText',
+      'segments.many.visual.nodes',
+      'segments.many.triggers~',
+      'segments.many.visual.note',
+      'segments.freeform.voiceoverText',
+      'segments.freeform.visual.nodes',
+      'segments.freeform.visual.note',
+      'segments.freeform.triggers~',
+      'segments.dimensions.voiceoverText',
+      'segments.dimensions.visual.nodes',
+    ],
+  },
+  {
+    id: 'r3',
+    kind: 'reconstructed',
+    method: 'snapshot-rule',
+    script: 'qc/apply-review-3.mjs',
+    fields: [
+      'segments.loop.title',
+      'segments.loop.voiceoverText',
+      'segments.loop.visual.title',
+      'segments.loop.visual.subtitle',
+      'segments.loop.visual.nodes',
+      'segments.loop.visual.note',
+      'segments.loop.triggers~',
+      'segments.loop.claims',
+      'segments.dimensions.voiceoverText',
+      'segments.dimensions.visual.nodes',
+      'segments.dimensions.claims',
+      'project.width',
+      'project.height',
+      'project.fps',
+    ],
+  },
+]);
+
+export const ALL_ROUNDS = Object.freeze([...ROUNDS, ...RECONSTRUCTED]);
+
+// The camera is preview.mjs c5f34dd8 and the two engine files it imports, at the versions
+// beside it in all four commit-backed rounds. A checkpoint engine older than the camera has
+// no cli-support.mjs, so the camera brings its own.
+export const CAMERA_FILES = Object.freeze({
+  'src/preview.mjs': CAMERA_BLOB,
+  'src/cli-support.mjs': '7cece5665a1c921ed8acb4b315af259441c6ecbf',
+  'src/canonical-json.mjs': 'b29b517d7886b055d4cf404f1d9b85e23a2f3244',
+});
+
+// JSON with object keys sorted, so two values compare by content rather than key order.
+export function canonical(v) {
+  if (v === undefined) return 'undefined';
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+function fieldPath(field) {
+  const parts = field.replace(/~$/, '').split('.');
+  return parts[0] === 'segments' ? { segment: parts[1], rest: parts.slice(2) } : { segment: null, rest: parts };
+}
+
+export function fieldValue(timing, field) {
+  const { segment, rest } = fieldPath(field);
+  let v = segment === null ? timing : timing?.segments?.find((s) => s.id === segment);
+  for (const p of rest) v = v?.[p];
+  if (!field.endsWith('~') || !Array.isArray(v)) return v;
+  return v.map((t) => (t && typeof t === 'object' ? canonical({ ...t, atMs: undefined }) : canonical(t))).sort();
+}
+
+export function setField(timing, field, value) {
+  if (field.endsWith('~')) throw new Error(`${field} compares without order and cannot be set`);
+  const { segment, rest } = fieldPath(field);
+  let v = segment === null ? timing : timing.segments.find((s) => s.id === segment);
+  for (const p of rest.slice(0, -1)) v = v?.[p];
+  if (!v || typeof v !== 'object') throw new Error(`${field}: its parent does not exist`);
+  const key = rest.at(-1);
+  if (value === undefined) delete v[key];
+  else v[key] = structuredClone(value);
+}
+
 export const SENTINEL = '.vcb-extract';
 
 export async function main(fn) {
