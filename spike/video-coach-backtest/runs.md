@@ -43,7 +43,9 @@ were dispatched, and that record was committed before the first run started.
     names this spike. The extraction removes paths from `audit.txt` for the same reason, so
     that nothing "could tell the coach the round is not live".
   - What paths cannot hide: the rubric's own `[HOUSE]` section, frozen with it, says
-    "Intentionally empty until the backtest completes."
+    "Intentionally empty until the backtest completes." The agent file's "Status"
+    section, frozen with it too, says "A backtest against past review rounds is testing
+    whether its BLOCKING findings are good enough to gate a render."
 - **The void check reads the session log too.**
   - Under the protocol, a run is void if its `FILES READ` goes outside its input set plus
     the rubric.
@@ -56,7 +58,35 @@ were dispatched, and that record was committed before the first run started.
 - **Capture.** The report is the session's last assistant message. It is copied byte for
   byte from the session's event log to `%TEMP%\vcb\runs\<round>-p<pass>.md`.
 
+### What the trial showed (recorded after run 1, before any other run started)
+
+The trial worked, so it is r2 pass 1's run. The session log showed three things that the
+rules above did not say. None of them changes how a run is started.
+
+1. **Where the report is.** In autopilot, the agent ends by calling `task_complete`. Its
+   last assistant message is empty.
+   - The report is therefore the `summary` of the session's `session.task_complete`
+     event.
+   - The `task_complete` call's argument and its result hold the same text. The capture
+     checks that they match.
+   - It replaces "the session's last assistant message" under "Capture". Nothing else
+     about the capture changes.
+2. **What the platform adds to the message.** The message sent is logged unchanged and
+   matches the saved one. The model receives it with two blocks in front:
+   - the current date and time;
+   - a workspace block, holding the project, the session's name (`Coach run <n>`), the
+     session's branch and worktree path, and the orchestrating session's id.
+
+   None of these names the round, the pass or the backtest.
+3. **What the system prompt holds.** Three things:
+   - the platform's own instructions;
+   - the repository's custom instructions, including the constitution;
+   - the agent file's body, with `$ARGUMENTS` left as literal text.
+
+   The agent was started as `video-coach` with the tools `read` and `search`.
+
 ## Runs
 
 | Run | Round | Pass | Session | Model in log | Report bytes | Report SHA-256 | Prompt SHA-256 | `FILES READ` | Session log | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 1 | r2 | 1 | `eca9b13b` | `gpt-6-sol` | 5361 | `be1673ee48a3eec5997bb1255b849a4ae438315cf7b79812f83b8ca3e947ca09` | `a16865138be021c6c25747d9154c456585979ebb106ddd56720c8c1797831fe1` | inside the set | 11 tool calls, all inside the set | valid |
