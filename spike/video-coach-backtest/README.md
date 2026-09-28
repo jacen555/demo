@@ -135,6 +135,7 @@ first fix commit that changed any input file (`timing.json`, `script.md`,
 - **Regenerated files.** Where a reconstructed round needs `script.md` or
   `storyboard.html`, they are regenerated with that commit's own generators. The generators
   must first reproduce the committed files byte for byte from the committed `timing.json`.
+  - *Amended before the first reconstructed extraction: see "Amendments", items 1 and 4.*
 
 **What the coach may read.**
 
@@ -156,6 +157,7 @@ first fix commit that changed any input file (`timing.json`, `script.md`,
     - A checkpoint round whose scene lacks the seek hook the camera uses
       (`window.masterTimeline`) would give eight stills of the same moment. That round gets
       pass 1 only.
+    - *Amended before the first reconstructed extraction: see "Amendments", items 2 and 3.*
   - **Deterministic to the eye, not to the byte.** Two runs on the r7 scene matched byte
     for byte on 6 of 8 stills.
     - `hard.png` differed on 721 pixels, by at most 13/255 in any channel.
@@ -185,6 +187,56 @@ first fix commit that changed any input file (`timing.json`, `script.md`,
   `audit.txt` shows the camera shooting the end card at `t=NaNs`. That still is dropped;
   the line stays, because the transcript is verbatim. A coach finding about either is
   judged like any other unmatched finding.
+
+### Amendments (2026-09-28, before any reconstructed round was extracted)
+
+Wiring the three reconstructed rounds (r6c, r2, r3) turned up five cases that the rules
+above do not settle. Each is decided here and committed before the extraction has run on
+any of them, and `inputs.md` records how each applied. The two reconstruction methods in
+`src/reconstruct.mjs` behave as committed in `921b2d8`: the only change to them moves the
+review script's first error line into a helper.
+
+1. **A checkpoint's generated files can be stale.** `script.md` and `storyboard.html` often
+   keep one blob across checkpoints whose `timing.json` differs. So a checkpoint's copy may
+   not be what its own generators make from its own timeline.
+   - A reconstructed round therefore always uses `script.md` and `storyboard.html`
+     regenerated from its own `timing.json`, by the generators at its own state.
+   - Each generator is proven first at the state: from the state's committed data files,
+     it must reproduce the state's committed file byte for byte.
+   - For a snapshot round whose file fails that, the proof falls back to the latest earlier
+     checkpoint whose file the same generator reproduces from that checkpoint's data
+     files. The generator stays the round's; only the data are older.
+   - With no proven `script.md`, the round is not extracted. With no proven
+     `storyboard.html`, it gets pass 1 only.
+   - A generated file that names the folder it was made in counts as a failed run.
+2. **The camera's files.** The camera, `preview.mjs` `c5f34dd8`, imports `cli-support.mjs`
+   and `canonical-json.mjs` from beside it.
+   - Checkpoints before #20 have an older `preview.mjs` (`1aa7b03f`) and no
+     `cli-support.mjs`. Those from #20 to #29 have the camera but an older
+     `cli-support.mjs`. Every checkpoint has the camera's `canonical-json.mjs`.
+   - Where the engine's `src/` differs from the camera's three files (`CAMERA_FILES` in
+     `src/lib.mjs`), each file that differs is written over it **after** the round's own
+     scene build. The build stays the round's, and the stills are the one camera's.
+   - The camera then runs with the same command as in every other round, so `audit.txt`
+     has the same shape.
+   - `inputs.md` records each file given and what the engine had.
+3. **The seek-hook check is static.** Whether a scene "lacks the seek hook" is decided by
+   matching `/window\.masterTimeline\s*=/` against the built `video-auto.html`. Without a
+   match, the camera is not run and the round gets pass 1 only.
+4. **What the generators read.** "Regenerated files" says the proof is from the committed
+   `timing.json`. Every version of both generators was read, in all 44 checkpoints and on
+   the lineage:
+   - `write-script.mjs` (two versions) also reads `calibration-observed.json`, and its
+     later version reads `silence-observed.json`, each only where present;
+   - `write-storyboard.mjs` (three versions) reads only `timing.json`.
+
+   So the proof uses the state's committed copies of all three data files, and the
+   regeneration uses them with `timing.json` replaced by the round's own. A data file
+   absent from the state is absent from the run.
+5. **A missing lockfile stops the round.** Checkpoints #1–#4 have no project
+   `package-lock.json`, and #1–#2 have no engine one. A state without both stops the
+   extraction with an error. `npm install` is never used instead, because it would resolve
+   today's versions, not the round's.
 
 ### Scoring (defined before results)
 
@@ -348,9 +400,17 @@ writes only under `--apply`.
    - collects `<tmp>/vcb/inputs/<round>/pass1/` and `pass2/`, and leaves a manifest
      beside the build.
 
+   A reconstructed round is first rebuilt with `src/reconstruct.mjs`: its `timing.json`
+   by its method, then `script.md` and `storyboard.html` by its generators (see
+   "Amendments"). They are written over the export before anything is built. Without
+   `--apply`, the plan shows each method's evidence: the fields and whether the script gives
+   the base back (r6c), each checkpoint's status (r2, r3), and each generator's proof.
+
    It refuses an output folder inside any checkout of this repository. It deletes only
    folders it created, and only under `--replace`. `--round <id>` (repeatable) limits it
-   to those rounds; `--work <dir>` and `--out <dir>` move the two folders.
+   to those rounds; `--work <dir>` and `--out <dir>` move the two folders. Because a round
+   folder is never rebuilt without `--replace`, the reconstructed rounds can be extracted
+   after r4–r7 without touching them: `--round r6c --round r2 --round r3`.
 2. **Assemble the rubric** from its transport pieces, which are kept outside the
    repository.
 

@@ -1,10 +1,12 @@
 // extract-inputs — rebuild each round's pre-fix inputs for the coach, outside the repository.
 //
-// For each round it writes the round's committed engine and project trees from git's
-// object store, byte for byte, and re-hashes every file against its blob id. It installs
-// dependencies from the committed lockfiles, builds the scene with the round's own engine,
-// and takes one still per segment with the single pinned camera. Last, it collects the two
-// input sets and a manifest that write-ledger.mjs turns into inputs.md.
+// For each round it writes the round's engine and project trees from git's object store,
+// byte for byte, and re-hashes every file against its blob id. A reconstructed round then
+// has its rebuilt timing.json and its regenerated script.md and storyboard.html written over
+// the export (src/reconstruct.mjs). It installs dependencies from the committed lockfiles,
+// builds the scene with the round's own engine, and takes one still per segment with the
+// single pinned camera. Last, it collects the two input sets and a manifest that
+// write-ledger.mjs turns into inputs.md.
 //
 // It plans by default and writes nothing without --apply.
 
@@ -13,27 +15,32 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import {
+  ALL_ROUNDS,
   CAMERA_BLOB,
+  CAMERA_FILES,
   CHECKPOINT_NS,
   ENGINE,
   EXIT,
   INPUT_FILES,
   LINEAGE_REF,
   PROJECT,
-  ROUNDS,
   UsageError,
   assertOutsideRepository,
   git,
   gitBlobId,
   gitText,
+  listTree,
   main,
   pathExists,
   pngSize,
   prepareFreshDir,
+  readBlobs,
   repoRoot,
   run,
+  safeJoin,
   sha256,
 } from './lib.mjs';
+import { planRegeneration, planRestoreFields, planSnapshotRule, readBlob } from './reconstruct.mjs';
 
 const USAGE = `
 extract-inputs — rebuild each round's pre-fix inputs for the coach, outside the repository.
@@ -43,7 +50,7 @@ extract-inputs — rebuild each round's pre-fix inputs for the coach, outside th
   node src/extract-inputs.mjs --apply --round r4 --round r7
 
 Options
-  --round <id>   round to extract; repeatable (default: every round): ${ROUNDS.map((r) => r.id).join(' ')}
+  --round <id>   round to extract; repeatable (default: every round): ${ALL_ROUNDS.map((r) => r.id).join(' ')}
   --out <dir>    where the coach's input sets go (default: <tmp>/vcb/inputs)
   --work <dir>   where each round is exported and built (default: <tmp>/vcb/work)
   --apply        actually extract. Without it nothing is written.
@@ -57,6 +64,9 @@ Exit codes: 0 success/plan · 1 a stage failed · 2 bad usage
 const SCENE_BUILD = ['../SizzleCraft/src/write-build-html.mjs', '--apply'];
 const CAMERA = ['../SizzleCraft/src/preview.mjs', '--apply'];
 const NPM_CI = ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--prefer-offline'];
+// The seek hook the camera drives (README, "Amendments", 3). Without it every still would
+// show the same moment.
+const SEEK_HOOK = /window\.masterTimeline\s*=/;
 
 await main(async () => {
   let parsed;
@@ -80,9 +90,9 @@ await main(async () => {
     console.log(USAGE);
     return EXIT.OK;
   }
-  const unknown = values.round.filter((id) => !ROUNDS.some((r) => r.id === id));
+  const unknown = values.round.filter((id) => !ALL_ROUNDS.some((r) => r.id === id));
   if (unknown.length) throw new UsageError(`unknown round(s): ${unknown.join(', ')}`);
-  const rounds = values.round.length ? ROUNDS.filter((r) => values.round.includes(r.id)) : ROUNDS;
+  const rounds = values.round.length ? ALL_ROUNDS.filter((r) => values.round.includes(r.id)) : ALL_ROUNDS;
 
   const out = path.resolve(values.out ?? path.join(os.tmpdir(), 'vcb', 'inputs'));
   const work = path.resolve(values.work ?? path.join(os.tmpdir(), 'vcb', 'work'));
@@ -91,20 +101,17 @@ await main(async () => {
 
   const lineageTip = await gitText(repo, ['rev-parse', '--verify', `${LINEAGE_REF}^{commit}`]);
   const plans = [];
-  for (const round of rounds) plans.push(await planRound(repo, round, lineageTip));
+  for (const round of rounds) {
+    plans.push(round.kind === 'commit-backed' ? await planRound(repo, round, lineageTip) : await planReconstructed(repo, round, lineageTip));
+  }
 
   for (const p of plans) {
-    console.log(`${p.round.id}  ${p.round.kind}  ${p.round.commit}`);
-    console.log(`    pre-fix rule: ${p.preFix.holds ? 'holds' : 'DOES NOT HOLD'}` +
-      ` (first fix ${p.preFix.firstFix ?? 'none'}${p.preFix.firstFixSubject ? ` "${p.preFix.firstFixSubject}"` : ''})`);
-    console.log(`    export: ${p.entries.length} files; camera ${p.cameraBlob === CAMERA_BLOB ? 'is' : 'IS NOT'} the pinned ${CAMERA_BLOB.slice(0, 8)}`);
-    const same = (ck) => (ck.commit ? ck.files.map((f) => `${path.posix.basename(f.path)} ${f.same ? 'same' : 'DIFFERS'}`).join(', ') : 'absent');
-    console.log(`    checkpoint #${p.checkpoint.index} ${p.checkpoint.commit.slice(0, 8)}: ${same(p.checkpoint)}`);
-    console.log(`    checkpoint #${p.checkpoint.next.index} ${p.checkpoint.next.commit?.slice(0, 8) ?? ''}: ${same(p.checkpoint.next)}`);
+    if (p.round.kind === 'commit-backed') printCommitPlan(p);
+    else printReconstructedPlan(p);
     console.log(`    work ${path.join(work, p.round.id)}${(await pathExists(path.join(work, p.round.id))) ? ' (exists)' : ''}`);
     console.log(`    out  ${path.join(out, p.round.id)}${(await pathExists(path.join(out, p.round.id))) ? ' (exists)' : ''}`);
   }
-  const broken = plans.filter((p) => !p.preFix.holds || p.cameraBlob !== CAMERA_BLOB);
+  const broken = plans.filter((p) => !p.holds);
   if (broken.length) {
     throw new Error(`round table disagrees with the protocol for: ${broken.map((p) => p.round.id).join(', ')}`);
   }
@@ -135,24 +142,131 @@ async function planRound(repo, round, lineageTip) {
   const entries = await listTree(repo, round.commit, [ENGINE, PROJECT]);
   const cameraBlob = entries.find((e) => e.path === `${ENGINE}/src/preview.mjs`)?.oid ?? null;
   const checkpoint = await crossCheck(repo, round, entries);
-  return { round, preFix, entries, cameraBlob, checkpoint };
+  // A commit-backed round's engine is where the camera came from, so it must need nothing.
+  const cameraOverlay = cameraOverlayFor(entries);
+  return {
+    round,
+    preFix,
+    entries,
+    cameraBlob,
+    checkpoint,
+    stateCommit: round.commit,
+    replace: [],
+    cameraOverlay,
+    passes: [1, 2],
+    holds: preFix.holds && cameraBlob === CAMERA_BLOB && cameraOverlay.length === 0,
+  };
 }
 
-async function listTree(repo, commit, roots) {
-  const raw = (await git(repo, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', ...roots])).toString('utf8');
-  const entries = [];
-  for (const rec of raw.split('\0')) {
-    if (!rec) continue;
-    const tab = rec.indexOf('\t');
-    const [mode, type, oid] = rec.slice(0, tab).split(' ');
-    const p = rec.slice(tab + 1);
-    if (type !== 'blob' || (mode !== '100644' && mode !== '100755')) {
-      throw new Error(`${commit.slice(0, 8)}:${p} is a ${type} (mode ${mode}); only regular files can be exported`);
-    }
-    entries.push({ mode, oid, path: p });
+function printCommitPlan(p) {
+  console.log(`${p.round.id}  ${p.round.kind}  ${p.round.commit}`);
+  console.log(`    pre-fix rule: ${p.preFix.holds ? 'holds' : 'DOES NOT HOLD'}` +
+    ` (first fix ${p.preFix.firstFix ?? 'none'}${p.preFix.firstFixSubject ? ` "${p.preFix.firstFixSubject}"` : ''})`);
+  console.log(`    export: ${p.entries.length} files; camera ${p.cameraBlob === CAMERA_BLOB && !p.cameraOverlay.length ? 'is' : 'IS NOT'} the pinned ${CAMERA_BLOB.slice(0, 8)}`);
+  const same = (ck) => (ck.commit ? ck.files.map((f) => `${path.posix.basename(f.path)} ${f.same ? 'same' : 'DIFFERS'}`).join(', ') : 'absent');
+  console.log(`    checkpoint #${p.checkpoint.index} ${p.checkpoint.commit.slice(0, 8)}: ${same(p.checkpoint)}`);
+  console.log(`    checkpoint #${p.checkpoint.next.index} ${p.checkpoint.next.commit?.slice(0, 8) ?? ''}: ${same(p.checkpoint.next)}`);
+}
+
+// The camera's three files against the engine's (README, "Amendments", 2). Each one that
+// differs is given to the engine after its own scene is built.
+function cameraOverlayFor(entries) {
+  return Object.entries(CAMERA_FILES)
+    .map(([rel, oid]) => ({ path: `${ENGINE}/${rel}`, engine: entries.find((e) => e.path === `${ENGINE}/${rel}`)?.oid ?? null, camera: oid }))
+    .filter((f) => f.engine !== f.camera);
+}
+
+async function planReconstructed(repo, round, lineageTip) {
+  let rec;
+  let state;
+  if (round.method === 'restore-fields') {
+    rec = await planRestoreFields(repo, round);
+    state = { commit: round.commit, index: null, timing: rec.timing.buf };
+  } else if (round.method === 'snapshot-rule') {
+    rec = await planSnapshotRule(repo, round, lineageTip);
+    if (!rec.chosen) return { round, rec, state: null, holds: false };
+    state = { commit: rec.chosen.commit, index: rec.chosen.index, timing: await readBlob(repo, rec.chosen.timingBlob) };
+  } else {
+    throw new Error(`${round.id}: unknown method "${round.method}"`);
   }
-  if (!entries.length) throw new Error(`${commit.slice(0, 8)} has no files under ${roots.join(', ')}`);
-  return entries;
+  const regen = await planRegeneration(repo, round, state);
+  const entries = await listTree(repo, state.commit, [ENGINE, PROJECT]);
+  const committedBlob = (rel) => entries.find((e) => e.path === rel)?.oid ?? null;
+  // Written over the export: the rebuilt timing.json and each proven regenerated file, where
+  // its bytes differ from the state's own.
+  const candidates = [
+    { path: `${PROJECT}/timing.json`, buf: state.timing, why: 'reconstructed' },
+    ...regen.files.filter((f) => f.buf).map((f) => ({ path: `${PROJECT}/${f.file}`, buf: f.buf, why: 'regenerated' })),
+  ];
+  const replace = candidates
+    .map((c) => ({ ...c, blob: gitBlobId(c.buf), committed: committedBlob(c.path) }))
+    .filter((c) => c.blob !== c.committed);
+  const missingLocks = [ENGINE, PROJECT].filter((root) => !committedBlob(`${root}/package-lock.json`));
+  return {
+    round,
+    rec,
+    state,
+    regen,
+    entries,
+    stateCommit: state.commit,
+    replace,
+    regenerated: regen.files.filter((f) => f.buf).map((f) => `${PROJECT}/${f.file}`),
+    cameraOverlay: cameraOverlayFor(entries),
+    missingLocks,
+    passes: regen.passes,
+    holds: rec.holds && regen.holds && missingLocks.length === 0,
+  };
+}
+
+function printReconstructedPlan(p) {
+  const { round, rec } = p;
+  const s8 = (x) => (x ? x.slice(0, 8) : '—');
+  const yes = (b) => (b ? 'yes' : 'NO');
+  const where = p.state ? `${p.state.commit}${p.state.index != null ? ` = checkpoint #${p.state.index}` : ''}` : 'no state chosen';
+  console.log(`${round.id}  reconstructed (${round.method})  ${where}`);
+  if (round.method === 'restore-fields') {
+    console.log(`    base ${s8(rec.base.commit)}; ${rec.fields.length} fields restored from ${s8(rec.restoreFrom.commit)}, ${rec.fields.filter((f) => f.differs).length} of them differ`);
+    console.log(`    base re-serialises unchanged: ${yes(rec.roundTrips)}; ${round.script} turns the rebuilt file back into the base: ${yes(rec.scriptGivesBase)}${rec.script.error ? ` (${rec.script.error})` : ''}`);
+    const mark = { before: 'b', after: 'a', other: 'o' };
+    printWrapped('checkpoints (b = restored value, a = base value, o = other):', rec.checkpoints.map((c) => `#${c.index} ${c.timingBlob ? c.fields.map((f) => mark[f]).join('') : '-'}`));
+  } else {
+    console.log(`    ${round.script} (${s8(rec.script.blob)}): ${rec.live.length} of ${rec.fields.length} fields change somewhere${rec.noop.length ? `; no-op: ${rec.noop.join(', ')}` : ''}`);
+    printWrapped('checkpoints:', rec.rows.map((r) => `#${r.index} ${r.status}`));
+    console.log(`    transitions (none, then all): after #${rec.transitions.join(', #') || '(none)'}`);
+  }
+  console.log(`    method ${rec.holds ? 'holds' : 'DOES NOT HOLD'}`);
+  if (!p.state) return;
+  for (const f of p.regen.files) {
+    const pr = f.proof;
+    const proven = pr.provenAt
+      ? pr.atState.reproduces
+        ? 'reproduces the file at the state'
+        : `stale at the state; reproduces checkpoint #${pr.provenAt.index}'s file`
+      : `NOT PROVEN (at the state: ${pr.atState.error ?? 'output differs'}; ${pr.tried.length} earlier checkpoint(s) tried)`;
+    const made = f.regenerated.blob === null
+      ? `regeneration failed: ${f.regenerated.error}`
+      : f.regenerated.blob === f.committed ? "regenerated: same bytes as the state's file" : "regenerated: differs from the state's file";
+    console.log(`    ${f.file}: ${path.posix.basename(f.generator)} ${s8(f.generatorBlob)} ${proven}; ${made}`);
+  }
+  console.log(`    written over the export: ${p.replace.map((r) => `${path.posix.basename(r.path)} (${r.why})`).join(', ') || 'nothing'}`);
+  console.log(`    passes: ${p.passes.join(', ') || 'none'}`);
+  console.log(`    lockfiles: ${p.missingLocks.length ? `MISSING under ${p.missingLocks.join(', ')}` : 'engine and project'}`);
+  const cam = p.cameraOverlay.length
+    ? `${p.cameraOverlay.map((f) => path.posix.basename(f.path)).join(', ')} given to the engine after its scene is built`
+    : "the engine's own";
+  console.log(`    export: ${p.entries.length} files; camera: ${cam}`);
+}
+
+function printWrapped(label, items, width = 100) {
+  let line = `    ${label}`;
+  for (const it of items) {
+    if (line.length + it.length + 2 > width) {
+      console.log(line);
+      line = '     ';
+    }
+    line += `  ${it}`;
+  }
+  console.log(line);
 }
 
 async function blobsAt(repo, commit, paths) {
@@ -190,33 +304,6 @@ async function crossCheck(repo, round, entries) {
   const named = await describe(round.checkpoint);
   if (!named.commit) throw new Error(`checkpoint #${round.checkpoint} for ${round.id} not found under ${CHECKPOINT_NS}`);
   return { ...named, next: await describe(round.checkpoint + 1) };
-}
-
-async function readBlobs(repo, oids) {
-  const unique = [...new Set(oids)];
-  const r = await run('git', ['-C', repo, 'cat-file', '--batch'], { input: `${unique.join('\n')}\n` });
-  if (r.code !== 0) throw new Error(`git cat-file --batch exited ${r.code}: ${r.stderr.toString('utf8').trim()}`);
-  const buf = r.stdout;
-  const blobs = new Map();
-  let pos = 0;
-  for (const oid of unique) {
-    const nl = buf.indexOf(0x0a, pos);
-    const [hOid, type, size] = buf.toString('utf8', pos, nl).split(' ');
-    if (hOid !== oid || type !== 'blob') throw new Error(`git cat-file: expected blob ${oid}, got "${buf.toString('utf8', pos, nl)}"`);
-    const start = nl + 1;
-    const end = start + Number(size);
-    blobs.set(oid, buf.subarray(start, end));
-    pos = end + 1;
-  }
-  return blobs;
-}
-
-function safeJoin(root, rel) {
-  const segs = rel.split('/');
-  if (segs.some((s) => s === '' || s === '.' || s === '..' || /[:\\\0]/.test(s))) {
-    throw new Error(`unsafe path in tree: ${JSON.stringify(rel)}`);
-  }
-  return path.join(root, ...segs);
 }
 
 async function toolVersions() {
@@ -274,7 +361,8 @@ function transcript(stages) {
 
 async function extractRound(repo, plan, { out, work, replace, tools, lineageTip }) {
   const { round, entries } = plan;
-  console.log(`\n== ${round.id} (${round.commit.slice(0, 8)})`);
+  const reconstructed = round.kind !== 'commit-backed';
+  console.log(`\n== ${round.id} (${plan.stateCommit.slice(0, 8)})`);
   const workRoot = path.join(work, round.id);
   const outRoot = path.join(out, round.id);
   await prepareFreshDir(workRoot, replace);
@@ -292,10 +380,27 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
   if (verified !== entries.length) throw new Error(`${round.id}: only ${verified}/${entries.length} exported files match their blob ids`);
   console.log(`    exported ${entries.length} files, ${verified} re-hashed against their blob ids`);
 
+  // A reconstructed round's reconstructed timing.json and regenerated files go over the
+  // export, and are re-hashed from disk the same way.
+  for (const r of plan.replace) {
+    const dest = safeJoin(workRoot, r.path);
+    await fs.writeFile(dest, r.buf);
+    if (gitBlobId(await fs.readFile(dest)) !== r.blob) throw new Error(`${round.id}: ${r.path} did not read back as written`);
+  }
+  if (plan.replace.length) {
+    console.log(`    written over the export: ${plan.replace.map((r) => `${path.posix.basename(r.path)} (${r.why})`).join(', ')}`);
+  }
+
   const projectDir = safeJoin(workRoot, PROJECT);
   const engineDir = safeJoin(workRoot, ENGINE);
 
-  // 2. Dependencies, from the committed lockfiles. No install scripts run.
+  // 2. Dependencies, from the committed lockfiles. No install scripts run, and a tree without
+  // a lockfile stops here: npm install would resolve today's versions (README, "Amendments", 5).
+  for (const root of [ENGINE, PROJECT]) {
+    if (!entries.some((e) => e.path === `${root}/package-lock.json`)) {
+      throw new Error(`${round.id}: ${root}/package-lock.json is not in the tree, and npm install is never used in its place`);
+    }
+  }
   const installs = [];
   for (const [label, dir] of [['engine', engineDir], ['project', projectDir]]) {
     const s = await stage(`npm ci (${label})`, dir, [npmCliPath(), ...NPM_CI], `npm ${NPM_CI.join(' ')}`);
@@ -308,32 +413,73 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
   const scene = await stage('scene build', projectDir, SCENE_BUILD, `node ${SCENE_BUILD.join(' ')}`);
   console.log(`    scene build: exit ${scene.exitCode}`);
   if (scene.exitCode !== 0) throw new Error(`${round.id}: scene build exited ${scene.exitCode}\n${scene.stderr.trim()}`);
-  const camera = await stage('camera', projectDir, CAMERA, `node ${CAMERA.join(' ')}`);
-  console.log(`    camera: exit ${camera.exitCode}`);
-  // Exit 1 is the layout audit failing, and the stills are still written; the coach sees it
-  // in audit.txt. Anything else is a broken stage.
-  if (camera.exitCode !== 0 && camera.exitCode !== 1) {
-    throw new Error(`${round.id}: camera exited ${camera.exitCode}\n${camera.stderr.trim()}`);
+
+  let passes = plan.passes;
+  let hook = null;
+  if (reconstructed) {
+    const html = await fs.readFile(path.join(projectDir, 'video-auto.html'), 'utf8');
+    hook = { file: `${PROJECT}/video-auto.html`, pattern: SEEK_HOOK.source, found: SEEK_HOOK.test(html) };
+    if (!hook.found) passes = passes.filter((p) => p !== 2);
+    console.log(`    seek hook: ${hook.found ? 'found' : 'NOT FOUND, so no camera and no pass 2'}`);
   }
 
-  // 4. Nothing the stages ran may have touched the committed inputs.
-  const inputEntries = INPUT_FILES.map((f) => entries.find((e) => e.path === `${PROJECT}/${f}`));
-  for (const e of inputEntries) {
-    if (!e) throw new Error(`${round.id}: an input file is missing from the tree`);
-    if (gitBlobId(await fs.readFile(safeJoin(workRoot, e.path))) !== e.oid) throw new Error(`${round.id}: ${e.path} changed during the build`);
+  let camera = null;
+  let overlay = [];
+  if (passes.includes(2)) {
+    // An engine older than the camera is given the camera's three files after its own scene
+    // is built, so the build is the round's and the stills are the one camera's.
+    if (plan.cameraOverlay.length) {
+      const cam = await readBlobs(repo, plan.cameraOverlay.map((f) => f.camera));
+      for (const f of plan.cameraOverlay) {
+        const dest = safeJoin(workRoot, f.path);
+        await fs.writeFile(dest, cam.get(f.camera));
+        if (gitBlobId(await fs.readFile(dest)) !== f.camera) throw new Error(`${round.id}: ${f.path} did not read back as written`);
+      }
+      overlay = plan.cameraOverlay;
+      console.log(`    camera files given to the engine: ${overlay.map((f) => path.posix.basename(f.path)).join(', ')}`);
+    }
+    camera = await stage('camera', projectDir, CAMERA, `node ${CAMERA.join(' ')}`);
+    console.log(`    camera: exit ${camera.exitCode}`);
+    // Exit 1 is the layout audit failing, and the stills are still written; the coach sees it
+    // in audit.txt. Anything else is a broken stage.
+    if (camera.exitCode !== 0 && camera.exitCode !== 1) {
+      throw new Error(`${round.id}: camera exited ${camera.exitCode}\n${camera.stderr.trim()}`);
+    }
   }
 
-  // 5. Collect the two input sets.
-  const timing = JSON.parse(await fs.readFile(path.join(projectDir, 'timing.json'), 'utf8'));
-  const endCardOn = timing.endCard != null && timing.endCard.enabled !== false;
-  if (endCardOn && !Number.isFinite(timing.contentMs)) {
-    throw new Error(`${round.id}: the end card is on but contentMs is missing, so its still would show no real moment`);
+  // 4. Nothing the stages ran may have touched the inputs: each is still the file the round
+  // was given, from the tree or written over it.
+  const expected = Object.fromEntries(
+    INPUT_FILES.map((f) => {
+      const rel = `${PROJECT}/${f}`;
+      return [f, plan.replace.find((r) => r.path === rel)?.blob ?? entries.find((e) => e.path === rel)?.oid ?? null];
+    }),
+  );
+  const used = passes.includes(2) ? INPUT_FILES : ['script.md'];
+  for (const f of INPUT_FILES) {
+    if (!expected[f]) {
+      if (used.includes(f)) throw new Error(`${round.id}: an input file is missing from the tree`);
+      continue;
+    }
+    if (gitBlobId(await fs.readFile(path.join(projectDir, f))) !== expected[f]) throw new Error(`${round.id}: ${PROJECT}/${f} changed during the build`);
   }
-  const stillIds = [...timing.segments.map((s) => s.id), ...(endCardOn ? ['endcard'] : [])];
 
-  const scrub = makeScrubber([[projectDir, '<project>'], [engineDir, '<engine>'], [workRoot, '<root>']]);
-  const audit = scrub(transcript([scene, camera]));
-  assertNoLocalPath(audit, 'audit.txt');
+  // 5. Collect the input sets the round has.
+  let endCardOn = null;
+  let stillIds = [];
+  let timing = null;
+  let audit = null;
+  if (passes.includes(2)) {
+    timing = JSON.parse(await fs.readFile(path.join(projectDir, 'timing.json'), 'utf8'));
+    endCardOn = timing.endCard != null && timing.endCard.enabled !== false;
+    if (endCardOn && !Number.isFinite(timing.contentMs)) {
+      throw new Error(`${round.id}: the end card is on but contentMs is missing, so its still would show no real moment`);
+    }
+    stillIds = [...timing.segments.map((s) => s.id), ...(endCardOn ? ['endcard'] : [])];
+    const scrub = makeScrubber([[projectDir, '<project>'], [engineDir, '<engine>'], [workRoot, '<root>']]);
+    audit = scrub(transcript([scene, camera]));
+    assertNoLocalPath(audit, 'audit.txt');
+  }
 
   const files = [];
   const put = async (pass, rel, buf, extra = {}) => {
@@ -342,47 +488,72 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
     await fs.writeFile(dest, buf, { flag: 'wx' });
     files.push({ pass, file: rel, blob: extra.blob ?? null, sha256: sha256(buf), bytes: buf.length, ...extra });
   };
-  const committed = async (f) => {
-    const e = inputEntries.find((x) => x.path === `${PROJECT}/${f}`);
-    return { buf: await fs.readFile(path.join(projectDir, f)), blob: e.oid };
+  // A file keeps its blob id only when its bytes are the tree's own.
+  const given = async (f) => {
+    const rel = `${PROJECT}/${f}`;
+    const buf = await fs.readFile(path.join(projectDir, f));
+    const written = plan.replace.find((r) => r.path === rel);
+    const extra = { blob: written ? null : expected[f] };
+    if (reconstructed && plan.regenerated.includes(rel)) extra.note = 'regenerated';
+    else if (written) extra.note = 'reconstructed';
+    return { buf, extra };
   };
-  const script = await committed('script.md');
-  await put(1, 'pass1/script.md', script.buf, { blob: script.blob });
-  for (const f of INPUT_FILES) {
-    const c = await committed(f);
-    await put(2, `pass2/${f}`, c.buf, { blob: c.blob });
-  }
-  await put(2, 'pass2/audit.txt', Buffer.from(audit, 'utf8'), { generated: 'stage transcript' });
-  for (const id of stillIds) {
-    const buf = await fs.readFile(path.join(projectDir, 'preview', `${id}.png`));
-    const { width, height } = pngSize(buf);
-    if (width !== timing.project.width || height !== timing.project.height) {
-      throw new Error(`${round.id}: still ${id}.png is ${width}x${height}, not the project's ${timing.project.width}x${timing.project.height}`);
+  const script = await given('script.md');
+  await put(1, 'pass1/script.md', script.buf, script.extra);
+  if (passes.includes(2)) {
+    for (const f of INPUT_FILES) {
+      const c = await given(f);
+      await put(2, `pass2/${f}`, c.buf, c.extra);
     }
-    await put(2, `pass2/stills/${id}.png`, buf, { generated: 'camera', width, height });
+    await put(2, 'pass2/audit.txt', Buffer.from(audit, 'utf8'), { generated: 'stage transcript' });
+    for (const id of stillIds) {
+      const buf = await fs.readFile(path.join(projectDir, 'preview', `${id}.png`));
+      const { width, height } = pngSize(buf);
+      if (width !== timing.project.width || height !== timing.project.height) {
+        throw new Error(`${round.id}: still ${id}.png is ${width}x${height}, not the project's ${timing.project.width}x${timing.project.height}`);
+      }
+      await put(2, `pass2/stills/${id}.png`, buf, { generated: 'camera', width, height });
+    }
   }
 
   const manifest = {
     round: round.id,
     kind: round.kind,
-    commit: round.commit,
+    commit: plan.stateCommit,
     lineage: { ref: LINEAGE_REF, tip: lineageTip },
-    preFix: plan.preFix,
+    ...(reconstructed
+      ? {
+          method: round.method,
+          state: { commit: plan.state.commit, index: plan.state.index, timingSha256: sha256(plan.state.timing) },
+          reconstruction: withoutBuffers(plan.rec),
+          regeneration: plan.regen.files.map(({ buf, ...f }) => f),
+          replaced: plan.replace.map(({ buf, ...r }) => ({ path: r.path, why: r.why, replacedBlob: r.committed, sha256: sha256(buf), bytes: buf.length })),
+          camera: passes.includes(2) ? { preview: CAMERA_BLOB, overlay } : null,
+          hook,
+          passes,
+        }
+      : { preFix: plan.preFix }),
     export: { roots: [ENGINE, PROJECT], files: entries.length, verified },
     engine: Object.fromEntries(
       ['src/write-build-html.mjs', 'src/preview.mjs', 'src/cli-support.mjs', 'package-lock.json']
         .map((f) => [`${ENGINE}/${f}`, entries.find((e) => e.path === `${ENGINE}/${f}`)?.oid ?? null])
         .concat([[`${PROJECT}/package-lock.json`, entries.find((e) => e.path === `${PROJECT}/package-lock.json`)?.oid ?? null]]),
     ),
-    stages: [...installs, ...[scene, camera].map((s) => ({ label: s.label, command: s.display, exitCode: s.exitCode }))],
-    layoutAudit: camera.exitCode === 0 ? 'clean' : 'issues reported (see audit.txt)',
-    endCard: endCardOn ? 'on — endcard.png kept' : 'off (endCard.enabled is false) — endcard.png dropped',
-    checkpoint: plan.checkpoint,
+    stages: [...installs, ...[scene, camera].filter(Boolean).map((s) => ({ label: s.label, command: s.display, exitCode: s.exitCode }))],
+    layoutAudit: camera ? (camera.exitCode === 0 ? 'clean' : 'issues reported (see audit.txt)') : 'not run (no pass 2)',
+    endCard: endCardOn === null ? 'not used (no pass 2)' : endCardOn ? 'on — endcard.png kept' : 'off (endCard.enabled is false) — endcard.png dropped',
+    ...(reconstructed ? {} : { checkpoint: plan.checkpoint }),
     tools: { ...tools, ...(await browserVersions(engineDir)) },
     files,
   };
   await fs.writeFile(path.join(workRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`    collected ${files.length} files into ${outRoot}`);
+}
+
+// The reconstruction's record, with the rebuilt timing.json kept only by its hash.
+function withoutBuffers(rec) {
+  const { timing, ...rest } = rec;
+  return timing ? { ...rest, timing: { sha256: sha256(timing.buf), bytes: timing.buf.length } } : rest;
 }
 
 async function browserVersions(engineDir) {

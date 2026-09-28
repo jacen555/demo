@@ -10,12 +10,28 @@
 // field's edit is not there yet.
 //
 // Both methods run a review script on a copy of one timing.json, in a throwaway folder under
-// the system temp directory that is deleted afterwards. Nothing else is written.
+// the system temp directory that is deleted afterwards. The regenerated files are made the
+// same way, in a throwaway copy of the round's trees. Nothing else is written.
 
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { CHECKPOINT_NS, PROJECT, canonical, fieldValue, git, gitBlobId, gitText, run, setField } from './lib.mjs';
+import {
+  CHECKPOINT_NS,
+  ENGINE,
+  PROJECT,
+  canonical,
+  fieldValue,
+  git,
+  gitBlobId,
+  gitText,
+  listTree,
+  pathExists,
+  readBlobs,
+  run,
+  safeJoin,
+  setField,
+} from './lib.mjs';
 
 export async function listCheckpoints(repo) {
   const raw = await gitText(repo, ['for-each-ref', '--format=%(objectname) %(refname)', CHECKPOINT_NS]);
@@ -53,15 +69,19 @@ export async function runReviewScript(scriptRel, scriptBuf, timingBuf) {
     await fs.writeFile(scriptPath, scriptBuf);
     await fs.writeFile(path.join(dir, 'timing.json'), timingBuf);
     const r = await run(process.execPath, [scriptPath], { cwd: dir });
-    const stderr = r.stderr.toString('utf8').trim();
     return {
       exitCode: r.code,
-      error: r.code === 0 ? null : (stderr.split('\n').find((l) => /Error/.test(l)) ?? stderr.split('\n')[0] ?? '').trim(),
+      error: r.code === 0 ? null : firstError(r),
       after: r.code === 0 ? await fs.readFile(path.join(dir, 'timing.json')) : null,
     };
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+}
+
+function firstError(r) {
+  const stderr = r.stderr.toString('utf8').trim();
+  return (stderr.split('\n').find((l) => /Error/.test(l)) ?? stderr.split('\n')[0] ?? '').trim();
 }
 
 const serialise = (json) => Buffer.from(`${JSON.stringify(json, null, 2)}\n`, 'utf8');
@@ -191,4 +211,144 @@ export async function planSnapshotRule(repo, round, lineageTip) {
 
 function sha(v) {
   return gitBlobId(Buffer.from(canonical(v), 'utf8')).slice(0, 12);
+}
+
+// ---- regenerated files ------------------------------------------------------------------
+// A reconstructed round's script.md and storyboard.html are regenerated from the round's own
+// timing.json by the generators at the round's own state (README, "Regenerated files"). The
+// coach must see what the pipeline makes from the timeline the user watched, and a
+// checkpoint can hold a file its author had not regenerated yet.
+//
+// A regenerated file is only as good as its generator, so each generator must first
+// reproduce a real file byte for byte from that file's own data: the file at the round's
+// own state, or, for a snapshot round whose file is stale, the latest earlier checkpoint's
+// (README, "Amendments", 1). Without that proof a file is not used, and the passes that
+// need it are dropped.
+export const GENERATED = Object.freeze([
+  { file: 'script.md', generator: `${PROJECT}/src/write-script.mjs`, args: [], passes: [1, 2] },
+  { file: 'storyboard.html', generator: `${ENGINE}/src/write-storyboard.mjs`, args: ['--apply'], passes: [2] },
+]);
+
+// What the generators read, found by reading every version of both in the checkpoints and
+// on the lineage (README, "Amendments", 4). write-script reads timing.json and, where
+// present, the two observed files. write-storyboard reads timing.json.
+export const DATA_FILES = Object.freeze(['timing.json', 'calibration-observed.json', 'silence-observed.json']);
+
+export async function dataAt(repo, commit) {
+  const data = {};
+  for (const f of DATA_FILES) {
+    const oid = await blobOid(repo, commit, `${PROJECT}/${f}`);
+    data[f] = oid ? await readBlob(repo, oid) : null;
+  }
+  return data;
+}
+
+const dataKey = (data) => DATA_FILES.map((f) => (data[f] ? gitBlobId(data[f]) : '-')).join(',');
+
+// Runs both generators with the code at `codeCommit` on the given data files, in a throwaway
+// copy of that state's engine and project trees. qc/** is left out, because it holds the
+// review scripts and screenshots and is never an input. Only the generated files are read
+// back, and the copy is deleted. Every generator version is run the same way: its output is
+// deleted first, then it runs from the project folder, so a version that writes
+// unconditionally and one that plans unless given --apply both write the file.
+export async function runGenerators(repo, codeCommit, data) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vcb-gen-'));
+  try {
+    const entries = (await listTree(repo, codeCommit, [ENGINE, PROJECT])).filter((e) => !e.path.startsWith(`${PROJECT}/qc/`));
+    const blobs = await readBlobs(repo, entries.map((e) => e.oid));
+    for (const e of entries) {
+      const dest = safeJoin(dir, e.path);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, blobs.get(e.oid));
+    }
+    const projectDir = safeJoin(dir, PROJECT);
+    for (const f of DATA_FILES) {
+      const dest = path.join(projectDir, f);
+      if (data[f]) await fs.writeFile(dest, data[f]);
+      else await fs.rm(dest, { force: true });
+    }
+    for (const g of GENERATED) await fs.rm(path.join(projectDir, g.file), { force: true });
+    const out = {};
+    // A file that names the folder it was made in would tell the coach where it came from.
+    const namesDir = (buf) => {
+      const text = buf.toString('latin1').toLowerCase();
+      return [dir, dir.replace(/\\/g, '/')].some((v) => text.includes(v.toLowerCase()));
+    };
+    for (const g of GENERATED) {
+      const script = path.relative(projectDir, safeJoin(dir, g.generator));
+      const r = await run(process.execPath, [script, ...g.args], { cwd: projectDir });
+      const file = path.join(projectDir, g.file);
+      let buf = r.code === 0 && (await pathExists(file)) ? await fs.readFile(file) : null;
+      let error = buf ? null : firstError(r) || 'no output file';
+      if (buf && namesDir(buf)) [buf, error] = [null, 'the output names the folder it was made in'];
+      out[g.file] = { exitCode: r.code, buf, blob: buf ? gitBlobId(buf) : null, error };
+    }
+    return out;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+// state: the round's code (`commit`), its checkpoint index for a snapshot round, and the
+// timing.json the round is rebuilt from.
+export async function planRegeneration(repo, round, state) {
+  const own = await dataAt(repo, state.commit);
+  const committed = {};
+  const generatorBlob = {};
+  for (const g of GENERATED) {
+    committed[g.file] = await blobOid(repo, state.commit, `${PROJECT}/${g.file}`);
+    generatorBlob[g.file] = await blobOid(repo, state.commit, g.generator);
+    if (!generatorBlob[g.file]) throw new Error(`${round.id}: ${g.generator} does not exist at ${state.commit.slice(0, 8)}`);
+  }
+
+  const ownRun = await runGenerators(repo, state.commit, own);
+  const proof = {};
+  for (const g of GENERATED) {
+    const r = ownRun[g.file];
+    const reproduces = r.blob !== null && r.blob === committed[g.file];
+    proof[g.file] = {
+      atState: { reproduces, exitCode: r.exitCode, error: r.error, output: r.blob, committed: committed[g.file] },
+      provenAt: reproduces ? { index: state.index, commit: state.commit, file: committed[g.file] } : null,
+      tried: [],
+    };
+  }
+
+  if (round.method === 'snapshot-rule') {
+    const seen = new Set();
+    const earlier = (await listCheckpoints(repo)).filter((ck) => ck.index < state.index).reverse();
+    for (const ck of earlier) {
+      const need = GENERATED.filter((g) => !proof[g.file].provenAt);
+      if (!need.length) break;
+      const data = await dataAt(repo, ck.commit);
+      if (!data['timing.json']) continue;
+      const files = {};
+      for (const g of need) files[g.file] = await blobOid(repo, ck.commit, `${PROJECT}/${g.file}`);
+      if (need.every((g) => !files[g.file])) continue;
+      const key = `${dataKey(data)}|${need.map((g) => files[g.file] ?? '-').join(',')}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const r = await runGenerators(repo, state.commit, data);
+      for (const g of need) {
+        if (!files[g.file]) continue;
+        const reproduces = r[g.file].blob === files[g.file];
+        proof[g.file].tried.push({ index: ck.index, reproduces });
+        if (reproduces) proof[g.file].provenAt = { index: ck.index, commit: ck.commit, file: files[g.file] };
+      }
+    }
+  }
+
+  const sameTiming = own['timing.json'] !== null && state.timing.equals(own['timing.json']);
+  const regen = sameTiming ? ownRun : await runGenerators(repo, state.commit, { ...own, 'timing.json': state.timing });
+  const files = GENERATED.map((g) => ({
+    file: g.file,
+    generator: g.generator,
+    generatorBlob: generatorBlob[g.file],
+    passes: g.passes,
+    committed: committed[g.file],
+    proof: proof[g.file],
+    regenerated: { exitCode: regen[g.file].exitCode, error: regen[g.file].error, blob: regen[g.file].blob },
+    buf: proof[g.file].provenAt ? regen[g.file].buf : null,
+  }));
+  const passes = [1, 2].filter((p) => files.filter((f) => f.passes.includes(p)).every((f) => f.buf !== null));
+  return { files, passes, holds: passes.includes(1) };
 }

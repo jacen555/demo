@@ -202,6 +202,53 @@ export const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('h
 export const gitBlobId = (buf) =>
   crypto.createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
 
+// Every file under `roots` at `commit`. Only regular files can be exported byte for byte.
+export async function listTree(repo, commit, roots) {
+  const raw = (await git(repo, ['ls-tree', '-r', '-z', '--full-tree', commit, '--', ...roots])).toString('utf8');
+  const entries = [];
+  for (const rec of raw.split('\0')) {
+    if (!rec) continue;
+    const tab = rec.indexOf('\t');
+    const [mode, type, oid] = rec.slice(0, tab).split(' ');
+    const p = rec.slice(tab + 1);
+    if (type !== 'blob' || (mode !== '100644' && mode !== '100755')) {
+      throw new Error(`${commit.slice(0, 8)}:${p} is a ${type} (mode ${mode}); only regular files can be exported`);
+    }
+    entries.push({ mode, oid, path: p });
+  }
+  if (!entries.length) throw new Error(`${commit.slice(0, 8)} has no files under ${roots.join(', ')}`);
+  return entries;
+}
+
+// Blob contents by id, in one `git cat-file --batch` read.
+export async function readBlobs(repo, oids) {
+  const unique = [...new Set(oids)];
+  const r = await run('git', ['-C', repo, 'cat-file', '--batch'], { input: `${unique.join('\n')}\n` });
+  if (r.code !== 0) throw new Error(`git cat-file --batch exited ${r.code}: ${r.stderr.toString('utf8').trim()}`);
+  const buf = r.stdout;
+  const blobs = new Map();
+  let pos = 0;
+  for (const oid of unique) {
+    const nl = buf.indexOf(0x0a, pos);
+    const [hOid, type, size] = buf.toString('utf8', pos, nl).split(' ');
+    if (hOid !== oid || type !== 'blob') throw new Error(`git cat-file: expected blob ${oid}, got "${buf.toString('utf8', pos, nl)}"`);
+    const start = nl + 1;
+    const end = start + Number(size);
+    blobs.set(oid, buf.subarray(start, end));
+    pos = end + 1;
+  }
+  return blobs;
+}
+
+// A tree path under `root`. A tree is data, so a path that could leave `root` is refused.
+export function safeJoin(root, rel) {
+  const segs = rel.split('/');
+  if (segs.some((s) => s === '' || s === '.' || s === '..' || /[:\\\0]/.test(s))) {
+    throw new Error(`unsafe path in tree: ${JSON.stringify(rel)}`);
+  }
+  return path.join(root, ...segs);
+}
+
 export function isInside(child, parent) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));

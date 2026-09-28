@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { EXIT, ROUNDS, SPIKE_DIR, UsageError, assembleRubric, main, pathExists, sha256 } from './lib.mjs';
+import { ALL_ROUNDS, EXIT, SPIKE_DIR, UsageError, assembleRubric, main, pathExists, sha256 } from './lib.mjs';
 
 const USAGE = `
 write-ledger — write inputs.md from the extraction manifests.
@@ -53,13 +53,14 @@ await main(async () => {
 
   const work = path.resolve(values.work ?? path.join(os.tmpdir(), 'vcb', 'work'));
   const manifests = [];
-  for (const round of ROUNDS) {
+  for (const round of ALL_ROUNDS) {
     const file = path.join(work, round.id, 'manifest.json');
     if (await pathExists(file)) manifests.push(JSON.parse(await fs.readFile(file, 'utf8')));
   }
   if (!manifests.length) throw new UsageError(`no round manifests under ${work}; run extract-inputs.mjs --apply first`);
 
-  const text = [header(), environment(manifests), await rubricSection(values), ...manifests.map(roundSection)].join('\n');
+  const sections = manifests.map((m) => (m.kind === 'commit-backed' ? roundSection(m) : reconstructedSection(m)));
+  const text = [header(), environment(manifests), await rubricSection(values), ...sections].join('\n');
   const dest = path.join(SPIKE_DIR, 'inputs.md');
   if (!values.apply) {
     console.log(text);
@@ -179,4 +180,112 @@ ${nextLine}
 
 ${table(['Pass', 'File', 'Git blob', 'SHA-256', 'Bytes', 'Note'], m.files.map((f) => [f.pass, code(`${m.round}/${f.file}`), code(f.blob), code(f.sha256), f.bytes, f.width ? `${f.width}×${f.height}` : (f.generated ?? '')]))}
 `;
+}
+
+// A reconstructed round (README, "Input sets") is reported apart from the commit-backed
+// ones, and its record is how it was rebuilt: the method's own evidence, the proof behind
+// each regenerated file, and exactly what was written over the export.
+function reconstructedSection(m) {
+  const base = (p) => path.posix.basename(p);
+  const state = m.method === 'restore-fields' ? restoreFieldsPart(m) : snapshotRulePart(m);
+  const replaced = m.replaced.length
+    ? table(['File', 'Why', 'Replaces blob', 'SHA-256', 'Bytes'], m.replaced.map((r) => [code(r.path), r.why, code(r.replacedBlob), code(r.sha256), r.bytes]))
+    : "Nothing: every file the round uses is the tree's own.";
+  const camera = !m.camera
+    ? 'not run'
+    : `${code(`preview.mjs`)} ${code(m.camera.preview)}; ${
+        m.camera.overlay.length
+          ? `given to the engine after its scene was built: ${m.camera.overlay.map((f) => `${code(base(f.path))} ${code(f.camera)} (the engine had ${f.engine ? code(f.engine) : 'none'})`).join(', ')}`
+          : "the engine's own"
+      }`;
+  return `## Round ${m.round} (reconstructed: ${m.method})
+
+${state}
+
+**Regenerated files.** Each is made by the generator at the state, from the round's timing.json and the
+state's observed files. It is used only if that generator first reproduces a real file byte for byte from
+that file's own data files (README, "Regenerated files").
+
+${table(['File', 'Generator', 'Proof', 'Regenerated', 'Used by'], m.regeneration.map((f) => [code(f.file), `${code(base(f.generator))} ${code(f.generatorBlob)}`, proofCell(f), regeneratedCell(f), f.proof.provenAt ? `pass ${f.passes.join(', ')}` : '**no pass**']))}
+
+**Written over the export.**
+
+${replaced}
+
+- **Camera:** ${camera}.
+- **Seek hook:** ${code(m.hook.pattern)} ${m.hook.found ? 'is' : '**is not**'} in ${code(m.hook.file)} after the scene build${m.hook.found ? '' : ', so the camera was not run'}.
+- **Passes:** ${m.passes.join(' and ')}${m.passes.includes(2) ? '' : ' only'}.
+- **Export:** ${m.export.files} files under ${m.export.roots.map(code).join(' and ')} at ${code(m.commit)}, written from
+  git's object store. ${m.export.verified} of ${m.export.files} re-hash to their blob ids.
+- **Browser:** playwright ${code(m.tools.playwright)}, chromium ${code(m.tools.chromium)}, headless shell ${code(m.tools.headlessShell)}.
+- **Layout audit:** ${m.layoutAudit}. **End card:** ${m.endCard}.
+
+${table(['Engine file', 'Blob'], Object.entries(m.engine).map(([p, b]) => [code(p), code(b)]))}
+
+${table(['Stage', 'Command', 'Exit'], m.stages.map((s) => [s.label, code(s.command), s.exitCode]))}
+
+**Files.** A file with a git blob is the tree's own; *regenerated* and *reconstructed* files have none.
+
+${table(['Pass', 'File', 'Git blob', 'SHA-256', 'Bytes', 'Note'], m.files.map((f) => [f.pass, code(`${m.round}/${f.file}`), code(f.blob), code(f.sha256), f.bytes, f.width ? `${f.width}×${f.height}` : (f.generated ?? f.note ?? '')]))}
+`;
+}
+
+function restoreFieldsPart(m) {
+  const rec = m.reconstruction;
+  const yes = (b) => (b ? 'yes' : '**no**');
+  const mark = { before: 'before', after: 'after', other: '**other**' };
+  const first = rec.checkpoints[0]?.index;
+  return `- **State:** never committed. The base ${code(rec.base.commit)}, with the ${rec.fields.length} fields that
+  ${code(rec.script.path)} (${code(rec.script.blob)}) writes put back from ${code(rec.restoreFrom.commit)}.
+- **Method:** the base's timing.json (${code(rec.base.timingBlob)}) re-serialises unchanged: ${yes(rec.roundTrips)}.
+  The script, run on the rebuilt file, gives back the base's byte for byte: ${yes(rec.scriptGivesBase)}${rec.script.error ? ` (${rec.script.error})` : ''}.
+  Every field differs from the base: ${yes(rec.fields.every((f) => f.differs))}. The method **${rec.holds ? 'holds' : 'does not hold'}**.
+- **Rebuilt timing.json:** ${rec.timing.bytes} bytes, SHA-256 ${code(rec.timing.sha256)}.
+
+${table(['Field', 'Base value', 'Restored value', 'Differs'], rec.fields.map((f) => [code(f.field), code(f.baseSha), code(f.restoredSha), yes(f.differs)]))}
+
+A value is shown as the first 12 hex digits of the git blob id of its canonical JSON.
+
+**Checkpoint scan.** Where the fields stand in each checkpoint from #${first} on: *before* is the restored
+value, *after* the base's, *other* neither.
+
+${table(['Checkpoint', 'Commit', 'timing.json blob', ...rec.fields.map((f) => code(f.field))], rec.checkpoints.map((c) => [`#${c.index}`, code(c.commit), code(c.timingBlob), ...(c.timingBlob ? c.fields.map((v) => mark[v]) : rec.fields.map(() => '—'))]))}`;
+}
+
+function snapshotRulePart(m) {
+  const rec = m.reconstruction;
+  const present = (r) => {
+    if (r.status === 'script fails') return r.error ?? '';
+    if (!r.present) return '—';
+    const n = `${r.present.length} of ${rec.live.length}`;
+    return r.status === 'partial' ? `${n}: ${r.present.map(code).join(', ')}` : n;
+  };
+  const noop = rec.noop.length
+    ? ` The script changes ${rec.noop.map(code).join(', ')} in no checkpoint, so ${rec.noop.length === 1 ? 'it cannot' : 'they cannot'} mark a state and ${rec.noop.length === 1 ? 'is' : 'are'} left out.`
+    : '';
+  return `- **State:** checkpoint #${m.state.index} (${code(m.state.commit)}): the latest session checkpoint holding none of the
+  edits ${code(rec.script.path)} (${code(rec.script.blob)}, at the lineage tip) makes, where the next one holds them
+  all. Run on a checkpoint's timing.json, the script changes a field exactly when that field's edit is not there yet.
+- **Fields:** ${rec.live.length} of ${rec.fields.length} change in some checkpoint.${noop}
+- **Transitions** (a *none* checkpoint followed by an *all* one): after ${rec.transitions.map((i) => `#${i}`).join(', ') || 'none'}.
+  The method **${rec.holds ? 'holds' : 'does not hold'}** (it needs exactly one).
+
+${table(['Checkpoint', 'Commit', 'timing.json blob', 'Status', 'Edits present'], rec.rows.map((r) => [`#${r.index}`, code(r.commit), code(r.timingBlob), r.status, present(r)]))}`;
+}
+
+function proofCell(f) {
+  const p = f.proof;
+  const tried = p.tried.length ? ` Earlier checkpoints tried: ${p.tried.map((t) => `#${t.index} ${t.reproduces ? 'yes' : 'no'}`).join(', ')}.` : '';
+  if (p.atState.reproduces) return `Reproduces the state's ${code(p.atState.committed)}.`;
+  const atState = p.atState.output === null
+    ? `At the state it fails (${p.atState.error}).`
+    : `At the state it makes ${code(p.atState.output)}, not the state's ${code(p.atState.committed)}.`;
+  if (p.provenAt) return `${atState} Reproduces checkpoint #${p.provenAt.index}'s ${code(p.provenAt.file)}.${tried}`;
+  return `**Not proven.** ${atState}${tried}`;
+}
+
+function regeneratedCell(f) {
+  const r = f.regenerated;
+  if (r.blob === null) return `failed: exit ${r.exitCode} (${r.error})`;
+  return `exit ${r.exitCode}; ${r.blob === f.committed ? "the same bytes as the state's file" : "differs from the state's file"}`;
 }
