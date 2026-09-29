@@ -40,7 +40,7 @@ import {
   safeJoin,
   sha256,
 } from './lib.mjs';
-import { planRegeneration, planRestoreFields, planSnapshotRule, readBlob } from './reconstruct.mjs';
+import { planCheckpoint, planRegeneration, planRestoreFields, planSnapshotRule, readBlob } from './reconstruct.mjs';
 
 const USAGE = `
 extract-inputs — rebuild each round's pre-fix inputs for the coach, outside the repository.
@@ -199,6 +199,10 @@ async function planReconstructed(repo, round, lineageTip) {
     rec = await planSnapshotRule(repo, round, lineageTip);
     if (!rec.chosen) return { round, rec, state: null, holds: false };
     state = { commit: rec.chosen.commit, index: rec.chosen.index, timing: await readBlob(repo, rec.chosen.timingBlob) };
+  } else if (round.method === 'checkpoint') {
+    rec = await planCheckpoint(repo, round);
+    if (!rec.holds) return { round, rec, state: null, holds: false };
+    state = { commit: rec.checkpoint.commit, index: rec.checkpoint.index, timing: await readBlob(repo, rec.checkpoint.timingBlob) };
   } else {
     throw new Error(`${round.id}: unknown method "${round.method}"`);
   }
@@ -242,6 +246,8 @@ function printReconstructedPlan(p) {
     console.log(`    base re-serialises unchanged: ${yes(rec.roundTrips)}; ${round.script} turns the rebuilt file back into the base: ${yes(rec.scriptGivesBase)}${rec.script.error ? ` (${rec.script.error})` : ''}`);
     const mark = { before: 'b', after: 'a', other: 'o' };
     printWrapped('checkpoints (b = restored value, a = base value, o = other):', rec.checkpoints.map((c) => `#${c.index} ${c.timingBlob ? c.fields.map((f) => mark[f]).join('') : '-'}`));
+  } else if (round.method === 'checkpoint') {
+    printWrapped('input files against the state:', rec.rows.map((r) => `#${r.index} ${r.index === rec.checkpoint.index ? 'state' : r.same ? 'same' : 'DIFFER'}`));
   } else {
     console.log(`    ${round.script} (${s8(rec.script.blob)}): ${rec.live.length} of ${rec.fields.length} fields change somewhere${rec.noop.length ? `; no-op: ${rec.noop.join(', ')}` : ''}`);
     printWrapped('checkpoints:', rec.rows.map((r) => `#${r.index} ${r.status}`));
@@ -478,6 +484,8 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
   }
 
   // 5. Collect the input sets the round has.
+  // The answer key names r1's items by segment number, so every manifest keeps the order.
+  const segments = JSON.parse(await fs.readFile(path.join(projectDir, 'timing.json'), 'utf8')).segments.map((s) => s.id);
   let endCardOn = null;
   let stillIds = [];
   let timing = null;
@@ -534,6 +542,7 @@ async function extractRound(repo, plan, { out, work, replace, tools, lineageTip 
     kind: round.kind,
     commit: plan.stateCommit,
     lineage: { ref: LINEAGE_REF, tip: lineageTip },
+    segments,
     ...(reconstructed
       ? {
           method: round.method,

@@ -29,6 +29,18 @@ Options
 Exit codes: 0 success/plan · 1 failed · 2 bad usage
 `.trimStart();
 
+// The answer key leaves some of a round's items to be settled from its extraction, by rules
+// it fixes, and asks for the result in this ledger before any coach run on the round
+// (answer-key.md, "r1"). The judgement is committed beside the ledger, and checked here
+// against the round's manifest.
+const RESOLUTIONS = Object.freeze({ r1: 'r1-resolution.json' });
+const RESOLVABLE = Object.freeze({
+  r1: {
+    'R1-04': ['objective', 'not catchable before render'],
+    'R1-11': ['objective', 'craft', 'not in these inputs'],
+  },
+});
+
 await main(async () => {
   let values;
   try {
@@ -64,12 +76,22 @@ await main(async () => {
   if (!manifests.length) throw new UsageError(`no round manifests under ${work}; run extract-inputs.mjs --apply first`);
   const freshFile = path.join(work, 'freshness.json');
   const fresh = (await pathExists(freshFile)) ? JSON.parse(await fs.readFile(freshFile, 'utf8')) : null;
+  const resolutions = new Map();
+  for (const m of manifests) {
+    if (!RESOLUTIONS[m.round]) continue;
+    const file = path.join(SPIKE_DIR, RESOLUTIONS[m.round]);
+    if (!(await pathExists(file))) {
+      throw new Error(`${m.round} was extracted, and the answer key asks for its resolution in inputs.md before any coach run on it; write ${file} first`);
+    }
+    resolutions.set(m.round, JSON.parse(await fs.readFile(file, 'utf8')));
+  }
 
   const isCommit = (m) => m.kind === 'commit-backed';
+  const extractedSection = (m) => [reconstructedSection(m), ...(resolutions.has(m.round) ? [resolutionSection(m, resolutions.get(m.round))] : [])].join('\n');
   const sections = [
     ...records.filter(isCommit).map(roundSection),
     ...(fresh ? [freshnessSection(fresh, manifests)] : []),
-    ...records.filter((m) => !isCommit(m)).map((m) => (m.extracted === false ? notExtractedSection(m) : reconstructedSection(m))),
+    ...records.filter((m) => !isCommit(m)).map((m) => (m.extracted === false ? notExtractedSection(m) : extractedSection(m))),
   ];
   const text = [header(), environment(manifests), await rubricSection(values), ...sections].join('\n');
   const dest = path.join(SPIKE_DIR, 'inputs.md');
@@ -201,7 +223,7 @@ ${table(['Pass', 'File', 'Git blob', 'SHA-256', 'Bytes', 'Note'], m.files.map((f
 // each regenerated file, and exactly what was written over the export.
 function reconstructedSection(m) {
   const base = (p) => path.posix.basename(p);
-  const state = m.method === 'restore-fields' ? restoreFieldsPart(m) : snapshotRulePart(m);
+  const state = statePart(m);
   const replaced = m.replaced.length
     ? table(['File', 'Why', 'Replaces blob', 'SHA-256', 'Bytes'], m.replaced.map((r) => [code(r.path), r.why, code(r.replacedBlob), code(r.sha256), r.bytes]))
     : "Nothing: every file the round uses is the tree's own.";
@@ -252,7 +274,7 @@ function regenerationTable(m) {
 // A reconstructed round the protocol does not extract is still reported: why it was left
 // out, and the same evidence an extracted round's section gives (README, "Amendment 6", 1).
 function notExtractedSection(m) {
-  const state = m.method === 'restore-fields' ? restoreFieldsPart(m) : snapshotRulePart(m);
+  const state = statePart(m);
   const regen = m.regeneration.length
     ? `
 **Regenerated files.** The same proof an extracted round's files are given (README, "Regenerated files").
@@ -332,6 +354,12 @@ function excerptBlock(lines) {
   return `${fence}text\n${body.join('\n')}\n${fence}`;
 }
 
+function statePart(m) {
+  if (m.method === 'restore-fields') return restoreFieldsPart(m);
+  if (m.method === 'checkpoint') return checkpointPart(m);
+  return snapshotRulePart(m);
+}
+
 function restoreFieldsPart(m) {
   const rec = m.reconstruction;
   const yes = (b) => (b ? 'yes' : '**no**');
@@ -377,6 +405,60 @@ function snapshotRulePart(m) {
   The method **${rec.holds ? 'holds' : 'does not hold'}** (it needs exactly one).
 
 ${table(['Checkpoint', 'Commit', 'timing.json blob', 'Status', 'Edits present'], rec.rows.map((r) => [`#${r.index}`, code(r.commit), code(r.timingBlob), r.status, present(r)]))}`;
+}
+
+// The state is one session checkpoint as it stands (README, "Amendment 8").
+function checkpointPart(m) {
+  const rec = m.reconstruction;
+  const ck = rec.checkpoint;
+  const base = (p) => path.posix.basename(p);
+  return `- **Descriptive only.** ${m.round} is reported on its own and counts toward neither bar (README, "Why r1 is
+  descriptive only").
+- **State:** checkpoint #${ck.index} (${code(ck.commit)}) as it stands: the checkpoint taken at the relay of the
+  round's review (README, "Amendment 7", item 9). Its own timing.json (${code(ck.timingBlob)}) is the round's. The
+  method **${rec.holds ? 'holds' : 'does not hold'}** (it needs the checkpoint to have a timing.json).
+- **Proof of a stale file.** The state is a session checkpoint, so a generator that does not reproduce the state's
+  own file may be proven at an earlier checkpoint, as a snapshot round's may (README, "Amendment 8").
+- **Neighbouring checkpoints.** The input files and the scene builder at each checkpoint out from the state, on each
+  side as far as the first that differs.
+
+${table(['Checkpoint', 'Commit', ...rec.compared.map((p) => code(base(p))), 'Same as the state'], rec.rows.map((r) => [`#${r.index}`, code(r.commit), ...r.files.map(code), r.index === ck.index ? '(the state)' : r.same ? 'yes' : '**no**']))}`;
+}
+
+// How the answer key's rules for a round were settled from its extraction, checked against
+// the round's manifest: every segment must be the round's, and every piece of evidence one of
+// its input files, cited by the SHA-256 the ledger records for it.
+function resolutionSection(m, res) {
+  const allowed = RESOLVABLE[m.round];
+  if (res.round !== m.round) throw new Error(`${RESOLUTIONS[m.round]} is for round ${res.round}, not ${m.round}`);
+  if (res.state !== m.commit) throw new Error(`${RESOLUTIONS[m.round]} was written against ${res.state}, but ${m.round} was extracted at ${m.commit}`);
+  const ids = res.items.map((i) => i.id);
+  if (ids.join() !== Object.keys(allowed).join()) throw new Error(`${RESOLUTIONS[m.round]} must resolve ${Object.keys(allowed).join(', ')}, in that order; it has ${ids.join(', ')}`);
+  const files = new Map(m.files.map((f) => [`${m.round}/${f.file}`, f]));
+  const rows = res.items.map((item) => {
+    if (!allowed[item.id].includes(item.class)) throw new Error(`${item.id}: "${item.class}" is not one of the key's classes for it: ${allowed[item.id].join(', ')}`);
+    if (item.segment != null && !m.segments.includes(item.segment)) throw new Error(`${item.id}: ${item.segment} is not one of ${m.round}'s segments`);
+    if (item.segment == null && item.class !== 'not in these inputs') throw new Error(`${item.id}: only "not in these inputs" may name no segment`);
+    if (!item.evidence?.length) throw new Error(`${item.id}: no evidence named`);
+    if (typeof item.shows !== 'string' || !item.shows.trim() || /[|\r\n]/.test(item.shows)) throw new Error(`${item.id}: "shows" must be one line of text, with no "|"`);
+    const evidence = item.evidence.map((e) => {
+      const f = files.get(e);
+      if (!f) throw new Error(`${item.id}: ${e} is not one of ${m.round}'s input files`);
+      return `${code(e)} (SHA-256 ${code(f.sha256.slice(0, 16))}…)`;
+    });
+    return [item.id, item.segment ? code(item.segment) : '—', item.class, evidence.join(', '), item.shows];
+  });
+  return `### The answer key's rules for ${m.round}, resolved
+
+From \`${RESOLUTIONS[m.round]}\`, committed with this ledger and checked against the round's manifest. The answer key
+fixes these rules, and asks for the result here before any coach run on ${m.round} (answer-key.md, "${m.round}").
+
+**Segment numbers.** The user's segment numbers are the render's order:
+
+${table(['Number', 'Segment'], m.segments.map((s, i) => [i + 1, code(s)]))}
+
+${table(['Item', 'Segment', 'Class', 'Evidence', 'What the inputs show'], rows)}
+`;
 }
 
 function proofCell(f) {

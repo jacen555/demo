@@ -1,4 +1,4 @@
-// reconstruct — the two methods that rebuild a round nobody committed (README, "Input sets").
+// reconstruct — the methods that rebuild a round nobody committed (README, "Input sets").
 //
 // restore-fields (r6c): the base commit, with the fields its review script writes put back
 // from the commit before the round. The script itself is the check: run on the result, it
@@ -9,9 +9,12 @@
 // "contains". Run on a checkpoint's timing.json, it changes a field exactly when that
 // field's edit is not there yet.
 //
-// Both methods run a review script on a copy of one timing.json, in a throwaway folder under
-// the system temp directory that is deleted afterwards. The regenerated files are made the
-// same way, in a throwaway copy of the round's trees. Nothing else is written.
+// checkpoint (r1): one session checkpoint as it stands, named in the round table after the
+// log was read (README, "Amendment 7", item 9). Nothing is rebuilt but the regenerated files.
+//
+// The first two methods run a review script on a copy of one timing.json, in a throwaway
+// folder under the system temp directory that is deleted afterwards. The regenerated files
+// are made the same way, in a throwaway copy of the round's trees. Nothing else is written.
 
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -19,6 +22,7 @@ import path from 'node:path';
 import {
   CHECKPOINT_NS,
   ENGINE,
+  INPUT_FILES,
   PROJECT,
   canonical,
   fieldValue,
@@ -213,6 +217,41 @@ function sha(v) {
   return gitBlobId(Buffer.from(canonical(v), 'utf8')).slice(0, 12);
 }
 
+// ---- checkpoint -------------------------------------------------------------------------
+// The state is the named checkpoint, and its own timing.json is the round's. The record also
+// walks out from it, on each side, to the first checkpoint whose input files differ, so the
+// ledger shows which neighbouring states hold the same inputs (README, "Amendment 7", item 3).
+export async function planCheckpoint(repo, round) {
+  const all = await listCheckpoints(repo);
+  const at = all.findIndex((ck) => ck.index === round.checkpoint);
+  if (at < 0) throw new Error(`${round.id}: checkpoint #${round.checkpoint} not found under ${CHECKPOINT_NS}`);
+  const compared = [...INPUT_FILES.map((f) => `${PROJECT}/${f}`), `${ENGINE}/src/write-build-html.mjs`];
+  const filesAt = async (ck) => {
+    const blobs = [];
+    for (const p of compared) blobs.push(await blobOid(repo, ck.commit, p));
+    return blobs;
+  };
+  const own = await filesAt(all[at]);
+  const rows = [{ index: all[at].index, commit: all[at].commit, files: own, same: true }];
+  for (const step of [-1, 1]) {
+    for (let i = at + step; i >= 0 && i < all.length; i += step) {
+      const files = await filesAt(all[i]);
+      const row = { index: all[i].index, commit: all[i].commit, files, same: files.every((b, k) => b === own[k]) };
+      if (step < 0) rows.unshift(row);
+      else rows.push(row);
+      if (!row.same) break;
+    }
+  }
+  const timingBlob = own[0];
+  return {
+    method: round.method,
+    checkpoint: { index: all[at].index, commit: all[at].commit, timingBlob },
+    compared,
+    rows,
+    holds: timingBlob !== null,
+  };
+}
+
 // ---- regenerated files ------------------------------------------------------------------
 // A reconstructed round's script.md and storyboard.html are regenerated from the round's own
 // timing.json by the generators at the round's own state (README, "Regenerated files"). The
@@ -221,9 +260,9 @@ function sha(v) {
 //
 // A regenerated file is only as good as its generator, so each generator must first
 // reproduce a real file byte for byte from that file's own data: the file at the round's
-// own state, or, for a snapshot round whose file is stale, the latest earlier checkpoint's
-// (README, "Amendments", 1). Without that proof a file is not used, and the passes that
-// need it are dropped.
+// own state, or, where the state is a session checkpoint and its file is stale, the latest
+// earlier checkpoint's (README, "Amendments", 1, and "Amendment 8"). Without that proof a
+// file is not used, and the passes that need it are dropped.
 export const GENERATED = Object.freeze([
   { file: 'script.md', generator: `${PROJECT}/src/write-script.mjs`, args: [], passes: [1, 2] },
   { file: 'storyboard.html', generator: `${ENGINE}/src/write-storyboard.mjs`, args: ['--apply'], passes: [2] },
@@ -289,8 +328,8 @@ export async function runGenerators(repo, codeCommit, data) {
   }
 }
 
-// state: the round's code (`commit`), its checkpoint index for a snapshot round, and the
-// timing.json the round is rebuilt from.
+// state: the round's code (`commit`), its checkpoint index where the state is a session
+// checkpoint, and the timing.json the round is rebuilt from.
 export async function planRegeneration(repo, round, state) {
   const own = await dataAt(repo, state.commit);
   const committed = {};
@@ -313,7 +352,9 @@ export async function planRegeneration(repo, round, state) {
     };
   }
 
-  if (round.method === 'snapshot-rule') {
+  // Only a checkpoint state has earlier checkpoints to fall back to. It was a snapshot round
+  // alone until "Amendment 8" added r1; r6c's state is a commit and has none.
+  if (state.index != null) {
     const seen = new Set();
     const earlier = (await listCheckpoints(repo)).filter((ck) => ck.index < state.index).reverse();
     for (const ck of earlier) {

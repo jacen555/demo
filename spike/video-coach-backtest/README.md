@@ -211,6 +211,7 @@ review script's first error line into a helper.
    - For a snapshot round whose file fails that, the proof falls back to the latest earlier
      checkpoint whose file the same generator reproduces from that checkpoint's data
      files. The generator stays the round's; only the data are older.
+     - *Extended to any round whose state is a session checkpoint: see "Amendment 8".*
    - With no proven `script.md`, the round is not extracted. With no proven
      `storyboard.html`, it gets pass 1 only.
    - A generated file that names the folder it was made in counts as a failed run.
@@ -425,6 +426,57 @@ changes which rounds are run, so each change says why.
     | P24 (plan L1596) | #38, L8109 | #38 holds `fc8dece`'s four files. All match r7 |
     | P26 (plan L1654) | #43, L8618 | Timeline, script and storyboard match r7. The engine is the later `.is-marked` one (item 8) |
 
+### Amendment 8 (2026-09-28, after r1's first plan run, before its extraction)
+
+Amendment 7, item 9 extracts r1 under "Amendments" item 1. r1's first plan run met a case
+that item 1 does not settle. This amendment was written after that run, after the answer
+key was committed, and before r1 was extracted or any coach run on it. The decision is the
+user's.
+
+1. **What the plan run measured at r1's state, checkpoint #7.**
+   - `write-script.mjs` (`0bfacee4`) reproduces #7's `script.md` (`2a4f3149`) byte for byte.
+   - `write-storyboard.mjs` (`47e7e1da`) does not reproduce #7's `storyboard.html`
+     (`643e796e`). That file is stale. It was made at checkpoint #4, from #4's timeline
+     (`7060f0b6`). Between #4 and #5, every segment's triggers changed, and six segments'
+     diagrams were laid out again, from a 1600×900 viewBox to 1600×520. Nothing else in
+     any segment changed, so the narration, and with it `script.md`, still reproduces.
+     #5, #6 and #7 all hold the render's timeline (`f9c98a98`).
+2. **The rule it meets.** Item 1's fallback to an earlier checkpoint is written "for a
+   snapshot round". r1's state is a checkpoint, but r1 is not a snapshot round. As written,
+   its storyboard has no proof, so r1 gets pass 1 only, and R1-04 can never be *objective*:
+   the answer key makes it objective only if r1's pass-2 inputs show it.
+3. **The user's decision:** *"Apply the fallback to r1, since its state is a checkpoint, and
+   disclose it as Amendment 8."* The fallback now applies wherever a round's state is a
+   session checkpoint.
+   - **r1:** the storyboard is proven at checkpoint #4, so r1 gets both passes.
+   - **r2 and r3:** no change. Their states are checkpoints, and item 1 already covered them.
+   - **r6c:** no change. Its state is a commit, with no earlier checkpoint to fall back to.
+   - Measured: the full plan made with this amendment's code and with the code before it
+     is the same for every round, except for r1's added lines.
+4. **Disclosures.**
+   - The fallback was measured before the user decided, so the user knew it gives r1 both
+     passes.
+   - It changes only whether pass 2 runs. The storyboard is the same file either way
+     (`ccc154a9`): it is made by #7's generator from #7's timeline. Only the proof uses #4's
+     data.
+   - The question was not asked blind. The orchestrator who put it knew r1's key, including
+     that R1-04 depends on pass 2's stills. r1 counts toward neither bar, so no bar can move
+     on this decision.
+   - Amendment 6, item 1 added no fallback for r6c. That state is a commit, and a fallback
+     would not have removed its `NaN` line. r1's state is a checkpoint, the case item 1's
+     fallback was written for, and the file it proves is the one used.
+5. **What changed in the code.**
+   - `src/lib.mjs`: r1's row, with the method `checkpoint` and state #7.
+   - `src/reconstruct.mjs`: `planCheckpoint`, which records the state, and each
+     neighbouring checkpoint out to the first whose input files or scene builder differ.
+     The fallback's condition is now "the state is a checkpoint", in place of "the method
+     is the snapshot rule".
+   - `src/extract-inputs.mjs`: the checkpoint method. Every manifest now also records its
+     segment order, because r1's key names segments by number.
+   - `src/write-ledger.mjs`: reports the checkpoint method, and the answer key's rules for
+     r1 as resolved from `r1-resolution.json`. It checks that file against r1's manifest,
+     and refuses to write once r1 is extracted if the file is missing.
+
 ### Scoring (defined before results)
 
 - **Recall** = objective defects the coach raised as **BLOCKING**, in any pass whose
@@ -591,13 +643,15 @@ writes only under `--apply`.
    by its method, then `script.md` and `storyboard.html` by its generators (see
    "Amendments"). They are written over the export before anything is built. Without
    `--apply`, the plan shows each method's evidence: the fields and whether the script gives
-   the base back (r6c), each checkpoint's status (r2, r3), and each generator's proof.
+   the base back (r6c), each checkpoint's status (r2, r3), the neighbouring checkpoints'
+   input files (r1), and each generator's proof.
 
    It refuses an output folder inside any checkout of this repository. It deletes only
    folders it created, and only under `--replace`. `--round <id>` (repeatable) limits it
    to those rounds; `--work <dir>` and `--out <dir>` move the two folders. Because a round
    folder is never rebuilt without `--replace`, the reconstructed rounds can be extracted
-   after r4–r7 without touching them: `--round r6c --round r2 --round r3`.
+   after r4–r7 without touching them: `--round r6c --round r2 --round r3`, and r1, after
+   the answer key, with `--round r1`.
 
    A reconstructed round that does not hold is not extracted. It gets no input set, and
    its work folder holds `not-extracted.json`, which says why, in place of a manifest
@@ -626,7 +680,9 @@ writes only under `--apply`.
 
    It names no local path. It refuses to write unless the pieces still reproduce
    `rubric.md` byte for byte. It reports every round folder it finds, extracted or not,
-   and the freshness check if `freshness.json` exists.
+   and the freshness check if `freshness.json` exists. Once r1 is extracted, it also needs
+   `r1-resolution.json`, the answer key's rules for r1 as resolved from its inputs
+   ("Amendment 8"), and refuses to write without it.
 
 Nothing under `tools/` is modified, and no git worktree is created. The scorer comes
 later.

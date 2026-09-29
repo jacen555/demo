@@ -38,7 +38,9 @@ export const ROUNDS = Object.freeze([
 //
 // restore-fields: the base commit, with the fields its review script writes put back from
 // the commit before the round. snapshot-rule: the latest session checkpoint that contains
-// none of the script's edits, provided the next checkpoint contains them.
+// none of the script's edits, provided the next checkpoint contains them. checkpoint: one
+// session checkpoint as it stands, for r1 only, which was added after the log was read
+// (README, "Amendment 7", item 9, and "Amendment 8").
 //
 // A field is where a review script writes authored content: what the video says or shows.
 // Timing bookkeeping is not a field. startMs, endMs, durationMs, plannedDurationMs, audio,
@@ -101,6 +103,8 @@ export const RECONSTRUCTED = Object.freeze([
       'project.fps',
     ],
   },
+  // The checkpoint taken at the relay of r1's review, P8 (README, "Amendment 7", item 9).
+  { id: 'r1', kind: 'reconstructed', method: 'checkpoint', checkpoint: 7 },
 ]);
 
 export const ALL_ROUNDS = Object.freeze([...ROUNDS, ...RECONSTRUCTED]);
