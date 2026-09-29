@@ -102,6 +102,14 @@ rules above did not say. None of them changes how a run is started.
    under "Neutral paths". The agent was started as `video-coach` with the tools `read` and
    `search`.
 
+### Where the report is, after run 4 (the README's Amendment 9)
+
+Run 4 wrote its report as an assistant message, then called `task_complete` with a
+one-sentence summary after an empty autopilot nudge. Amendment 9 replaces item 1 above for
+every run: the report is the one text that starts `COACH REPORT` and has a `FILES READ:`
+line, whether it is an assistant message or the `task_complete` summary. An empty autopilot
+message after the report is not a second prompt.
+
 ## Runs
 
 | Run | Round | Pass | Session | Model in log | Report bytes | Report SHA-256 | Prompt SHA-256 | `FILES READ` | Session log | Status |

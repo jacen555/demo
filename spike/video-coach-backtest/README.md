@@ -477,6 +477,63 @@ user's.
      r1 as resolved from `r1-resolution.json`. It checks that file against r1's manifest,
      and refuses to write once r1 is extracted if the file is missing.
 
+### Amendment 9 (2026-09-28, after coach runs 1–6, before any scoring)
+
+Run 4, r6 pass 2, met a case that the capture rule does not settle. This amendment was
+written after runs 1–6 had finished, and before any of their reports was scored or, past
+run 1, recorded in `runs.md`. The decision is the user's.
+
+1. **What run 4's session log shows.**
+   - The coach wrote its report as an assistant message and ended its turn without calling
+     `task_complete`. The message begins `COACH REPORT — pass 2`. Its `FILES READ` lists
+     the rubric and the 12 files of its input set, and nothing else.
+   - All 22 of its tool calls touched only its input set and the rubric.
+   - Autopilot then added a user message. Its content is empty, its source is `autopilot`,
+     and the platform expanded it into a reminder to call `task_complete`. The coach
+     answered with a `task_complete` call whose summary is one sentence about the report.
+   - `runs.md` takes the report from that summary ("What the trial showed", item 1). Here
+     the summary is not a report: it has no findings and no `FILES READ`.
+   - Runs 1, 2, 3, 5 and 6 match the trial run: one user message, no assistant message
+     with text, and the report in the `task_complete` summary.
+2. **The user's decision:** *"The full report message, by a rule for every run: the report
+   is the one text that starts "COACH REPORT" and has FILES READ, and an empty autopilot
+   nudge after it is not a second prompt."*
+3. **The rule, as the capture applies it to every run.**
+   - The candidates are every assistant message with text, and the `session.task_complete`
+     summary.
+   - The report is the candidate whose first line starts `COACH REPORT` and which has a
+     `FILES READ:` line. If more than one candidate qualifies, they must be identical.
+   - The first user message must still be the dispatch message. A later user message is
+     not a second prompt if it is empty, its source is `autopilot`, and it comes after the
+     report.
+   - A run with no report, or one that breaks either rule, is flagged. Nothing from it is
+     scored until the user decides.
+   - Nothing else changes: the void check, the byte-for-byte copy, and the check that the
+     `task_complete` argument equals its summary.
+4. **Measured before this commit.**
+   - Runs 1, 2, 3, 5 and 6, captured again under the rule, give the same reports byte for
+     byte. Each has one candidate, the `task_complete` summary, and no later user message.
+   - Ten synthetic logs cover the rule's branches: the report as a message and in
+     `task_complete`, a later message with text, a later message not from autopilot, a
+     nudge before the report, no report, a report without `FILES READ`, two reports that
+     differ, two that are identical, and a read outside the set. Each comes out valid,
+     flagged or void as the rule says.
+   - Run 4 is captured under the rule only after this amendment is committed.
+5. **Disclosures.**
+   - The orchestrator read run 4's report while finding out why it was flagged, and knows
+     r6's key, so it could have told how each option would score. The question put to the
+     user described the report only by its structure.
+   - This decision can move the bar. r6 is commit-backed, and its pass 2 is the only pass
+     that reads the storyboard, which is R6-10's only route ("Counts" in `answer-key.md`).
+   - The options the user declined:
+     - re-running r6 pass 2 once, the protocol's remedy for a void run. Run 4 is not void
+       as the protocol defines it, and a re-run would draw a second report after the first
+       had been read;
+     - recording r6 pass 2 as having no report. No pass of r6 could then reach R6-10, and
+       the commit-backed bar could not be met.
+   - Runs 7 and 8, r1's two passes, were dispatched before this amendment was committed,
+     in the same way as runs 1–6. They are captured under it.
+
 ### Scoring (defined before results)
 
 - **Recall** = objective defects the coach raised as **BLOCKING**, in any pass whose
