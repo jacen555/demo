@@ -26,7 +26,17 @@ import {
   CliError,
   EXIT,
 } from '../src/cli-support.mjs';
-import { makeProject, makeOutsideDir, runScript, tryMakeDirLink, tryMakeFileLink, MISSING_FFMPEG } from './_helpers.mjs';
+import {
+  makeProject,
+  makeOutsideDir,
+  runScript,
+  tryMakeDirLink,
+  tryMakeFileLink,
+  assertCleanExit,
+  MISSING_FFMPEG,
+  timingFixture,
+  wordedSegments,
+} from './_helpers.mjs';
 
 const SENTINEL = 'SENTINEL — MUST SURVIVE AN ENGINE-CHOSEN WRITE';
 
@@ -386,5 +396,328 @@ describe('path confinement reaches the CLI', () => {
     assert.doesNotMatch(r.all, /SQUIRRELTOKEN/, 'the contents of a refused read must never reach the output');
     assert.equal(r.code, EXIT.USAGE, `a planted link must be refused, not planned around, got ${r.code}\n${r.all}`);
     assert.match(r.all, /link/i, 'and the refusal must say why');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S10 / S11. write-subtitles joined its sidecar names onto the project directory and wrote
+// them with writeFileSync, which follows a link wherever it points: `--apply --replace`
+// over a demo.vtt linked outside the project overwrote the link's target. write-chapters
+// confined nothing at all — not --output, not --input, not its own chapters.ffmeta.
+//
+// The sidecars, the embed output and chapters.ffmeta are ENGINE-CHOSEN names, so a link at
+// any of them is refused outright, in-root or not. --output is CALLER-named, so it gets the
+// boundary rule instead: following the caller's own in-root link is what they asked for,
+// and an escaping one is refused.
+// ---------------------------------------------------------------------------
+describe('write-subtitles and write-chapters confine every path they touch', () => {
+  const VICTIM = 'ORIGINAL VICTIM';
+  // The distinctive part leads, because a JSON parse error quotes only the first 10 bytes.
+  const SECRET = 'SQUIRRELTOKEN-do-not-disclose';
+  const worded = timingFixture(wordedSegments);
+  const subtitleProject = (t, files = {}) => makeProject(t, { 'timing.json': worded, ...files });
+  const chaptersProject = (t, files = {}) =>
+    makeProject(t, {
+      'timing.json': worded,
+      'demo-with-music.mp4': 'video bytes',
+      'ffmpeg-path.txt': MISSING_FFMPEG,
+      ...files,
+    });
+
+  for (const [kind, sidecar, other] of [['vtt', 'demo.vtt', 'demo.srt'], ['srt', 'demo.srt', 'demo.vtt']]) {
+    test(`writeSubtitles_${kind}SidecarIsLinkToOutsideVictim_refusesWithoutClobberingIt`, (t) => {
+      const root = subtitleProject(t);
+      const outside = makeOutsideDir(t, { victim: VICTIM });
+      if (!tryMakeFileLink(path.join(root, sidecar), path.join(outside, 'victim'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript('write-subtitles.mjs', ['--apply', '--replace'], root);
+
+      assert.equal(r.code, EXIT.USAGE, `a planted link must be refused, got ${r.code}\n${r.all}`);
+      assert.match(r.all, /link/i, 'the refusal must say the sidecar is a link');
+      assert.equal(fs.readFileSync(path.join(outside, 'victim'), 'utf8'), VICTIM, 'a sidecar link must never be written through');
+      assert.equal(fs.existsSync(path.join(root, other)), false, 'the refusal must come before either sidecar is written');
+    });
+  }
+
+  test('writeSubtitles_sidecarIsInRootLink_isRefusedBecauseTheEngineChoseTheName', (t) => {
+    const root = subtitleProject(t, { 'approved.srt': VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'demo.srt'), path.join(root, 'approved.srt'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-subtitles.mjs', ['--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /link/i);
+    assert.equal(fs.readFileSync(path.join(root, 'approved.srt'), 'utf8'), VICTIM, 'the caller never named approved.srt');
+  });
+
+  test('writeSubtitles_embedOutputIsLinkToOutsideVictim_refusesBeforeWritingAnything', (t) => {
+    const root = subtitleProject(t, { 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG });
+    const outside = makeOutsideDir(t, { 'victim.mp4': VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'demo-with-music-subtitled.mp4'), path.join(outside, 'victim.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply', '--replace'], root);
+
+    // ffmpeg is missing here, so the victim would survive even an unguarded run. What
+    // carries the weight is the refusal itself, and that nothing was written before it.
+    assert.equal(r.code, EXIT.USAGE, `the embed output must be refused, not handed to ffmpeg -y, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /link/i);
+    assert.equal(fs.readFileSync(path.join(outside, 'victim.mp4'), 'utf8'), VICTIM);
+    assert.equal(fs.existsSync(path.join(root, 'demo.vtt')), false, 'the refusal must come before the sidecars are written');
+  });
+
+  test('writeSubtitles_embedSourceIsLinkEscapingRoot_isRefused', (t) => {
+    const root = subtitleProject(t, { 'ffmpeg-path.txt': MISSING_FFMPEG });
+    const outside = makeOutsideDir(t, { 'private.mp4': 'outside video' });
+    if (!tryMakeFileLink(path.join(root, 'demo-with-music.mp4'), path.join(outside, 'private.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-subtitles.mjs', ['--embed'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `a source outside the project must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /outside the project root/i);
+  });
+
+  test('writeSubtitles_embedSourceAliasesTheEmbedOutput_isRefused', (t) => {
+    // ffmpeg reading and writing one file destroys it. An in-root link is a legal source,
+    // so the collision is only visible once both ends are resolved.
+    const root = subtitleProject(t, { 'ffmpeg-path.txt': MISSING_FFMPEG, 'demo-with-music-subtitled.mp4': VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'demo-with-music.mp4'), path.join(root, 'demo-with-music-subtitled.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /both resolve to/);
+    assert.equal(fs.readFileSync(path.join(root, 'demo-with-music-subtitled.mp4'), 'utf8'), VICTIM);
+    assert.equal(fs.existsSync(path.join(root, 'demo.vtt')), false);
+  });
+
+  test('writeChapters_outputOutsideRoot_isRefusedBeforeAnyWrite', (t) => {
+    const root = chaptersProject(t);
+    const outside = makeOutsideDir(t);
+
+    const r = runScript('write-chapters.mjs', ['--output', path.join(outside, 'out.mp4'), '--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /outside the project root/i);
+    assert.equal(fs.existsSync(path.join(root, 'chapters.ffmeta')), false, 'nothing may be written before the refusal');
+  });
+
+  test('writeChapters_outputThroughLinkEscapingRoot_writesNothingAnywhere', (t) => {
+    const root = chaptersProject(t);
+    const outside = makeOutsideDir(t);
+    if (!tryMakeDirLink(path.join(root, 'escape'), outside)) return t.skip('platform refused to create a directory link');
+
+    const r = runScript('write-chapters.mjs', ['--output', 'escape/out.mp4', '--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /outside the project root/i);
+    assert.deepEqual(fs.readdirSync(outside), [], 'must never write outside the project root');
+    assert.equal(fs.existsSync(path.join(root, 'chapters.ffmeta')), false, 'nothing may be written before the refusal');
+  });
+
+  test('writeChapters_outputSameAsInput_isRefusedRatherThanRemuxedInPlace', (t) => {
+    const root = chaptersProject(t);
+
+    const r = runScript('write-chapters.mjs', ['--output', 'demo-with-music.mp4', '--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /both resolve to/);
+    assert.equal(fs.readFileSync(path.join(root, 'demo-with-music.mp4'), 'utf8'), 'video bytes');
+    assert.equal(fs.existsSync(path.join(root, 'chapters.ffmeta')), false);
+  });
+
+  test('writeChapters_metadataIsLinkToOutsideVictim_refusesWithoutClobberingIt', (t) => {
+    const root = chaptersProject(t);
+    const outside = makeOutsideDir(t, { victim: VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'chapters.ffmeta'), path.join(outside, 'victim'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-chapters.mjs', ['--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.match(r.all, /link/i);
+    assert.equal(fs.readFileSync(path.join(outside, 'victim'), 'utf8'), VICTIM, 'the metadata link must never be written through');
+  });
+
+  test('writeChapters_metadataIsInRootLink_isRefusedBecauseTheEngineChoseTheName', (t) => {
+    const root = chaptersProject(t, { 'notes.txt': VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'chapters.ffmeta'), path.join(root, 'notes.txt'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-chapters.mjs', ['--apply', '--replace'], root);
+
+    assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+    assert.equal(fs.readFileSync(path.join(root, 'notes.txt'), 'utf8'), VICTIM, 'the caller never named notes.txt');
+  });
+
+  test('writeChapters_inputOutsideRoot_isRefused', (t) => {
+    const root = chaptersProject(t);
+    const outside = makeOutsideDir(t, { 'private.mp4': 'outside video' });
+    const input = path.relative(root, path.join(outside, 'private.mp4'));
+
+    const r = runScript('write-chapters.mjs', ['--input', input], root);
+
+    assert.equal(r.code, EXIT.USAGE, `an input outside the project must be refused, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /outside the project root/i);
+    assert.equal(fs.existsSync(path.join(root, 'chapters.ffmeta')), false);
+  });
+
+  // timing.json and ffmpeg-path.txt are read on the engine's own initiative, and each has a
+  // report channel: a JSON parse error quotes the bytes it choked on, and the plan prints
+  // the pointer in its "would run" line.
+  for (const [method, script, args] of [
+    ['writeChapters', 'write-chapters.mjs', []],
+    ['writeSubtitles', 'write-subtitles.mjs', ['--embed']],
+  ]) {
+    test(`${method}_timingIsLinkToOutsideSecret_refusesWithoutDisclosingIt`, (t) => {
+      const root = makeProject(t, { 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG });
+      const outside = makeOutsideDir(t, { 'secret.txt': SECRET });
+      if (!tryMakeFileLink(path.join(root, 'timing.json'), path.join(outside, 'secret.txt'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript(script, args, root);
+
+      assert.doesNotMatch(r.all, /SQUIRREL/, 'the contents of a refused read must never reach the output');
+      assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+      // Refused for being a link at all, not for where it leads: see the in-root cases below.
+      assert.match(r.all, /timing file "timing\.json" is a link/);
+    });
+
+    test(`${method}_ffmpegPointerIsLinkToOutsideSecret_refusesWithoutDisclosingIt`, (t) => {
+      const root = makeProject(t, { 'timing.json': worded, 'demo-with-music.mp4': 'video bytes' });
+      const outside = makeOutsideDir(t, { 'secret.txt': SECRET });
+      if (!tryMakeFileLink(path.join(root, 'ffmpeg-path.txt'), path.join(outside, 'secret.txt'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript(script, args, root);
+
+      assert.doesNotMatch(r.all, /SQUIRREL/, 'the contents of a refused read must never reach the output');
+      assert.equal(r.code, EXIT.USAGE, `got ${r.code}\n${r.all}`);
+      assert.match(r.all, /ffmpeg pointer "ffmpeg-path\.txt" is a link/);
+    });
+
+    // An IN-ROOT link is the case the boundary rule cannot see: it is contained, so it was
+    // followed. Neither name was chosen by the caller, so a link at either is not an
+    // instruction to read something else — it is refused outright, wherever it points.
+    test(`${method}_ffmpegPointerIsInRootLinkToSentinel_planRefusesWithoutPrintingIt`, (t) => {
+      const root = makeProject(t, { 'timing.json': worded, 'demo-with-music.mp4': 'video bytes', 'notes.txt': SECRET });
+      if (!tryMakeFileLink(path.join(root, 'ffmpeg-path.txt'), path.join(root, 'notes.txt'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript(script, args, root);
+
+      assert.doesNotMatch(r.all, /SQUIRREL/, `a plan must never print the file a pointer link leads to\n${r.all}`);
+      assertCleanExit(r, EXIT.USAGE);
+      assert.match(r.all, /ffmpeg pointer "ffmpeg-path\.txt" is a link/);
+    });
+
+    test(`${method}_timingIsInRootLinkToSentinel_refusesWithoutDisclosingIt`, (t) => {
+      const root = makeProject(t, { 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG, 'notes.txt': SECRET });
+      if (!tryMakeFileLink(path.join(root, 'timing.json'), path.join(root, 'notes.txt'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript(script, args, root);
+
+      assert.doesNotMatch(r.all, /SQUIRREL/, `the file a timing link leads to must never reach the output\n${r.all}`);
+      assertCleanExit(r, EXIT.USAGE);
+      assert.match(r.all, /timing file "timing\.json" is a link/);
+    });
+
+    test(`${method}_timingIsInRootLinkToAnotherTimeline_isRefusedRatherThanFollowed`, (t) => {
+      // The target parses cleanly, so no parse error gives it away: followed, the run
+      // simply describes a project nobody pointed it at.
+      const other = timingFixture(wordedSegments, { project: { name: 'SQUIRRELTOKEN' } });
+      const root = makeProject(t, {
+        'other.json': other,
+        'demo-with-music.mp4': 'video bytes',
+        'SQUIRRELTOKEN-with-music.mp4': 'video bytes',
+        'ffmpeg-path.txt': MISSING_FFMPEG,
+      });
+      if (!tryMakeFileLink(path.join(root, 'timing.json'), path.join(root, 'other.json'))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      const r = runScript(script, args, root);
+
+      assertCleanExit(r, EXIT.USAGE);
+      assert.match(r.all, /timing file "timing\.json" is a link/);
+      assert.doesNotMatch(r.all, /SQUIRREL/, `the linked timeline must not have been read\n${r.all}`);
+    });
+
+    test(`${method}_timingIsNotJson_refusesWithoutEchoingIt`, (t) => {
+      // A JSON parse error quotes the bytes it choked on. The file here is the project's
+      // own, but the message is the same code path that would print any file's opening.
+      const root = makeProject(t, { 'timing.json': SECRET, 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG });
+
+      const r = runScript(script, args, root);
+
+      assert.doesNotMatch(r.all, /SQUIRREL/, `a parse error must describe the file, not quote it\n${r.all}`);
+      assertCleanExit(r, EXIT.FAILED);
+      assert.match(r.all, /timing\.json is not valid JSON \(\d+ characters\)/);
+    });
+
+    for (const [artifact, name] of [['timing', 'timing.json'], ['ffmpegPointer', 'ffmpeg-path.txt']]) {
+      test(`${method}_${artifact}IsDirectory_isRefusedCleanly`, (t) => {
+        const files = { 'timing.json': worded, 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG };
+        delete files[name];
+        const root = makeProject(t, files);
+        fs.mkdirSync(path.join(root, name));
+
+        const r = runScript(script, args, root);
+
+        assertCleanExit(r, EXIT.USAGE, `a directory at ${name} must be refused, not read: `);
+        assert.match(r.all, new RegExp(`${name.replace('.', '\\.')} is not a regular file`));
+      });
+    }
+  }
+
+  test('writeChapters_defaultOutputIsInRootLink_isRefusedBeforeMetadataIsWritten', (t) => {
+    // The caller never named demo-with-music-chaptered.mp4 — the engine did — so a link
+    // there is not an instruction to follow. Followed, --apply --replace rewrote
+    // chapters.ffmeta and then handed ffmpeg -y the file the link pointed at.
+    const root = chaptersProject(t, { 'approved.mp4': VICTIM, 'chapters.ffmeta': SENTINEL });
+    if (!tryMakeFileLink(path.join(root, 'demo-with-music-chaptered.mp4'), path.join(root, 'approved.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-chapters.mjs', ['--apply', '--replace'], root);
+
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /output video "demo-with-music-chaptered\.mp4" is a link/);
+    assert.equal(fs.readFileSync(path.join(root, 'approved.mp4'), 'utf8'), VICTIM, 'the caller never named approved.mp4');
+    assert.equal(
+      fs.readFileSync(path.join(root, 'chapters.ffmeta'), 'utf8'),
+      SENTINEL,
+      'the refusal must come before the metadata is written',
+    );
+  });
+
+  test('writeChapters_explicitOutputIsInRootLink_isFollowedBecauseTheCallerNamedIt', (t) => {
+    // REGRESSION GUARD (passed before this change too) for the test above: the refusal is
+    // for the name the engine chose. A caller's own --output keeps the boundary rule.
+    const root = chaptersProject(t, { 'approved.mp4': VICTIM });
+    if (!tryMakeFileLink(path.join(root, 'mine.mp4'), path.join(root, 'approved.mp4'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('write-chapters.mjs', ['--output', 'mine.mp4'], root);
+
+    assertCleanExit(r, EXIT.OK, 'a caller-named in-root link is theirs to follow: ');
+    assert.match(r.all, /output\s+\S*approved\.mp4/, `the plan must show where the caller's link leads\n${r.all}`);
   });
 });

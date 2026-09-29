@@ -56,6 +56,15 @@ export const BLOCK_PLAYWRIGHT = pathToFileURL(
 ).href;
 
 /**
+ * The loader that swaps `msedge-tts` and `playwright` for deterministic fakes in one child
+ * process, so the voice/remix --apply paths run with no network and no browser. Pass it as
+ * `nodeArgs: ['--import', FAKE_AUDIO]`. See tests/fixtures/fake-audio.mjs.
+ */
+export const FAKE_AUDIO = pathToFileURL(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-audio.mjs'),
+).href;
+
+/**
  * Creates a file symlink, returning false when the platform refuses (symlink creation
  * needs Developer Mode or elevation on Windows), so a test can skip rather than fail.
  */
@@ -71,6 +80,34 @@ export function tryMakeFileLink(linkPath, target) {
 export const contiguousSegments = [
   { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
   { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+];
+
+/**
+ * contiguousSegments carrying the measured word boundaries voice.mjs records, for the
+ * stages that read them (write-subtitles). The words are BARE, as TTS metadata delivers
+ * them; punctuation lives only in voiceoverText.
+ *
+ * Cues this produces: "Hello there." 100..1100 and "Second segment here." 2100..3600.
+ */
+export const wordedSegments = [
+  {
+    id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'Hello there.',
+    audio: {
+      file: 'segment_000.mp3', durationMs: 2000,
+      words: [{ word: 'Hello', startMs: 100, endMs: 600 }, { word: 'there', startMs: 600, endMs: 1100 }],
+    },
+  },
+  {
+    id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'Second segment here.',
+    audio: {
+      file: 'segment_001.mp3', durationMs: 2000,
+      words: [
+        { word: 'Second', startMs: 2100, endMs: 2600 },
+        { word: 'segment', startMs: 2600, endMs: 3100 },
+        { word: 'here', startMs: 3100, endMs: 3600 },
+      ],
+    },
+  },
 ];
 
 /** A timing.json body that satisfies every stage's minimum expectations. */
