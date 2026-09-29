@@ -1,0 +1,26 @@
+{
+  "round": "r1",
+  "state": "b9a3c09239b75aca2c95e4c07e5434f79541011d",
+  "items": [
+    {
+      "id": "R1-04",
+      "segment": "hard",
+      "class": "objective",
+      "evidence": [
+        "r1/pass2/stills/hard.png"
+      ],
+      "shows": "Segment 1's still, taken at 23.4 s. The arrowheads between the three stacked boxes on the left are cut off by the boxes above and below them, the pink arrowhead into the orange turn 2 is partly hidden under the green turn 2's corner, and three arrowheads pile up between the two boxes at the bottom. The layout audit reports no issue, because it does not test arrowheads against boxes. Lane row 4, overflow and clipping. Judged by the user from the still, because the orchestrator knew the key."
+    },
+    {
+      "id": "R1-11",
+      "segment": "blindspot",
+      "class": "objective",
+      "evidence": [
+        "r1/pass1/script.md",
+        "r1/pass2/timing.json",
+        "r1/pass2/stills/blindspot.png"
+      ],
+      "shows": "Segment 7 in the render's order, as P16 numbers it, and the segment about the interface harness. Its narration says \"Watch it drive the real interface\" (script.md L83). The segment is in footage mode with no clip: none was registered at the state, and the built scene plays none. So it renders the four-node stage-trace diagram, and no interface appears (still blindspot.png). Its On-screen line says \"The clip has NOT been captured\" (L85). The same case as R2-11. twotier also names the interface harness, but its narration describes two labelled lanes, and its still shows them."
+    }
+  ]
+}

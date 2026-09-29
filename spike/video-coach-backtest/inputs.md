@@ -641,3 +641,102 @@ that file's own data files (README, "Regenerated files").
 | 2 | `r3/pass2/stills/twotier.png` | — | `fd57bf574c351d68d38b3860707d2210c9eb085a3fd6f4feb569d85d652e28b2` | 758061 | 1920×1080 |
 | 2 | `r3/pass2/stills/blindspot.png` | — | `27eb7f31839594f26e50111f7da10a8e4f3f4f7b79583b0206d720deb45bc9be` | 487221 | 1920×1080 |
 | 2 | `r3/pass2/stills/loop.png` | — | `23a633a56b2195a52c4d0ffcb192ed52d7eb6c2bb024dfd92946fc95d2da8b79` | 397303 | 1920×1080 |
+
+## Round r1 (reconstructed: checkpoint)
+
+- **Descriptive only.** r1 is reported on its own and counts toward neither bar (README, "Why r1 is
+  descriptive only").
+- **State:** checkpoint #7 (`b9a3c09239b75aca2c95e4c07e5434f79541011d`) as it stands: the checkpoint taken at the relay of the
+  round's review (README, "Amendment 7", item 9). Its own timing.json (`f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09`) is the round's. The
+  method **holds** (it needs the checkpoint to have a timing.json).
+- **Proof of a stale file.** The state is a session checkpoint, so a generator that does not reproduce the state's
+  own file may be proven at an earlier checkpoint, as a snapshot round's may (README, "Amendment 8").
+- **Neighbouring checkpoints.** The input files and the scene builder at each checkpoint out from the state, on each
+  side as far as the first that differs.
+
+| Checkpoint | Commit | `timing.json` | `script.md` | `storyboard.html` | `write-build-html.mjs` | Same as the state |
+|---|---|---|---|---|---|---|
+| #4 | `17e1f6f754d4226337dde537f2d2f3ee84e169f9` | `7060f0b6dcf86141d764e34620d52877e1204b60` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `643e796e7426ed8530f6db6b90b43c3df0202683` | `a1fd88d77f6fce617780649bc7a2a743267003a2` | **no** |
+| #5 | `7a9ef3c9ec67d1ca14aad6bca97896e246ff420a` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `643e796e7426ed8530f6db6b90b43c3df0202683` | `a1fd88d77f6fce617780649bc7a2a743267003a2` | yes |
+| #6 | `50bc5e9f2a133d17f12e399727cdf66ec81970aa` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `643e796e7426ed8530f6db6b90b43c3df0202683` | `a1fd88d77f6fce617780649bc7a2a743267003a2` | yes |
+| #7 | `b9a3c09239b75aca2c95e4c07e5434f79541011d` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `643e796e7426ed8530f6db6b90b43c3df0202683` | `a1fd88d77f6fce617780649bc7a2a743267003a2` | (the state) |
+| #8 | `5d3f6e68c5383d5066f665b6930bf106a639b123` | `6180aef9d8e56145530ed963a433a20112720eb9` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `643e796e7426ed8530f6db6b90b43c3df0202683` | `a1fd88d77f6fce617780649bc7a2a743267003a2` | **no** |
+
+**Regenerated files.** Each is made by the generator at the state, from the round's timing.json and the
+state's observed files. It is used only if that generator first reproduces a real file byte for byte from
+that file's own data files (README, "Regenerated files").
+
+| File | Generator | Proof | Regenerated | Used by |
+|---|---|---|---|---|
+| `script.md` | `write-script.mjs` `0bfacee418f90a4f1995f50a1bb9a04b43282139` | Reproduces the state's `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c`. | exit 0; the same bytes as the state's file | pass 1, 2 |
+| `storyboard.html` | `write-storyboard.mjs` `47e7e1da08b95731dd0f790773c43f3dc80478e4` | At the state it makes `ccc154a983028fd9032e9852f3812b9bbda2bbc2`, not the state's `643e796e7426ed8530f6db6b90b43c3df0202683`. Reproduces checkpoint #4's `643e796e7426ed8530f6db6b90b43c3df0202683`. Earlier checkpoints tried: #6 no, #4 yes. | exit 0; differs from the state's file | pass 2 |
+
+**Written over the export.**
+
+| File | Why | Replaces blob | SHA-256 | Bytes |
+|---|---|---|---|---|
+| `tools/EvalLoopDemo/storyboard.html` | regenerated | `643e796e7426ed8530f6db6b90b43c3df0202683` | `9916199caf36adb5d79134fe9aaa7a47a5fe6af311ae2ac7c6afd0363269d2c2` | 46887 |
+
+- **Camera:** `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79`; given to the engine after its scene was built: `preview.mjs` `c5f34dd8a16560dc50befc9ae67324d2396e4b79` (the engine had `1aa7b03f26e183028ca2e842ede909daac6bc189`), `cli-support.mjs` `7cece5665a1c921ed8acb4b315af259441c6ecbf` (the engine had none).
+- **Seek hook:** `window\.masterTimeline\s*=` is in `tools/EvalLoopDemo/video-auto.html` after the scene build.
+- **Passes:** 1 and 2.
+- **Export:** 56 files under `tools/SizzleCraft` and `tools/EvalLoopDemo` at `b9a3c09239b75aca2c95e4c07e5434f79541011d`, written from
+  git's object store. 56 of 56 re-hash to their blob ids.
+- **Browser:** playwright `1.63.0`, chromium `153.0.8010.12 (revision 1243)`, headless shell `revision 1243`.
+- **Layout audit:** clean. **End card:** off (endCard.enabled is false) — endcard.png dropped.
+
+| Engine file | Blob |
+|---|---|
+| `tools/SizzleCraft/src/write-build-html.mjs` | `a1fd88d77f6fce617780649bc7a2a743267003a2` |
+| `tools/SizzleCraft/src/preview.mjs` | `1aa7b03f26e183028ca2e842ede909daac6bc189` |
+| `tools/SizzleCraft/src/cli-support.mjs` | — |
+| `tools/SizzleCraft/package-lock.json` | `85a4d9700098c84e001f0e3acd49050fff087911` |
+| `tools/EvalLoopDemo/package-lock.json` | `c461a17a6a251924cb7a119c0c09516a5e61cdb2` |
+
+| Stage | Command | Exit |
+|---|---|---|
+| npm ci (engine) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| npm ci (project) | `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` | 0 |
+| scene build | `node ../SizzleCraft/src/write-build-html.mjs --apply` | 0 |
+| camera | `node ../SizzleCraft/src/preview.mjs --apply` | 0 |
+
+**Files.** A file with a git blob is the tree's own; *regenerated* and *reconstructed* files have none.
+
+| Pass | File | Git blob | SHA-256 | Bytes | Note |
+|---|---|---|---|---|---|
+| 1 | `r1/pass1/script.md` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `41d3a37078e607c56ea21d235f36a1a103158957c866f0d269d07430f17bb8b0` | 13154 | regenerated |
+| 2 | `r1/pass2/timing.json` | `f9c98a98ca112bc2ccb7da6b6d5101bee66a6e09` | `b14df627628cad075b92eb7e75b873cf12d4cda1e73eb9ff0902d1812b66edc9` | 143128 |  |
+| 2 | `r1/pass2/script.md` | `2a4f3149071ec840987ae53a94bfdfc0a4f70e9c` | `41d3a37078e607c56ea21d235f36a1a103158957c866f0d269d07430f17bb8b0` | 13154 | regenerated |
+| 2 | `r1/pass2/storyboard.html` | — | `9916199caf36adb5d79134fe9aaa7a47a5fe6af311ae2ac7c6afd0363269d2c2` | 46887 | regenerated |
+| 2 | `r1/pass2/audit.txt` | — | `29855ca8f2543f3006da6b12e452819296b040e986bb8c2f5770eb78ed67a9b8` | 506 | stage transcript |
+| 2 | `r1/pass2/stills/hard.png` | — | `356966ecb304fab2f165beb64c9d770f0c609f07a20cb898e127bf9803211c98` | 783978 | 1920×1080 |
+| 2 | `r1/pass2/stills/bdd.png` | — | `2909bb0623310129ccb0d835c9282625506305c5b0b843ba95a50b40e1a8299b` | 751592 | 1920×1080 |
+| 2 | `r1/pass2/stills/scenario.png` | — | `50eb64ddb1240199e1673b2862115f449914115d9813c0f6569b2e689ab5d479` | 775013 | 1920×1080 |
+| 2 | `r1/pass2/stills/many.png` | — | `e20d0bb5b1c056f0028e349c25585904462a58fd597602b56cb0c8f48c723a6c` | 778745 | 1920×1080 |
+| 2 | `r1/pass2/stills/dimensions.png` | — | `063ad646d24e12614983dcd1f401bdc20b8dd1b9f869c8ca95adda06f7ea6066` | 741420 | 1920×1080 |
+| 2 | `r1/pass2/stills/twotier.png` | — | `33061799e13f6c79c4736a5aacdaeaa942ee4aef290c2ec99a433aebd9debad2` | 746401 | 1920×1080 |
+| 2 | `r1/pass2/stills/blindspot.png` | — | `71a40120548f613407210b4acfded3c7794fc654b35e8bc2f02978749ea484b6` | 416517 | 1920×1080 |
+| 2 | `r1/pass2/stills/loop.png` | — | `23a633a56b2195a52c4d0ffcb192ed52d7eb6c2bb024dfd92946fc95d2da8b79` | 397303 | 1920×1080 |
+
+### The answer key's rules for r1, resolved
+
+From `r1-resolution.json`, committed with this ledger and checked against the round's manifest. The answer key
+fixes these rules, and asks for the result here before any coach run on r1 (answer-key.md, "r1").
+
+**Segment numbers.** The user's segment numbers are the render's order:
+
+| Number | Segment |
+|---|---|
+| 1 | `hard` |
+| 2 | `bdd` |
+| 3 | `scenario` |
+| 4 | `many` |
+| 5 | `dimensions` |
+| 6 | `twotier` |
+| 7 | `blindspot` |
+| 8 | `loop` |
+
+| Item | Segment | Class | Evidence | What the inputs show |
+|---|---|---|---|---|
+| R1-04 | `hard` | objective | `r1/pass2/stills/hard.png` (SHA-256 `356966ecb304fab2`…) | Segment 1's still, taken at 23.4 s. The arrowheads between the three stacked boxes on the left are cut off by the boxes above and below them, the pink arrowhead into the orange turn 2 is partly hidden under the green turn 2's corner, and three arrowheads pile up between the two boxes at the bottom. The layout audit reports no issue, because it does not test arrowheads against boxes. Lane row 4, overflow and clipping. Judged by the user from the still, because the orchestrator knew the key. |
+| R1-11 | `blindspot` | objective | `r1/pass1/script.md` (SHA-256 `41d3a37078e607c5`…), `r1/pass2/timing.json` (SHA-256 `b14df627628cad07`…), `r1/pass2/stills/blindspot.png` (SHA-256 `71a40120548f6134`…) | Segment 7 in the render's order, as P16 numbers it, and the segment about the interface harness. Its narration says "Watch it drive the real interface" (script.md L83). The segment is in footage mode with no clip: none was registered at the state, and the built scene plays none. So it renders the four-node stage-trace diagram, and no interface appears (still blindspot.png). Its On-screen line says "The clip has NOT been captured" (L85). The same case as R2-11. twotier also names the interface harness, but its narration describes two labelled lanes, and its still shows them. |
