@@ -115,3 +115,20 @@ message after the report is not a second prompt.
 | Run | Round | Pass | Session | Model in log | Report bytes | Report SHA-256 | Prompt SHA-256 | `FILES READ` | Session log | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | r2 | 1 | `eca9b13b` | `gpt-6-sol` | 5361 | `be1673ee48a3eec5997bb1255b849a4ae438315cf7b79812f83b8ca3e947ca09` | `a16865138be021c6c25747d9154c456585979ebb106ddd56720c8c1797831fe1` | inside the set | 11 tool calls, all inside the set | valid |
+| 2 | r2 | 2 | `b4b85cc5` | `gpt-6-sol` | 5019 | `b804ce9ce7c8c113fb707e5ff4fa02ae3c7a79a90de7416ca8f510354686cd47` | `d75f77770799fb2697a73b1e1ade93463dbe996e6b36ff3583e7f2ae93ab82bf` | inside the set | 34 tool calls, all inside the set | valid |
+| 3 | r6 | 1 | `8172d51f` | `gpt-6-sol` | 4208 | `1e84f655b1f50182a9cfc6991b65e94e421b55fc42f108a49d370f0e95754d64` | `d4c97acb4290974af60b2079749325fb2a9db8ca41568762cb8c2a8865417f44` | inside the set | 7 tool calls, all inside the set | valid |
+| 4 | r6 | 2 | `31a5bbed` | `gpt-6-sol` | 5017 | `da1eb3419e520fb3c41d4485cfcfc9224e9377e5d7242f09739ac0b8a0bfc639` | `3f918a6703552e01176a2c3aa8f5955284455fbdb4a1342af0b5c4a6a0582c59` | inside the set | 22 tool calls, all inside the set | valid (Amendment 9) |
+| 5 | r7 | 1 | `8c36e980` | `gpt-6-sol` | 3569 | `4560fd16601b387e449cd5ab6f32564d6a440bee9549c5307654e2b5f2f7bd30` | `c94ec4ceb156afb9c3778d22d0210f74ad60669eb3591b908acbbaa51dac34cb` | inside the set | 7 tool calls, all inside the set | valid |
+| 6 | r7 | 2 | `63b92b9d` | `gpt-6-sol` | 5234 | `b03cb9c3be39c68bdc9abfce0a5f91d80f0f7355bdabcd8605e557834d4b960c` | `633e90f9107708473b146894e068afb901fafffde35eee139d0fda6f0d64007a` | inside the set | 51 tool calls, all inside the set | valid |
+| 7 | r1 | 1 | `b8a9a249` | `gpt-6-sol` | 4757 | `2304de740e76b026688f7e876bf3bddc940583f2a95c071cd1b880c51f442cc9` | `10396fb50326c8be159cc1ef1bafcfd72eb036881bb43e185a593efc0c9d9bf4` | inside the set | 9 tool calls, all inside the set | valid |
+| 8 | r1 | 2 | `33afdd68` | `gpt-6-sol` | 4397 | `97f9abdf2e81444c395cc33445a521bc7260e04770415e072a0d36687bbddd45` | `d0f80547b391b4979f7df77d9b36645c0e014c7e1715f5ca9029f95731282bd0` | inside the set | 40 tool calls, all inside the set | valid |
+
+- Every run's staged inputs and rubric still matched their SHA-256s after the run.
+- **Run 4:** the report is the assistant message at line 140 of the session's log. Line
+  151 is the empty autopilot message. The `task_complete` summary that the rule before
+  Amendment 9 would have taken is 198 bytes (`c688426ccd225850dd334feb73022df21ccc2802b843a165969d5af65fb575c6`).
+- **Runs 7 and 8** were dispatched before Amendment 9 was committed, and captured after it.
+- **Every coach worktree, runs 1–8, was at `7ec4817`,** which does not hold the answer key.
+  Each was made from `users/jonosace-microsoft/multi-agent-orchestration`. The local branch
+  was ahead of `7ec4817` every time, at `f0e0312`, `2ab965a` and `0cab08a`, and the remote
+  branch was at `7ec4817`. So the app evidently makes a worktree from the remote head.
