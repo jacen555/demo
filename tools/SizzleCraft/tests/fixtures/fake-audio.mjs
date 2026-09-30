@@ -65,6 +65,17 @@
 // PCM: 0.0 for a silent frame, VOICED_LEVEL for a voiced one. Anything that is not a
 // marker frame is rejected, as a real decoder rejects garbage.
 //
+// When $FAKE_PLAYWRIGHT_GOTO_SWAP and $FAKE_PLAYWRIGHT_GOTO_SWAP_WITH are both set,
+// page.goto() copies the second file over the first before it returns. That is the window
+// between a stage's first read of its input and the decode, so a test can replace the
+// input there deterministically and assert which bytes were actually measured.
+// The swap is CONFINED, because runScript passes the parent's whole environment and an
+// inherited pair would arm it in every run: both paths must resolve, by real path, inside a
+// sizzlecraft-test-* directory directly under the real temp dir — what makeProject and
+// makeOutsideDir create. The source must be a regular file, the target a regular file or
+// absent, and neither a link. Anything else throws, failing the run, and copies nothing.
+// With either variable unset the seam does nothing.
+//
 // LIMITS: READ THESE BEFORE REUSING IT
 //
 //   - It covers the surface voice.mjs and remix.mjs use today and nothing else. The fake

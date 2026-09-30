@@ -379,27 +379,43 @@ const boundTo = (voice) => ({
 });
 
 describe('envelope input validation', () => {
+  // EACH FIXTURE REACHES THE CHECK IT IS NAMED FOR. These three used to carry no binding
+  // and no voiceover.mp3, so all three stopped at "voice track not found" — exit 2, the
+  // code they asserted — and deleting the rms validation left them green. Each is now
+  // bound to narration on disk, and each asserts the rms refusal itself.
+  const voice = Buffer.from('narration bytes');
+  const boundEnvelopeProject = (t, envelope) =>
+    makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ ...envelope, measuredFrom: boundTo(voice) }),
+    });
+
   test('makeMusic_envelopeWithEmptyRms_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms: [] }) });
+    const dir = boundEnvelopeProject(t, { rms: [] });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'an empty envelope must not produce NaN samples: ');
+    assert.match(r.stderr, /has an empty "rms" array/, 'and the refusal must be the rms check, not an earlier one');
     assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_envelopeWithNonNumericSamples_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms: [0.1, 'x', 0.2] }) });
+    const dir = boundEnvelopeProject(t, { rms: [0.1, 'x', 0.2] });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'a non-numeric envelope sample must be refused: ');
+    assert.match(r.stderr, /"rms"\[1\] is "x"/, 'the refusal must name the sample');
+    assert.match(r.stderr, /finite non-negative number/, 'and the rule it breaks');
     assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_envelopeMissingRmsArray_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ durationMs: 100 }) });
+    const dir = boundEnvelopeProject(t, { durationMs: 100 });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'an envelope without an rms array must be refused: ');
+    assert.match(r.stderr, /must contain an "rms" array/, 'and the refusal must be the rms check');
+    assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_validEnvelope_writesFiniteSamples', (t) => {

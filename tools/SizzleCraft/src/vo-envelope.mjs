@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { EXIT, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
 import {
   fingerprintVoice,
+  fingerprintBuffer,
   envelopeBindingRecord,
   classifyEnvelopeLineage,
   describeEnvelopeState,
@@ -42,13 +43,12 @@ await runCli(async () => {
   const voicePath = requireExistingFile(projectDir, voiceName, 'voice track');
   const outPath = resolveOutput(projectDir, values.out ?? 'vo-envelope.json', { apply, replace, label: 'output' });
 
-  // Taken from the INPUT, streamed, on BOTH paths: the plan needs it to report whether an
-  // envelope already on disk still describes this audio, and the apply path needs it to
-  // write the binding. See envelope-ducking.mjs for why the fingerprint is over the input
-  // rather than over the artefact it certifies.
-  const fingerprint = await fingerprintVoice(voicePath, voiceName);
-
   if (!apply) {
+    // Taken from the INPUT, streamed: the plan needs it to report whether an envelope
+    // already on disk still describes this audio. See envelope-ducking.mjs for why the
+    // fingerprint is over the input rather than over the artefact it certifies.
+    const fingerprint = await fingerprintVoice(voicePath, voiceName);
+
     console.log('plan: measure the narration amplitude envelope');
     console.log(`  source ${voicePath} (${fingerprint.bytes} bytes, sha256 ${fingerprint.sha256.slice(0, 12)})`);
     console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
@@ -72,13 +72,20 @@ await runCli(async () => {
     return EXIT.OK;
   }
 
+  // ONE READ, BOTH HASHED AND DECODED. The binding used to be taken from one read of the
+  // voice and the envelope measured from a second, with a browser launch in between, so
+  // a file replaced in that window got the new audio's envelope bound to the old audio.
+  // Read once, before the browser: the fingerprint and the decode are over these bytes.
+  const voiceBytes = await fs.promises.readFile(voicePath);
+  const fingerprint = fingerprintBuffer(voiceBytes, voiceName);
+
   // Loaded only on the --apply path so a plan never needs a browser.
   const { chromium } = await import('playwright');
   const b = await chromium.launch({ headless: true });
   try {
     const p = await b.newPage();
     await p.goto('about:blank');
-    const b64 = fs.readFileSync(voicePath).toString('base64');
+    const b64 = voiceBytes.toString('base64');
     const env = await p.evaluate(async (b64) => {
       const bin = atob(b64); const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
@@ -92,8 +99,7 @@ await runCli(async () => {
       }
       return { durationMs: Math.round(buf.duration * 1000), hopMs: 20, rms };
     }, b64);
-    // The binding is written from the fingerprint taken BEFORE the decode, so it names
-    // the bytes that were actually measured.
+    // The binding names the buffer that was decoded, so it names the bytes measured.
     fs.writeFileSync(outPath, JSON.stringify({ ...env, measuredFrom: envelopeBindingRecord(fingerprint) }));
     console.log(`envelope: ${env.rms.length} frames over ${env.durationMs}ms -> ${outPath}`);
     console.log(`  measured from ${fingerprint.file} (sha256 ${fingerprint.sha256.slice(0, 12)})`);

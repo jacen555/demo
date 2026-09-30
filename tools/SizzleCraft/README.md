@@ -40,7 +40,7 @@ place to fix a bug.
 | `silence-scan.mjs` | S4 | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5). |
 | `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip. |
 | `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one. |
-| `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, and the threshold solve. Side-effect free, so it is unit-tested directly. |
+| `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, the threshold solve, and the bed's ducking record (`<bed>.duck.json`). Side-effect free apart from `publishBedDuckRecord`, which writes that record; unit-tested directly. |
 | `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
 | `frame-capture.mjs` | S6 | Headless-browser frame capture with dedup. **The long pole.** |
 | `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
@@ -282,9 +282,14 @@ it — it names the missing `evidence` marker and stops there.
 only one that can actually be carried out — `check-levels.mjs` measures a *rendered file*,
 so there is nothing to measure until the remux has run:
 
-1. `--confirm-gain` to accept the mix parameters and produce the mix;
+1. `--confirm-gain`, on a person's answer, to accept the mix parameters and produce the mix;
 2. `node src/check-levels.mjs --file <out>` to measure it;
 3. read the lead-in window, where the bed plays alone, **before delivering**.
+
+**`--confirm-gain` is the caller's assertion** that a person measured or listened to the mix
+and accepts these values for this source. The tool cannot tell who passed it, and records
+`evidence: "operator-confirmed"` either way — so an agent must not pass it on its own
+authority: ask the person, and pass it only on their answer.
 
 `confirmedAt` and `evidence` are written only on a run where someone actually passed
 `--confirm-gain`; a settled pin is left untouched rather than restamped.
@@ -302,7 +307,9 @@ declared, the pin binds to the `pinned` subset of it, and the filter graph is au
 against it before ffmpeg is invoked. A value interpolated into the graph without being
 declared leaves a number that traces to nothing, and the run stops with exit `1` (a check
 failed) having written nothing — on the plan path too, because a plan that prints a graph
-it cannot account for describes a mix nobody confirmed.
+it cannot account for describes a mix nobody confirmed. A gain too small to render as a
+plain decimal — nonzero and below `0.000001` — is refused as usage (exit `2`) before it
+reaches the graph.
 
 **Existing locks are refused, not upgraded.** A pin written before the registry cannot say
 which ceiling it covered, and back-filling today's default would record an agreement
@@ -326,10 +333,11 @@ single anticipated shape and read `volume=.5` as nothing at all:
 | Detected | Not detected |
 |---|---|
 | a name used through the registry that is not declared | anything reaching ffmpeg **outside** `-filter_complex` — `-b:a`, `-ar`, an added `-af`, a changed codec |
-| a number in the finished graph that no declared use or structural literal accounts for | a change carrying **no digit at all** — swapping `alimiter` for `acompressor`, `level=disabled` → `enabled` |
+| a number in the finished graph that no declared use or structural literal accounts for | a change carrying **no digit at all** outside the `asplit`/`amix` literals — swapping `alimiter` for `acompressor`, `level=disabled` → `enabled` |
 | a number duplicating a declared value (accounting is by value **and** use-count) | a value inside a `[link label]` (redacted before the scan) or shaped like a **filter identifier** (`c0`, `ml1` — digits in a name are skipped) |
 | **any run of characters carrying a digit** that is neither a plain decimal nor a filter identifier — `.5`, `5.`, `+1.5`, `-1.5`, `1e3`, `1.5E-2`, `6dB`, `128k` all stop the run rather than being skipped | **whether `pinned` is set correctly** — nothing mechanical can know a knob moves the level, and this has already been got wrong once (see below) |
 | a `pinned` parameter never declared, or declared and never applied | |
+| a **structural literal** — `atrim=0:`, `asplit=2`, the whole `amix` — appearing more or fewer times than the graph builder took it through `mix.structural()`, or anywhere but at a filter boundary. A second `asplit`/`amix` pair doubles a bus without adding a number; literals were once stripped wherever they appeared, so it passed as structure | |
 
 The honest summary: a knob interpolated into the mix graph cannot reach ffmpeg **as a
 number** — in any numeric form ffmpeg accepts, not just the ones anticipated when the scan
@@ -347,9 +355,12 @@ against, and it is the signal fed into the limiter whose ceiling *is* pinned —
 voice-only change moved the delivered mix while a settled pin went on reporting valid,
 which is exactly the defect `--ceiling` had. The incident behind this whole feature was a
 voice `1.40` / music `0.85` rebalance that shipped a bed 24 dB above target. It is now
-pinned. The confirmed set is `--voice-gain`, `--music-gain`, `--ceiling` and the four duck
-knobs `--duck-db`, `--duck-ratio`, `--duck-attack`, `--duck-release`. Nothing mechanical
-caught that error, and nothing mechanical would catch the next one.
+pinned. So is `--crossfade`, once left unpinned as a knob that only joins a loop wrap: on a
+looping bed its tri curves dip up to 3.01 dB at each overlap's midpoint, so it sets the bed
+level for a large share of the running time. The confirmed set is `--voice-gain`,
+`--music-gain`, `--ceiling`, `--crossfade` and the four duck knobs `--duck-db`,
+`--duck-ratio`, `--duck-attack`, `--duck-release`. Nothing mechanical caught either error,
+and nothing mechanical would catch the next one.
 
 **A conditional pinned knob is recorded as absent, not omitted.** The duck is opt-in, so
 on a run without `--duck-db` its knobs have no value — but a pinned parameter must still
@@ -357,12 +368,17 @@ be accounted for or the pin records a partial set. `mix.declareAbsent()` writes
 `NOT_IN_FORCE` (`0`) for them, and `mix.use()` refuses a knob declared that way, so "not in
 force" cannot be claimed for a value that is in force. **Turning ducking on is therefore a
 changed pinned parameter** and demands a fresh confirmation — which is correct, because
-switching the duck on moves the delivered mix.
+switching the duck on moves the delivered mix. `--crossfade` is conditional the same way:
+it reaches the mix only when the bed loops, so on a bed that covers the video it is
+recorded `NOT_IN_FORCE` whatever the flag says and a change to it asks for no confirmation,
+while a bed that starts looping — a longer video, a shorter track — is a changed pinned
+parameter. So the loop is decided before the pin is checked, and on `--apply` durations
+that cannot be read stop the run (exit `1`) rather than being guessed.
 
-> **Adding the duck knobs invalidated every existing pin**, exactly as `--ceiling` did.
-> Each project needs **one** more `--confirm-gain`. That is the mechanism working rather
-> than an obstacle: the set grew, and the pin failed loudly instead of quietly certifying
-> a set it no longer covers.
+> **Adding the duck knobs invalidated every existing pin**, exactly as `--ceiling` did, and
+> pinning `--crossfade` did it again. Each time, each project needs **one** more
+> `--confirm-gain`. That is the mechanism working rather than an obstacle: the set grew, and
+> the pin failed loudly instead of quietly certifying a set it no longer covers.
 
 ### Sidechain ducking for a file-sourced bed
 
@@ -388,6 +404,9 @@ node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
   --duck-db 11 --duck-envelope vo-envelope.json --apply --confirm-gain
 ```
 
+Without `--duck-db` the `--duck-*` options are refused (exit `2`), not ignored: ducking is
+off, so nothing would read them.
+
 **Set the levels with two knobs, not one.** `--music-gain` puts the bed at your
 `musicInGapsDb`; `--duck-db` is the **difference** down to `musicUnderSpeechDb`. For
 −30 and −41 that is `--duck-db 11`.
@@ -396,6 +415,38 @@ node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
 > played flat is compensating for the duck's absence — it is low so that narration stays
 > intelligible. With a duck in the graph that same value puts the bed far below the gaps
 > level. Re-derive it from the track's measured RMS and your gaps target.
+
+**A bed `make-music` ducked is checked against the narration, and never ducked twice — if it
+has a ducking record.**
+`make-music --envelope` bakes its duck into the samples, timed to the narration it was made
+with, and nothing in the audio says so. So `make-music --apply` writes `<out>.duck.json`
+beside every bed: the narration it ducked against, or that it did not duck. `--replace`
+overwrites a record that is a regular file, never a link or a directory: one already at the
+record's name is refused before the bed is synthesised (exit `2`) and left as it is, and the
+bed is not written. Without `--replace` the record is created only if its
+name is still free when it is published: one that appeared while the bed was synthesised is
+refused (exit `2`) and left as it is, and the bed is not written. That publish makes a hard
+link, which a FAT or exFAT volume cannot: there it fails (exit `1`) and writes neither file;
+`--replace` publishes by rename instead, and overwrites an existing bed and a record that is
+a regular file.
+If the record's file cannot be closed once the record is published, what was written to it
+cannot be confirmed: the run fails (exit `1`), the record is left at its name, and the bed is
+not written. Move the record aside, or re-run with `--replace` to overwrite it.
+`remux-music` reads the record on the plan and on `--apply`, with or without `--duck-db`:
+
+| The record says | `remux-music` |
+|---|---|
+| ducked, against the narration in play | uses the bed's own duck. **`--duck-db` is refused (exit `2`)**: it would duck the bed a second time. Drop it, or write a flat bed with `make-music` (no `--envelope`) and duck that in the graph |
+| ducked against other narration, fingerprints other bytes than the bed, or is malformed | refused (exit `1`), naming what differs or what is wrong with it |
+| not ducked | the bed plays flat, or `--duck-db` is its only duck |
+| *nothing — no record* (a licensed track, or a bed from before records existed) | **not read as flat**: the plan says whether `make-music` ducked it cannot be told, and with `--duck-db` that the in-graph duck lands on top of any duck baked into it |
+
+A bed with no record gets no such check: `--duck-db` is not refused on a `make-music` bed from
+before records existed, and ducks it a second time if it was ducked. The plan warns; it does
+not prevent it.
+
+`remux-music` refuses a link, or anything but a regular file, at the record's name (exit
+`2`), and reports a record that does not parse by its length, never its contents.
 
 **Why `sidechaincompress`, and what was rejected.**
 
@@ -409,7 +460,10 @@ node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4 `
 `(level − threshold) × (1 − 1/ratio)`, so a fixed threshold delivers whatever depth the
 narration happens to land on. `remux-music` measures the speech level in the envelope and
 solves the threshold backwards from `--duck-db`. That is why the envelope must describe
-the narration in play, and why a stale one stops the run.
+the narration in play, and why a stale one stops the run. A depth the narration cannot
+deliver — the solved threshold would fall outside the range ffmpeg's `sidechaincompress`
+accepts — is refused (exit `2`), naming the depth it can reach, rather than clamped while
+the pin records the depth that was asked for.
 
 #### The gaps level is APPROACHED, not reached — and by how much
 
@@ -425,26 +479,33 @@ A one-pole release closes on its target asymptotically and never arrives. At the
 | 3.31 s | 0.10 dB |
 | 4.00 s | 0.04 dB |
 
-So a real inter-segment gap honours `musicInGapsDb` to within about **0.7 dB**, and a
-**silent segment** — an intro slide, an intermission — sits on it properly, because the
-release keeps riding up and **nothing caps how long the excursion may last**. There is
+So in the model a real inter-segment gap comes within about **0.7 dB** of `musicInGapsDb`
+(a modelled figure, not a bound: see the one measured render below), and a **silent
+segment** — an intro slide, an intermission — sits on it properly, because the release
+keeps riding up and **nothing caps how long the excursion may last**. There is
 deliberately no hold and no hysteresis: a hold long enough to stop word-gap pumping and a
 cap on excursion length are the same mechanism at two timescales, and the second one
 breaks the intermission case. `sidechaincompress` cannot express a hold either, so adding
 one would put the model and the graph out of agreement.
 
 The plan prints this figure **for the release actually in force, against the gaps measured
-in your envelope** — not the table above. Shorten `--duck-release` to close it further, at
-the cost of more audible movement across word gaps.
+in your envelope** — not the table above — and refuses an envelope whose `hopMs` is not a
+number of milliseconds from 1 to 1000 (exit `1`), because it sets every gap length. A
+shorter `--duck-release` closes the modelled figure further, at the cost of more audible
+movement across word gaps. But the one measured render did not track the model, and nothing
+was measured below 800 ms, so release is **not** the coefficient to tune by this number.
 
 **Two further limits, stated rather than implied.**
 
 - The solve lands the depth on the **average** speech level. Speech is not constant-level,
   so a syllable *N* dB louder ducks `N × (1 − 1/ratio)` dB deeper — 0.75·*N* at the default
   ratio 4. The depth is a **centre, not a clamp**; lower `--duck-ratio` narrows the spread.
-- **Nothing here has been measured against a real render.** The figures above are computed
-  from the one-pole model the tests pin; whether ffmpeg's `attack`/`release` coefficients
-  map onto that model exactly is **not verified in this repo**. Verify by decoding the
+- **One render has been measured, and it did not track the model.** The figures above are
+  computed from the one-pole model the tests pin. With an 11 dB duck across a 1.82 s median
+  gap, the bed measured 0.05–0.12 dB short at an 800 ms release (model 0.67 dB), 2.0–3.5 dB
+  at 1500 ms (model 2.09) and 6.1–8.7 dB at 2500 ms (model 3.70). So the model is **not a
+  bound in either direction**, ffmpeg's `attack`/`release` coefficients do not map onto it
+  exactly, and nothing was measured below 800 ms. Verify by decoding the
   output and measuring — and **measure inside true gaps, not near their boundaries**. A
   first attempt at this sampled 0.1 s from a boundary, measured narration, and read the
   result as "ducking barely worked".
@@ -465,8 +526,9 @@ guarantee. This tool clamps sample peaks before the AAC encode and measures noth
 it — **verifying a dBTP target means decoding the output and measuring it yourself.** The
 earlier guidance of "about 2.5" was a guess and has been removed.
 
-**Known gap — what this pin does not do.** It records that an operator confirmed a set of
-mix parameters, not that anyone measured the result. `music-gain.lock.json` carries
+**Known gap — what this pin does not do.** It records that the caller passed
+`--confirm-gain` — an assertion that a person accepted a set of mix parameters, which the
+tool cannot check — not that anyone measured the result. `music-gain.lock.json` carries
 `evidence: "operator-confirmed"` so the file cannot be misread as a calibration record. A
 measured pin is not buildable from what exists today: `check-levels.mjs` writes no
 artifact, measures a *rendered video* rather than the music source, has no way to bind a
@@ -578,7 +640,7 @@ node src/write-build-html.mjs                  # then: --apply --replace
 node src/frame-capture.mjs                     # then: --apply
 node src/encode-mp4.mjs                        # then: --apply --replace
 node src/vo-envelope.mjs                       # then: --apply --replace
-node src/make-music.mjs --out bed.wav --seconds 240 --preset bright   # then: --apply
+node src/make-music.mjs --out bed.wav --seconds 240 --preset bright   # then: --apply (writes bed.wav and bed.wav.duck.json)
 node src/remux-music.mjs --video render.mp4 --out render-with-music.mp4   # then: --apply --confirm-gain
 
 # a licensed bed, ducked under narration (see "Sidechain ducking" above)

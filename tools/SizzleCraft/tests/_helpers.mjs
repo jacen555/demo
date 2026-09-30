@@ -34,6 +34,22 @@ export function makeOutsideDir(t, files = {}) {
   return makeProject(t, files);
 }
 
+/**
+ * A silent 16-bit mono PCM WAV that music-metadata, the engine's real probe, measures at
+ * exactly `seconds`. remux-music decides whether the bed loops BEFORE its gain pin, so a
+ * test that reaches the pin on --apply needs music whose length can actually be read.
+ */
+export function pcmWav(seconds, sampleRate = 8000) {
+  const dataBytes = Math.round(seconds * sampleRate) * 2;
+  const buf = Buffer.alloc(44 + dataBytes);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataBytes, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataBytes, 40);
+  return buf;
+}
+
 /** Runs an engine script as a real CLI in `cwd` and returns its exit code + streams. */
 export function runScript(script, args, cwd, { env = {}, nodeArgs = [] } = {}) {
   const r = spawnSync(process.execPath, [...nodeArgs, path.join(srcDir, script), ...args], {
@@ -63,6 +79,42 @@ export const BLOCK_PLAYWRIGHT = pathToFileURL(
 export const FAKE_AUDIO = pathToFileURL(
   path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-audio.mjs'),
 ).href;
+
+/**
+ * The --import URL of a preload that creates `target` (holding `body`) inside the child's
+ * own console.log call for the first line containing `marker`, so it lands before the
+ * script's next statement with no race. `target` must be in a makeProject/makeOutsideDir
+ * directory. Pass it as `nodeArgs: ['--import', plantOnMarker({...})]`.
+ * See tests/fixtures/plant-on-marker.mjs.
+ */
+export function plantOnMarker({ marker, target, body }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plant-on-marker.mjs'));
+  url.search = new URLSearchParams({ marker, target, body }).toString();
+  return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes fs.unlinkSync fail with EPERM for entries of
+ * `dir` whose names contain `fragment`, announcing each refusal on stderr. `dir` must be a
+ * makeProject/makeOutsideDir directory. See tests/fixtures/refuse-unlink.mjs.
+ */
+export function refuseUnlink({ dir, fragment }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'refuse-unlink.mjs'));
+  url.search = new URLSearchParams({ dir, fragment }).toString();
+  return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes fs.closeSync fail with EIO, after really closing
+ * the descriptor, for descriptors fs.openSync opened on entries of `dir` whose names contain
+ * `fragment`, announcing each failure on stderr. `dir` must be a makeProject/makeOutsideDir
+ * directory. See tests/fixtures/fail-close.mjs.
+ */
+export function failClose({ dir, fragment }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-close.mjs'));
+  url.search = new URLSearchParams({ dir, fragment }).toString();
+  return url.href;
+}
 
 /**
  * Creates a file symlink, returning false when the platform refuses (symlink creation

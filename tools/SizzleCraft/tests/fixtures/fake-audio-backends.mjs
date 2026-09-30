@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import { requireTestOwnedPath } from './test-owned-path.mjs';
 
 // ---- the marker-frame codec ------------------------------------------------------------------
 
@@ -170,7 +171,20 @@ export const chromium = {
       async newPage() {
         if (!open) throw new Error('fake playwright: browser has been closed');
         return {
-          async goto() { return null; },
+          // FAKE_PLAYWRIGHT_GOTO_SWAP / _WITH replace one file with another while the page
+          // loads — the window between a script's first read of its input and the decode.
+          // CONFINED to suite-owned files: runScript passes the parent's whole environment,
+          // so an inherited pair would otherwise copy anything over anything. Out of bounds
+          // throws, failing the run loudly, and copies nothing.
+          async goto() {
+            const { FAKE_PLAYWRIGHT_GOTO_SWAP: target, FAKE_PLAYWRIGHT_GOTO_SWAP_WITH: source } = process.env;
+            if (target && source) {
+              const from = requireTestOwnedPath(source, 'fake playwright: $FAKE_PLAYWRIGHT_GOTO_SWAP_WITH');
+              const to = requireTestOwnedPath(target, 'fake playwright: $FAKE_PLAYWRIGHT_GOTO_SWAP', { mayBeAbsent: true });
+              fs.copyFileSync(from, to);
+            }
+            return null;
+          },
           evaluate: evaluateLikeABrowser,
           async close() {},
         };

@@ -36,6 +36,7 @@ import {
   MISSING_FFMPEG,
   timingFixture,
   wordedSegments,
+  pcmWav,
 } from './_helpers.mjs';
 
 const SENTINEL = 'SENTINEL — MUST SURVIVE AN ENGINE-CHOSEN WRITE';
@@ -345,12 +346,15 @@ describe('path confinement reaches the CLI', () => {
   // `music-gain.lock.json`. The engine picks that name on its own initiative, so an
   // in-root link at it redirects a write the caller never asked for — which is exactly
   // the distinction resolveInternalArtifact draws and resolveOutput deliberately does not.
+  //
+  // The bed is decodable because --apply probes it before it reaches the pin: whether it
+  // loops decides whether the crossfade is in the pinned mix.
   const remuxProject = (t, files = {}) =>
     makeProject(t, {
       'ffmpeg-path.txt': MISSING_FFMPEG,
       'in.mp4': 'video bytes',
       'voiceover.mp3': 'voice bytes',
-      'music.wav': 'music bytes',
+      'music.wav': pcmWav(10),
       ...files,
     });
 
@@ -362,7 +366,8 @@ describe('path confinement reaches the CLI', () => {
     );
 
   test('remuxMusic_gainLockIsLinkToOutsideVictim_refusesWithoutClobberingIt', (t) => {
-    const root = remuxProject(t);
+    // A timeline, so the apply run can size the mix and reach the pin.
+    const root = remuxProject(t, { 'timing.json': JSON.stringify({ project: { fps: 30 }, durationMs: 4000 }) });
     const outside = makeOutsideDir(t, { 'victim.json': 'ORIGINAL VICTIM' });
     const link = path.join(root, 'music-gain.lock.json');
     if (!tryMakeFileLink(link, path.join(outside, 'victim.json'))) {
