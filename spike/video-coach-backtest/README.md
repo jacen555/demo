@@ -63,7 +63,7 @@ before frame capture (pass 2).
 
 - **In git:** the learnings. That is the rubric with its brief and provenance record, the
   coach, this protocol, the answer key, the two hash ledgers (`inputs.md`, `runs.md`) and
-  the result.
+  the result (`scoring.md`).
 - **Not in git:** the extracted inputs, the stills and the coach reports. They are output,
   so they live outside the repository.
 - **Why hashes are enough:** each committed hash fixes the output it names before the next
@@ -740,13 +740,52 @@ writes only under `--apply`.
    and the freshness check if `freshness.json` exists. Once r1 is extracted, it also needs
    `r1-resolution.json`, the answer key's rules for r1 as resolved from its inputs
    ("Amendment 8"), and refuses to write without it.
+5. **Score the runs**, which writes `scoring.md`.
 
-Nothing under `tools/` is modified, and no git worktree is created. The scorer comes
-later.
+   ```powershell
+   node src/write-scoring.mjs --events <events.jsonl> --apply
+   ```
+
+   It reads the protocol files from `HEAD`, and refuses while any of them has uncommitted
+   changes. It reads the coach reports from `<tmp>/vcb/runs` (`--runs <dir>` moves it) and
+   checks each one's size and hash against `runs.md`. The user's answers come from the
+   session's event log, `--events`. The scoring exchanges run from the question starting
+   "1 of 19 · " to the one starting "r1 · Q26, the last one · ", and each of those must
+   appear exactly once. Every declaration the script relies on is checked, and a failed
+   check stops it. It will not overwrite `scoring.md` without `--replace`, and it will not
+   write anything that names a profile path, a URL or the user's name.
+
+Nothing under `tools/` is modified, and no git worktree is created.
 
 ## Answer
 
-_(pending)_
+**No.** The coach stays advisory-only.
+
+Every figure is in `scoring.md`, which `src/write-scoring.mjs` computes from the committed
+records and the user's answers.
+
+| Set | Rounds | Recall (BLOCKING) | Precision | Bar |
+|---|---|---|---|---|
+| Commit-backed (governs) | r6, r7 | 1/3 | 4/4 | not met |
+| Reconstructed | r2 | 1/2 | 2/2 | met |
+| Pooled | r2, r6, r7 | 2/5 | 6/6 | not met |
+
+- **The Scoring rules can be read two ways.** They say the bar is "pooled over all scored
+  rounds", and also that it "is evaluated on both sets", with the commit-backed result
+  governing when the sets disagree. `scoring.md` reports both readings, and the bar is
+  missed under either.
+- **The misses are the ones the key predicted.** Before any run, "Counts" in
+  `answer-key.md` said that R6-13 had no BLOCKING route, and that R2-06 and R6-10 could be
+  blocked only by applying OBJ-07's check procedure rather than its rule text. The coach
+  caught both items with a direct route (R2-11 and R7-01), and none of those three.
+- **When it blocked, the user agreed**, 6 times out of 6 in the scored rounds. Four of the
+  six are one observation in segment `many`, raised again in every round and judged each
+  time a valid defect that the review had missed.
+- **Counting ADVISORY findings changes no recall figure.**
+- **The evidence is thin.** The governing set has three objective items, and one more
+  catch would have met the bar. Run 4 does not affect the answer (Amendment 9).
+- **r1 is descriptive only.** Precision there is 2/2 of the findings judged. Recall is
+  0/2 certain, and at most 1/2.
 
 ## Disposition
 
