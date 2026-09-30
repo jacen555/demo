@@ -789,8 +789,16 @@ records and the user's answers.
 
 ## Disposition
 
-- [ ] **Graduate** — rebuild for real in `apps/`, `services/`, `libs/`, or `tools/`
+- [x] **Graduate** — rebuild for real in `apps/`, `services/`, `libs/`, or `tools/`
       at its proper tier. Graduation is a **rewrite** under the gates this skipped, not a
       folder move.
 - [ ] **Retire** — delete this folder; the finding lives in `docs/adr/`.
 - [ ] **Park** — still a useful reference. Note what would unblock it.
+
+**Graduate**, chosen by the user on 2026-09-30, as an **advisory-only** step in the demo
+pipeline: pass 1 before TTS, pass 2 before frame capture. The coach never gates a render.
+[ADR 0006](../../docs/adr/0006-keep-the-video-coach-advisory-only.md) records why.
+
+The graduated step is rebuilt under Tier 2 gates, with its own reviewed rubric; nothing
+outside `spike/` may point into this folder. It has not started. This folder stays as the
+reference for the rubric and the protocol until it lands.

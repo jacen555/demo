@@ -73,3 +73,4 @@ observations. No hand-waving.>
 | [0003](0003-drive-real-uis-with-scripted-playwright-frame-capture.md) | Drive real UIs with scripted Playwright frame capture | Accepted | 2026-09-23 |
 | [0004](0004-split-the-eval-harness-into-an-engine-and-a-cli.md) | Split the eval harness into an engine and a CLI | Accepted | 2026-09-24 |
 | [0005](0005-refuse-machine-paths-at-authoring-time.md) | Refuse machine paths at authoring time, not in the report | Accepted | 2026-09-24 |
+| [0006](0006-keep-the-video-coach-advisory-only.md) | Keep the video coach advisory-only, and graduate it into the demo pipeline | Accepted | 2026-09-30 |

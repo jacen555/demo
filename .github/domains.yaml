@@ -260,6 +260,14 @@ domains:
     reviewer: none
     checklist: none
     question: 'Would a pre-render content coach, given only a round''s pre-render artifacts (script, timing, storyboard, stills), have caught at least half of the objective defects the user reported across the EvalLoopDemo review rounds, with the user agreeing with at least 4 in 5 of its blocking findings?'
-    status: active
-    notes: ''
+    status: answered
+    notes: >
+      Answer: No. Commit-backed BLOCKING recall was 1/3 against a 50% bar, with precision
+      4/4, so the coach stays advisory-only and never gates a render. See
+      docs/adr/0006-keep-the-video-coach-advisory-only.md and the spike's scoring.md.
+      Disposition: graduate (the user's decision, 2026-09-30) as an advisory step in the
+      demo pipeline, pass 1 before TTS and pass 2 before frame capture. It must be
+      rewritten under tier-2 gates with its own reviewed rubric, not moved (constitution
+      §XI). Retain until that task lands: this is the reference for the rubric and the
+      protocol. Excluded from Forge.sln; nothing outside spike/ depends on it.
 

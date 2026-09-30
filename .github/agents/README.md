@@ -16,7 +16,7 @@ custom agents + prompts), not runtime application code.
 | `service-builder.agent.md` / `service-reviewer.agent.md` | Services and shared libraries (`services/**`, `libs/**`). |
 | `tooling-builder.agent.md` / `tooling-reviewer.agent.md` | CLIs and PowerShell (`tools/**`, `scripts/**`). |
 | `researcher.agent.md` | **Researcher** — investigates a question, builds a spike, writes an ADR. |
-| `video-coach.agent.md` | **Video coach** — read-only pre-render review of a video's script, storyboard and stills against a rubric named at dispatch. Blocks on objective defects, advises on craft, never approves or waives. Runs on a different model family from the video's author. Provisional until ADR 0006. |
+| `video-coach.agent.md` | **Video coach** — read-only pre-render review of a video's script, storyboard and stills against a rubric named at dispatch. Flags objective defects, advises on craft, never approves or waives. Runs on a different model family from the video's author. Advisory only (ADR 0006): it never gates a render. |
 | `../checklists/*-design-checklist.md` | Per-kind design checklists used at planning, build, and review. |
 | `../prompts/speckit.*.prompt.md` | Self-contained spec → plan → tasks → implement workflow. |
 | `../skills/scaffold-domain/SKILL.md` | Creates and registers a new domain (optionally with its own agent pair). |
