@@ -620,6 +620,21 @@ component leaves a lane to another, feed that lane's check a known-bad input and
 fail. The audit that found C-14 also found tests that stay green with the code they guard
 deleted (B-8, B-9). Mutation is the same move, applied to a test.
 
+## Pattern: a zero needs a positive control of the same shape
+
+A count from a command whose failure mode is empty output cannot tell *nothing matched*
+from *nothing ran*. The consumer session measured two instances in one week:
+- an unquoted `A..B` revision range returned 0 in both directions. Quoted, it returned 0
+  with `HEAD` on the left and 5 with the branch on the left. So a control run with `HEAD`
+  on the left passes while the bug is live; only the other direction can detect it;
+- a session-store query for PowerShell calls returned 0 rows. The control showed the store
+  held nothing for that session at all: a zero that meant *not auditable*, read as
+  *clean*, in the audit built to catch zeros that mean nothing ran.
+
+**Any count derived from a command whose failure mode is empty output needs a positive
+control of the same shape**: the same command, arguments and direction, run where it must
+return more than zero. Asserting exit status is not a substitute; the broken range exits 0.
+
 ## Pattern: provenance names the page read, not the work cited
 
 The rubric author read four papers' abstracts on repository records such as ERIC and
