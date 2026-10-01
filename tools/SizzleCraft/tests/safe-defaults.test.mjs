@@ -736,9 +736,11 @@ describe('every producer of a timing file obeys the end-card rule', { skip: ajvA
       const g = runScript('silence-gen.mjs', ['--out', name, '--ms', '2000', '--apply'], dir);
       assert.equal(g.code, EXIT.OK, `fixture audio must build for this test to mean anything\n${g.all}`);
     }
+    // Words recorded as voice.mjs records them: remix refuses a narrated segment whose
+    // record holds none, because its clip cannot be narration voice produced for it.
     const segments = [
-      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
-      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000, words: [{ word: 'hello', startMs: 100, endMs: 600 }, { word: 'there', startMs: 600, endMs: 1100 }] } },
+      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000, words: [{ word: 'second', startMs: 2100, endMs: 2600 }, { word: 'segment', startMs: 2600, endMs: 3100 }, { word: 'here', startMs: 3100, endMs: 3600 }] } },
     ];
     fs.writeFileSync(
       path.join(dir, 'timing.json'),

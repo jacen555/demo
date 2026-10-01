@@ -90,7 +90,9 @@ describe('concat-audio destroy-by-default', () => {
   itPlansByDefault({
     script: 'concat-audio.mjs',
     files: {
-      'timing.json': timingFixture(),
+      // Worded: a narrated segment whose record holds no words is refused (its clip is not
+      // narration voice.mjs produced for it), and this pins the default, not that refusal.
+      'timing.json': timingFixture(wordedSegments),
       'silence.mp3': 'silence-bytes',
       'segment_000.mp3': 'seg-zero',
       'segment_001.mp3': 'seg-one',
@@ -367,11 +369,14 @@ describe('encode-mp4 publish guard', () => {
 
 // ---------------------------------------------------------------------------
 // remix / voice — round one taught them to forward --apply --replace to silence-gen
-// unconditionally, which moved the destroy-by-default defect up one level.
+// unconditionally, which moved the destroy-by-default defect up one level. Both now write
+// their pauses in-process through the link-refusing resolver, so no child is spawned at
+// all; what stays pinned is that a plan run writes nothing.
 // ---------------------------------------------------------------------------
 describe('parent stages have their own safe default', () => {
   const voiceFiles = {
-    'timing.json': timingFixture(),
+    // Worded: remix refuses a narrated segment whose record holds no words, even in a plan.
+    'timing.json': timingFixture(wordedSegments),
     'voiceover.mp3': SENTINEL,
     'segment_000.mp3': 'seg-zero',
     'segment_001.mp3': 'seg-one',
@@ -396,9 +401,8 @@ describe('parent stages have their own safe default', () => {
     assert.match(r.all, /--apply/);
   });
 
-  test('remix_planRun_doesNotInvokeSilenceGenAtAll', (t) => {
-    // The call-site contract: a parent that was not asked to write must not hand a
-    // child the flags that make it write.
+  test('remix_planRun_writesNoPauseAsset', (t) => {
+    // remix writes its pauses in-process, and only on --apply: a plan run writes none.
     const dir = makeProject(t, voiceFiles);
     const r = runScript('remix.mjs', [], dir);
 
@@ -409,12 +413,12 @@ describe('parent stages have their own safe default', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The silence-gen call-site contract, in the direction that matters: when the parent
-// IS asked to write, the child must actually write. Round one's fix would otherwise
-// regress into a silent no-op.
+// silence-gen's own write contract: asked to write, it writes; not asked, it writes
+// nothing. voice and remix no longer spawn it (they write their pauses in-process), so
+// this pins the standalone tool.
 // ---------------------------------------------------------------------------
-describe('silence-gen call-site contract', () => {
-  test('silenceGen_invokedTheWayParentsInvokeIt_actuallyWrites', (t) => {
+describe('silence-gen write contract', () => {
+  test('silenceGen_withApplyAndReplace_writesTheAsset', (t) => {
     const dir = makeProject(t);
     const r = runScript(
       'silence-gen.mjs',
@@ -426,7 +430,7 @@ describe('silence-gen call-site contract', () => {
     assert.equal(fs.statSync(path.join(dir, 'gap_01.mp3')).size, 20 * 288);
   });
 
-  test('silenceGen_invokedWithoutWriteFlags_producesNoFileSoParentsMustOptIn', (t) => {
+  test('silenceGen_withoutWriteFlags_writesNothing', (t) => {
     const dir = makeProject(t);
     const r = runScript('silence-gen.mjs', ['--project', dir, '--out', 'gap_01.mp3', '--ms', '480'], dir);
 

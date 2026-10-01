@@ -36,8 +36,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { EXIT } from '../src/cli-support.mjs';
-import { makeProject, runScript, assertCleanExit } from './_helpers.mjs';
+import { EXIT, narrationFingerprint } from '../src/cli-support.mjs';
+import {
+  FAKE_AUDIO, makeProject, runScript, assertCleanExit, tryMakeFileLink, timingFixture, wordedSegments, shortNameOf, zeroFileIds,
+  ZERO_FILE_IDS_ARMED, failLstat, FAIL_LSTAT_ARMED,
+} from './_helpers.mjs';
 
 // ---------------------------------------------------------------------------
 // Frame-exact MP3 fixtures.
@@ -111,6 +114,85 @@ function timingWith(segments, extra = {}) {
     segments,
     ...extra,
   });
+}
+
+/**
+ * silentMiddleSegments as the voice stage leaves them: the silent segment carries the
+ * record of the clip it generated for its 960 ms window, with no words.
+ */
+function voicedSilentMiddle() {
+  const segments = silentMiddleSegments();
+  segments[1].audio = { file: 'segment_001.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] };
+  return segments;
+}
+
+/**
+ * The clips voicedSilentMiddle()'s records name. A remedy names a stage only where that
+ * stage would accept the timeline, and remix requires every clip a record names, so a
+ * fixture that expects remix to be named carries them.
+ */
+const voicedClips = () => ({
+  'segment_000.mp3': clipBytes(480, MARKER_ONE),
+  'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+  'segment_002.mp3': clipBytes(720, MARKER_THREE),
+});
+
+/** Word boundaries moved by `ms`, as a reflow moves them with their segment. */
+const shiftWords = (list, ms) => list.map((w) => ({ ...w, startMs: w.startMs + ms, endMs: w.endMs + ms }));
+
+/**
+ * voicedSilentMiddle() after a silence edit made by hand and not yet reflowed: the
+ * intermission's window now ends at `endMs` (3000 ms long by default, from 960) and "three"
+ * has been moved after it. The intermission's record still describes the 960 ms of silence
+ * voice generated.
+ */
+function widenedIntermission(endMs = 3480) {
+  const segments = voicedSilentMiddle();
+  const shift = endMs - segments[1].endMs;
+  segments[1].endMs = endMs;
+  segments[2].startMs += shift;
+  segments[2].endMs += shift;
+  segments[2].audio.words = shiftWords(segments[2].audio.words, shift);
+  return segments;
+}
+
+/**
+ * calibration-observed.json exactly as voice.mjs writes it for voicedSilentMiddle(): real
+ * narration fingerprints, and `silent: true` on the silent row. `rows` replaces a row by id.
+ */
+function voiceCalibration(rows = {}) {
+  return JSON.stringify({
+    voiceId: 'en-US-AvaNeural',
+    roundedSpeed: 1,
+    aggregate: { words: 7, speechMs: 1200, observedEffWps: 5.833, observedSafeWps: 5.833 },
+    segments: [
+      { id: 'one', words: 3, chars: 18, clipMs: 480, speechMs: 480, effWps: 6.25, textHash: narrationFingerprint('hello there friend') },
+      { id: 'intermission', words: 0, chars: 0, clipMs: 960, speechMs: 0, silent: true, textHash: narrationFingerprint('') },
+      { id: 'three', words: 4, chars: 15, clipMs: 720, speechMs: 720, effWps: 5.556, textHash: narrationFingerprint('and we are back') },
+    ].map((row) => rows[row.id] ?? row),
+  });
+}
+
+/** The cues of a WebVTT sidecar, in order, with their times in milliseconds. */
+function vttCues(vtt) {
+  const ms = (clock) => {
+    const [h, m, s] = clock.split(':');
+    return Math.round((Number(h) * 3600 + Number(m) * 60 + Number(s)) * 1000);
+  };
+  return [...vtt.matchAll(/(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})[^\r\n]*\r?\n((?:[^\r\n]+\r?\n?)+)/g)]
+    .map(([, a, b, text]) => ({ startMs: ms(a), endMs: ms(b), text: text.trim().replace(/\s*\r?\n\s*/g, ' ') }));
+}
+
+/**
+ * A narrated segment [0, 960] followed by a declared silent one [960, 1920]. No gap sits
+ * between them: none is ever inserted at a seam that touches a silent segment.
+ */
+function spokenThenSilent(voiceoverText, words) {
+  return [
+    { id: 'one', startMs: 0, endMs: 960, voiceoverText,
+      audio: { file: 'segment_01.mp3', durationMs: 960, headMs: words[0].startMs, tailMs: 0, words } },
+    { id: 'break', startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' } },
+  ];
 }
 
 // ===========================================================================
@@ -211,6 +293,109 @@ describe('subtitles for silent segments', () => {
     assert.match(vtt, /\[music\]/);
     assert.doesNotMatch(r.all, /Infinity|NaN/, `the report must not print a non-number\n${r.all}`);
   });
+
+  // A narrated segment and a silent one meet with no gap between them: none is ever
+  // inserted at a seam touching a silent segment. So the last spoken word can end exactly
+  // where the silent cue starts, and the 40 ms clearance a cue keeps from a SPOKEN
+  // neighbour would cut that word's own cue short.
+  test('writeSubtitles_lastWordEndsWhereASilentCueStarts_cueRunsToTheEndOfThatWord', (t) => {
+    const words = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 960 }];
+    const dir = makeProject(t, { 'timing.json': timingWith(spokenThenSilent('Alpha go.', words)) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    const cues = vttCues(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'));
+    assert.deepEqual(cues, [
+      { startMs: 100, endMs: 960, text: 'Alpha go.' },
+      { startMs: 960, endMs: 1920, text: '[music]' },
+    ], 'the spoken cue must stay on screen until its last word has been said, and no longer');
+  });
+
+  test('writeSubtitles_shortCueJustBeforeASilentCue_neverOverlapsIt', (t) => {
+    // "Go." starts 30 ms before the silent cue. Clamped 40 ms short of it, its end fell
+    // before its start, and the 200 ms fallback then ran it into the silent cue.
+    const words = [{ word: 'Alpha', startMs: 100, endMs: 900 }, { word: 'Go', startMs: 930, endMs: 960 }];
+    const dir = makeProject(t, { 'timing.json': timingWith(spokenThenSilent('Alpha. Go.', words)) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    const cues = vttCues(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'));
+    assert.deepEqual(cues.slice(1), [
+      { startMs: 930, endMs: 960, text: 'Go.' },
+      { startMs: 960, endMs: 1920, text: '[music]' },
+    ]);
+    for (let i = 1; i < cues.length; i++) {
+      assert.ok(cues[i - 1].endMs <= cues[i].startMs,
+        `cue ${i - 1} ends at ${cues[i - 1].endMs} ms, after cue ${i} starts at ${cues[i].startMs} ms`);
+    }
+  });
+
+  test('writeSubtitles_spokenWordRunningIntoASilentWindow_failsInsteadOfClampingIt', (t) => {
+    // "go" ends 40 ms inside the silent window. No cue can both show that word and leave
+    // the authored silent cue alone, so the contradiction is reported, not trimmed away.
+    const words = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 1000 }];
+    const dir = makeProject(t, { 'timing.json': timingWith(spokenThenSilent('Alpha go.', words)) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a spoken word inside a silent window must fail: ');
+    assert.match(r.all, /timing\.segments\[0\] \("one"\): audio\.words\[1\]/, r.all);
+    assert.match(r.all, /timing\.segments\[1\] \("break"\)/, 'the message must name the silent segment it runs into');
+    assert.match(r.all, /remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /\bgo\b/, 'the narration is not repeated in a diagnostic');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['timing.json'], 'no sidecar may be written');
+  });
+
+  test('writeSubtitles_cueFollowedByASpokenCue_keepsItsClearance', (t) => {
+    // REGRESSION GUARD (passes before and after). Only a cue followed by a SILENT cue
+    // changed; a spoken neighbour still gets its 40 ms clearance.
+    const dir = makeProject(t, { 'timing.json': timingWith(structuredClone(wordedSegments)) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    const [first] = vttCues(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'));
+    assert.deepEqual(first, { startMs: 100, endMs: 2060, text: 'Hello there.' });
+  });
+
+  // timing.durationMs bounds the last cue. When the last window outruns it, the remedy
+  // depends on what that window is: a silent one is a silence edit, which remix (S4)
+  // reflows with no re-voice; a narrated one needs its clip measured by voice (S3).
+  test('writeSubtitles_durationShorterThanAWidenedFinalSilentWindow_namesRemixNotVoice', (t) => {
+    const words = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 960 }];
+    const segments = spokenThenSilent('Alpha go.', words);
+    segments[1].endMs = 3960; // widened from 960 to 3000 ms; nothing has reflowed it
+    segments[1].audio = { file: 'segment_02.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] };
+    // The clips the records name: remix requires them, and is named as the step only where it would run.
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }),
+      'segment_01.mp3': clipBytes(960, MARKER_ONE),
+      'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+    });
+    const before = fs.readdirSync(dir).sort();
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all, /no shorter than the last segment \(which ends at 3960 ms\)/, r.all);
+    assert.match(r.all, /timing\.segments\[1\] \("break"\) is declared silent[^\n]*run remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, `a silence edit never needs a re-voice\n${r.all}`);
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'no sidecar may be written');
+  });
+
+  test('writeSubtitles_durationShorterThanTheFinalNarratedWindow_namesTheVoiceStage', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(structuredClone(wordedSegments), { durationMs: 3000, contentMs: 3000 }),
+    });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all, /It bounds the last cue; run voice\.mjs \(S3\) to measure it/, r.all);
+    assert.doesNotMatch(r.all, /remix/, r.all);
+  });
 });
 
 // ===========================================================================
@@ -218,17 +403,156 @@ describe('subtitles for silent segments', () => {
 // ===========================================================================
 describe('chapters for silent segments', () => {
   test('writeChapters_declaredSilentSegment_getsItsOwnChapterAtTheAuthoredStart', (t) => {
+    // The silent segment starts at 2.4 s, so its chapter timestamp is distinguishable from
+    // the first chapter's forced 0:00. At 480 ms both printed `0:00`, and a chapter wrongly
+    // pinned to zero could not be told apart from a correct one.
     const segments = silentMiddleSegments();
+    segments[0].endMs = 2400;
+    segments[1].startMs = 2400;
+    segments[1].endMs = 3360;
     segments[1].visual = { title: 'Intermission' };
+    segments[2].startMs = 3360;
+    segments[2].endMs = 4080;
+    segments[2].audio.words = shiftWords(segments[2].audio.words, 1920);
     const dir = makeProject(t, { 'timing.json': timingWith(segments) });
 
     // --list needs no ffmpeg and no rendered MP4, so this pins the chapter maths itself.
     const r = runScript('write-chapters.mjs', ['--list'], dir);
 
     assertCleanExit(r, EXIT.OK, 'chapters must not need narration: ');
-    assert.match(r.all, /0:00\s+one/);
-    assert.match(r.all, /0:00\s+Intermission/, `the silent segment must get a chapter\n${r.all}`);
+    assert.match(r.all, /^0:00\s+one$/m);
+    assert.match(r.all, /^0:02\s+Intermission$/m, `the silent segment's chapter must start at its authored 2.4 s\n${r.all}`);
+    assert.match(r.all, /^0:03\s+three$/m, r.all);
   });
+});
+
+// ===========================================================================
+// A durationMs short of the last window: which stage re-measures it. write-subtitles and
+// write-chapters are both bounded by it, and both ask silent-segment.mjs, so one edit is
+// never sent to two different stages.
+// ===========================================================================
+describe('the remedy for a durationMs short of the timeline', () => {
+  const alphaGo = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 960 }];
+
+  test('writeChapters_durationShorterThanAWidenedFinalSilentWindow_namesRemixNotVoice', (t) => {
+    const segments = spokenThenSilent('Alpha go.', alphaGo);
+    segments[1].endMs = 3960; // widened from 960 to 3000 ms; nothing has reflowed it
+    segments[1].audio = { file: 'segment_02.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] };
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }),
+      'segment_01.mp3': clipBytes(960, MARKER_ONE),
+      'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+    });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all, /no shorter than the last segment \(which ends at 3960 ms\)/, r.all);
+    assert.match(r.all, /It closes the last chapter, and timing\.segments\[1\] \("break"\) is declared silent[^\n]*run remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, `a silence edit never needs a re-voice\n${r.all}`);
+  });
+
+  test('writeChapters_durationShorterThanTheFinalNarratedWindow_namesTheVoiceStage', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(structuredClone(wordedSegments), { durationMs: 3000, contentMs: 3000 }),
+    });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all, /It closes the last chapter; run voice\.mjs \(S3\) to measure it/, r.all);
+    assert.doesNotMatch(r.all, /remix/, r.all);
+  });
+
+  for (const [stage, script, args] of [
+    ['writeSubtitles', 'write-subtitles.mjs', ['--apply']],
+    ['writeChapters', 'write-chapters.mjs', ['--list']],
+  ]) {
+    // A silence edit need not touch the last window: widen the intermission and move what
+    // follows it, and the window that outruns durationMs is a narrated one.
+    test(`${stage}_durationShortAfterAMiddleSilentWindowWasWidened_namesRemixNotVoice`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(widenedIntermission(), { durationMs: 2160, contentMs: 2160 }), ...voicedClips() });
+      const before = fs.readdirSync(dir).sort();
+
+      const r = runScript(script, args, dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+      assert.match(r.all, /no shorter than the last segment \(which ends at 4200 ms\)/, r.all);
+      assert.match(r.all, /timing\.segments\[1\] \("intermission"\) is declared silent[^\n]*run remix\.mjs \(S4\)/, r.all);
+      assert.doesNotMatch(r.all, /voice\.mjs/, `a silence edit never needs a re-voice\n${r.all}`);
+      assert.deepEqual(fs.readdirSync(dir).sort(), before, 'nothing may be written');
+    });
+
+    // The same edit where the intermission's record names its clip but gives no length: it
+    // cannot show the window was edited, and it cannot show it was not. remix is still the
+    // repair — it regenerates that silence and writes the length — and it is the stage
+    // validate-timing names for that record, so this stage must not send it to a re-voice.
+    test(`${stage}_durationShortAfterAMiddleSilentWindowWhoseRecordHasNoLength_namesRemixNotVoice`, (t) => {
+      const segments = widenedIntermission();
+      delete segments[1].audio.durationMs;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 2160, contentMs: 2160 }), ...voicedClips() });
+      const before = fs.readdirSync(dir).sort();
+
+      const r = runScript(script, args, dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+      assert.match(r.all,
+        /timing\.segments\[1\] \("intermission"\) is declared silent, but its audio record has no durationMs[^\n]*run remix\.mjs \(S4\)/, r.all);
+      assert.doesNotMatch(r.all, /voice\.mjs/, `remix repairs this record with no re-voice\n${r.all}`);
+      assert.doesNotMatch(r.all, /window no longer holds/, `nothing shows the window was edited\n${r.all}`);
+      assert.deepEqual(fs.readdirSync(dir).sort(), before, 'nothing may be written');
+    });
+
+    // A silent segment whose record names no clip is one the voice stage has not run for,
+    // and remix refuses it: naming remix would send the author to a refusal.
+    test(`${stage}_durationShortOfAFinalSilentWindowNamingNoClip_namesTheVoiceStage`, (t) => {
+      const segments = spokenThenSilent('Alpha go.', alphaGo);
+      segments[1].endMs = 3960;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }) });
+
+      const r = runScript(script, args, dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+      assert.match(r.all, /timing\.segments\[1\] \("break"\) is declared silent but no audio\.file names its clip[^\n]*voice\.mjs \(S3\)/, r.all);
+      assert.doesNotMatch(r.all, /remix/, r.all);
+    });
+  }
+
+  // The remix remedy named above, run: it reflows the timeline and rewrites durationMs with
+  // it, and both stages then accept the timeline. For a record that describes the old window
+  // and for one that gives no length.
+  for (const [record, audio] of [
+    ['DescribingTheOldWindow', { file: 'segment_001.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] }],
+    ['WithNoLength', { file: 'segment_001.mp3', words: [] }],
+  ]) {
+    test(`durationShortfall_middleSilentRecord${record}_isRepairedByTheRemixItNames`, (t) => {
+      const segments = widenedIntermission();
+      segments[1].audio = audio;
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments, { durationMs: 2160, contentMs: 2160 }),
+        'calibration-observed.json': voiceCalibration(),
+        'segment_000.mp3': clipBytes(480, MARKER_ONE),
+        'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+        'segment_002.mp3': clipBytes(720, MARKER_THREE),
+      });
+      const stages = [['write-subtitles.mjs', ['--apply']], ['write-chapters.mjs', ['--list']]];
+      for (const [script, args] of stages) {
+        const before = runScript(script, args, dir);
+        assertCleanExit(before, EXIT.FAILED, `${script} must refuse the short duration first: `);
+        assert.match(before.all, /timing\.segments\[1\] \("intermission"\) is declared silent[^\n]*remix\.mjs \(S4\)/, before.all);
+      }
+
+      assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK,
+        'the named remedy must run: ');
+      const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+      assert.ok(produced.durationMs >= produced.segments.at(-1).endMs,
+        `durationMs ${produced.durationMs} must cover the last window, which ends at ${produced.segments.at(-1).endMs}`);
+
+      for (const [script, args] of stages) {
+        assertCleanExit(runScript(script, args, dir), EXIT.OK, `${script} after the remedy: `);
+      }
+    });
+  }
 });
 
 // ===========================================================================
@@ -313,7 +637,7 @@ describe('concat-audio timeline integrity', () => {
     // timeline, so the stage must SAY so rather than absorb it: drift nothing prints is
     // drift nobody finds.
     const segments = [
-      { id: 'one', startMs: 0, endMs: 480, voiceoverText: 'hello there friend', audio: { file: 'segment_000.mp3', durationMs: 480 } },
+      { id: 'one', startMs: 0, endMs: 480, voiceoverText: 'hello there friend', audio: { file: 'segment_000.mp3', durationMs: 480, words: silentMiddleSegments()[0].audio.words } },
       { id: 'gap', startMs: 480, endMs: 1480, voiceoverText: '', silence: { caption: '[music]' } },
     ];
     const dir = makeProject(t, {
@@ -326,8 +650,292 @@ describe('concat-audio timeline integrity', () => {
 
     assertCleanExit(r, EXIT.OK, 'a non-frame-aligned window must still concatenate: ');
     assert.match(r.all, /\+8ms/, `the 1000ms window becomes 1008ms and that must be disclosed\n${r.all}`);
+    // A silence edit is routed to S4: the stage that reflows the timeline onto the audio
+    // without re-voicing is remix. Sending the author to the voice stage would re-synthesise
+    // every clip to fix a number that has nothing to do with narration.
+    assert.match(r.all, /remix\.mjs \(S4\)/, `the note must name the S4 stage that reflows\n${r.all}`);
+    assert.doesNotMatch(r.all, /voice\.mjs/, 'a silence-only edit must never be sent to the voice stage');
     const out = fs.readFileSync(path.join(dir, 'voiceover.mp3'));
     assert.equal(out.length, msToBytes(480) + msToBytes(1008), 'the track must contain the silence that was actually generated');
+  });
+
+  test('concatAudio_silentWindowWidenedAfterVoiceRan_generatesTheAuthoredWindowNotTheOldClip', (t) => {
+    // voice generated segment_001.mp3 for a 960 ms window; the window is now 3000 ms.
+    const segments = voicedSilentMiddle();
+    segments[1].endMs = 3480;
+    segments[2].startMs = 3480;
+    segments[2].endMs = 4200;
+    segments[2].audio.words = shiftWords(segments[2].audio.words, 2040);
+    const oldClip = clipBytes(960, SILENT_MARKER);
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_000.mp3': clipBytes(480, MARKER_ONE),
+      'segment_001.mp3': oldClip,
+      'segment_002.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a widened silent window must concatenate: ');
+    const out = fs.readFileSync(path.join(dir, 'voiceover.mp3'));
+    assert.equal(out.length, msToBytes(480) + msToBytes(3000) + msToBytes(720),
+      `the track is ${(out.length / FRAME_BYTES) * FRAME_MS}ms; the timeline says 4200ms`);
+    assert.equal(markerAtMs(out, 480), SILENT_MARKER, 'the intermission must begin at 480ms');
+    assert.equal(markerAtMs(out, 3456), SILENT_MARKER, 'and still be silent at 3456ms');
+    assert.equal(markerAtMs(out, 3480), MARKER_THREE, 'segment three must begin where the timeline puts it, at 3480ms');
+    assert.ok(fs.readFileSync(path.join(dir, 'segment_001.mp3')).equals(oldClip), 'concat writes only its --out');
+  });
+
+  test('concatAudio_narratedSegmentDeclaredSilentAfterVoiceRan_generatesSilenceInsteadOfTheOldSpeech', (t) => {
+    // Declared silent in timing.json alone: the record still names the speech clip voice
+    // made for it, and still carries that clip's words.
+    const segments = silentMiddleSegments();
+    segments[1].audio = { file: 'segment_001.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [{ word: 'old', startMs: 480, endMs: 1440 }] };
+    const MARKER_SPEECH = 0x22;
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_000.mp3': clipBytes(480, MARKER_ONE),
+      'segment_001.mp3': clipBytes(960, MARKER_SPEECH),
+      'segment_002.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    const plan = runScript('concat-audio.mjs', [], dir);
+
+    assertCleanExit(plan, EXIT.OK);
+    assert.match(plan.all,
+      /\+ segment "intermission" — GENERATE 960ms of digital silence from its authored window \(declared silent; segment_001\.mp3, which its record names, is not used and is left as it is\)/,
+      plan.all);
+    assert.doesNotMatch(plan.all, /^\s+\+ segment_001\.mp3/m, 'the speech clip must not be planned into the track');
+    assert.doesNotMatch(plan.all, /segment_001\.mp3 is on disk but no segment claims it/, 'a clip a segment still names is not an orphan');
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    const out = fs.readFileSync(path.join(dir, 'voiceover.mp3'));
+    assert.equal(out.length, msToBytes(480) + msToBytes(960) + msToBytes(720));
+    for (const ms of [480, 960, 1416]) {
+      assert.equal(markerAtMs(out, ms), SILENT_MARKER, `a segment declared silent must be silent at ${ms}ms`);
+    }
+    assert.equal(out.includes(Buffer.alloc(8, MARKER_SPEECH)), false, 'the old speech must not be anywhere in the track');
+  });
+
+  test('concatAudio_narratedSegmentWhoseRecordHoldsNoWords_isRefusedNamingTheVoiceStage', (t) => {
+    // The intermission's declaration is removed and narration added in timing.json only.
+    // Its clip is still the silence voice generated: there is no narration to play.
+    for (const edit of [(audio) => { audio.words = []; }, (audio) => { delete audio.words; }]) {
+      const segments = voicedSilentMiddle();
+      delete segments[1].silence;
+      segments[1].voiceoverText = 'now it speaks';
+      edit(segments[1].audio);
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments),
+        'silence.mp3': clipBytes(240, 0x77),
+        'segment_000.mp3': clipBytes(480, MARKER_ONE),
+        'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+        'segment_002.mp3': clipBytes(720, MARKER_THREE),
+      });
+
+      for (const args of [[], ['--apply']]) {
+        const r = runScript('concat-audio.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.USAGE, `concat ${args.join(' ') || '(plan)'} must refuse narration that was never synthesised: `);
+        assert.match(r.all, /segment "intermission"/, r.all);
+        assert.match(r.all, /voice\.mjs \(S3\)/, r.all);
+        assert.equal(fs.existsSync(path.join(dir, 'voiceover.mp3')), false, 'nothing may be written');
+      }
+    }
+  });
+
+  test('concatAudio_positionalProjectWithASilentSegment_isRefusedBeforeAnyWrite', (t) => {
+    // No segment names its clip, so clips can only be matched to segments by position —
+    // and once a segment is silent, a directory listing cannot say which clip is whose.
+    const segments = silentMiddleSegments();
+    for (const s of segments) delete s.audio;
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_01.mp3': clipBytes(480, MARKER_ONE),
+      'segment_02.mp3': clipBytes(960, 0x22),
+      'segment_03.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.USAGE, `concat ${args.join(' ') || '(plan)'} must refuse to guess: `);
+      assert.match(r.all, /segment "intermission"/, r.all);
+      assert.match(r.all, /audio\.file/, 'the refusal must offer naming each clip');
+      assert.match(r.all, /voice\.mjs \(S3\)/, 'and the voice stage');
+      assert.equal(fs.existsSync(path.join(dir, 'voiceover.mp3')), false, 'nothing may be written');
+    }
+  });
+
+  test('concatAudio_positionalProjectWithNoSilentSegment_concatenatesInOrderAsBefore', (t) => {
+    // REGRESSION GUARD (passes before and after): positional mode without silence is
+    // unchanged, orphan report included.
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 480, voiceoverText: 'hello there friend' },
+      { id: 'two', startMs: 720, endMs: 1440, voiceoverText: 'and we are back' },
+    ];
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_01.mp3': clipBytes(480, MARKER_ONE),
+      'segment_02.mp3': clipBytes(720, MARKER_THREE),
+      'segment_03.mp3': clipBytes(240, 0x22),
+    });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /warning: segment_03\.mp3 is on disk but no segment claims it — it was NOT included/);
+    const out = fs.readFileSync(path.join(dir, 'voiceover.mp3'));
+    assert.ok(out.equals(Buffer.concat([clipBytes(480, MARKER_ONE), clipBytes(240, 0x77), clipBytes(720, MARKER_THREE)])));
+  });
+
+  test('concatAudio_defaultOutputIsALink_isRefusedButANamedOutFollowsIt', (t) => {
+    // voiceover.mp3 is a name the ENGINE chose when --out is omitted, so a link there is
+    // refused. Naming --out is the caller choosing the destination, link and all.
+    const TARGET = 'MUST SURVIVE';
+    const dir = silentGapProject(t, { 'music.wav': TARGET });
+    if (!tryMakeFileLink(path.join(dir, 'voiceover.mp3'), path.join(dir, 'music.wav'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const refused = runScript('concat-audio.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(refused, EXIT.USAGE, 'the default output must not be written through a link: ');
+    assert.match(refused.all, /voiceover\.mp3.*is a link/, refused.all);
+    assert.equal(fs.readFileSync(path.join(dir, 'music.wav'), 'utf8'), TARGET, 'the link target must keep its bytes');
+
+    const named = runScript('concat-audio.mjs', ['--apply', '--replace', '--out', 'voiceover.mp3'], dir);
+
+    assertCleanExit(named, EXIT.OK, 'a caller-named --out is resolved as it always was: ');
+    assert.equal(fs.readFileSync(path.join(dir, 'music.wav')).length, msToBytes(2160), 'the named output follows the link');
+  });
+
+  test('concatAudio_positionalProjectWithAnEarlierMissingClip_isRefusedAsAmbiguousNotAsMissing', (t) => {
+    // No clip is on disk, so segment one — narrated, and first — has none. The positional
+    // refusal does not depend on reaching the silent segment: once any segment is silent,
+    // no clip can be matched by position, so that is the reason, and it is exit 2.
+    const segments = silentMiddleSegments();
+    for (const s of segments) delete s.audio;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'silence.mp3': clipBytes(240, 0x77) });
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.USAGE, `concat ${args.join(' ') || '(plan)'} must refuse to guess before consuming any clip: `);
+      assert.match(r.all, /segment "intermission" is declared silent, but no segment in timing\.json names its clip/, r.all);
+      assert.doesNotMatch(r.all, /has no clip to concatenate/, r.all);
+      assert.equal(fs.existsSync(path.join(dir, 'voiceover.mp3')), false, 'nothing may be written');
+    }
+  });
+
+  test('concatAudio_positionalProjectWithAMalformedSilentDeclaration_stillFailsOnTheDeclaration', (t) => {
+    // REGRESSION GUARD (passes before and after): the declaration is checked before the
+    // positional refusal, so a malformed one is still reported as such, with exit 1.
+    const segments = silentMiddleSegments({ caption: '   ' });
+    for (const s of segments) delete s.audio;
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_01.mp3': clipBytes(480, MARKER_ONE),
+      'segment_02.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /segment "intermission" is declared silent but its `silence\.caption` is "   "/, r.all);
+  });
+
+  // A clip a record names is claimed under the name discovery lists, so it is never called an
+  // orphan. When that name is a link, the file it resolves to is claimed too: the link plays
+  // it, and reporting it as unclaimed invites deleting what the link needs.
+  const orphanLine = (name) => new RegExp(`${name.replace('.', '\\.')} is on disk but no segment claims it`);
+
+  test('concatAudio_silentRecordNamingAnInRootLink_claimsTheLinkAndItsTarget', (t) => {
+    for (const [recordNames, linkAt, target] of [
+      ['segment_001.mp3', 'segment_001.mp3', 'clips/intermission.mp3'],
+      ['intermission-link.mp3', 'intermission-link.mp3', 'segment_001.mp3'],
+    ]) {
+      const segments = voicedSilentMiddle();
+      segments[1].audio.file = recordNames;
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments),
+        'silence.mp3': clipBytes(240, 0x77),
+        'segment_000.mp3': clipBytes(480, MARKER_ONE),
+        [target]: clipBytes(960, SILENT_MARKER),
+        'segment_002.mp3': clipBytes(720, MARKER_THREE),
+      });
+      if (!tryMakeFileLink(path.join(dir, linkAt), path.join(dir, target))) {
+        return t.skip('platform refused to create a file link');
+      }
+      // The record names the link, so the link is the name printed, with its target beside it.
+      const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const named = `${escape(recordNames)} \\(a link to ${escape(path.join(...target.split('/')))}\\), which its record names`;
+
+      for (const args of [[], ['--apply']]) {
+        const r = runScript('concat-audio.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.OK);
+        assert.doesNotMatch(r.all, orphanLine('segment_001.mp3'), `${recordNames} -> ${target}: a clip a record names is not an orphan\n${r.all}`);
+        assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+        assert.match(r.all,
+          new RegExp(args.length ? `; ${named}, was not used\\)` : `\\(declared silent; ${named}, is not used and is left as it is\\)`), r.all);
+      }
+    }
+  });
+
+  test('concatAudio_narratedRecordNamingAnInRootLink_claimsTheLinkAndItsTarget', (t) => {
+    for (const [recordNames, linkAt, target] of [
+      ['segment_000.mp3', 'segment_000.mp3', 'clips/one.mp3'],
+      ['one-link.mp3', 'one-link.mp3', 'segment_000.mp3'],
+    ]) {
+      const segments = voicedSilentMiddle();
+      segments[0].audio.file = recordNames;
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments),
+        'silence.mp3': clipBytes(240, 0x77),
+        [target]: clipBytes(480, MARKER_ONE),
+        'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+        'segment_002.mp3': clipBytes(720, MARKER_THREE),
+      });
+      if (!tryMakeFileLink(path.join(dir, linkAt), path.join(dir, target))) {
+        return t.skip('platform refused to create a file link');
+      }
+
+      for (const args of [[], ['--apply']]) {
+        const r = runScript('concat-audio.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.OK);
+        assert.doesNotMatch(r.all, orphanLine('segment_000.mp3'), `${recordNames} -> ${target}: a clip a record names is not an orphan\n${r.all}`);
+        assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+      }
+    }
+  });
+
+  test('concatAudio_recordNamingItsClipInAnotherCase_claimsTheClipDiscoveryLists', (t) => {
+    // Windows file names are case-insensitive: SEGMENT_000.MP3 opens segment_000.mp3.
+    if (process.platform !== 'win32') return t.skip('file names are case-sensitive on this platform');
+    const segments = voicedSilentMiddle();
+    segments[0].audio.file = 'SEGMENT_000.MP3';
+    segments[1].audio.file = 'Segment_001.MP3';
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_000.mp3': clipBytes(480, MARKER_ONE),
+      'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+      'segment_002.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    const r = runScript('concat-audio.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
   });
 });
 
@@ -400,27 +1008,347 @@ describe('calibration excludes silent segments', () => {
     // compares segment-by-segment by index — still lines up. Dropping them would make
     // every silent project report "the timeline has 3 segment(s) but the calibration
     // measured 2", which is a lineage failure caused by the fix rather than by the data.
-    const segments = silentMiddleSegments();
-    const dir = makeProject(t, {
-      'timing.json': timingWith(segments),
-      'calibration-observed.json': JSON.stringify({
-        voiceId: 'en-US-AvaNeural',
-        roundedSpeed: 1,
-        aggregate: { words: 7, speechMs: 1200, observedEffWps: 5.833, observedSafeWps: 5.833 },
-        segments: [
-          { id: 'one', words: 3, chars: 18, clipMs: 480, speechMs: 480, effWps: 6.25, textHash: 'x' },
-          { id: 'intermission', words: 0, chars: 0, clipMs: 960, speechMs: 0, silent: true, textHash: 'x' },
-          { id: 'three', words: 4, chars: 15, clipMs: 720, speechMs: 720, effWps: 5.556, textHash: 'x' },
-        ],
-      }),
-    });
+    //
+    // Real fingerprints, exactly as voice.mjs writes them, so lineage CAN be intact — and
+    // the test asserts that it is, rather than only that nothing crashed.
+    const segments = voicedSilentMiddle();
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
 
     const r = runScript('validate-timing.mjs', [], dir);
 
     assertCleanExit(r, EXIT.OK, 'a calibration covering a silent segment must validate: ');
     assert.doesNotMatch(r.all, /the timeline has \d+ segment\(s\) but the calibration measured/,
       `silent segments must not be read as a segment-count mismatch\n${r.all}`);
+    assert.doesNotMatch(r.all, /calibration lineage:/, `lineage must be intact, neither STALE nor UNPROVEN\n${r.all}`);
+    assert.match(r.all, /word budget: NOT EVALUATED — these windows were measured FROM this audio/, r.all);
+
+    // The same files, with the declaration removed: the calibration measured silence where
+    // the timeline now expects narration, so it no longer covers the timeline.
+    delete segments[1].silence;
+    fs.writeFileSync(path.join(dir, 'timing.json'), timingWith(segments));
+
+    const undeclared = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(undeclared.all, /calibration lineage: STALE — segment "intermission"[^\n]*declar/, undeclared.all);
+    assert.doesNotMatch(undeclared.all, /word budget: NOT EVALUATED/, undeclared.all);
   });
+});
+
+// ===========================================================================
+// S4 silence edits and the records validate-timing reads
+// ===========================================================================
+describe('validate-timing after a silence edit', () => {
+  test('validateTiming_silentSegmentWhoseRecordStillCarriesWords_failsNamingRemix', (t) => {
+    // A narrated segment declared silent and then concatenated WITHOUT remix: the
+    // voice track is right, but the record still carries the old speech's words.
+    const segments = voicedSilentMiddle();
+    segments[1].audio.words = [{ word: 'old', startMs: 480, endMs: 1440 }];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a record contradicting its declaration must fail: ');
+    assert.match(r.all, /declared silence: STALE RECORD/, r.all);
+    assert.match(r.all, /segment "intermission"[^\n]*1 measured word/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /declared silence: OK/, r.all);
+    assert.doesNotMatch(r.all, /\bold\b/, 'the stale word itself is not repeated');
+  });
+
+  test('validateTiming_silentWindowWidenedThenRemixed_keepsLineageIntact', (t) => {
+    // A silence edit followed by remix: the window and the record now say 3000 ms, the
+    // calibration still says 960. The calibration measures NARRATION, and none changed.
+    const segments = voicedSilentMiddle();
+    segments[1].endMs = 3480;
+    segments[1].audio.durationMs = 3000;
+    segments[2].startMs = 3480;
+    segments[2].endMs = 4200;
+    segments[2].audio.words = shiftWords(segments[2].audio.words, 2040);
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.doesNotMatch(r.all, /calibration lineage: STALE/, `an authored silent window is not stale narration\n${r.all}`);
+    assert.doesNotMatch(r.all, /Re-run the\s+voice stage/, r.all);
+    assert.match(r.all, /word budget: NOT EVALUATED/, r.all);
+  });
+
+  test('validateTiming_narratedWindowChangedSinceMeasured_isStillStale', (t) => {
+    // REGRESSION GUARD (passes before and after): only a SILENT window stopped counting.
+    const segments = voicedSilentMiddle();
+    segments[2].endMs = 2400;
+    segments[2].audio.durationMs = 960;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "three" window is 960ms but the measured clip was 720ms/, r.all);
+    assert.match(r.all, /Re-run the\s+voice stage/, r.all);
+  });
+
+  test('validateTiming_segmentDeclaredSilentSinceMeasured_isStaleNamingTheDeclarationAndRemix', (t) => {
+    // three is silenced and remixed: its record now describes generated silence, but the
+    // calibration row voice wrote measured it as narration. The words differ too, but
+    // the cause is the declaration, and the remedy for a silence edit is S4, not S3.
+    const segments = voicedSilentMiddle();
+    segments[2].voiceoverText = '';
+    segments[2].silence = { caption: '[applause]' };
+    segments[2].audio = { file: 'segment_002.mp3', durationMs: 720, headMs: 0, tailMs: 0, words: [] };
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'lineage is advisory: ');
+    assert.match(r.all, /calibration lineage: STALE — segment "three" is declared silent now, but the calibration measured it as narration/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /Re-run the\s+voice stage/, 'a silence edit never needs a re-voice');
+  });
+
+  test('validateTiming_silenceEditBeforeANarrationChange_reportsTheNarrationChange', (t) => {
+    // "one" is silenced (S4 work) and "three" is re-worded (S3 work). The silence edit is
+    // found first, but its "no re-voice" advice must not mask the change that needs one.
+    const segments = voicedSilentMiddle();
+    segments[0].voiceoverText = '';
+    segments[0].silence = { caption: '[applause]' };
+    segments[0].audio = { file: 'segment_000.mp3', durationMs: 480, headMs: 0, tailMs: 0, words: [] };
+    segments[2].voiceoverText = 'and we are home';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "three" narration does not match the fingerprint/, r.all);
+    assert.match(r.all, /Re-run the\s+voice stage/, r.all);
+    assert.doesNotMatch(r.all, /No re-voice is/, r.all);
+  });
+
+  test('validateTiming_textEmptySegmentDeclaredSilentSinceMeasured_isStale', (t) => {
+    // A row with no `silent` field means "measured as narration" — absence is not
+    // permission. Only a hand-made or pre-silence calibration has such a row for a
+    // text-empty segment; voice.mjs itself refuses to synthesise empty narration.
+    const segments = voicedSilentMiddle();
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'calibration-observed.json': voiceCalibration({
+        intermission: { id: 'intermission', words: 0, chars: 0, clipMs: 960, speechMs: 960, effWps: 0, textHash: narrationFingerprint('') },
+      }),
+    });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "intermission" is declared silent now, but the calibration measured it as narration/, r.all);
+    assert.doesNotMatch(r.all, /word budget: NOT EVALUATED/, r.all);
+  });
+
+  test('validateTiming_textEmptySegmentNoLongerDeclaredSilent_isStaleNamingTheVoiceStage', (t) => {
+    // The other direction: the row says silent, the segment no longer does.
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "intermission" is no longer declared silent, but the calibration measured it as silence/, r.all);
+    assert.match(r.all, /voice\.mjs \(S3\)/, r.all);
+    assert.doesNotMatch(r.all, /word budget: NOT EVALUATED/, r.all);
+  });
+
+  // A silent window is authored, and the silence in the track is generated from it. When the
+  // record's generated length and the window disagree, the window was edited after that
+  // silence was made and nothing has reflowed the timeline onto it: the track still holds
+  // the old length. Before, that edit validated completely green.
+  test('validateTiming_silentWindowWidenedWithoutRemix_failsNamingRemix', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[1].endMs = 3480; // widened from 960 to 3000 ms; the record still says 960
+    segments[2].startMs = 3480;
+    segments[2].endMs = 4200;
+    segments[2].audio.words = shiftWords(segments[2].audio.words, 2040);
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a silent window its record does not describe must fail: ');
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.match(r.all, /segment "intermission" window is 3000ms, but its audio record describes 960ms of generated silence/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /declared silence: OK/, r.all);
+    assert.doesNotMatch(r.all, /Re-run the\s+voice stage/, 'a silence edit never needs a re-voice');
+  });
+
+  test('validateTiming_silentSegmentWithNoRecordYet_isReportedUncheckedNotFailed', (t) => {
+    // Declared before voice ran, or after it and handled by concat alone: there is no
+    // record, so no generated length to compare with and nothing that can disagree. It is
+    // not failed — and not counted as OK either, because nothing about it was checked.
+    const dir = makeProject(t, { 'timing.json': timingWith(silentMiddleSegments()) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a silent segment with no record is not a mismatch: ');
+    assert.match(r.all, /declared silence: UNCHECKED \(1 segment\(s\): intermission\) — no audio record yet/, r.all);
+    assert.doesNotMatch(r.all, /declared silence: OK/, `nothing was checked, so nothing is OK\n${r.all}`);
+    assert.doesNotMatch(r.all, /NOT REFLOWED|INCOMPLETE RECORD/, r.all);
+  });
+
+  test('validateTiming_checkedAndUncheckedSilentSegments_countsOnlyTheCheckedOnesAsOk', (t) => {
+    // "three" is silenced with no record yet; the intermission's record matches its window.
+    const segments = voicedSilentMiddle();
+    segments[2].voiceoverText = '';
+    segments[2].silence = { caption: '[applause]' };
+    delete segments[2].audio;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a silent segment with no record is not a failure: ');
+    assert.match(r.all, /^declared silence: OK \(1 segment\(s\): intermission\)$/m, r.all);
+    assert.match(r.all, /^declared silence: UNCHECKED \(1 segment\(s\): three\) — no audio record yet/m, r.all);
+  });
+
+  // A record that is THERE but gives no generated length is not "no record". voice.mjs and
+  // remix.mjs both record the length of every silent clip they generate, so a record without
+  // one was made or edited by other means, and the window it cannot vouch for may be stale.
+  // It fails, naming the stage that can rewrite it: remix when the record names the clip,
+  // voice when it names none, because remix refuses a segment whose record names no clip.
+  test('validateTiming_silentRecordWithNoLengthUnderAWidenedWindow_failsIncompleteNamingRemix', (t) => {
+    const segments = widenedIntermission();
+    segments[1].audio = { file: 'segment_001.mp3', words: [] };
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a present record with no generated length must fail: ');
+    assert.match(r.all, /declared silence: INCOMPLETE RECORD/, r.all);
+    assert.match(r.all, /segment "intermission"[^\n]*has no durationMs[^\n]*Run remix\.mjs \(S4\)/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, `the record names its clip, so no re-voice is needed\n${r.all}`);
+    assert.doesNotMatch(r.all, /declared silence: OK|OK: all checks passed/, r.all);
+    assert.doesNotMatch(r.all, /no audio record/, `a record that is there is not "no record"\n${r.all}`);
+  });
+
+  for (const [scenario, record] of [['AnEmptyObject', {}], ['Null', null]]) {
+    test(`validateTiming_silentRecordThatIs${scenario}_failsIncompleteNamingTheVoiceStage`, (t) => {
+      const segments = voicedSilentMiddle();
+      segments[1].audio = record;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+      // The schema refuses `null` too (`audio` must be an object); --no-schema shows the
+      // declared-silence check refusing both on its own.
+      for (const args of [[], ['--no-schema']]) {
+        const r = runScript('validate-timing.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.FAILED, `${args.join(' ') || 'with the schema'}: a present record with no length must fail: `);
+        if (record === null && args.length === 0) assert.match(r.all, /SCHEMA: INVALID/, r.all);
+        assert.match(r.all, /declared silence: INCOMPLETE RECORD/, r.all);
+        assert.match(r.all, /segment "intermission"[^\n]*voice\.mjs \(S3\)/, r.all);
+        assert.doesNotMatch(r.all, /remix/, `remix refuses a segment whose record names no clip\n${r.all}`);
+        assert.doesNotMatch(r.all, /declared silence: OK|OK: all checks passed/, r.all);
+      }
+    });
+  }
+
+  for (const [scenario, durationMs, shown] of [
+    ['ANumericString', '960', /durationMs is a string/],
+    ['Null', null, /durationMs is null/],
+    ['Negative', -960, /durationMs is -960/],
+  ]) {
+    test(`validateTiming_silentRecordWhoseLengthIs${scenario}_failsIncompleteNamingRemix`, (t) => {
+      const segments = voicedSilentMiddle();
+      segments[1].audio.durationMs = durationMs;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+      // The schema refuses each of these too; --no-schema shows the declared-silence check
+      // refusing it on its own, rather than reading '960' as the window's 960.
+      for (const args of [[], ['--no-schema']]) {
+        const r = runScript('validate-timing.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.FAILED, `${args.join(' ') || 'with the schema'}: a length that is not a number must fail: `);
+        assert.match(r.all, /declared silence: INCOMPLETE RECORD/, r.all);
+        assert.match(r.all, shown, r.all);
+        assert.match(r.all, /segment "intermission"[^\n]*remix\.mjs \(S4\)/, r.all);
+        assert.doesNotMatch(r.all, /declared silence: OK|OK: all checks passed/, r.all);
+      }
+    });
+  }
+
+  test('validateTiming_silentRecordNamingNoClipAndNoLength_failsIncompleteNamingTheVoiceStage', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[1].audio = { headMs: 0, tailMs: 0, words: [] };
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a present record with no length must fail: ');
+    assert.match(r.all, /declared silence: INCOMPLETE RECORD/, r.all);
+    assert.match(r.all, /segment "intermission"[^\n]*voice\.mjs \(S3\)/, r.all);
+    assert.doesNotMatch(r.all, /remix/, `remix refuses a segment whose record names no clip\n${r.all}`);
+  });
+
+  test('validateTiming_staleOrUnreflowedSilentRecordNamingNoClip_namesTheVoiceStageNotRemix', (t) => {
+    // The same rule for the other two record failures: remix is named only where it runs.
+    const staleWords = () => {
+      const segments = voicedSilentMiddle();
+      segments[1].audio.words = [{ word: 'old', startMs: 480, endMs: 1440 }];
+      return segments;
+    };
+    for (const [block, segments] of [['STALE RECORD', staleWords()], ['NOT REFLOWED', widenedIntermission()]]) {
+      delete segments[1].audio.file;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+      const r = runScript('validate-timing.mjs', [], dir);
+
+      assertCleanExit(r, EXIT.FAILED, `${block}: `);
+      assert.match(r.all, new RegExp(`declared silence: ${block}`), r.all);
+      assert.match(r.all, /segment "intermission"[^\n]*voice\.mjs \(S3\)/, r.all);
+      assert.doesNotMatch(r.all, /remix/, `${block}: remix refuses a segment whose record names no clip\n${r.all}`);
+    }
+  });
+
+  // The remedy INCOMPLETE RECORD names, run: remix regenerates the silence from the window,
+  // writes its frame-quantised length into the record, and the timeline then validates.
+  for (const [scenario, windowEndMs] of [['Widened', 3480], ['NonFrameAligned', 3490]]) {
+    test(`validateTiming_silentRecordWithNoLength${scenario}ThenRemixed_failsBeforeAndPassesAfter`, (t) => {
+      const segments = widenedIntermission(windowEndMs);
+      segments[1].audio = { file: 'segment_001.mp3', words: [] };
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments),
+        'calibration-observed.json': voiceCalibration(),
+        'segment_000.mp3': clipBytes(480, MARKER_ONE),
+        'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+        'segment_002.mp3': clipBytes(720, MARKER_THREE),
+      });
+
+      const incomplete = runScript('validate-timing.mjs', [], dir);
+
+      assertCleanExit(incomplete, EXIT.FAILED, 'the record with no length must fail first: ');
+      assert.match(incomplete.all, /declared silence: INCOMPLETE RECORD[\s\S]*remix\.mjs \(S4\)/, incomplete.all);
+
+      assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK,
+        'the named remedy must run: ');
+      const produced = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+      // 3000 ms is 125 frames of 24 ms; 3010 ms is 125.4, so it too becomes 125 frames.
+      assert.deepEqual(produced.segments.map((s) => [s.id, s.startMs, s.endMs]),
+        [['one', 0, 480], ['intermission', 480, 3480], ['three', 3480, 4200]]);
+      assert.equal(produced.segments[1].audio.durationMs, 3000, 'the record must carry the frame-quantised window');
+      const v = runScript('validate-timing.mjs', [], dir);
+
+      assertCleanExit(v, EXIT.OK, 'the timeline remix produced must validate: ');
+      assert.match(v.all, /declared silence: OK \(1 segment\(s\): intermission\)/, v.all);
+      assert.doesNotMatch(v.all, /INCOMPLETE RECORD|NOT REFLOWED|UNCHECKED/, v.all);
+    });
+  }
+
+  for (const [scenario, calibration] of [['MeasuredRate', true], ['EstimatedRate', false]]) {
+    test(`validateTiming_measuredWindowsBesideASilentSegment_${scenario}_claimsOnlyTheNarratedWindows`, (t) => {
+      const files = { 'timing.json': timingWith(voicedSilentMiddle()) };
+      if (calibration) files['calibration-observed.json'] = voiceCalibration();
+      const dir = makeProject(t, files);
+
+      const r = runScript('validate-timing.mjs', [], dir);
+
+      assertCleanExit(r, EXIT.OK);
+      assert.match(r.all,
+        /segment windows: MEASURED from synthesised audio — narrated windows only \(1 declared-silent segment\(s\) excluded/, r.all);
+    });
+  }
 });
 
 // ===========================================================================
@@ -488,5 +1416,1338 @@ describe('reporting a silent segment honestly', () => {
 
     assert.notEqual(r.code, EXIT.OK, `an unplaceable segment must fail\n${r.all}`);
     assert.match(r.all, /unplaceable/, 'the failure must name the segment it could not place');
+  });
+});
+
+// ===========================================================================
+// A named remedy is one its stage accepts
+//
+// A diagnostic that names a stage is only giving a remedy if that stage would run: on the
+// timeline as it stands, or, where the remedy is an edit, on the timeline after the edit.
+// remix.mjs and concat-audio.mjs each refuse a whole timeline whose silence declarations are
+// malformed, and voice.mjs --apply stops at one, after writing the clips before it; remix
+// refuses a record whose clip is not there, and the TTS service cannot synthesise narration
+// that has no text. A message that sends the author to a stage that refuses is a dead end,
+// so where the named stage would refuse, it says why.
+// ===========================================================================
+describe('a named remedy is one its stage accepts', () => {
+  const alphaGo = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 960 }];
+  const unclaimed = (name) => new RegExp(`${name.replace('.', '\\.')} is on disk but no segment claims it`);
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rewriteTiming = (dir, edit) => {
+    const file = path.join(dir, 'timing.json');
+    const timing = JSON.parse(fs.readFileSync(file, 'utf8'));
+    edit(timing);
+    fs.writeFileSync(file, JSON.stringify(timing));
+  };
+
+  // ---- R4-1: a record naming a clip by its 8.3 short name ---------------------------------
+  // The resolver keeps the alias it was given, while discovery lists the long name, so a
+  // clip a record names that way was reported as unclaimed: an orphan, inviting its deletion.
+  test('concatAudio_silentRecordNamingTheShortNameOfItsClip_doesNotCallTheClipAnOrphan', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(voicedSilentMiddle()), 'silence.mp3': clipBytes(240, 0x77), ...voicedClips() });
+    const alias = shortNameOf(path.join(dir, 'segment_001.mp3'));
+    if (alias === null) return t.skip('no 8.3 short name here: not Windows, or this volume does not generate them');
+    rewriteTiming(dir, (timing) => { timing.segments[1].audio.file = alias; });
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.OK);
+      assert.doesNotMatch(r.all, unclaimed('segment_001.mp3'), `${alias} is segment_001.mp3, which the record claims\n${r.all}`);
+      assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+      assert.match(r.all, new RegExp(`${escape(alias)}, which its record names, (is not used and is left as it is|was not used)`), r.all);
+    }
+  });
+
+  test('concatAudio_narratedRecordNamingTheShortNameOfItsClip_warnsOfNoOrphanUnderApply', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(voicedSilentMiddle()), 'silence.mp3': clipBytes(240, 0x77), ...voicedClips() });
+    const alias = shortNameOf(path.join(dir, 'segment_000.mp3'));
+    if (alias === null) return t.skip('no 8.3 short name here: not Windows, or this volume does not generate them');
+    rewriteTiming(dir, (timing) => { timing.segments[0].audio.file = alias; });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.doesNotMatch(r.all, unclaimed('segment_000.mp3'), `${alias} is segment_000.mp3, which the record claims\n${r.all}`);
+    assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+    assert.equal(markerAtMs(fs.readFileSync(path.join(dir, 'voiceover.mp3')), 0), MARKER_ONE, 'the clip the alias names is the one played');
+  });
+
+  // ---- R5-1: a record naming the 8.3 short name of a LINK --------------------------------------
+  // Every name the resolver gives back follows the link to its target, so none of them is the
+  // link's own directory entry: the link a record named that way was reported as unclaimed.
+
+  /**
+   * voicedSilentMiddle()'s project with segment_00`index`.mp3 made a link to its clip's bytes,
+   * which are moved to store_00`index`.bin, and the record naming the link by its 8.3 short
+   * name. null, with the test skipped saying why, where that cannot be built here.
+   */
+  function projectNamingALinkByItsShortName(t, index) {
+    if (process.platform !== 'win32') {
+      t.skip('8.3 short names are a Windows feature');
+      return null;
+    }
+    const link = `segment_00${index}.mp3`;
+    const store = `store_00${index}.bin`;
+    const clips = Object.entries(voicedClips()).map(([name, bytes]) => [name === link ? store : name, bytes]);
+    const dir = makeProject(t, { 'timing.json': timingWith(voicedSilentMiddle()), 'silence.mp3': clipBytes(240, 0x77), ...Object.fromEntries(clips) });
+    if (!tryMakeFileLink(path.join(dir, link), path.join(dir, store))) {
+      t.skip('platform refused to create a file link');
+      return null;
+    }
+    const alias = shortNameOf(path.join(dir, link));
+    if (alias === null) {
+      t.skip('no 8.3 short name for the link: this volume does not generate them');
+      return null;
+    }
+    rewriteTiming(dir, (timing) => { timing.segments[index].audio.file = alias; });
+    return { dir, link, alias };
+  }
+
+  test('concatAudio_silentRecordNamingTheShortNameOfALink_doesNotCallTheLinkAnOrphan', (t) => {
+    const built = projectNamingALinkByItsShortName(t, 1);
+    if (built === null) return;
+    const { dir, link, alias } = built;
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.OK);
+      assert.doesNotMatch(r.all, unclaimed(link), `${alias} is the link ${link}, which the record claims\n${r.all}`);
+      assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+      assert.match(r.all,
+        new RegExp(`${escape(alias)} \\(a link to store_001\\.bin\\), which its record names, (is not used and is left as it is|was not used)`), r.all);
+    }
+  });
+
+  test('concatAudio_narratedRecordNamingTheShortNameOfALink_doesNotCallTheLinkAnOrphan', (t) => {
+    const built = projectNamingALinkByItsShortName(t, 0);
+    if (built === null) return;
+    const { dir, link, alias } = built;
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.OK);
+      assert.doesNotMatch(r.all, unclaimed(link), `${alias} is the link ${link}, which the record claims\n${r.all}`);
+      assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+    }
+    assert.equal(markerAtMs(fs.readFileSync(path.join(dir, 'voiceover.mp3')), 0), MARKER_ONE, 'the clip the link names is the one played');
+  });
+
+  test('concatAudio_recordNamingTheShortNameOfOneOfTwoHardLinksOfALink_claimsNeitherAndSaysWhy', (t) => {
+    // Two names for one link share its identity, so which of them the short name belongs to
+    // cannot be told. Neither is claimed, and neither is called unclaimed either.
+    const built = projectNamingALinkByItsShortName(t, 1);
+    if (built === null) return;
+    const { dir, link, alias } = built;
+    const twin = 'segment_009.mp3';
+    try {
+      fs.linkSync(path.join(dir, link), path.join(dir, twin));
+    } catch {
+      return t.skip('platform refused to hard-link the link');
+    }
+    if (!fs.lstatSync(path.join(dir, twin)).isSymbolicLink()) return t.skip('platform hard-linked the target, not the link');
+
+    for (const [args, lead] of [[[], '  ! '], [['--apply'], 'warning: ']]) {
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assertCleanExit(r, EXIT.OK);
+      for (const [name, other] of [[link, twin], [twin, link]]) {
+        assert.doesNotMatch(r.all, unclaimed(name), `${name} may be the file the record names\n${r.all}`);
+        assert.match(r.all, new RegExp(`${escape(lead)}${escape(name)} may be the file segment "intermission" names by the short ` +
+          `name ${escape(alias)} — it and ${escape(other)} are hard links of one link, so which of them that short name ` +
+          'belongs to cannot be told'), r.all);
+      }
+    }
+  });
+
+  // ---- R6-2: a volume that reports no file IDs -------------------------------------------------
+  // The link's own entry is found by identity, so with no file IDs it is not found. That is
+  // not evidence that no record names it: no link is then called unclaimed, and the line
+  // says why. A regular file is claimed by its canonical name, so it keeps the plain line.
+  const noFileIds = (name, label, alias) => new RegExp(`${escape(name)} may be the file ${escape(label)} names by the ` +
+    `short name ${escape(alias)} — this volume reports no file IDs, so whether that short name belongs to it cannot be told`);
+  for (const [kind, index, label] of [['Silent', 1, 'segment "intermission"'], ['Narrated', 0, 'segment "one"']]) {
+    test(`concatAudio_${kind.toLowerCase()}RecordNamingTheShortNameOfALinkWhereTheVolumeReportsNoFileIds_saysItMayBeTheLink`, (t) => {
+      const built = projectNamingALinkByItsShortName(t, index);
+      if (built === null) return;
+      const { dir, link, alias } = built;
+
+      for (const [args, lead] of [[[], '  ! '], [['--apply'], 'warning: ']]) {
+        const r = runScript('concat-audio.mjs', args, dir, { nodeArgs: ['--import', zeroFileIds({ dir })] });
+
+        assert.match(r.all, ZERO_FILE_IDS_ARMED, `the volume must report no file IDs\n${r.all}`);
+        assertCleanExit(r, EXIT.OK);
+        assert.doesNotMatch(r.all, unclaimed(link), `with no file IDs, ${alias} may be ${link}\n${r.all}`);
+        assert.doesNotMatch(r.all, / is on disk but no segment claims it/, r.all);
+        assert.match(r.all, new RegExp(`^${escape(lead)}${noFileIds(link, label, alias).source}$`, 'm'), r.all);
+      }
+    });
+  }
+
+  test('concatAudio_recordNamingALinkByItsLongNameWhereTheVolumeReportsNoFileIds_claimsItWithNothingToQualify', (t) => {
+    // GUARD (passes before and after): the long name is the entry discovery lists, so no
+    // identity is needed to claim it.
+    const clips = Object.entries(voicedClips()).map(([name, bytes]) => [name === 'segment_001.mp3' ? 'store_001.bin' : name, bytes]);
+    const dir = makeProject(t, { 'timing.json': timingWith(voicedSilentMiddle()), 'silence.mp3': clipBytes(240, 0x77), ...Object.fromEntries(clips) });
+    if (!tryMakeFileLink(path.join(dir, 'segment_001.mp3'), path.join(dir, 'store_001.bin'))) return t.skip('platform refused to create a file link');
+
+    for (const args of [[], ['--apply']]) {
+      const r = runScript('concat-audio.mjs', args, dir, { nodeArgs: ['--import', zeroFileIds({ dir })] });
+
+      assert.match(r.all, ZERO_FILE_IDS_ARMED, `the volume must report no file IDs\n${r.all}`);
+      assertCleanExit(r, EXIT.OK);
+      assert.doesNotMatch(r.all, / is on disk but no segment claims it| may be the file /, r.all);
+    }
+  });
+
+  test('concatAudio_regularFileOrphanBesideAShortNamedLinkWhereTheVolumeReportsNoFileIds_isStillCalledUnclaimed', (t) => {
+    // The regular file's line is a GUARD (it passes before and after): an alias of a regular
+    // file is claimed by its canonical name, so no short name can be a regular file left
+    // over. Only the link is qualified.
+    const built = projectNamingALinkByItsShortName(t, 1);
+    if (built === null) return;
+    const { dir, link, alias } = built;
+    fs.writeFileSync(path.join(dir, 'segment_009.mp3'), clipBytes(240, 0x99));
+
+    for (const [args, lead, fate] of [[[], '  ! ', 'it will NOT be included'], [['--apply'], 'warning: ', 'it was NOT included']]) {
+      const r = runScript('concat-audio.mjs', args, dir, { nodeArgs: ['--import', zeroFileIds({ dir })] });
+
+      assert.match(r.all, ZERO_FILE_IDS_ARMED, `the volume must report no file IDs\n${r.all}`);
+      assertCleanExit(r, EXIT.OK);
+      assert.match(r.all, new RegExp(`^${escape(lead)}segment_009\\.mp3 is on disk but no segment claims it — ${fate}$`, 'm'), r.all);
+      assert.doesNotMatch(r.all, unclaimed(link), r.all);
+      assert.match(r.all, new RegExp(`^${escape(lead)}${noFileIds(link, 'segment "intermission"', alias).source}$`, 'm'), r.all);
+    }
+  });
+
+  // ---- R7-1: an entry that cannot be inspected -------------------------------------------------
+  // The link's own entry is found by inspecting every entry, so a search that could not inspect
+  // one has not shown that no record names the link: whichever entry it was, and even where the
+  // link was found before it. No link is then called unclaimed, and the line says why.
+  const notInspected = (name, label, alias) => new RegExp(`${escape(name)} may be the file ${escape(label)} names by the ` +
+    `short name ${escape(alias)} — not every entry here could be inspected, so whether that short name belongs to it cannot be told`);
+  const refusedLstat = (name) => new RegExp(`^fail-lstat: refused .*[\\\\/]${escape(name)}$`, 'm');
+  for (const [kind, index, label] of [['Silent', 1, 'segment "intermission"'], ['Narrated', 0, 'segment "one"']]) {
+    test(`concatAudio_${kind.toLowerCase()}RecordNamingTheShortNameOfALinkWhoseOwnEntryCannotBeInspected_saysItMayBeTheLink`, (t) => {
+      const built = projectNamingALinkByItsShortName(t, index);
+      if (built === null) return;
+      const { dir, link, alias } = built;
+
+      for (const [args, lead] of [[[], '  ! '], [['--apply'], 'warning: ']]) {
+        const r = runScript('concat-audio.mjs', args, dir, { nodeArgs: ['--import', failLstat({ dir, names: [link] })] });
+
+        assert.match(r.all, FAIL_LSTAT_ARMED, `${link} must be made uninspectable\n${r.all}`);
+        assert.match(r.all, refusedLstat(link), `the search must have tried to inspect ${link}\n${r.all}`);
+        assertCleanExit(r, EXIT.OK);
+        assert.doesNotMatch(r.all, / is on disk but no segment claims it/, `${alias} may be ${link}\n${r.all}`);
+        assert.match(r.all, new RegExp(`^${escape(lead)}${notInspected(link, label, alias).source}$`, 'm'), r.all);
+      }
+    });
+  }
+
+  test('concatAudio_silentRecordNamingTheShortNameOfALinkWhereALaterEntryCannotBeInspected_claimsNothingAndSaysItMayBeTheLink', (t) => {
+    // The search fails closed: the link's entry, listed before the one that cannot be
+    // inspected, is not claimed, because an unfinished search has not shown it is the only
+    // entry the short name can belong to.
+    const built = projectNamingALinkByItsShortName(t, 1);
+    if (built === null) return;
+    const { dir, link, alias } = built;
+    const later = 'zz_notes.txt';
+    fs.writeFileSync(path.join(dir, later), 'not a clip');
+    const order = fs.readdirSync(dir);
+    if (!order.includes(link) || order.indexOf(later) < order.indexOf(link)) {
+      return t.skip(`this volume does not list ${link} before ${later}: ${order.join(', ')}`);
+    }
+
+    for (const [args, lead] of [[[], '  ! '], [['--apply'], 'warning: ']]) {
+      const r = runScript('concat-audio.mjs', args, dir, { nodeArgs: ['--import', failLstat({ dir, names: [later] })] });
+
+      assert.match(r.all, FAIL_LSTAT_ARMED, `${later} must be made uninspectable\n${r.all}`);
+      assert.match(r.all, refusedLstat(later), `the search must have reached ${later}\n${r.all}`);
+      assertCleanExit(r, EXIT.OK);
+      assert.doesNotMatch(r.all, / is on disk but no segment claims it/, `${alias} may be ${link}\n${r.all}`);
+      assert.match(r.all, new RegExp(`^${escape(lead)}${notInspected(link, 'segment "intermission"', alias).source}$`, 'm'), r.all);
+    }
+  });
+
+  // ---- R5 sweep, table D: remix's plan, where a silent record names a clip by its short name ----
+  // The plan says what this run does to the file a silent segment's record named. Compared as
+  // text, a short name of a file this run writes read as another file, which it "leaves as it is".
+  for (const [scenario, target, expect] of [
+    ['ItsOwnClip', 'segment_02.mp3', null],
+    ['TheVoiceTrack', 'voiceover.mp3', /segment_02\.mp3 [^\n]*; its record named [^\n]*, which this run overwrites$/m],
+  ]) {
+    test(`remix_planWhereASilentRecordNamesTheShortNameOf${scenario}_doesNotSayItIsLeftAsItIs`, (t) => {
+      const dir = makeProject(t, {
+        'timing.json': timingWith(voicedSilentMiddle()),
+        ...voicedClips(),
+        'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+        'voiceover.mp3': 'the previous narration',
+      });
+      const alias = shortNameOf(path.join(dir, target));
+      if (alias === null) return t.skip('no 8.3 short name here: not Windows, or this volume does not generate them');
+      rewriteTiming(dir, (timing) => { timing.segments[1].audio.file = alias; });
+
+      const r = runScript('remix.mjs', [], dir);
+
+      assertCleanExit(r, EXIT.OK, 'the plan must succeed: ');
+      assert.match(r.all, /segment_02\.mp3 [^\n]*segment "intermission" is declared silent: regenerated from its 960ms authored window/, r.all);
+      assert.doesNotMatch(r.all, /leaves as it is/, `${alias} is ${target}, which this run writes\n${r.all}`);
+      if (expect === null) assert.doesNotMatch(r.all, /its record named/, `the record names the segment's own clip\n${r.all}`);
+      else assert.match(r.all, expect, r.all);
+    });
+  }
+
+  test('remix_planWhereASilentRecordNamesAHardLinkOfTheVoiceTrack_saysItIsLeftAsItIs', (t) => {
+    // The guard on the fix above, which compares names, never identity: a hard link is another
+    // entry, and publishing by rename replaces the voice track's entry, not the file they share.
+    const dir = makeProject(t, {
+      'timing.json': timingWith(voicedSilentMiddle()),
+      ...voicedClips(),
+      'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+      'voiceover.mp3': 'the previous narration',
+    });
+    try {
+      fs.linkSync(path.join(dir, 'voiceover.mp3'), path.join(dir, 'old_voice.mp3'));
+    } catch {
+      return t.skip('platform refused to hard-link');
+    }
+    rewriteTiming(dir, (timing) => { timing.segments[1].audio.file = 'old_voice.mp3'; });
+
+    const r = runScript('remix.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'the plan must succeed: ');
+    assert.match(r.all, /segment_02\.mp3 [^\n]*; its record named old_voice\.mp3, which remix leaves as it is$/m, r.all);
+  });
+
+  // ---- R6-3: remix's plan, where a silent record names a LINK the resolver follows -----------
+  // The plan's account of a file a record named compares canonical names, so a link to a
+  // file this run writes is that file however the link spells its target. The link is never
+  // written: each output is published by rename, so the link reads the new file afterwards.
+  const projectWhoseSilentRecordNamesALink = (t, link, target) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(voicedSilentMiddle()),
+      ...voicedClips(),
+      'segment_02.mp3': clipBytes(960, 0x5a),
+      'voiceover.mp3': 'the previous narration',
+    });
+    const spelled = target(dir);
+    if (spelled === null) {
+      t.skip('no 8.3 short name here: not Windows, or this volume does not generate them');
+      return null;
+    }
+    if (!tryMakeFileLink(path.join(dir, link), spelled)) {
+      t.skip('platform refused to create a file link');
+      return null;
+    }
+    rewriteTiming(dir, (timing) => { timing.segments[1].audio.file = link; });
+    return dir;
+  };
+  const read = (dir, f) => fs.readFileSync(path.join(dir, f));
+
+  test('remix_silentRecordNamingALinkToTheVoiceTrack_saysThisRunOverwritesItAndTheLinkThenReadsTheNewTrack', (t) => {
+    const dir = projectWhoseSilentRecordNamesALink(t, 'old_voice.mp3', () => 'voiceover.mp3');
+    if (dir === null) return;
+
+    const plan = runScript('remix.mjs', [], dir);
+
+    assertCleanExit(plan, EXIT.OK, 'the plan must succeed: ');
+    assert.match(plan.all, /^ {2}segment_02\.mp3 [^\n]*; its record named old_voice\.mp3, which this run overwrites$/m, plan.all);
+    assert.doesNotMatch(plan.all, /leaves as it is/, plan.all);
+
+    assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK);
+
+    assert.ok(fs.lstatSync(path.join(dir, 'old_voice.mp3')).isSymbolicLink(), 'the link itself is never written');
+    assert.ok(read(dir, 'old_voice.mp3').equals(read(dir, 'voiceover.mp3')), 'the link reads the voice track this run published');
+    assert.notEqual(read(dir, 'voiceover.mp3').toString('latin1'), 'the previous narration');
+    assert.equal(JSON.parse(read(dir, 'timing.json')).segments[1].audio.file, 'segment_02.mp3');
+  });
+
+  test('remix_silentRecordNamingALinkToItsOwnClip_saysNothingOfItAndTheLinkThenReadsTheNewSilence', (t) => {
+    const dir = projectWhoseSilentRecordNamesALink(t, 'own.mp3', () => 'segment_02.mp3');
+    if (dir === null) return;
+    const old = read(dir, 'segment_02.mp3');
+
+    const plan = runScript('remix.mjs', [], dir);
+
+    assertCleanExit(plan, EXIT.OK, 'the plan must succeed: ');
+    assert.match(plan.all, /segment_02\.mp3 [^\n]*segment "intermission" is declared silent: regenerated from its 960ms authored window$/m, plan.all);
+    assert.doesNotMatch(plan.all, /its record named|leaves as it is/, `own.mp3 is the clip this run regenerates\n${plan.all}`);
+
+    assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK);
+
+    assert.equal(JSON.parse(read(dir, 'timing.json')).segments[1].audio.file, 'segment_02.mp3');
+    assert.ok(fs.lstatSync(path.join(dir, 'own.mp3')).isSymbolicLink(), 'the link itself is never written');
+    assert.ok(read(dir, 'own.mp3').equals(read(dir, 'segment_02.mp3')), 'the link reads the clip this run regenerated');
+    assert.ok(!read(dir, 'segment_02.mp3').equals(old), 'and that clip is the new silence, not the old clip');
+  });
+
+  // The link's target spelled by its 8.3 short name: read as text, the name the resolver
+  // gives back is another file, which this run "leaves as it is".
+  for (const [scenario, link, target, expect] of [
+    ['TheVoiceTrack', 'old_voice.mp3', 'voiceover.mp3', /; its record named old_voice\.mp3, which this run overwrites$/m],
+    ['ItsOwnClip', 'own.mp3', 'segment_02.mp3', null],
+  ]) {
+    test(`remix_planWhereASilentRecordNamesALinkToTheShortNameOf${scenario}_saysWhatThisRunDoesToIt`, (t) => {
+      const dir = projectWhoseSilentRecordNamesALink(t, link, (d) => shortNameOf(path.join(d, target)));
+      if (dir === null) return;
+
+      const plan = runScript('remix.mjs', [], dir);
+
+      assertCleanExit(plan, EXIT.OK, 'the plan must succeed: ');
+      assert.match(plan.all, /segment_02\.mp3 [^\n]*segment "intermission" is declared silent: regenerated from its 960ms authored window/, plan.all);
+      assert.doesNotMatch(plan.all, /leaves as it is/, `the link leads to ${target}, which this run writes\n${plan.all}`);
+      if (expect === null) assert.doesNotMatch(plan.all, /its record named/, `the link leads to the segment's own clip\n${plan.all}`);
+      else assert.match(plan.all, expect, plan.all);
+    });
+  }
+
+  // ---- R4-3: a silent window that is not a number is an authored field to correct ----------
+  for (const [stage, script, args] of [
+    ['writeChapters', 'write-chapters.mjs', ['--list']],
+    ['writeSubtitles', 'write-subtitles.mjs', ['--apply']],
+  ]) {
+    test(`${stage}_silentWindowEndWrittenAsAString_namesTheFieldAndRemixNotTheVoiceStage`, (t) => {
+      const segments = voicedSilentMiddle();
+      segments[1].endMs = '5000';
+      const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+      const files = fs.readdirSync(dir).sort();
+
+      const r = runScript(script, args, dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a window that is not a number must fail: ');
+      assert.match(r.all,
+        /timing\.segments\[1\] \("intermission"\) is declared silent, so its window is authored, not measured: endMs is a string \(4 characters\) — write it as a number of milliseconds, >= 0/, r.all);
+      assert.match(r.all, /If that changes the window's length, remix\.mjs \(S4\) reflows the timeline onto it, with no re-voice/, r.all);
+      assert.doesNotMatch(r.all, /voice\.mjs/, `an authored window is corrected by hand, never by a re-voice\n${r.all}`);
+      assert.deepEqual(fs.readdirSync(dir).sort(), files, 'nothing may be written');
+    });
+  }
+
+  test('writeChapters_silentWindowWithNoEnd_namesTheFieldAndRemixNotTheVoiceStage', (t) => {
+    const segments = voicedSilentMiddle();
+    delete segments[1].endMs;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a window with no end must fail: ');
+    assert.match(r.all, /timing\.segments\[1\] \("intermission"\) is declared silent, so its window is authored, not measured: endMs is missing — write it as a number of milliseconds/, r.all);
+    assert.match(r.all, /If that changes the window's length, remix\.mjs \(S4\) reflows the timeline onto it, with no re-voice/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+  });
+
+  test('writeSubtitles_silentWindowEndNullWhereRemixWouldRefuse_namesTheFieldAndWhyRemixWouldRefuse', (t) => {
+    // No clip is on disk, so remix would refuse even once the field is corrected: it is named
+    // as the stage that reflows, with the reason it would not run, and never as a step to take.
+    const segments = voicedSilentMiddle();
+    segments[1].endMs = null;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a window with a null end must fail: ');
+    assert.match(r.all, /timing\.segments\[1\] \("intermission"\) is declared silent, so its window is authored, not measured: endMs is null — write it as a number of milliseconds/, r.all);
+    assert.match(r.all,
+      /remix\.mjs \(S4\) is the stage that reflows the timeline onto it, with no re-voice, but it would refuse this timeline even then: segment_000\.mp3 is not in the project/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+    assert.doesNotMatch(r.all, /[Rr]un remix/, r.all);
+  });
+
+  test('writeChapters_narratedWindowEndWrittenAsAString_stillNamesTheVoiceStage', (t) => {
+    // REGRESSION GUARD (passes before and after): a narrated window is measured by voice.
+    const segments = voicedSilentMiddle();
+    segments[2].endMs = '2160';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 2160, contentMs: 2160 }), ...voicedClips() });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /timing\.segments\[2\] \("three"\): endMs is a string \(4 characters\) — it must be a finite number of milliseconds, >= 0\. Run voice\.mjs \(S3\/S4\) first/, r.all);
+  });
+
+  // ---- R5-3: the remedy is asked of exactly the edit the message names ------------------------
+  // Correcting startMs alone, to any number >= 0, leaves a window that ends at 0 with no
+  // positive length, which remix refuses: so endMs is named too, and remix only after both.
+  for (const [stage, script, args] of [
+    ['writeChapters', 'write-chapters.mjs', ['--list']],
+    ['writeSubtitles', 'write-subtitles.mjs', ['--apply']],
+  ]) {
+    test(`${stage}_silentWindowStartNotANumberWithAnEndOfZero_namesTheEndTooAndRemixOnlyAfterBoth`, (t) => {
+      const segments = voicedSilentMiddle();
+      segments[1].startMs = 'oops';
+      segments[1].endMs = 0;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+      const r = runScript(script, args, dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a window that is not a number must fail: ');
+      assert.match(r.all,
+        /startMs is a string \(4 characters\) — write it as a number of milliseconds, >= 0\. endMs \(0\) must change too: no startMs >= 0 gives a window that ends at 0 a positive length, so write endMs as a number of milliseconds greater than startMs/, r.all);
+      assert.match(r.all, /Once both are corrected, if that changes the window's length, remix\.mjs \(S4\) reflows the timeline onto it, with no re-voice/, r.all);
+      assert.doesNotMatch(r.all, /write it as a number of milliseconds, >= 0\. If that changes the window's length, remix/,
+        `remix refuses the window correcting startMs alone leaves, so it is not the step after that edit\n${r.all}`);
+      assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+    });
+  }
+
+  test('writeChapters_silentWindowWithNeitherFieldANumber_givesEachFieldTheBoundThatMakesTheWindowPositive', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[1].startMs = 'start';
+    segments[1].endMs = null;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a window that is not a number must fail: ');
+    assert.match(r.all, /startMs is a string \(5 characters\) — write it as a number of milliseconds, >= 0 and less than endMs\. Once both are corrected, if that changes the window's length, remix\.mjs \(S4\) reflows/, r.all);
+    assert.match(r.all, /endMs is null — write it as a number of milliseconds, >= 0 and greater than startMs\. Once both are corrected, if that changes the window's length, remix\.mjs \(S4\) reflows/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+  });
+
+  for (const [field, bound] of [['startMs', 'less than endMs \\(1440\\)'], ['endMs', 'greater than startMs \\(480\\)']]) {
+    test(`writeSubtitles_silentWindow${field === 'startMs' ? 'Start' : 'End'}NotANumber_boundsItByTheFieldItKeeps`, (t) => {
+      const segments = voicedSilentMiddle();
+      segments[1][field] = 'later';
+      const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a window that is not a number must fail: ');
+      assert.match(r.all, new RegExp(`${field} is a string \\(5 characters\\) — write it as a number of milliseconds, >= 0 and ${bound}\\. ` +
+        "If that changes the window's length, remix\\.mjs \\(S4\\) reflows"), r.all);
+    });
+  }
+
+  // ---- R4-4: a malformed declaration is reported in place of the remedy, and names no stage -----
+  for (const [scenario, audio, files] of [
+    ['WithAClip', { file: 'segment_02.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] },
+      { 'segment_01.mp3': clipBytes(960, MARKER_ONE), 'segment_02.mp3': clipBytes(960, SILENT_MARKER) }],
+    ['WithNoClip', undefined, { 'segment_01.mp3': clipBytes(960, MARKER_ONE) }],
+  ]) {
+    test(`writeChapters_durationShortOfAFinalWindowDeclaredSilentAsFalse${scenario}_namesTheDeclarationAndNoStage`, (t) => {
+      const segments = spokenThenSilent('Alpha go.', alphaGo);
+      segments[1].endMs = 3960;
+      segments[1].silence = false;
+      if (audio) segments[1].audio = audio;
+      const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }), ...files });
+
+      const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+      assert.match(r.all, /no shorter than the last segment \(which ends at 3960 ms\)/, r.all);
+      assert.match(r.all,
+        /It closes the last chapter, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("break"\) declares `silence` as false/, r.all);
+      assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+    });
+  }
+
+  test('writeSubtitles_durationShortWithAMalformedMiddleDeclaration_namesTheDeclarationNotTheVoiceStage', (t) => {
+    const segments = widenedIntermission();
+    segments[1].silence.caption = '   ';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 2160, contentMs: 2160 }), ...voicedClips() });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all,
+      /It bounds the last cue, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("intermission"\) is declared silent but its `silence\.caption` is "   "/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+  });
+
+  // ---- the class sweep: concat-audio ----------------------------------------------------------
+  test('concatAudio_positionalRefusalWhereTheVoiceStageWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const segments = silentMiddleSegments();
+    for (const s of segments) delete s.audio;
+    segments[2].voiceoverText = '';
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_01.mp3': clipBytes(480, MARKER_ONE),
+      'segment_02.mp3': clipBytes(720, MARKER_THREE),
+    });
+
+    const r = runScript('concat-audio.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a positional project with a silent segment is still refused: ');
+    assert.match(r.all, /no segment in timing\.json names its clip/, r.all);
+    assert.match(r.all, /voice\.mjs \(S3\)[^\n]*refuses this timeline as it stands: segment "three" is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/, r.all);
+    // An appended refusal does not retract an instruction, so none is given: the message says
+    // what the voice stage would do, why it refuses, and the edit that clears it.
+    assert.doesNotMatch(r.all, /\bhave voice\.mjs/, `no instruction to have the voice stage do it\n${r.all}`);
+    assert.match(r.all, /voice\.mjs \(S3\) would name every clip it writes, but it refuses this timeline as it stands/, r.all);
+    assert.match(r.all, /Write its narration, or, if it is meant to be silent, declare it silent/, r.all);
+  });
+
+  test('concatAudio_positionalProjectWhoseEverySegmentIsSilent_generatesEveryWindowAsBefore', (t) => {
+    // No segment needs a clip, so there is nothing to match by position and no ambiguity to
+    // refuse. Refused, it had no remedy at all: there is no narrated clip to name, and
+    // voice.mjs refuses a timeline with no narration.
+    const segments = [
+      { id: 'slide', startMs: 0, endMs: 960, voiceoverText: '', silence: { caption: '[title card]' } },
+      { id: 'gap', startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'segment_01.mp3': clipBytes(480, MARKER_ONE) });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'an entirely silent project concatenates, as at HEAD: ');
+    assert.match(r.all, /warning: segment_01\.mp3 is on disk but no segment claims it — it was NOT included/, r.all);
+    const out = fs.readFileSync(path.join(dir, 'voiceover.mp3'));
+    assert.equal(out.length, msToBytes(1920), 'both windows, as generated silence');
+    assert.equal(out.includes(Buffer.alloc(8, MARKER_ONE)), false, 'no clip plays in a silent window');
+  });
+
+  test('concatAudio_missingNarratedClipWhereTheVoiceStageWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const segments = silentMiddleSegments();
+    segments[0].voiceoverText = '';
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'silence.mp3': clipBytes(240, 0x77),
+      'segment_000.mp3': clipBytes(480, MARKER_ONE),
+    });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a missing narrated clip still fails: ');
+    assert.match(r.all, /segment "three" has no clip to concatenate \(segment_002\.mp3 is missing\)/, r.all);
+    assert.match(r.all, /refuses this timeline as it stands: segment "one" is narrated but has no narration text/, r.all);
+    assert.match(r.all, /if this segment is meant to be a gap, declare it silent \(a `silence` block with a caption, and no narration text\)/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/, r.all);
+  });
+
+  test('concatAudio_unvoicedNarrationWithNoTextToSynthesise_saysWhyTheVoiceStageWouldRefuse', (t) => {
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence; // its voiceoverText stays ''
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'silence.mp3': clipBytes(240, 0x77), ...voicedClips() });
+
+    const r = runScript('concat-audio.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /segment "intermission" is narrated, but its audio record holds an empty word list/, r.all);
+    assert.match(r.all, /refuses this timeline as it stands: segment "intermission" is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/, r.all);
+  });
+
+  test('concatAudio_quantisationNoteWhereRemixWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 480, voiceoverText: 'hello there friend', audio: { file: 'segment_000.mp3', durationMs: 480, words: silentMiddleSegments()[0].audio.words } },
+      { id: 'gap', startMs: 480, endMs: 1480, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'silence.mp3': clipBytes(240, 0x77), 'segment_000.mp3': clipBytes(480, MARKER_ONE) });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /\+8ms/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\)[^\n]*refuses this timeline as it stands: segment "gap" has no audio\.file/, r.all);
+    assert.doesNotMatch(r.all, /[Rr]un remix/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, 'a quantisation note never sends a silence matter to a re-voice');
+  });
+
+  test('concatAudio_quantisationNoteWhereRemixWouldRun_namesIt', (t) => {
+    // REGRESSION GUARD (passes before and after).
+    const dir = makeProject(t, { 'timing.json': timingWith(widenedIntermission(1480)), 'silence.mp3': clipBytes(240, 0x77), ...voicedClips() });
+
+    const r = runScript('concat-audio.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /\+8ms against their authored length\. Run remix\.mjs \(S4\) to reflow the timeline onto the audio that exists/, r.all);
+  });
+
+  // ---- the class sweep: write-subtitles and write-chapters --------------------------------------
+  test('writeSubtitles_durationNotANumberInAnEntirelySilentTimeline_saysToSetItByHand', (t) => {
+    // voice.mjs refuses a timeline with no narration, and remix refuses records that name no
+    // clip, so no stage measures this one.
+    const segments = [
+      { id: 'slide', startMs: 0, endMs: 1000, voiceoverText: '', silence: { caption: '[title card]' } },
+      { id: 'gap', startMs: 1000, endMs: 2000, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: '2000' }) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /set timing\.durationMs by hand, no shorter than the last segment's end/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+  });
+
+  test('writeSubtitles_unvoicedSegmentWhereTheVoiceStageWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const segments = silentMiddleSegments();
+    segments[2].voiceoverText = '';
+    delete segments[2].audio;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /timing\.segments\[2\] \("three"\) has no audio\.words/, r.all);
+    assert.match(r.all, /refuses this timeline as it stands: timing\.segments\[2\] \("three"\) is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/, r.all);
+  });
+
+  test('writeSubtitles_spokenWordInASilentWindowWhereRemixWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const words = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 1000 }];
+    const dir = makeProject(t, { 'timing.json': timingWith(spokenThenSilent('Alpha go.', words)), 'segment_01.mp3': clipBytes(960, MARKER_ONE) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all,
+      /remix\.mjs \(S4\) reflows the timeline around it, but it refuses this timeline as it stands: timing\.segments\[1\] \("break"\) has no audio\.file/, r.all);
+    assert.doesNotMatch(r.all, /run remix\.mjs/, r.all);
+  });
+
+  test('writeChapters_unmeasuredNarratedWindowWhereTheVoiceStageWouldRefuse_saysWhyRatherThanSendingThere', (t) => {
+    const segments = silentMiddleSegments();
+    segments[0].endMs = '480';
+    segments[2].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /timing\.segments\[0\] \("one"\): endMs is a string \(3 characters\)/, r.all);
+    assert.match(r.all, /refuses this timeline as it stands: timing\.segments\[2\] \("three"\) is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /Run voice\.mjs/, r.all);
+  });
+
+  // ---- the class sweep: calibration ------------------------------------------------------------
+  test('buildCalibration_everySegmentSilent_offersAnEditTheVoiceStageWouldAccept', async () => {
+    // Removing a declaration alone leaves a narrated segment with no text, which the TTS
+    // service cannot synthesise, so the edit must give that segment its narration too.
+    const { buildCalibration } = await import('../src/silent-segment.mjs');
+    const segments = [{ id: 'slide', startMs: 0, endMs: 1000, voiceoverText: '', silence: { caption: '[title]' } }];
+
+    assert.throws(
+      () => buildCalibration(segments, [{ durationMs: 1000, headMs: 0, tailMs: 0 }], { voiceId: 'v', roundedSpeed: 1 }),
+      /[Gg]ive a segment its narration text and remove its `silence` declaration/,
+    );
+  });
+
+  // ---- the class sweep: validate-timing -------------------------------------------------------
+  test('validateTiming_unreflowedSilentWindowWhereRemixWouldRefuse_saysWhy', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(widenedIntermission()) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\)[^\n]*refuses this timeline as it stands: segment_000\.mp3 is not in the project/, r.all);
+    assert.doesNotMatch(r.all, /Run remix\.mjs/, r.all);
+  });
+
+  test('validateTiming_unreflowedRecordNamingNoClipInAnEntirelySilentTimeline_doesNotSendItToTheVoiceStage', (t) => {
+    const segments = [
+      { id: 'slide', startMs: 0, endMs: 1000, voiceoverText: '', silence: { caption: '[title card]' }, audio: { durationMs: 960, headMs: 0, tailMs: 0, words: [] } },
+      { id: 'gap', startMs: 1000, endMs: 2000, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.match(r.all, /every segment is declared silent/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/i, r.all);
+  });
+
+  test('validateTiming_staleLineageWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[0].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "one" now has 0 word\(s\)/, r.all);
+    // A refusal appended after an instruction does not retract it: the instruction goes.
+    assert.doesNotMatch(r.all, /Re-run the\s+voice stage/, `voice refuses this timeline, so re-running it is not the step\n${r.all}`);
+    assert.match(r.all,
+      /voice\.mjs \(S3\) re-synthesises and re-measures it, but it refuses this timeline as it stands: segment "one" is narrated but has no narration text/, r.all);
+    assert.match(r.all, /Write its narration, or, if it is meant to be silent, declare it silent/, r.all);
+  });
+
+  test('validateTiming_silencedLineageWhereRemixWouldRefuse_saysWhy', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[2].voiceoverText = '';
+    segments[2].silence = { caption: '[applause]' };
+    segments[2].audio = { file: 'segment_002.mp3', durationMs: 720, headMs: 0, tailMs: 0, words: [] };
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "three" is declared silent now/, r.all);
+    assert.match(r.all, /remix\.mjs \(S4\) refuses this timeline as it stands: segment_000\.mp3 is not in the project/, r.all);
+  });
+
+  test('validateTiming_unprovenLineageWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[2].voiceoverText = '';
+    const { textHash, ...unfingerprinted } = JSON.parse(voiceCalibration()).segments[0];
+    assert.ok(textHash, 'the row had a fingerprint to remove');
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'calibration-observed.json': voiceCalibration({ one: unfingerprinted }),
+      ...voicedClips(),
+    });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: UNPROVEN/, r.all);
+    assert.match(r.all, /voice\.mjs \(S3\) refuses this timeline as it stands: segment "three" is narrated but has no narration text/, r.all);
+  });
+
+  test('validateTiming_calibrationWithNoRateWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[0].voiceoverText = '';
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'calibration-observed.json': JSON.stringify({ voiceId: 'en-US-AvaNeural', roundedSpeed: 1, aggregate: {}, segments: [] }),
+    });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /carries no `aggregate\.observedEffWps`/, r.all);
+    assert.doesNotMatch(r.all, /Re-run the voice stage/, `voice refuses this timeline, so re-running it is not the step\n${r.all}`);
+    assert.match(r.all, /Delete it to fall back to intake\.wordsPerSecond deliberately/, r.all);
+    assert.match(r.all,
+      /voice\.mjs \(S3\) regenerates it, but it refuses this timeline as it stands: segment "one" is narrated but has no narration text/, r.all);
+    assert.match(r.all, /Write its narration, or, if it is meant to be silent, declare it silent/, r.all);
+  });
+
+  test('validateTiming_unsilencedLineageWithTextWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence;
+    segments[1].voiceoverText = 'now it speaks';
+    segments[2].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "intermission" is no longer declared silent/, r.all);
+    // Restoring the declaration while the text is there would leave it malformed (a silent
+    // segment must carry no narration text), so removing the text is named with it.
+    assert.match(r.all, /restore its `silence` declaration \(with a caption\)\s+and remove its narration text/, r.all);
+    assert.doesNotMatch(r.all, /Run that stage/, `voice refuses this timeline, so running it is not the step\n${r.all}`);
+    assert.match(r.all,
+      /voice\.mjs \(S3\) synthesises it, but it refuses this timeline as it stands: segment "three" is narrated but has no narration text/, r.all);
+    assert.match(r.all, /Write its narration, or, if it is meant to be silent, declare it silent/, r.all);
+  });
+
+  test('validateTiming_unsilencedLineageWithNoTextWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    // Asked of the timeline once the segment has its narration text: "three" still has none.
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence;
+    segments[2].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "intermission" is no longer declared silent/, r.all);
+    assert.doesNotMatch(r.all, /run that stage/i, `voice refuses this timeline, so running it is not the step\n${r.all}`);
+    assert.match(r.all, /restore its `silence` declaration\s+\(with a caption\)/, r.all);
+    assert.match(r.all,
+      /give it its narration text; voice\.mjs \(S3\) synthesises it, but it refuses this timeline as it stands: segment "three" is narrated but has no narration text/, r.all);
+    assert.match(r.all, /Write its narration, or, if it is meant to be silent, declare it silent/, r.all);
+  });
+
+  // REGRESSION GUARDS (pass before and after): where the voice stage would run, each of the
+  // four instructions above is printed exactly as it always was.
+  test('validateTiming_unsilencedLineageWithTextWhereTheVoiceStageWouldRun_keepsItsInstruction', (t) => {
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence;
+    segments[1].voiceoverText = 'now it speaks';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all,
+      /\n  Run that stage, or restore its `silence` declaration \(with a caption\)\r?\n  and remove its narration text if it is meant to be silent\.\r?\n/, r.all);
+    assert.doesNotMatch(r.all, /refuses this timeline/, r.all);
+  });
+
+  test('validateTiming_unsilencedLineageWithNoTextWhereTheVoiceStageWouldRun_keepsItsInstruction', (t) => {
+    const segments = voicedSilentMiddle();
+    delete segments[1].silence;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all,
+      /\n  Give it its narration text and run that stage, or restore its `silence` declaration\r?\n  \(with a caption\) if it is meant to be silent\.\r?\n/, r.all);
+    assert.doesNotMatch(r.all, /refuses this timeline/, r.all);
+  });
+
+  test('validateTiming_staleLineageWhereTheVoiceStageWouldRun_keepsItsInstruction', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[0].voiceoverText = 'hello there my friend';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), 'calibration-observed.json': voiceCalibration(), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "one" now has 4 word\(s\)/, r.all);
+    assert.match(r.all,
+      /PREDICTION against these windows, with the safety margin restored\. Re-run the\r?\n  voice stage to re-measure before rendering — here that IS the right move, because\r?\n  the narration really has changed and the audio on disk is for the old text\.\r?\n/, r.all);
+    assert.doesNotMatch(r.all, /refuses this timeline/, r.all);
+  });
+
+  test('validateTiming_calibrationWithNoRateWhereTheVoiceStageWouldRun_keepsItsInstruction', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(voicedSilentMiddle()),
+      'calibration-observed.json': JSON.stringify({ voiceId: 'en-US-AvaNeural', roundedSpeed: 1, aggregate: {}, segments: [] }),
+      ...voicedClips(),
+    });
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all,
+      /used\. Re-run the voice stage to regenerate it, or delete it to fall back to intake\.wordsPerSecond deliberately\.\r?\n/, r.all);
+    assert.doesNotMatch(r.all, /refuses this timeline/, r.all);
+  });
+
+  // ---- the class sweep: every branch of the duration remedies -----------------------------------
+  // A duration short of the last window, or not a number at all, names the stage that
+  // re-measures it. Each branch below is one where that stage would refuse.
+  test('writeChapters_durationShortOfAFinalSilentWindowInAnEntirelySilentTimeline_saysToSetItByHand', (t) => {
+    // No segment is narrated, so voice.mjs has nothing to synthesise, and no record names a
+    // clip, so remix refuses: no stage measures this timeline.
+    const segments = [
+      { id: 'slide', startMs: 0, endMs: 960, voiceoverText: '', silence: { caption: '[title card]' } },
+      { id: 'gap', startMs: 960, endMs: 3960, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all, /every segment is declared silent, so no stage measures the timeline: set timing\.durationMs by hand, no shorter than the last segment's end/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, r.all);
+  });
+
+  test('writeChapters_durationShortOfAFinalSilentWindowNamingNoClipWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = spokenThenSilent('', alphaGo);
+    segments[1].endMs = 3960;
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all,
+      /voice\.mjs \(S3\) generates its clip and re-measures the timeline, but it refuses this timeline as it stands: timing\.segments\[0\] \("one"\) is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/i, r.all);
+  });
+
+  test('writeChapters_durationShortOfAWidenedFinalSilentWindowWhereRemixWouldRefuse_saysWhy', (t) => {
+    // segment_01.mp3, which narrated "one" names, is not on disk, so remix would refuse.
+    const segments = spokenThenSilent('Alpha go.', alphaGo);
+    segments[1].endMs = 3960;
+    segments[1].audio = { file: 'segment_02.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] };
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments, { durationMs: 1920, contentMs: 1920 }),
+      'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+    });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all,
+      /remix\.mjs \(S4\) regenerates that silence and reflows the timeline onto it, with no re-voice, but it refuses this timeline as it stands: segment_01\.mp3 is not in the project/, r.all);
+    assert.doesNotMatch(r.all, /run remix\.mjs/i, r.all);
+  });
+
+  test('writeSubtitles_durationShortAfterAMiddleSilentWindowWasWidenedWhereRemixWouldRefuse_saysWhy', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(widenedIntermission(), { durationMs: 2160, contentMs: 2160 }) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all,
+      /remix\.mjs \(S4\) regenerates that silence and reflows the timeline onto it, with no re-voice, but it refuses this timeline as it stands: segment_000\.mp3 is not in the project/, r.all);
+    assert.doesNotMatch(r.all, /run remix\.mjs/i, r.all);
+  });
+
+  test('writeChapters_durationShortOfANarratedWindowWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = silentMiddleSegments();
+    segments[0].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 2000, contentMs: 2000 }) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
+    assert.match(r.all,
+      /It closes the last chapter; voice\.mjs \(S3\) measures it, but it refuses this timeline as it stands: timing\.segments\[0\] \("one"\) is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/i, r.all);
+  });
+
+  test('writeSubtitles_durationNotANumberWithAMalformedDeclaration_namesTheDeclarationAndNoStage', (t) => {
+    const segments = voicedSilentMiddle();
+    segments[1].silence.caption = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 'unknown' }), ...voicedClips() });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all,
+      /It bounds the last cue, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("intermission"\) is declared silent but its `silence\.caption` is ""/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+  });
+
+  test('writeChapters_durationNotANumberInAnEntirelySilentTimelineWhereRemixWouldRun_namesRemix', (t) => {
+    const segments = [
+      { id: 'slide', startMs: 0, endMs: 960, voiceoverText: '', silence: { caption: '[title card]' },
+        audio: { file: 'segment_01.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] } },
+      { id: 'gap', startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' },
+        audio: { file: 'segment_02.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] } },
+    ];
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments, { durationMs: 'unknown' }),
+      'segment_01.mp3': clipBytes(960, SILENT_MARKER),
+      'segment_02.mp3': clipBytes(960, SILENT_MARKER),
+    });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all,
+      /It closes the last chapter; every segment is declared silent, so there is no narration to measure: run remix\.mjs \(S4\), which generates the silence and measures the timeline, with no re-voice/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs/, r.all);
+  });
+
+  test('writeChapters_durationNotANumberWhereTheVoiceStageWouldRefuse_saysWhy', (t) => {
+    const segments = silentMiddleSegments();
+    segments[0].voiceoverText = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments, { durationMs: 'unknown' }) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all,
+      /It closes the last chapter; voice\.mjs \(S3\/S4\) measures it, but it refuses this timeline as it stands: timing\.segments\[0\] \("one"\) is narrated but has no narration text/, r.all);
+    assert.doesNotMatch(r.all, /run voice\.mjs/i, r.all);
+  });
+
+  test('writeChapters_silentWindowEndWrittenAsAStringWithAMalformedDeclaration_namesTheDeclarationAndNoStage', (t) => {
+    // Correcting the field alone leaves a malformed declaration (a blank caption), so the
+    // message reports it instead of naming remix as the stage that reflows the window.
+    const segments = voicedSilentMiddle();
+    segments[1].endMs = '5000';
+    segments[1].silence.caption = '';
+    const dir = makeProject(t, { 'timing.json': timingWith(segments), ...voicedClips() });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all,
+      /endMs is a string \(4 characters\) — write it as a number of milliseconds, >= 0 and greater than startMs \(480\)\. A malformed silence declaration is reported here instead: timing\.segments\[1\] \("intermission"\) is declared silent but its `silence\.caption` is ""/, r.all);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, r.all);
+  });
+
+  // ---- R8-1: the advice that ends a remix collision refusal, on its routes outside remix -------
+  // Each fixture below was measured to print that advice: write-chapters and write-subtitles in
+  // a duration remedy, validate-timing in a lineage note and in a NOT REFLOWED repair. Each pin
+  // matches one whole line, from where the route starts it to the end of the advice. Anchored at
+  // both ends, it fails when the advice loses its tail or gains one.
+  const wholeLine = (start, end) => new RegExp(`^${escape(start)}[^\\n]*${escape(end)}\\r?$`, 'm');
+  // Names, sizes and mtimes: the "nothing was written" check.
+  const listing = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort()
+    .map((f) => { const s = fs.statSync(path.join(dir, f)); return `${f}:${s.size}:${s.mtimeMs}`; });
+
+  for (const [stage, script, argSets] of [
+    ['writeChapters', 'write-chapters.mjs', [[], ['--list'], ['--apply']]],
+    ['writeSubtitles', 'write-subtitles.mjs', [[], ['--apply']]],
+  ]) {
+    test(`${stage}_durationShortWhereANarratedRecordNamesTheSilentClip_endsWithTheReplaceRunAndWhatItOverwrites`, (t) => {
+      // Narrated "one" names segment_02.mp3, the name that belongs to silent "break"'s
+      // position, as if the timeline was reordered after voice ran.
+      const segments = spokenThenSilent('Alpha go.', alphaGo);
+      segments[0].audio.file = 'segment_02.mp3';
+      segments[1].audio = { file: 'segment_01.mp3', durationMs: 960, headMs: 0, tailMs: 0, words: [] };
+      const dir = makeProject(t, {
+        'timing.json': timingWith(segments, { durationMs: 1000 }),
+        'segment_01.mp3': clipBytes(960, SILENT_MARKER),
+        'segment_02.mp3': clipBytes(960, MARKER_ONE),
+      });
+      const before = listing(dir);
+
+      for (const args of argSets) {
+        const r = runScript(script, args, dir);
+
+        assertCleanExit(r, EXIT.FAILED, `${script} ${args.join(' ') || '(plan)'}: a duration shorter than the last window must fail: `);
+        assert.match(r.all, wholeLine('error: timing.durationMs is 1000 — ',
+          `Then run remix.mjs --apply --replace: --replace because segment_02.mp3 is still there, and this run overwrites it with timing.segments[1] ("break")'s silence`), r.all);
+        assert.equal(r.all.trimEnd().split(/\r?\n/).length, 1, `one line of output\n${r.all}`);
+        assert.deepEqual(listing(dir), before, 'nothing may be written');
+      }
+    });
+  }
+
+  // "three" silenced in place, as validateTiming_segmentDeclaredSilentSinceMeasured_* silences
+  // it, while narrated "one"'s record names segment_03.mp3: the name remix gives three's clip.
+  const threeSilencedOverOnesClip = () => {
+    const segments = voicedSilentMiddle();
+    segments[2].voiceoverText = '';
+    segments[2].silence = { caption: '[applause]' };
+    segments[2].audio = { file: 'segment_002.mp3', durationMs: 720, headMs: 0, tailMs: 0, words: [] };
+    segments[0].audio.file = 'segment_03.mp3';
+    return segments;
+  };
+  const threesArm =
+    `Then run remix.mjs --apply --replace: --replace because segment_03.mp3 is still there, and this run overwrites it with segment "three"'s silence.`;
+
+  test('validateTiming_silencedLineageWhereANarratedRecordNamesTheSilentClip_endsWithTheReplaceRunAndWhatItOverwrites', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(threeSilencedOverOnesClip()),
+      'calibration-observed.json': voiceCalibration(),
+      'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+      'segment_002.mp3': clipBytes(720, SILENT_MARKER),
+      'segment_03.mp3': clipBytes(480, MARKER_ONE),
+    });
+    const before = listing(dir);
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'lineage is advisory: ');
+    assert.match(r.all, wholeLine('  remix.mjs (S4) refuses this timeline as it stands: ', threesArm), r.all);
+    assert.equal(r.all.split(threesArm).length - 1, 1, `the lineage note alone prints it\n${r.all}`);
+    assert.deepEqual(listing(dir), before, 'nothing may be written');
+  });
+
+  test('validateTiming_unreflowedSilentWindowWhereANarratedRecordNamesItsClip_endsWithTheReplaceRunAndWhatItOverwrites', (t) => {
+    const segments = threeSilencedOverOnesClip();
+    segments[2].endMs += 240; // a 960 ms window against a record of 720 ms
+    const dir = makeProject(t, {
+      'timing.json': timingWith(segments),
+      'segment_001.mp3': clipBytes(960, SILENT_MARKER),
+      'segment_002.mp3': clipBytes(720, SILENT_MARKER),
+      'segment_03.mp3': clipBytes(480, MARKER_ONE),
+    });
+    const before = listing(dir);
+
+    const r = runScript('validate-timing.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a silent window its record does not describe must fail: ');
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.match(r.all,
+      wholeLine('  segment "three" window is 960ms, but its audio record describes 720ms of generated silence', threesArm), r.all);
+    assert.equal(r.all.split(threesArm).length - 1, 1, `the NOT REFLOWED repair alone prints it\n${r.all}`);
+    assert.deepEqual(listing(dir), before, 'nothing may be written');
+  });
+
+  // ---- R5-4: the stages read the project's timing.json, whatever file --timing selects -------
+  // A stage named as the step for another file would read a different timeline, or none.
+  const installStep = /The stages read [^\n]*timing\.json, not [^\n]*alt\.json\. To act on the file this run checked, install it as timing\.json( \(replacing the timing\.json there now\))? and run validate-timing again without --timing: that run decides the stage\./;
+
+  test('validateTiming_alternateTimingFileWithNoProjectTiming_namesNoStageAndSaysToInstallIt', (t) => {
+    const dir = makeProject(t, { 'alt.json': timingWith(widenedIntermission()), ...voicedClips() });
+
+    const r = runScript('validate-timing.mjs', ['--timing', 'alt.json'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'an unreflowed silent window fails in whichever file it is: ');
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.doesNotMatch(r.all, /remix\.mjs|voice\.mjs/, `remix and voice read timing.json, and there is none\n${r.all}`);
+    assert.match(r.all, installStep, r.all);
+    assert.doesNotMatch(r.all, /replacing/, `there is no timing.json to replace\n${r.all}`);
+  });
+
+  test('validateTiming_alternateTimingFileBesideADifferentProjectTiming_saysTheInstallReplacesIt', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(voicedSilentMiddle()),
+      'alt.json': timingWith(widenedIntermission()),
+      ...voicedClips(),
+    });
+
+    const r = runScript('validate-timing.mjs', ['--timing', 'alt.json'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.doesNotMatch(r.all, /remix\.mjs|voice\.mjs/, `remix and voice would act on the timing.json beside it\n${r.all}`);
+    assert.match(r.all, installStep, r.all);
+    assert.match(r.all, /install it as timing\.json \(replacing the timing\.json there now\)/, r.all);
+  });
+
+  test('validateTiming_alternateTimingFileWithStaleLineage_namesNoStage', (t) => {
+    // The lineage branches and the missing-rate error go through the same decision.
+    const stale = voicedSilentMiddle();
+    stale[0].voiceoverText = 'hello there my friend';
+    const dir = makeProject(t, {
+      'timing.json': timingWith(voicedSilentMiddle()),
+      'alt.json': timingWith(stale),
+      'calibration-observed.json': voiceCalibration(),
+      ...voicedClips(),
+    });
+
+    const r = runScript('validate-timing.mjs', ['--timing', 'alt.json'], dir);
+
+    assert.match(r.all, /calibration lineage: STALE — segment "one" now has 4 word\(s\)/, r.all);
+    assert.doesNotMatch(r.all, /Re-run the\s+voice stage|voice\.mjs|remix\.mjs/, r.all);
+    assert.match(r.all, installStep, r.all);
+
+    fs.writeFileSync(path.join(dir, 'calibration-observed.json'),
+      JSON.stringify({ voiceId: 'en-US-AvaNeural', roundedSpeed: 1, aggregate: {}, segments: [] }));
+    const rate = runScript('validate-timing.mjs', ['--timing', 'alt.json'], dir);
+
+    assert.match(rate.all, /carries no `aggregate\.observedEffWps`/, rate.all);
+    assert.doesNotMatch(rate.all, /Re-run the voice stage|voice\.mjs \(S3\)/, rate.all);
+    assert.match(rate.all, /Delete it to fall back to intake\.wordsPerSecond deliberately/, rate.all);
+    assert.match(rate.all, installStep, rate.all);
+  });
+
+  // REGRESSION GUARD (passes before and after): every spelling of the project's own
+  // timing.json names the file the stages read, before remix republishes it and after, so it
+  // is the default. Each runs the stage the default names, and is asked again.
+  const projectWhoseTimingRemixWouldReflow = (t) => makeProject(t, {
+    'timing.json': timingWith(widenedIntermission()),
+    'calibration-observed.json': voiceCalibration(),
+    ...voicedClips(),
+  });
+  for (const [spelled, spell, unavailable] of [
+    ['AsTheDefault', () => 'timing.json'],
+    ['AsAnAbsolutePath', (dir) => path.join(dir, 'timing.json')],
+    ['InUpperCase', () => (process.platform === 'win32' ? 'TIMING.JSON' : null), 'names differ by case off Windows'],
+    ['DotRelativeInUpperCase', () => (process.platform === 'win32' ? '.\\TIMING.JSON' : null), 'names differ by case off Windows'],
+    ['ByItsShortName', (dir) => shortNameOf(path.join(dir, 'timing.json')),
+      'no 8.3 short name here: not Windows, or this volume does not generate them'],
+    ['ThroughAnInRootLink', (dir) => (tryMakeFileLink(path.join(dir, 'link.json'), 'timing.json') ? 'link.json' : null),
+      'platform refused to create a file link'],
+  ]) {
+    test(`validateTiming_timingFlagNamingTheProjectTimingFile${spelled}_printsWhatARunWithoutItPrintsBeforeAndAfterRemix`, (t) => {
+      const dir = projectWhoseTimingRemixWouldReflow(t);
+      const spelling = spell(dir);
+      if (spelling === null) return t.skip(unavailable);
+      const plain = runScript('validate-timing.mjs', [], dir);
+      assertCleanExit(plain, EXIT.FAILED, 'the widened window fails until remix reflows it: ');
+      assert.match(plain.all, /Run remix\.mjs \(S4\)/, `the run without --timing names remix\n${plain.all}`);
+
+      const r = runScript('validate-timing.mjs', ['--timing', spelling], dir);
+
+      assert.equal(r.code, plain.code, `--timing ${spelling}\n${r.all}`);
+      assert.equal(r.all, plain.all, `--timing ${spelling} is the project's timing.json`);
+
+      assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK,
+        'the stage the default named must run: ');
+      const after = runScript('validate-timing.mjs', ['--timing', spelling], dir);
+
+      assert.doesNotMatch(after.all, /NOT REFLOWED/, `--timing ${spelling} must read the timeline remix published\n${after.all}`);
+      if (spelled === 'ByItsShortName' && !fs.existsSync(path.join(dir, spelling))) {
+        // Measured both ways: a short name can follow the replaced file's name, or go with it.
+        t.diagnostic(`${spelling} went with the file remix replaced; validate reports it missing`);
+        assertCleanExit(after, EXIT.USAGE, 'a short name that names nothing is a missing file: ');
+        assert.match(after.all, /timing file not found: /, after.all);
+      } else {
+        if (spelled === 'ByItsShortName') t.diagnostic(`${spelling} now names the timing.json remix published`);
+        assertCleanExit(after, EXIT.OK, `--timing ${spelling} after remix: `);
+      }
+    });
+  }
+
+  test('validateTiming_timingFlagNamingAHardLinkOfTheProjectTimingFile_namesNoStageAndSaysWhatARenameLeavesIt', (t) => {
+    // A hard link is the project's timing.json only until a stage republishes it by rename,
+    // so the stage a run without --timing names would repair a file the link no longer reads.
+    const dir = projectWhoseTimingRemixWouldReflow(t);
+    try {
+      fs.linkSync(path.join(dir, 'timing.json'), path.join(dir, 'same-file.json'));
+    } catch {
+      return t.skip('platform refused to hard-link');
+    }
+    const hardLink = new RegExp('[^\\n]*same-file\\.json is a hard link to [^\\n]*timing\\.json, the file the stages read\\. ' +
+      'A stage that rewrites the timeline can replace that file with a new one rather than write through it, which would ' +
+      'leave [^\\n]*same-file\\.json holding the timeline this run checked\\. Run validate-timing again without --timing: ' +
+      'that run decides the stage, on the file the stages read\\.');
+
+    const r = runScript('validate-timing.mjs', ['--timing', 'same-file.json'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'an unreflowed silent window fails in whichever file it is: ');
+    assert.match(r.all, /declared silence: NOT REFLOWED/, r.all);
+    assert.doesNotMatch(r.all, /remix\.mjs|voice\.mjs/, `remix would replace timing.json and leave the link behind\n${r.all}`);
+    assert.match(r.all, hardLink, r.all);
+    assert.doesNotMatch(r.all, /install/, `installing the link as timing.json would copy a file onto itself\n${r.all}`);
+
+    const plain = runScript('validate-timing.mjs', [], dir);
+    assertCleanExit(plain, EXIT.FAILED);
+    assert.match(plain.all, /Run remix\.mjs \(S4\)/, plain.all);
+    assertCleanExit(runScript('remix.mjs', ['--apply', '--replace'], dir, { nodeArgs: ['--import', FAKE_AUDIO] }), EXIT.OK,
+      'the stage the default named must run: ');
+    assertCleanExit(runScript('validate-timing.mjs', [], dir), EXIT.OK, 'remix repaired the file the stages read: ');
+
+    const left = runScript('validate-timing.mjs', ['--timing', 'same-file.json'], dir);
+
+    assertCleanExit(left, EXIT.FAILED, 'the link kept the timeline it was checked with, as the sentence said: ');
+    assert.match(left.all, /declared silence: NOT REFLOWED/, left.all);
+  });
+
+  test('validateTiming_timingFlagNamingAHardLinkWhereTheVolumeReportsNoFileIds_saysToInstallIt', (t) => {
+    // CHARACTERIZATION (passes before and after): with no file IDs a hard link cannot be told
+    // from another file, so it is given the install step another file gets.
+    const dir = projectWhoseTimingRemixWouldReflow(t);
+    try {
+      fs.linkSync(path.join(dir, 'timing.json'), path.join(dir, 'same-file.json'));
+    } catch {
+      return t.skip('platform refused to hard-link');
+    }
+
+    const r = runScript('validate-timing.mjs', ['--timing', 'same-file.json'], dir, { nodeArgs: ['--import', zeroFileIds({ dir })] });
+
+    assert.match(r.all, ZERO_FILE_IDS_ARMED, `the volume must report no file IDs\n${r.all}`);
+    assertCleanExit(r, EXIT.FAILED);
+    assert.doesNotMatch(r.all, /remix\.mjs|voice\.mjs/, r.all);
+    assert.doesNotMatch(r.all, /is a hard link/, `with no file IDs a hard link cannot be told\n${r.all}`);
+    assert.match(r.all, /The stages read [^\n]*timing\.json, not [^\n]*same-file\.json\. To act on the file this run checked, install it as timing\.json \(replacing the timing\.json there now\)/, r.all);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canonicalName: the ONE answer to "what is this file called", shared by validate's
+// --timing decision, remix's plan accounting and remix's narrated-clip guard. Each caller
+// states its own policy for a failure; the function reports one rather than guessing.
+// ---------------------------------------------------------------------------
+describe('canonicalName', () => {
+  const load = async () => (await import('../src/silent-segment.mjs')).canonicalName;
+
+  test('canonicalName_pathThatDoesNotExist_isReturnedAsTyped', async (t) => {
+    const canonicalName = await load();
+    const dir = makeProject(t);
+    const absent = path.join(dir, 'Not-Here.MP3');
+
+    assert.equal(canonicalName(absent), absent, 'nothing exists to name, so the caller compares the text it has');
+  });
+
+  test('canonicalName_shortNameOrCaseVariantOfAFile_isItsLongName', async (t) => {
+    const canonicalName = await load();
+    const dir = makeProject(t, { 'voiceover.mp3': 'bytes' });
+    const long = canonicalName(path.join(dir, 'voiceover.mp3'));
+    assert.equal(path.basename(long), 'voiceover.mp3');
+    const spellings = [];
+    if (process.platform === 'win32') spellings.push('VOICEOVER.MP3');
+    const alias = shortNameOf(path.join(dir, 'voiceover.mp3'));
+    if (alias !== null) spellings.push(alias);
+    if (spellings.length === 0) return t.skip('names differ by case off Windows, and no 8.3 short name is generated here');
+
+    for (const spelling of spellings) assert.equal(canonicalName(path.join(dir, spelling)), long, spelling);
+  });
+
+  test('canonicalName_linkInsideTheProject_isTheNameOfTheFileItLeadsTo', async (t) => {
+    const canonicalName = await load();
+    const dir = makeProject(t, { 'voiceover.mp3': 'bytes' });
+    if (!tryMakeFileLink(path.join(dir, 'link.mp3'), 'voiceover.mp3')) return t.skip('platform refused to create a file link');
+
+    assert.equal(canonicalName(path.join(dir, 'link.mp3')), canonicalName(path.join(dir, 'voiceover.mp3')));
+  });
+
+  test('canonicalName_failureOtherThanAbsence_isThrownForTheCallerToDecide', async (t) => {
+    const canonicalName = await load();
+    const dir = makeProject(t);
+
+    assert.throws(() => canonicalName(path.join(dir, 'nul\0byte.mp3')), (err) => err.code === 'ERR_INVALID_ARG_VALUE',
+      'a name the platform cannot ask about is not an absent one');
+    const looped = tryMakeFileLink(path.join(dir, 'a.mp3'), 'b.mp3') && tryMakeFileLink(path.join(dir, 'b.mp3'), 'a.mp3');
+    if (!looped) return t.skip('platform refused to create a file link');
+    assert.throws(() => canonicalName(path.join(dir, 'a.mp3')), (err) => err.code === 'ELOOP',
+      'a loop of links names no file, and is not an absent one either');
   });
 });

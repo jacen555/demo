@@ -18,7 +18,7 @@ import { describe, test, before, after } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { EXIT } from '../src/cli-support.mjs';
-import { makeProject, runScript, footageProject } from './_helpers.mjs';
+import { makeProject, runScript, footageProject, FOOTAGE_FRAME_COUNT } from './_helpers.mjs';
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const INERT_GSAP = fs.readFileSync(path.join(fixturesDir, 'gsap-stub.js'), 'utf8');
@@ -103,6 +103,30 @@ async function openScene(t, htmlPath) {
       return value;
     },
   };
+}
+
+/** The frame footageProject's clip shows at `atMs`, by the runtime's own index rule. */
+const footageFrameAt = (atMs) =>
+  `frame_${String(Math.max(1, Math.min(FOOTAGE_FRAME_COUNT, Math.round((atMs / 1000) * FPS) + 1))).padStart(5, '0')}.jpg`;
+
+/**
+ * Asserts that the footage frame for `atMs` is on screen.
+ *
+ * `__setFootageFrame` resolves an EMPTY list when the frame it would load is already the
+ * one showing (`if(el.dataset.cur===url)return`), and fireTriggersUpTo starts that same
+ * load without awaiting it. So asking again returns [true] while the load is pending and
+ * [] once it has finished: asserting [true] raced the image decoder and failed about one
+ * run in three. probeFootageFrames in _helpers.mjs judges it the same way. Every load that
+ * was started must succeed, AND the layer must end up showing the expected frame, so an
+ * empty list passes only when that frame is already on screen.
+ */
+async function assertFootageFrameOnScreen(scene, atMs, message) {
+  const { outcomes, cur } = await scene.eval(async (ms) => {
+    const outcomes = await window.__setFootageFrame(ms);
+    return { outcomes, cur: document.querySelector('.sl.on .footage-layer')?.dataset.cur ?? null };
+  }, atMs);
+  assert.ok(outcomes.every((ok) => ok === true), `${message}: a frame load failed — outcomes ${JSON.stringify(outcomes)}`);
+  assert.equal(cur === null ? null : cur.split('/').pop(), footageFrameAt(atMs), `${message}: the footage layer shows ${JSON.stringify(cur)}`);
 }
 
 const lowContrast = (issues) => issues.filter((i) => i.reason === 'low-contrast');
@@ -332,7 +356,7 @@ describe('legibility audit (C-14)', () => {
       assert.equal(r.code, EXIT.OK, r.all);
       const scene = await openScene(t, path.join(dir, 'video-auto.html'));
       await scene.frameAt(1);
-      assert.deepEqual(await scene.eval(() => window.__setFootageFrame(1000)), [true], 'a footage frame must be on screen, or the backdrop is not footage');
+      await assertFootageFrameOnScreen(scene, 1000, 'a footage frame must be on screen, or the backdrop is not footage');
       await makeTransparent(scene);
       if (transparent) {
         const pe = await scene.eval((sel) => getComputedStyle(document.querySelector(sel)).pointerEvents, transparent);
@@ -351,6 +375,52 @@ describe('legibility audit (C-14)', () => {
       assert.deepEqual(after, before, 'the audit must leave every style attribute and pointer-events value as it found them');
     });
   }
+
+  // The footage precondition above must hold whichever way the image decoder races it, and
+  // must still fail when no frame can be on screen. Both directions are pinned here, with
+  // the race made deterministic, so the precondition cannot drift back to either flaky or
+  // vacuous.
+  test('footageFrameOnScreen_loadAlreadySettledWhenAsked_passesOnAnEmptyOutcomeList', async (t) => {
+    const dir = footageProject(t);
+    assert.equal(runScript('write-build-html.mjs', ['--apply', '--replace'], dir).code, EXIT.OK);
+    const scene = await openScene(t, path.join(dir, 'video-auto.html'));
+    await scene.frameAt(1);
+    // Wait out the load fireTriggersUpTo started, so the next request finds it on screen.
+    await scene.eval(() => window.__setFootageFrame(1000));
+    assert.deepEqual(await scene.eval(() => window.__setFootageFrame(1000)), [],
+      'precondition: a settled frame answers with an empty outcome list — the case that raced');
+
+    await assertFootageFrameOnScreen(scene, 1000, 'a settled footage frame is on screen');
+  });
+
+  test('footageFrameOnScreen_emptyOutcomeListWithNoFootageOnScreen_fails', async (t) => {
+    const dir = footageProject(t);
+    assert.equal(runScript('write-build-html.mjs', ['--apply', '--replace'], dir).code, EXIT.OK);
+    const scene = await openScene(t, path.join(dir, 'video-auto.html'));
+    // Segment "two" has no footage, so nothing loads and the outcome list is empty.
+    await scene.frameAt(3);
+    assert.deepEqual(await scene.eval(() => window.__setFootageFrame(3000)), [],
+      'precondition: no footage layer covers this instant');
+
+    await assert.rejects(
+      assertFootageFrameOnScreen(scene, 3000, 'no footage slide is on screen'),
+      /no footage slide is on screen: the footage layer shows null/,
+    );
+  });
+
+  test('footageFrameOnScreen_frameCannotLoad_fails', async (t) => {
+    const dir = footageProject(t);
+    assert.equal(runScript('write-build-html.mjs', ['--apply', '--replace'], dir).code, EXIT.OK);
+    // Built with a valid frame set, then the frames are removed, so every image load fails.
+    fs.rmSync(path.join(dir, 'evidence-pack', 'footage', 'myclip'), { recursive: true });
+    const scene = await openScene(t, path.join(dir, 'video-auto.html'));
+    await scene.frameAt(1);
+
+    await assert.rejects(
+      assertFootageFrameOnScreen(scene, 1000, 'no footage frame can load'),
+      /no footage frame can load: a frame load failed — outcomes \[false\]/,
+    );
+  });
 
   test('auditLegibility_noSamplePointLandsOnTheText_reportsContrastUnverified', async (t) => {
     // Nine points sample what is under the text. When none lands on it, as between two glyphs set

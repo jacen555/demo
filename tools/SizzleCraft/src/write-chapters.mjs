@@ -39,6 +39,9 @@ import {
   describeWrite,
   planFooter,
 } from './cli-support.mjs';
+import {
+  isSilentSegment, durationShortfallRemedy, durationMeasureRemedy, silentWindowFieldProblem, narratedWindowFieldRemedy,
+} from './silent-segment.mjs';
 
 const USAGE = `
 write-chapters — add MP4 chapter markers, one per segment, taken from the measured
@@ -198,7 +201,7 @@ function readTimeline(projectDir) {
   if (timing === null || typeof timing !== 'object' || Array.isArray(timing)) {
     throw new CliError(`timing.json holds ${describeValue(timing)}, not a timeline object`, EXIT.FAILED);
   }
-  const problems = timelineProblems(timing);
+  const problems = timelineProblems(timing, projectDir);
   if (problems.length) throw new CliError(summarise(problems), EXIT.FAILED);
   return timing;
 }
@@ -211,8 +214,11 @@ function readTimeline(projectDir) {
  * So every chapter window is proven positive here — a segment window that is positive and
  * follows the previous one makes each start strictly later than the last, and a duration
  * no shorter than the last segment closes the final chapter after it opens.
+ *
+ * A stage named as a remedy is asked first whether it would run on this project (see
+ * silent-segment.mjs), which is why the project directory is passed.
  */
-function timelineProblems(timing) {
+function timelineProblems(timing, projectDir) {
   const segs = timing.segments;
   if (!Array.isArray(segs) || !segs.length) {
     const what = Array.isArray(segs) ? 'empty' : describeValue(segs);
@@ -221,6 +227,7 @@ function timelineProblems(timing) {
   const problems = [];
   let prev = null;
   let lastEndMs = null;
+  let lastIndex = null; // the segment that ends last: what it holds decides which stage re-measures the duration
   segs.forEach((s, i) => {
     const where = segmentLabel(s, i);
     if (s === null || typeof s !== 'object' || Array.isArray(s)) {
@@ -235,9 +242,14 @@ function timelineProblems(timing) {
     }
     const unmeasured = ['startMs', 'endMs'].filter(k => !isMs(s[k]));
     for (const k of unmeasured) {
-      problems.push(
-        `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
-          'Run voice.mjs (S3/S4) first',
+      // A declared silent window is authored, not measured: it is corrected by hand, and
+      // re-voicing is never its repair.
+      problems.push(isSilentSegment(s)
+        ? silentWindowFieldProblem({
+          dir: projectDir, timing, index: i, field: k, fields: unmeasured, shown: describeValue(s[k]), labelOf: segmentLabel,
+        })
+        : `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
+          narratedWindowFieldRemedy(projectDir, timing, segmentLabel),
       );
     }
     if (unmeasured.length) return;
@@ -252,15 +264,22 @@ function timelineProblems(timing) {
       );
     }
     prev = { where, endMs: s.endMs };
+    if (lastEndMs === null || s.endMs >= lastEndMs) lastIndex = i;
     lastEndMs = Math.max(lastEndMs ?? 0, s.endMs);
   });
 
   const d = timing.durationMs;
   if (!isMs(d) || (lastEndMs !== null && d < lastEndMs)) {
     const floor = lastEndMs === null ? '' : `, no shorter than the last segment (which ends at ${lastEndMs} ms)`;
+    // A measured duration short of the last window means some window changed after the
+    // audio was measured. silent-segment.mjs decides which stage re-measures it — remix
+    // for a silence edit, voice otherwise, each only where it would run — for
+    // write-subtitles too, so the two agree.
+    const remedy = !isMs(d)
+      ? durationMeasureRemedy('It closes the last chapter', projectDir, timing, segmentLabel)
+      : durationShortfallRemedy('It closes the last chapter', projectDir, timing, lastIndex, segmentLabel);
     problems.push(
-      `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ` +
-        'It closes the last chapter; run voice.mjs (S3/S4) to measure it',
+      `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ${remedy}`,
     );
   }
   return problems;

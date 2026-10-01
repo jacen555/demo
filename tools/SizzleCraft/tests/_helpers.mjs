@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-import { spawnSync, spawn } from 'node:child_process';
+import { spawnSync, spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -114,6 +114,51 @@ export function failClose({ dir, fragment }) {
   const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-close.mjs'));
   url.search = new URLSearchParams({ dir, fragment }).toString();
   return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes every stat the engine reads report inode 0 for
+ * the paths inside `dir`, as a volume with no file IDs does, announcing itself on stderr.
+ * `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/zero-file-ids.mjs.
+ */
+export function zeroFileIds({ dir }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'zero-file-ids.mjs'));
+  url.search = new URLSearchParams({ dir }).toString();
+  return url.href;
+}
+
+/** The line zero-file-ids.mjs writes once armed, which a test asserts so the IDs were really withheld. */
+export const ZERO_FILE_IDS_ARMED = /^zero-file-ids: armed — inode 0 for every path inside /m;
+
+/**
+ * The --import URL of a preload that makes fs.lstatSync fail with EPERM for the entries of
+ * `dir` whose names are exactly one of `names`, announcing itself and each refusal on
+ * stderr. `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/fail-lstat.mjs.
+ */
+export function failLstat({ dir, names }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-lstat.mjs'));
+  url.search = new URLSearchParams([['dir', dir], ...names.map((name) => ['name', name])]).toString();
+  return url.href;
+}
+
+/** The line fail-lstat.mjs writes once armed, which a test asserts so the failure was really staged. */
+export const FAIL_LSTAT_ARMED = /^fail-lstat: armed — lstat fails for /m;
+
+/**
+ * The 8.3 short name Windows generated for `file`, or null when it has none. Generation is
+ * per volume and can be switched off, so it is asked of the filesystem, never assumed.
+ */
+export function shortNameOf(file) {
+  if (process.platform !== 'win32') return null;
+  let out;
+  try {
+    out = execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"for %I in ("${file}") do @echo %~sI"`],
+      { encoding: 'utf8', windowsVerbatimArguments: true });
+  } catch {
+    return null;
+  }
+  const alias = path.basename(out.trim());
+  return alias !== '' && alias.toLowerCase() !== path.basename(file).toLowerCase() ? alias : null;
 }
 
 /**

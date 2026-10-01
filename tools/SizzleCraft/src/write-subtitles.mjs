@@ -31,7 +31,10 @@ import {
   describeWrite,
   planFooter,
 } from './cli-support.mjs';
-import { isSilentSegment, silentSegmentProblems, silentCaption } from './silent-segment.mjs';
+import {
+  isSilentSegment, silentSegmentProblems, silentCaption, durationShortfallRemedy, durationMeasureRemedy,
+  silentWindowFieldProblem, narratedWindowFieldRemedy, voiceBlocker, remixBlocker, gatedRemedy, declareSilentRemedy,
+} from './silent-segment.mjs';
 
 const USAGE = `
 write-subtitles — WebVTT and SRT caption sidecars cut from the measured word timings in
@@ -47,7 +50,10 @@ Options
   --max-cps <n>     reading-speed ceiling in characters per second, 5..60 (default: 20)
   --min-cue <ms>    shortest time a cue stays on screen, 100..10000 (default: 900)
   --hold <ms>       how long a cue stays up into the pause after its last word, 0..10000
-                    (default: 1200). Never past the next cue or the end of the timeline.
+                    (default: 1200). Never past the end of the timeline or into a
+                    silent segment's cue. It stops at least 40 ms short of a spoken cue,
+                    except that a cue starting within 40 ms of the next spoken one still
+                    gets 200 ms on screen, which overlaps it.
   --embed           also write <project>-with-music-subtitled.mp4: <project>-with-music.mp4
                     with the SRT muxed in as a soft mov_text track. Reads ffmpeg from
                     ffmpeg-path.txt in the project root.
@@ -213,17 +219,32 @@ cues.sort((a, b) => a.startMs - b.startMs);
 // Hold each cue into the pause that follows it. A viewer reads for as long as the cue is
 // ON SCREEN, not for as long as the words were spoken, so reading speed must be measured
 // against display duration — and extending into the natural pause is free readability.
-// Never run into the next cue, and never past the end of the timeline.
+// Never past the end of the timeline, and never into a silent cue. A spoken cue stops 40 ms
+// short of the next spoken one, except where it starts within 40 ms of it: it still gets
+// 200 ms on screen, and overlaps it.
 //
 // A SILENT CUE IS NOT HELD. Its window is authored, not measured, so stretching it would
 // make the sidecar disagree with the timeline it was derived from — and "[music]" is not
 // text a viewer needs extra time to read.
+//
+// A cue BEFORE a silent cue keeps its 40 ms clearance only where that does not cut its own
+// last word short. No gap is inserted at a seam that touches a silent segment, so a spoken
+// cue's last word can end right where the silent cue begins; the clearance kept from a
+// spoken neighbour would then take the end of that word off screen while it is still being
+// said. It never runs past the silent cue's start either: a word that would has already
+// been refused by timelineProblems, because no cue can show it without overlapping one
+// that is authored. A spoken neighbour keeps exactly the rule it always had.
 for (let i = 0; i < cues.length; i++) {
   if (cues[i].silent) continue;
   const next = cues[i + 1];
-  const ceiling = next ? next.startMs - 40 : timing.durationMs;
+  const spokenEndMs = cues[i].endMs;
+  const ceiling = !next ? timing.durationMs
+    : next.silent ? Math.max(next.startMs - 40, Math.min(spokenEndMs, next.startMs))
+    : next.startMs - 40;
   cues[i].endMs = Math.min(Math.max(cues[i].endMs + HOLD_MS, cues[i].startMs + MIN_CUE_MS), ceiling);
-  if (cues[i].endMs <= cues[i].startMs) cues[i].endMs = cues[i].startMs + 200;
+  if (cues[i].endMs <= cues[i].startMs) {
+    cues[i].endMs = next?.silent ? Math.min(cues[i].startMs + 200, next.startMs) : cues[i].startMs + 200;
+  }
 }
 
 // ---- wrap to <=2 balanced lines -------------------------------------------------------
@@ -440,7 +461,7 @@ function readTimeline(root) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new CliError(`timing.json holds ${describeValue(parsed)}, not a timeline object`, EXIT.FAILED);
   }
-  const problems = timelineProblems(parsed);
+  const problems = timelineProblems(parsed, root);
   if (problems.length) throw new CliError(summarise(problems), EXIT.FAILED);
   return parsed;
 }
@@ -449,15 +470,25 @@ function readTimeline(root) {
  * Everything that would put a wrong or unreadable cue into the sidecars, as human-readable
  * lines: segment windows that are unmeasured, empty or out of order; a duration that
  * cannot bound the last cue; and measured words that are not finite, ordered times.
+ *
+ * A stage named as a remedy is asked first whether it would run on this project (see
+ * silent-segment.mjs), which is why the project root is passed. Each is asked once, and
+ * only if a remedy needs it.
  */
-function timelineProblems(t) {
+function timelineProblems(t, root) {
   const segs = t.segments;
   if (!Array.isArray(segs) || !segs.length) {
     return [`timing.segments is ${Array.isArray(segs) ? 'empty' : describeValue(segs)} — there is nothing to caption`];
   }
+  const gate = {};
+  const gates = {
+    voice: () => (gate.voice !== undefined ? gate.voice : (gate.voice = voiceBlocker(root, t, segmentLabel))),
+    remix: () => (gate.remix !== undefined ? gate.remix : (gate.remix = remixBlocker(root, t, segmentLabel))),
+  };
   const problems = [];
   let prev = null;
   let lastEndMs = null;
+  let lastIndex = null; // the segment that ends last: what it holds decides which stage re-measures the duration
   segs.forEach((s, i) => {
     const where = segmentLabel(s, i);
     if (s === null || typeof s !== 'object' || Array.isArray(s)) {
@@ -466,9 +497,14 @@ function timelineProblems(t) {
     }
     const unmeasured = ['startMs', 'endMs'].filter(k => !isMs(s[k]));
     for (const k of unmeasured) {
-      problems.push(
-        `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
-          'Run voice.mjs (S3/S4) first',
+      // A declared silent window is authored, not measured: it is corrected by hand, and
+      // re-voicing is never its repair.
+      problems.push(isSilentSegment(s)
+        ? silentWindowFieldProblem({
+          dir: root, timing: t, index: i, field: k, fields: unmeasured, shown: describeValue(s[k]), labelOf: segmentLabel,
+        })
+        : `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
+          narratedWindowFieldRemedy(root, t, segmentLabel),
       );
     }
     if (unmeasured.length) return;
@@ -483,16 +519,24 @@ function timelineProblems(t) {
       );
     }
     prev = { where, endMs: s.endMs };
+    if (lastEndMs === null || s.endMs >= lastEndMs) lastIndex = i;
     lastEndMs = Math.max(lastEndMs ?? 0, s.endMs);
-    problems.push(...(isSilentSegment(s) ? silentSegmentProblems(s, where) : wordProblems(s, where)));
+    problems.push(...(isSilentSegment(s) ? silentSegmentProblems(s, where) : wordProblems(s, where, gates)));
   });
+  problems.push(...spokenWordsInSilentWindows(segs, gates));
 
   const d = t.durationMs;
   if (!isMs(d) || (lastEndMs !== null && d < lastEndMs)) {
     const floor = lastEndMs === null ? '' : `, no shorter than the last segment (which ends at ${lastEndMs} ms)`;
+    // A measured duration short of the last window means some window changed after the
+    // audio was measured. silent-segment.mjs decides which stage re-measures it — remix
+    // for a silence edit, voice otherwise, each only where it would run — for
+    // write-chapters too, so the two agree.
+    const remedy = !isMs(d)
+      ? durationMeasureRemedy('It bounds the last cue', root, t, segmentLabel)
+      : durationShortfallRemedy('It bounds the last cue', root, t, lastIndex, segmentLabel);
     problems.push(
-      `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ` +
-        'It bounds the last cue; run voice.mjs (S3/S4) to measure it',
+      `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ${remedy}`,
     );
   }
   return problems;
@@ -504,15 +548,18 @@ function timelineProblems(t) {
  * A DELIBERATELY SILENT SEGMENT IS NOT AN UNSYNTHESISED ONE. Both have no `audio.words`, so
  * the no-words refusal used to fire on both — naming a cause ("run voice.mjs") that is
  * simply wrong for an intermission. The `silence` declaration separates them, and only an
- * undeclared segment reaches this.
+ * undeclared segment reaches this. The voice stage is named as the step only where it
+ * would run, and the declaration it offers instead is one every stage accepts.
  */
-function wordProblems(seg, where) {
+function wordProblems(seg, where, gates) {
   const w = seg.audio?.words;
   if (!Array.isArray(w) || !w.length) {
+    const voice = gates.voice();
     return [
-      `${where} has no audio.words — run voice.mjs (S3) first. ` +
+      `${where} has no audio.words — ${voice === null ? 'run voice.mjs (S3) first'
+        : gatedRemedy(voice, { stem: 'voice.mjs (S3) measures them' }, { factOnly: true })}. ` +
         'Subtitles are generated from measured word boundaries, not from the script. ' +
-        '(If this segment is meant to be silent, declare it with a "silence" block instead.)',
+        `(If this segment is meant to be silent, ${declareSilentRemedy(seg)} instead.)`,
     ];
   }
   const problems = [];
@@ -542,6 +589,44 @@ function wordProblems(seg, where) {
 
 function isMs(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Measured spoken words that fall inside a declared silent window.
+ *
+ * A silent window is authored and is captioned by its own cue, so a spoken word inside it
+ * cannot be shown without overlapping that cue, and trimming the word's cue to fit would
+ * hide a contradiction in the timeline rather than caption it. A zero-length word AT the
+ * window's start counts as inside; a word ending exactly where the window starts does not.
+ * Only well-formed words and windows are compared — anything else is reported elsewhere.
+ * Each stage it names is named as the step only where it would run.
+ */
+function spokenWordsInSilentWindows(segs, gates) {
+  const windows = segs.flatMap((q, k) =>
+    isSilentSegment(q) && isMs(q.startMs) && isMs(q.endMs) && q.endMs > q.startMs ? [{ q, k }] : []);
+  if (!windows.length) return [];
+  const problems = [];
+  segs.forEach((s, i) => {
+    if (s === null || typeof s !== 'object' || isSilentSegment(s) || !Array.isArray(s.audio?.words)) return;
+    s.audio.words.forEach((w, j) => {
+      if (w === null || typeof w !== 'object' || !isMs(w.startMs) || !isMs(w.endMs) || w.endMs < w.startMs) return;
+      const hit = windows.find(({ q }) => w.startMs < q.endMs && (w.endMs > q.startMs || w.startMs >= q.startMs));
+      if (!hit) return;
+      problems.push(
+        `${segmentLabel(s, i)}: audio.words[${j}] (${w.startMs} -> ${w.endMs} ms) runs into ` +
+          `${segmentLabel(hit.q, hit.k)}, which is declared silent from ${hit.q.startMs} to ${hit.q.endMs} ms — ` +
+          'a spoken word cannot be captioned inside an authored silent window. If the silent window was edited, ' +
+          `${gatedRemedy(gates.remix(), {
+            open: 'run remix.mjs (S4) to reflow the timeline around it',
+            stem: 'remix.mjs (S4) reflows the timeline around it',
+          }, { factOnly: true })}; if the narration changed, ${gatedRemedy(gates.voice(), {
+            open: 'run voice.mjs (S3)',
+            stem: 'voice.mjs (S3) re-measures it',
+          }, { factOnly: true })}`,
+      );
+    });
+  });
+  return problems;
 }
 
 function segmentLabel(s, i) {

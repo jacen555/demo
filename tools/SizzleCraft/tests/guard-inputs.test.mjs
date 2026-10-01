@@ -23,6 +23,7 @@ import {
   runScript,
   timingFixture,
   contiguousSegments,
+  wordedSegments,
   brandTokens,
   tryMakeDirLink,
   tryMakeFileLink,
@@ -616,7 +617,8 @@ describe('complete write set', () => {
   });
 
   test('remix_voiceoverLinkedToTiming_isRefusedBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'timing.json': timingFixture() });
+    // Worded, so the timeline is one remix accepts and the refusal is the link's.
+    const dir = makeProject(t, { 'timing.json': timingFixture(wordedSegments) });
     if (!tryMakeFileLink(path.join(dir, 'voiceover.mp3'), path.join(dir, 'timing.json'))) {
       return t.skip('platform refused to create a file link');
     }
@@ -624,6 +626,7 @@ describe('complete write set', () => {
     const r = runScript('remix.mjs', ['--apply', '--replace'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'voiceover and timing resolving to one file must be refused: ');
+    assert.match(r.all, /is a link/, r.all);
     assert.equal(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'), before);
   });
 
@@ -1285,13 +1288,14 @@ describe('engine-chosen outputs refuse links', () => {
   });
 
   test('remix_voiceoverLinkedToAnUnrelatedInRootFile_isRefused', (t) => {
-    const dir = makeProject(t, { 'timing.json': timingFixture(), 'notes.txt': SENTINEL });
+    const dir = makeProject(t, { 'timing.json': timingFixture(wordedSegments), 'notes.txt': SENTINEL });
     if (!tryMakeFileLink(path.join(dir, 'voiceover.mp3'), path.join(dir, 'notes.txt'))) {
       return t.skip('platform refused to create a file link');
     }
     const r = runScript('remix.mjs', ['--apply', '--replace'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'remix output must not be redirected by a link: ');
+    assert.match(r.all, /is a link/, r.all);
     assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), SENTINEL);
   });
 

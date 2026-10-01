@@ -80,8 +80,9 @@
 //
 //   - It covers the surface voice.mjs and remix.mjs use today and nothing else. The fake
 //     browser cannot render a page, so never load it into a stage that captures frames.
-//   - Child processes the stage spawns (silence-gen.mjs) do not inherit --import. They do
-//     not need to, because neither faked module is imported there.
+//   - Child processes a stage spawns do not inherit --import. voice.mjs and remix.mjs
+//     spawn none on --apply now (they write their pauses in-process); a child that needs
+//     neither faked module would not need it anyway.
 //   - It is a TEST fixture. Nothing in src/ may import it.
 import { register } from 'node:module';
 

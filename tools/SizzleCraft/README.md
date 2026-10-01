@@ -35,10 +35,10 @@ place to fix a bug.
 | `remux-verify.mjs` | S8/S9 | The video-stream verdict for the cheap remux path. Parses ffmpeg's `MD5=` line rather than comparing raw strings — equal-but-unparsed output is not evidence either digest was computed. |
 | `write-storyboard.mjs` | S2 | Emits `storyboard.html`. Lede text comes from `project.lede`. |
 | `voice.mjs` | S3 | TTS synthesis via `msedge-tts` → per-segment MP3. |
-| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate gap audio assets. `silence-gen` takes its frame maths from `silent-segment.mjs` so it cannot drift from the silence `concat-audio` generates. |
-| `silent-segment.mjs` | — | **What a deliberately silent segment is**, in one place: the `segments[].silence` declaration, its validation, its authored duration, the frame-aligned silence generator, and the calibration builder that keeps zero-word segments out of the word-rate maths. Side-effect free, so it is unit-tested directly. |
+| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate silence assets. `silence-gen` is the standalone generator for a file the caller names; `voice` and `remix` no longer spawn it — they write their lead-in, gap and outro silence in-process. All three take their bytes from `silent-segment.mjs`, so none can drift from the silence `concat-audio` generates. |
+| `silent-segment.mjs` | — | **What a deliberately silent segment is**, in one place: the `segments[].silence` declaration, its validation, its authored duration, the frame-aligned silence generator (and the pause-asset rules `voice` and `remix` share with `silence-gen`), the check that a narrated record holds measured words, and the calibration builder that keeps zero-word segments out of the word-rate maths. Side-effect free, so it is unit-tested directly. |
 | `silence-scan.mjs` | S4 | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5). |
-| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip. |
+| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. Narrated clips are reused as they are; a declared silent segment's audio is generated from its **current** authored window and never taken from a clip, so a silence edit needs no re-voice. Both refuse a narrated segment whose record names its clip but holds no measured words — arranging audio cannot create speech. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip, which is also why a project that names no clips in `audio.file` is refused once a segment is silent while another is narrated; where every segment is silent, each window is generated. |
 | `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one. |
 | `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, the threshold solve, and the bed's ducking record (`<bed>.duck.json`). Side-effect free apart from `publishBedDuckRecord`, which writes that record; unit-tested directly. |
 | `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
@@ -80,7 +80,7 @@ the old rule is untouched:
 
 | `silence` | `audio` | Meaning |
 |---|---|---|
-| present | present | A silent segment, synthesised. Its clip is generated digital silence. |
+| present | present | A silent segment the voice stage has seen. Its clip is generated digital silence. `remix` (S4) regenerates its clip from the current window, and `concat-audio` (S4) generates the silence into the track from that window without using the clip, so a silence edit since then needs no re-voice. |
 | present | absent | A silent segment; the voice stage has not run. |
 | absent | absent | **The voice stage has not run. Still fails, exactly as before.** |
 
@@ -97,20 +97,127 @@ drift apart, which is the defect class this engine keeps re-shipping.
   silence *is* the pause.
 - **concat-audio (S4)** fills the window with generated digital silence so the segment
   occupies its time in the voice track. This is the load-bearing one: omitting it moved
-  every later segment earlier with no error.
+  every later segment earlier with no error. The silence is generated from the **current**
+  authored window and never taken from a clip, so a window widened — or a segment
+  silenced — since voice ran plays at its authored length, and the old clip (speech, or
+  silence of the old length) is left unused on disk. It never writes `timing.json`. A
+  project whose timeline names no clip in any `audio.file` has its clips matched to
+  segments by their order on disk; once any segment is declared silent while another is
+  narrated, a directory listing cannot say which clip is whose, so that is refused (exit
+  `2`) — name each narrated segment's clip in `audio.file`. `voice` names every clip it
+  writes, on a timeline it accepts; the refusal says whether it would accept this one.
+  Where every segment is silent, no clip is matched to anything and each window is
+  generated. That refusal comes before any clip is read, after every declaration has been
+  checked, so a missing clip earlier in the timeline cannot pre-empt it. A clip a record
+  names is claimed under the name the directory lists, however the record cases it, and
+  where that name is a link, so is the file the link resolves to. It is claimed under its
+  canonical name too, where the platform reports one, so a record naming a regular file
+  by its Windows 8.3 short name claims its long name. A short name of a link claims the
+  link's own entry, found by the link's identity; where hard links of one link share that
+  identity, which of them the short name belongs to cannot be told, so neither is claimed
+  and each is reported as one the record may name. Where there is no identity to find it
+  by — the volume reports no file IDs, or an entry cannot be inspected — nothing more is
+  claimed, and each unclaimed entry that is a link, or cannot be inspected, is reported as
+  one the record may name rather than as unclaimed. A regular file left unclaimed is
+  reported without that qualifying: a record that names its entry — by its own name, a
+  case variant or a short name — claims it, wherever the platform reports the file's
+  canonical name. A short name that cannot itself be inspected, or a file whose canonical
+  name the platform does not report, claims nothing beyond the names above, and the entry
+  it reaches may then be reported as unclaimed. That is accounting only: what is read is
+  still the path the record names.
+- **remix (S4)** generates the same silence, writes it as the segment's clip under the
+  name voice gives it (`segment_NN.mp3`), reflows the timeline onto its length, and
+  rewrites the record to describe it: that length, no words, no head or tail. A second
+  remix changes nothing. This is the route for a silence edit — an intermission's length,
+  silencing a narrated segment — because `voice --apply` re-synthesises every clip. It does
+  not fill a segment the voice stage never saw: while any segment has no audio record it
+  refuses (exit `2`) before writing anything, and its plan names those segments. Every
+  output is staged beside its destination and checked before any is published — the voice
+  track is probed from the staged bytes and held to the reflowed timeline (C-6) — then
+  each is renamed into place, `timing.json` last. A failed check publishes nothing (exit
+  `1`); a rename that fails partway names what was and was not published, and leaves
+  `timing.json` as it was.
+- **Both S4 stages refuse** a malformed declaration (`"silence": false` included) and a
+  narrated segment whose record names its clip but holds no measured words: that clip is
+  not narration voice produced for it, and arranging audio cannot create speech. So, with
+  such a record, removing a declaration needs the voice stage, and they say so.
+- **A remedy names a stage only where that stage would run.** Every diagnostic here that
+  names `voice` or `remix` as the next step first asks `silent-segment.mjs` whether that
+  stage would accept the project as it stands: whether it has a list of segment objects,
+  its silence declarations, its narration text, the clips its records name, and the files
+  the stage writes. Where it would refuse, the message names it as refusing and says why.
+  While any silence declaration is malformed, the part of a remedy that would name `voice`
+  or `remix` — as the step, or as refusing — reports that declaration in the stage's
+  place, since neither stage would finish an `--apply` run on that timeline: `remix`
+  refuses it before writing anything, and `voice` checks a declaration only when `--apply`
+  reaches that segment, then stops (exit `2`) after writing the clips before it. When
+  asked whether a stage would accept the project, `silent-segment.mjs` asks whether every
+  segment is an object before it asks about declarations, so a segment that is not one can
+  be reported instead, as the stage's refusal. The declaration replaces only part of the
+  message: the explanation around it can still name a stage. The intake, brand tokens, the
+  TTS service and the `--replace` guard are not modelled; each stage reports those itself.
+  Three limits: `validate-timing --timing <file>` checking a file other than the project's
+  `timing.json` names no stage as the step, because every stage reads `timing.json` — it
+  says instead to install the file as `timing.json` (and that this replaces the one there,
+  where there is one) and run `validate-timing` again without `--timing`, which decides
+  the stage. A case variant, an 8.3 short name or an in-root link of `timing.json` is that
+  file; once a stage replaces it, a case variant or a link names the new one, and a short
+  name names it or nothing. A hard link of it is not: it is another entry for the file,
+  which a stage publishing `timing.json` by rename leaves holding the old timeline. Where
+  the volume reports file IDs a hard link is told just that, with no install step —
+  installing it would copy the file onto itself — and where it reports none, it is treated
+  as another file. `concat-audio`'s refusal of a missing clip, in a timeline that names no
+  clip in any `audio.file` and declares no silence, keeps the wording it always had, which
+  names `voice` without asking; so does `frame-capture`'s refusal of a segment with
+  neither a finite `endMs` nor a `startMs` and `audio.durationMs` to derive one from. And
+  a `remix` run whose publishing fails partway names a re-run of `remix` without asking:
+  that run has just passed every check `remix` makes of this timeline, which it leaves as
+  it was.
 - **write-subtitles (S10)** emits the authored `caption` as one cue spanning the window.
   There are no measured word boundaries to caption from, so the cue text must be authored;
-  a blank one is refused rather than rendered as an empty caption box.
-- **write-chapters (S11)** gives it a chapter like any other segment.
+  a blank one is refused rather than rendered as an empty caption box. The spoken cue just
+  before it keeps its last word on screen until that word ends rather than stopping 40 ms
+  short, and never overlaps it; a measured word that runs into a silent window is refused,
+  naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter
+  than the last window names `remix` when the change is a silence edit — the last window is
+  a silent one, or an earlier silent window no longer holds the silence its record
+  describes — and when an earlier silent record names its clip but gives no usable length,
+  which `remix` rewrites. It names `voice` otherwise, including for a silent segment whose
+  record names no clip, which `remix` refuses — unless every segment is silent, when no
+  stage measures the timeline and it says to set `durationMs` by hand. A silent segment
+  whose `startMs` or `endMs` is not a number of milliseconds is an authored field to
+  correct by hand — never a re-voice. The message gives the bound that keeps the window
+  positive (`startMs` below `endMs`, `endMs` above `startMs`), names the other field as
+  well where no value of the bad one alone would do, and only after those edits, if they
+  change the window's length, names `remix` to reflow the timeline onto it.
+- **write-chapters (S11)** gives it a chapter like any other segment, and routes a
+  `durationMs` short of the last window, and a silent window field that is not a number,
+  by the same rules, from `silent-segment.mjs`.
 - **calibration** excludes it from the per-segment and aggregate word rate. A rate over
   zero words is not a slow rate — it is `NaN`, which `JSON.stringify` writes as `null`.
-- **validate-timing** reports it as `silent` rather than `n/a`, and checks the declaration.
+- **validate-timing** reports it as `silent` rather than `n/a`, and checks the declaration
+  and the record: a silent segment whose record still carries measured words — silenced,
+  then concatenated without `remix` — fails, naming `remix`. Calibration lineage ignores a
+  silent window, which is authored, but not the declaration: a segment silenced or
+  un-silenced since the voice stage ran makes lineage stale, with advice that follows the
+  direction (a silence edit needs no re-voice; un-silencing needs `voice`). A silent window
+  that is not the length its record gives — edited since its silence was generated —
+  fails as `declared silence: NOT REFLOWED` (exit `1`), naming `remix`, by the same test
+  `remix` applies, from `silent-segment.mjs`. A record that is there but gives no usable
+  length — not an object, or a `durationMs` that is not a number ≥ 0 — fails as
+  `declared silence: INCOMPLETE RECORD` (exit `1`). Each of these record failures names
+  `remix` when the record names its clip, and `voice` when it names none, because `remix`
+  refuses a segment without one. A silent segment with no audio record at all is reported
+  as `declared silence: UNCHECKED` — not failed, and not counted in the `OK` line, which
+  lists only the segments it checked. Beside silent segments, the `MEASURED` windows label
+  claims only the narrated windows. Checking a file other than the project's `timing.json`
+  with `--timing`, none of these messages names a stage as the step (see the limits above).
 
 **One rounding caveat, disclosed at the point of use.** Generated silence is frame-aligned
 to 24 ms, so a filled window lands within 12 ms of its authored length (a 2000 ms window
-becomes 1992 ms). `voice` reflows the timeline onto the real value, so a full pipeline run
-stays consistent; a standalone `concat-audio` prints the accumulated delta and tells you to
-re-run `voice` to reflow.
+becomes 1992 ms). `voice` and `remix` reflow the timeline onto the real value, so a full
+pipeline run stays consistent; a standalone `concat-audio` prints the accumulated delta and
+names `remix` as the step that reflows it, where `remix` would run — no re-voice needed.
 
 ## Configuration precedence
 
@@ -181,8 +288,24 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
   name; a link there is refused even when its target is also inside the project.
 - Two inputs that resolve to one output file are refused rather than silently
   overwriting each other.
-- A parent stage never hands a child the flags that make it write. `remix` and `voice`
-  forward `--apply`/`--replace` to `silence-gen` only when they were given them.
+- **A file name the engine chose is never written through a link**, even one that stays
+  inside the project. `voice` and `remix` write their lead-in, gap and outro silence
+  in-process through the same link-refusing resolver as every other output, and list them
+  in the plan under the same `--replace` guard; they used to hand them to a `silence-gen`
+  child, which follows an in-root link. `concat-audio` refuses a link at its default
+  `voiceover.mp3`, while a path you name with `--out` may still resolve through one.
+- **`remix` never writes a narrated clip it reads, under any name.** Before the plan it
+  refuses (exit `2`) a destination that is that clip: by name — the path the record
+  resolves to, links followed, which catches an in-root link and, on Windows, a case
+  variant — by canonical name, which needs no file IDs and catches a Windows 8.3 short
+  name, and by file identity where the volume reports file IDs, which catches a hard link.
+  A hard link is refused even though publishing by rename would leave it holding its
+  narration; where the volume reports no file IDs a hard link is not detected, and its
+  narration survives at its own name. The refusal names the record's own spelling and how
+  it reaches the destination, and advises a copy: the narration gets a file of its own and
+  its record points there, while a file another record names stays where it is; it says
+  when the next run needs `--replace`. Each output is then published by rename, which
+  replaces the entry rather than writing through it.
 - **Every value a guard depends on is validated before the guard reads it** — calibration
   rates, drift tolerances, frame rates, envelope samples, lock owner PIDs and ffmpeg's
   MD5 output. A threshold that arrives as `NaN` does not relax a check, it removes it,
@@ -226,8 +349,9 @@ A `stamp-lineage` tool was built here to close that, and **withdrawn**. It is wo
 recording why, because the next person to want it will reach the same design:
 
 `textHash` is a fingerprint over the **exact narration bytes**. No *voice-stage-bound*
-record of them survives. `voice` writes six things — the segment clips, `voiceover.mp3`,
-`timing.json`, `calibration-observed.json`, `sync-mapping.md` and `heal-log.txt` — and the
+record of them survives. `voice` writes six things besides the silence it inserts — the
+segment clips, `voiceover.mp3`, `timing.json`, `calibration-observed.json`,
+`sync-mapping.md` and `heal-log.txt` — and the
 only record of what was *spoken* is `segments[].audio.words`, the TTS service's
 tokenisation, which does not voice punctuation. Everything else is a summary: `chars` is a
 count. So an edit from `"… ready?"` to `"… ready!"` preserves word count, character count,
@@ -568,7 +692,9 @@ Had `textHash` hashed the audio, that recovery would not exist — the choice wo
 been between proven lineage and a reproducible deliverable.
 
 Two notes on the recovery. `remix` is the reflow path that does *not* re-synthesise —
-it reuses the `segment_*.mp3` clips on disk byte-for-byte and only changes pacing. And
+it reuses the narrated `segment_*.mp3` clips on disk byte-for-byte and only changes
+pacing. (A declared silent segment's clip it regenerates from the authored window; that
+is digital silence, the same bytes every time.) And
 `vo-envelope.json` is the one artefact derived from audio *content*, so it is **bound to
 the audio it measured**: it records a `measuredFrom` fingerprint of the voice track, and
 every consumer refuses an envelope that describes different audio. Restore the clips that
@@ -704,9 +830,13 @@ directly by hand. See the skill for the stage ordering.
   measures the text in the file now. Edit a segment's narration without re-running the
   voice stage and that predicate still holds, which would wave through exactly the case
   the budget exists to catch. So `voice.mjs` records a **`textHash`** — a sha256 of each
-  segment's exact narration — and `validate-timing` checks it, along with segment order
-  and naming. `{words, chars, clipMs}` are kept only as cheap pre-checks that give better
-  messages: they are a *summary*, and every summary collides — `"word0 word1 word2 word3"`
+  segment's exact narration — and `validate-timing` checks it, along with segment order,
+  naming and each segment's `silence` declaration. `{words, chars, clipMs}` are kept only
+  as cheap pre-checks that give better messages (`clipMs` is not compared for a declared
+  silent segment, whose window is authored rather than narrated, so a silence edit does
+  not make lineage stale; a silent window its record does not describe fails the
+  declared-silence check instead, naming `remix`, or `voice` where its record names no
+  clip): they are a *summary*, and every summary collides — `"word0 word1 word2 word3"`
   and `"other word1 word2 word3"` agree on all three while being different scripts. A
   calibration with no fingerprint is **unproven**, not intact, so the budget is evaluated.
   A mismatch is **not** an error — editing and re-validating before re-synthesising is the
@@ -721,8 +851,8 @@ input/output filenames — it requires `--video` and `--out`. `make-music.mjs`,
 `preview.mjs`, `preview-seg.mjs` and `append-outro.mjs` take named options instead of
 positional arguments. A driver that invoked these bare will now produce a plan and exit
 `0` without doing the work — a loud no-op rather than a silent one, but still a change.
-The in-repo callers (`remix.mjs`, `voice.mjs`) are updated; **external project build
-sequences must add the flags.**
+The in-repo callers (`remix.mjs`, `voice.mjs`) were updated, and have since stopped
+spawning `silence-gen` at all; **external project build sequences must add the flags.**
 
 **Not done**
 - **`write-script.mjs` (S1) is not extracted.** It diverged ~120% between projects —
