@@ -1424,11 +1424,10 @@ describe('reporting a silent segment honestly', () => {
 //
 // A diagnostic that names a stage is only giving a remedy if that stage would run: on the
 // timeline as it stands, or, where the remedy is an edit, on the timeline after the edit.
-// remix.mjs and concat-audio.mjs each refuse a whole timeline whose silence declarations are
-// malformed, and voice.mjs --apply stops at one, after writing the clips before it; remix
-// refuses a record whose clip is not there, and the TTS service cannot synthesise narration
-// that has no text. A message that sends the author to a stage that refuses is a dead end,
-// so where the named stage would refuse, it says why.
+// remix.mjs, concat-audio.mjs and voice.mjs each refuse a whole timeline whose silence
+// declarations are malformed; remix refuses a record whose clip is not there, and the TTS
+// service cannot synthesise narration that has no text. A message that sends the author to a
+// stage that refuses is a dead end, so where the named stage would refuse, it says why.
 // ===========================================================================
 describe('a named remedy is one its stage accepts', () => {
   const alphaGo = [{ word: 'Alpha', startMs: 100, endMs: 500 }, { word: 'go', startMs: 500, endMs: 960 }];
@@ -1941,7 +1940,7 @@ describe('a named remedy is one its stage accepts', () => {
       assert.match(r.all, /no shorter than the last segment \(which ends at 3960 ms\)/, r.all);
       assert.match(r.all,
         /It closes the last chapter, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("break"\) declares `silence` as false/, r.all);
-      assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+      assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix and voice each refuse a malformed declaration, so neither is named\n${r.all}`);
     });
   }
 
@@ -1955,7 +1954,7 @@ describe('a named remedy is one its stage accepts', () => {
     assertCleanExit(r, EXIT.FAILED, 'a duration shorter than the last window must fail: ');
     assert.match(r.all,
       /It bounds the last cue, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("intermission"\) is declared silent but its `silence\.caption` is "   "/, r.all);
-    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix and voice each refuse a malformed declaration, so neither is named\n${r.all}`);
   });
 
   // ---- the class sweep: concat-audio ----------------------------------------------------------
@@ -2395,7 +2394,7 @@ describe('a named remedy is one its stage accepts', () => {
     assertCleanExit(r, EXIT.FAILED);
     assert.match(r.all,
       /It bounds the last cue, but a malformed silence declaration is reported here instead: timing\.segments\[1\] \("intermission"\) is declared silent but its `silence\.caption` is ""/, r.all);
-    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix refuses a malformed declaration and voice --apply stops at one, so neither is named\n${r.all}`);
+    assert.doesNotMatch(r.all, /voice\.mjs|remix\.mjs/, `remix and voice each refuse a malformed declaration, so neither is named\n${r.all}`);
   });
 
   test('writeChapters_durationNotANumberInAnEntirelySilentTimelineWhereRemixWouldRun_namesRemix', (t) => {

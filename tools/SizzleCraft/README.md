@@ -148,10 +148,12 @@ drift apart, which is the defect class this engine keeps re-shipping.
   the stage writes. Where it would refuse, the message names it as refusing and says why.
   While any silence declaration is malformed, the part of a remedy that would name `voice`
   or `remix` — as the step, or as refusing — reports that declaration in the stage's
-  place, since neither stage would finish an `--apply` run on that timeline: `remix`
-  refuses it before writing anything, and `voice` checks a declaration only when `--apply`
-  reaches that segment, then stops (exit `2`) after writing the clips before it. When
-  asked whether a stage would accept the project, `silent-segment.mjs` asks whether every
+  place, since neither stage would run on that timeline: `remix` and `voice` each refuse
+  it before writing anything, in their plan as well as under `--apply`. Each reports that
+  declaration (exit `2`) once its own earlier checks have passed. A failure in one of
+  those is reported first, in its own words, instead of the declaration; for `voice`, a
+  failure of its brand voice allow-list (`brand/tokens.json`) exits `1`. When asked
+  whether a stage would accept the project, `silent-segment.mjs` asks whether every
   segment is an object before it asks about declarations, so a segment that is not one can
   be reported instead, as the stage's refusal. The declaration replaces only part of the
   message: the explanation around it can still name a stage. The intake, brand tokens, the

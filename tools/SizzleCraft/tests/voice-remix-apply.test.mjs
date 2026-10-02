@@ -52,6 +52,7 @@ import path from 'node:path';
 import { parseFile } from 'music-metadata';
 
 import { EXIT } from '../src/cli-support.mjs';
+import { renderBlocker, voiceBlocker } from '../src/silent-segment.mjs';
 import { FAKE_AUDIO, brandTokens, makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, shortNameOf, zeroFileIds, ZERO_FILE_IDS_ARMED } from './_helpers.mjs';
 import { FRAME_BYTES, FRAME_MS, frames, readFrames, ttsClip } from './fixtures/fake-audio-backends.mjs';
 
@@ -442,6 +443,110 @@ describe('voice writes its pause assets as engine-chosen outputs', () => {
     for (const never of ['lead.mp3', 'gap_01.mp3', 'outro.mp3']) {
       assert.doesNotMatch(d.all, new RegExp(never.replace('.', '\\.')), `${never} can never be written here\n${d.all}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// voice refuses a timeline its gate refuses, in its plan and under --apply, before it writes
+// anything or calls the TTS service. It used to make two of the gate's timeline checks, both
+// only under --apply and both late: a silence declaration's, inside its loop, after writing
+// the clips before that segment; and the all-silent one, in buildCalibration, after writing
+// every clip and the voice track, as an uncaught error. So its plan promised runs that
+// --apply refused or crashed on, and --apply could overwrite the previous narration before
+// it stopped. Each segment clip and the voice track are seeded with a distinct marker clip,
+// and the snapshot hashes every file, so it shows an overwrite as well as an addition.
+// ---------------------------------------------------------------------------
+describe('voice refuses a timeline its gate refuses before it writes anything', () => {
+  const authored = () => [
+    { id: 'one', startMs: 0, endMs: 960, voiceoverText: NARRATION.one },
+    { id: 'two', startMs: 960, endMs: 1680, voiceoverText: NARRATION.two },
+    { id: 'intermission', startMs: 1680, endMs: 2640, voiceoverText: '', silence: { caption: '[music]' } },
+    { id: 'four', startMs: 2640, endMs: 3840, voiceoverText: NARRATION.four },
+  ];
+  const SENTINELS = {
+    'segment_01.mp3': frames(1),
+    'segment_02.mp3': frames(2),
+    'segment_03.mp3': frames(3),
+    'segment_04.mp3': frames(4),
+    'voiceover.mp3': frames(5),
+  };
+  // timingBody takes durationMs from the last segment, which a timeline with no segment list,
+  // or an empty one, does not have. So this states it: 3840 ms, where `four` ends.
+  const body = (segments) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 1280, height: 720, lede: 'a lede' },
+    durationMs: 3840,
+    endCard: { enabled: false },
+    intake: INTAKE,
+    ...(segments === undefined ? {} : { segments }),
+  });
+
+  // The gate is asked first, about the project exactly as voice will find it.
+  function runVoice(t, segments, args) {
+    const timingText = body(segments);
+    const dir = makeProject(t, { 'timing.json': timingText, 'brand/tokens.json': brandTokens, ...SENTINELS });
+    const log = path.join(makeOutsideDir(t), 'tts.jsonl');
+    const gate = voiceBlocker(dir, JSON.parse(timingText));
+    const before = snapshot(dir);
+    const r = runScript('voice.mjs', args, dir, { nodeArgs: ['--import', FAKE_AUDIO], env: { FAKE_TTS_LOG: log } });
+    // One comparison, so a failure shows every file written AND whether the service was called.
+    const outcome = { files: snapshot(dir), ttsCalled: fs.existsSync(log) };
+    return { gate, before, r, log, outcome };
+  }
+
+  const MODES = [['plan', []], ['apply', ['--apply', '--replace']]];
+
+  for (const [scenario, segments, pinned] of [
+    ['AMalformedDeclaration', () => { const s = authored(); s[2].silence = false; return s; },
+      /^error: segment "intermission" declares `silence` as false — it must be an object, e\.g\. \{"caption": "\[music\]"\}$/m],
+    // No id: labelled by its 0-based index, as the gate labels it. Pinned as printed, not endorsed.
+    ['AnIdlessMalformedDeclaration', () => { const s = authored(); s[2].silence = false; delete s[2].id; return s; },
+      /^error: segment "2" declares `silence` as false — it must be an object, e\.g\. \{"caption": "\[music\]"\}$/m],
+    ['ANarratedSegmentWithNoText', () => { const s = authored(); delete s[2].silence; return s; },
+      /\. Write its narration, or, if it is meant to be silent, declare it silent \(a `silence` block with a caption, and no narration text\)\.$/m],
+    ['EverySegmentSilent', () => authored().map((s) => ({ ...s, voiceoverText: '', silence: { caption: '[music]' } })), null],
+    ['NoSegmentList', () => undefined, null],
+    ['AnEmptySegmentList', () => [], null],
+    ['ANullSegment', () => { const s = authored(); s[1] = null; return s; }, null],
+  ]) {
+    for (const [mode, args] of MODES) {
+      test(`voice_${mode}With${scenario}_refusesBeforeAnyWriteOrTtsCall`, (t) => {
+        const { gate, before, r, outcome } = runVoice(t, segments(), args);
+
+        assert.ok(gate, 'the gate refuses this timeline');
+        assert.deepEqual(outcome, { files: before, ttsCalled: false }, 'a refusal writes nothing and calls no TTS service');
+        assertCleanExit(r, EXIT.USAGE, 'a timeline the gate refuses must be refused: ');
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        // The stage must give its gate's reason, in its gate's words, so the two cannot drift apart.
+        assert.ok(r.stderr.includes(gate.fact), `voice must refuse for the gate's reason: ${gate.fact}\n${r.all}`);
+        const line = gate.declaration ? `error: ${gate.fact}` : `error: ${renderBlocker(gate)}.`;
+        assert.match(r.stderr, new RegExp(`^${esc(line)}$`, 'm'), r.all);
+        if (pinned) assert.match(r.stderr, pinned, r.all);
+      });
+    }
+  }
+
+  // The same project, harness and assertions on a timeline the gate accepts: they can see a
+  // write and a call to the TTS service, so their silence above means none happened.
+  test('voice_planWithAValidTimeline_exitsZeroAndWritesNothing', (t) => {
+    const { gate, before, r, outcome } = runVoice(t, authored(), []);
+
+    assert.equal(gate, null, 'the gate accepts this timeline');
+    assert.deepEqual(outcome, { files: before, ttsCalled: false }, 'a plan writes nothing and calls no TTS service');
+    assertCleanExit(r, EXIT.OK, 'the plan must succeed: ');
+    assert.doesNotMatch(r.stderr, /^error:/m, r.all);
+  });
+
+  test('voice_applyWithAValidTimeline_callsTheTtsServiceAndOverwritesEveryClip', (t) => {
+    const { gate, before, r, log, outcome } = runVoice(t, authored(), ['--apply', '--replace']);
+
+    assert.equal(gate, null, 'the gate accepts this timeline');
+    assert.notDeepEqual(outcome.files, before, 'the run must write');
+    assert.deepEqual(Object.keys(SENTINELS).filter((f) => !(f in outcome.files) || outcome.files[f] === before[f]), [],
+      'every seeded clip, and the voice track, must be overwritten');
+    assert.equal(outcome.ttsCalled, true, 'the TTS service must be called');
+    assert.ok(fs.statSync(log).size > 0, 'and the call logged');
+    assertCleanExit(r, EXIT.OK, 'a valid timeline must be voiced: ');
+    assert.doesNotMatch(r.stderr, /^error:/m, r.all);
   });
 });
 
@@ -1131,8 +1236,8 @@ describe('remix regenerates declared silence from the authored window', () => {
 
   test('remix_malformedDeclarationBesideUnvoicedNarration_reportsTheDeclarationFirst', (t) => {
     // remix checks every declaration first, and refuses a malformed one before writing anything.
-    // Reporting the unvoiced segment first sent the author to voice.mjs, whose --apply stops at
-    // that declaration (exit 2) only after writing the clips before it.
+    // Reporting the unvoiced segment first sent the author to voice.mjs, which, once its own
+    // earlier checks pass, refuses the same declaration (exit 2).
     const dir = remixProject(t, (s) => { s[0].audio.words = []; s[2].silence = false; });
 
     for (const args of [[], ['--apply', '--replace']]) {

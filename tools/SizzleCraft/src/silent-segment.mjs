@@ -769,10 +769,10 @@ function shapeBlocker(timing) {
   return bad === -1 ? null : { fact: `timing.segments[${bad}] is not a segment object` };
 }
 
-// remix refuses a timeline with a malformed silence declaration before writing anything, and
-// voice --apply stops at one on reaching that segment, after writing the clips before it.
-// Both gates ask this straight after the timeline's shape, so unless the shape is refused
-// first, a remedy that asks either reports the declaration rather than naming a stage.
+// remix and voice each refuse a timeline with a malformed silence declaration before writing
+// anything, in their plan and under --apply. Both gates ask this straight after the timeline's
+// shape, so unless the shape is refused first, a remedy that asks either reports the
+// declaration rather than naming a stage.
 function declarationBlocker(segs, labelOf) {
   for (const [i, s] of segs.entries()) {
     if (!isSilentSegment(s)) continue;
@@ -783,13 +783,16 @@ function declarationBlocker(segs, labelOf) {
 }
 
 /**
- * Would voice.mjs (S3) run on this timeline? null when this model finds nothing to stop it;
- * otherwise the first refusal this model finds, as `{fact, then?, declaration?}`. The order
- * is the model's, not voice's. For example, voice.mjs checks its write set before its plan,
- * and checks a silence declaration only when its --apply loop reaches that segment, after
- * writing the clips before it.
+ * Would voice.mjs (S3) accept this timeline's segments? null when it would; otherwise the
+ * first refusal, as `{fact, then?, declaration?}`, from these checks in this order: the
+ * segments' shape, every silence declaration, the narration text, and whether any segment is
+ * narrated. voice.mjs makes exactly these checks, by calling this, before it builds its write
+ * set, in its plan and under --apply; voiceBlocker makes them before it asks about that write
+ * set. So the stage and its gate cannot disagree about any of them. It judges a timing object
+ * already parsed: voice.mjs calls it after parsing its arguments, reading timing.json, and
+ * checking its intake, its end-card decision and its brand voice allow-list.
  */
-export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
+export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
   const shape = shapeBlocker(timing);
   if (shape) return shape;
   const segs = timing.segments;
@@ -805,7 +808,22 @@ export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
   if (segs.every(isSilentSegment)) {
     return { fact: 'every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from' };
   }
-  return writeSetBlocker(dir, voiceWriteSet(timing)).blocker ?? null;
+  return null;
+}
+
+/**
+ * Would voice.mjs (S3) run on this timeline? null when this model finds nothing to stop it;
+ * otherwise the first refusal this model finds, as `{fact, then?, declaration?}`: first
+ * voiceTimelineBlocker's, then the files voice writes, resolved as voice resolves them before
+ * its plan. voice.mjs makes the same two checks, in the same order, before it writes anything.
+ * The rest it checks itself, and this model does not: before them, its intake, its end-card
+ * decision and the brand voice allow-list; after them, under --apply, the replace guard, so
+ * this model answers for a run given --replace; and from synthesis on, the TTS service, the
+ * per-segment fit (C-10), the pause assets' lengths, an enabled end card's builderVersion and
+ * the drift check (C-6).
+ */
+export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
+  return voiceTimelineBlocker(timing, labelOf) ?? writeSetBlocker(dir, voiceWriteSet(timing)).blocker ?? null;
 }
 
 /**

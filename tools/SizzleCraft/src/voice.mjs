@@ -10,7 +10,7 @@ import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
 import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
-import { isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, segmentClipName, gapAssetName } from './silent-segment.mjs';
+import { isSilentSegment, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, voiceTimelineBlocker, renderBlocker, segmentClipName, gapAssetName } from './silent-segment.mjs';
 
 const USAGE = `
 voice — synthesise narration per segment and concatenate it (pipeline stage S3).
@@ -35,7 +35,7 @@ reproduce a shipped deliverable. If you need both the re-measurement and the shi
 audio, keep this run's timing.json + calibration-observed.json and restore the previous
 audio files: the narration fingerprint is over the TEXT, so the two are separable.
 
-Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage or refused overwrite
+Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage, a refused timeline or a refused overwrite
 `.trimStart();
 
 const cli = (() => {
@@ -87,6 +87,20 @@ if (!allowVoices.includes(voice)) throw new Error(`C-11: voice "${voice}" not on
 
 const probeMs = async f => Math.round(((await parseFile(f, { duration: true })).format.duration ?? 0) * 1000);
 const ratePct = (speed >= 1 ? '+' : '') + Math.round((speed - 1) * 100) + '%';
+
+// ---- the timeline ---------------------------------------------------------------------------
+// Checked before the write set is built, in the plan and under --apply alike: the segments'
+// shape, every silence declaration, the narration text, and that some segment is narrated.
+// A timeline that fails one is refused here, so the plan does not promise a run that --apply
+// would refuse for it, and the refused run writes nothing and calls no TTS service. The
+// checks are voiceTimelineBlocker's, in silent-segment.mjs; the gate other stages ask before
+// naming this stage makes them too, so the two agree. A malformed declaration is reported in
+// its own words, as remix reports one.
+const timelineRefusal = voiceTimelineBlocker(timing);
+if (timelineRefusal) {
+  console.error(timelineRefusal.declaration ? `error: ${timelineRefusal.fact}` : `error: ${renderBlocker(timelineRefusal)}.`);
+  process.exit(EXIT.USAGE);
+}
 
 // ---- the write set --------------------------------------------------------------------------
 // Declared once and used for three things: the plan, the distinctness check, and the
@@ -197,8 +211,6 @@ const results = [];
 for (let i = 0; i < timing.segments.length; i++) {
   const seg = timing.segments[i];
   if (isSilentSegment(seg)) {
-    const problems = silentSegmentProblems(seg);
-    if (problems.length) { console.error(`error: ${problems[0]}`); process.exit(EXIT.USAGE); }
     const authoredMs = silentDurationMs(seg);
     const file = segmentTargets[i].path;
     fs.writeFileSync(file, silentMp3(authoredMs));
