@@ -22,7 +22,7 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 883 (882 pass, 1 skip) at `d1d8d47` | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. **Third pass, for the same consumer:** the gain pin became a registry that fails closed on a knob nobody declared (seven pinned); silent segments must be declared and captioned, never inferred from absence; a licensed bed is ducked in-graph by a solved `sidechaincompress` threshold, verified by decoding at ~10.4 dB of an 11 dB target; and `vo-envelope.json` is bound to the voiceover it measured. **The third pass landed unreviewed. The 2026-09-28 cross-family review failed it, its findings became T1–T5, and round 2 is running — gap 22.** **Then the fixes from the 2026-09-28 audit and §VIII reviews (T1–T5), each gated by a cross-family review:** T1 `a0add0b` makes the scene audits fire (C-14 contrast, C-5 clipped code block) and keeps slides on their seams; T2 `cbac96b` makes write-chapters and write-subtitles plan by default and confines their writes; T3 `b671a2e` binds a baked bed to its narration, pins the crossfade and refuses a duck that cannot be delivered. All three passed review. T4 `53424c2` regenerates declared silence in S4 (remix, concat-audio) from the authored window, without a re-voice, and passed at round 8. F6 `d1d8d47` makes voice check its timeline before it writes anything, in its plan and under `--apply`, and passed at round 2. Two High voice defects its review raised are placed in Q14 and F7 (gap 27). T5 (documentation) has not started. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 883 (882 pass, 1 skip) at `d1d8d47` | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. **Third pass, for the same consumer:** the gain pin became a registry that fails closed on a knob nobody declared (seven pinned); silent segments must be declared and captioned, never inferred from absence; a licensed bed is ducked in-graph by a solved `sidechaincompress` threshold, verified by decoding at ~10.4 dB of an 11 dB target; and `vo-envelope.json` is bound to the voiceover it measured. **The third pass landed unreviewed. The 2026-09-28 cross-family review failed it, its findings became T1–T5, and round 2 failed it again on 2026-10-02 — gap 22.** **Then the fixes from the 2026-09-28 audit and §VIII reviews (T1–T5), each gated by a cross-family review:** T1 `a0add0b` makes the scene audits fire (C-14 contrast, C-5 clipped code block) and keeps slides on their seams; T2 `cbac96b` makes write-chapters and write-subtitles plan by default and confines their writes; T3 `b671a2e` binds a baked bed to its narration, pins the crossfade and refuses a duck that cannot be delivered. All three passed review. T4 `53424c2` regenerates declared silence in S4 (remix, concat-audio) from the authored window, without a re-voice, and passed at round 8. F6 `d1d8d47` makes voice check its timeline before it writes anything, in its plan and under `--apply`, and passed at round 2. Two High voice defects its review raised are placed in Q14 and F7 (gap 27). T5 (documentation) has not started. |
 | `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
 | `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42 at 4K/JPEG on this branch; a 4:37 four-facts cut with the ducked mix is verified on the consumer's branch and **not merged** (gap 23). Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
 | `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
@@ -254,8 +254,8 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     this audit spent forty rounds learning not to. Schedule the traced sweep as its
     own task; grade each sink only once its resolver is known.
 
-22. **SizzleCraft's third pass landed unreviewed, failed its retrospective review, and is in
-    round 2.**
+22. **SizzleCraft's third pass landed unreviewed, failed its retrospective review, and
+    failed round 2.**
     - Landing `c620c88`, `331ddac`, `c3f1e56` and `34fa0e7` without a cross-family review
       was a §VIII breach on the orchestrator's side. The 2026-09-28 audit ran on
       `claude-opus-5.5`, the builders' own family, so **it found defects without
@@ -270,10 +270,48 @@ built through `forge-team` with a real builder and reviewer. That is the next re
       Their findings, unioned with the audit's, became T1–T5.
     - T1–T4 and F6 each passed a cross-family review of **their own diff only**. That does
       not show every 2026-09-28 finding was carried into the union, placed and closed.
-      **Round 2 checks exactly that.** It went to the same three reviewers on 2026-10-02,
-      against a frozen export at `1a9cfa2`, with T5's queued findings excluded.
-    - `d71c605` brought the consumer's code-block wrap (gap 23) into this branch, with its
-      CSS corrected, and was committed as unreviewed. It is in round 2's scope.
+      **Round 2 checked exactly that**, on 2026-10-02: the same three reviewers, a frozen
+      export at `1a9cfa2` (67 of 67 blobs re-verified after the reviews), with T5's queued
+      findings excluded.
+    - `d71c605` brought the consumer's code-block wrap (gap 23) into this branch byte for
+      byte (9 lines, 0 differing), and was committed as unreviewed. T1 `a0add0b` corrected
+      its CSS. Until 2026-10-02 this file credited that correction to `d71c605`.
+    - **Round 2 failed all three.** The orchestrator confirmed every finding by a probe, a
+      mutation or a read; none was refuted:
+      - pin: the union's findings are fixed, except that no test publishes a lock —
+        deleting remux's lock-writer call leaves all 883 tests passing (PARTIAL). New:
+        `audit` budgets gains by literal and count, not position, so a `volume=1.5` moved
+        onto the voice chain is accepted (High, latent); gain-pin's guidance says there is
+        nothing to measure, then that `--confirm-gain` asserts a person measured (Medium).
+      - duck: D-h2 (an older ducked bed with no record is accepted as absent) and D-m2
+        (`durationMs` against the frame count) are PARTIAL. New: make-music publishes its
+        record, then writes `music.wav` unconditionally and through links (High); it
+        indexes the envelope at 20 ms whatever its `hopMs` (High); and no test checks the
+        PCM is ducked — deleting the multiplier leaves all 883 passing (Medium).
+      - silence: the union's findings are fixed. New: a silent `startMs` of `null`,
+        `"1000"` or `[]` becomes a window (High); a silent window has no upper bound, so
+        `endMs` 1e10 asks `silentMp3` for 120 GB (High); frame-capture derives a
+        declared-silent `endMs` from stale audio (Medium); a caption carrying a cue
+        separator reaches the VTT raw (Medium). The orchestrator added K4 (Low): a `NaN`
+        window prints as `nullms`.
+      - `d71c605`: FAIL on process only, for want of a BUILDER-MODEL. Measured since from
+        local usage telemetry: the consumer session's main agent, which wrote `ffe3f82`,
+        ran only `claude-opus-5`; `d71c605` was committed on `claude-opus-5.5`. Both are
+        cross-family to the `gpt-6-sol` reviewer. The cloud session store returned no rows,
+        even for this session, so its zero was not evidence.
+    - **Process stays FAIL, permanently.** T1–T3's builder reports were never archived, and
+      their commit messages name no pre-fix failure and no exact command. T4's and F6's
+      evidence exists in session files, but the brief gave the reviewers only commit
+      messages, so **the orchestrator's brief made a process PASS unreachable by
+      construction**. From Q14 on, each commit message carries its TEST-FIRST-EVIDENCE and
+      BUILDER-MODEL.
+    - **The union was not faithful.** It downgraded P-h2 (High→Medium), S-h6 (High→Low,
+      having considered only narrated→silent) and S-t1 (High→Medium), narrowed D-h2 to
+      "the filename must change" and D-m2 to remux's default, and its D-m1 row omitted a
+      gap. The reviewers' severities stand.
+    - Placement, proposed and pending the user: the silence findings fold into Q14; a duck
+      task and then a pin task follow F7; gain-pin's wording goes into T5. D-h2's residue
+      needs a design call, since a licensed bed has no record by design.
     - **From 2026-09-28 to 2026-10-02 this entry said "no independent review".** It was
       written in `c526a79`, the commit the reviewers were dispatched against, and not
       updated when the FAILs arrived that afternoon. The orchestrator repeated the claim in
@@ -340,8 +378,9 @@ built through `forge-team` with a real builder and reviewer. That is the next re
 `d1d8d47`) → Q14, with the segment-id check → F7 → the `assertCleanExit` fix →
 validate-scene → T5, with the T4 follow-ups batched in → Prettier adoption → coach
 graduation G5, G1, G2+G3, G4, G6, G7. Each is Tier 2: a plan, pre-edit approval, a failing
-test first, then a cross-family review. Round 2 of the 2026-09-28 reviews runs alongside
-Q14 (gap 22).
+test first, then a cross-family review. Round 2 of the 2026-09-28 reviews failed on
+2026-10-02 (gap 22). Its findings are proposed for Q14 (silence), a duck task and a pin task
+after F7, and T5 — pending the user's decision.
 
 1. Close the environment gaps in `memory-bank/techContext.md` (CSharpier, PSScriptAnalyzer,
    Pester).

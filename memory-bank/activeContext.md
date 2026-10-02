@@ -16,23 +16,27 @@ ADR 0006 records why (below).
 | `b671a2e` | T3 — a baked bed is bound to its narration, crossfade is pinned, an undeliverable duck is refused | **PASS** at round 4 |
 | `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
 | `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
-| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first. The shape check also gains the schema's segment `id` rule, which closes gap 27's id-less crash | not started — spec, then approval |
+| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first. The shape check also gains the schema's segment `id` rule, which closes gap 27's id-less crash | spec ready; round 2's silence findings proposed for it — approval pending |
 | F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
 | `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
 | validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
-| T5 | Documentation debt | not started |
-| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | 2026-09-28 **FAIL** (pin reviewer; it also confirmed the commit's two round-1 fixes). Findings placed in T3 — round 2 **running** |
-| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | 2026-09-28 **FAIL** (silence reviewer, with `2e5a62e`). Findings placed in T1, T2 and T4 — round 2 **running** |
-| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | 2026-09-28 **FAIL** (duck reviewer, with `34fa0e7`). Findings placed in T3, one in T5 — round 2 **running** |
+| Duck (round 2) | make-music: write order and links, envelope hop and length, a test that the PCM is ducked; an older bed with no record needs a design call | proposed after F7 — pending the user |
+| Pin (round 2) | `audit` budgets gains by position; a test that publishes a lock | proposed after the duck task — pending the user |
+| T5 | Documentation debt; gain-pin's self-contradicting guidance proposed for it | not started |
+| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | 2026-09-28 **FAIL** (pin reviewer; it also confirmed the commit's two round-1 fixes). Findings placed in T3. Round 2, 2026-10-02: **FAIL** — placed findings fixed, except that no test publishes a lock (PARTIAL); new: `audit` accepts a gain moved onto the voice chain (High, latent), and gain-pin's guidance contradicts itself (Medium). Placement pending (gap 22) |
+| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | 2026-09-28 **FAIL** (silence reviewer, with `2e5a62e`). Findings placed in T1, T2 and T4. Round 2: **FAIL** — placed findings fixed; new: a non-number silent `startMs` becomes a window and a silent window has no upper bound (High), two Medium. Proposed for Q14 (gap 22) |
+| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | 2026-09-28 **FAIL** (duck reviewer, with `34fa0e7`). Findings placed in T3, one in T5. Round 2: **FAIL** — two placed findings PARTIAL; new: make-music writes the bed after publishing its record, and ignores the envelope's hop (High); no test checks the PCM is ducked (Medium). Placement pending (gap 22) |
 | `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | Reviewed with `c3f1e56` |
 | `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | Reviewed with `331ddac` |
-| `d71c605` | The consumer's code-block wrap (`ffe3f82`), with its CSS corrected | **None** until round 2, where the silence reviewer covers it |
+| `d71c605` | The consumer's code-block wrap (`ffe3f82`), byte for byte; T1 `a0add0b` corrected its CSS | Round 2: **FAIL on process only** — no BUILDER-MODEL recorded, no CSS defect left. Since measured: written on `claude-opus-5`, committed on `claude-opus-5.5` (gap 22) |
 
 **The third-pass commits had their cross-family review on 2026-09-28: three `gpt-6-sol`
 reviewers, FAIL on all three.** Their findings, with the audit's, became T1–T5. The T1–T4
-and F6 reviews cover their own diffs only, so **round 2** runs now, alongside Q14. It checks
-that every 2026-09-28 finding was carried into the union, placed and closed (progress,
-gap 22). Until 2026-10-02 this file said those commits had no review at all. That was
+and F6 reviews cover their own diffs only, so **round 2** (2026-10-02) checked that every
+2026-09-28 finding was carried into the union, placed and closed. **It failed all three
+again**: nine new findings and three PARTIALs, each confirmed by the orchestrator, and five
+findings the union had downgraded or narrowed without grounds (progress, gap 22). Until
+2026-10-02 this file said those commits had no review at all. That was
 written before the verdicts arrived and never corrected. SizzleCraft: 883 tests (882 pass,
 1 skip) at `d1d8d47`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch
 through `013cdc8`, which is 27 commits past `main` with no PR yet. Everything after it, T4 and
