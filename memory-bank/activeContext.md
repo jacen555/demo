@@ -75,9 +75,14 @@ a bar fixed before any coach output existed.
 - **Disposition: graduate**, the user's decision on 2026-09-30. It becomes an advisory step
   in the demo pipeline, pass 1 before TTS and pass 2 before frame capture. It is rebuilt
   under Tier 2 gates with its own reviewed rubric, and it never gates a render.
-- **Not started.** Five design questions go to the user first: whether to revise the
-  rubric, how the inputs are assembled, where the rubric lives, whether "BLOCKING" is
-  renamed, and how repeated findings are handled.
+- **Plan approved 2026-09-30, on the user's five design answers. Not started**; queued as
+  G1–G7 after T5 and Prettier. The rubric carries over with both holes fixed: OBJ-07 checks
+  the spoken moment against a measured tolerance, and a new rule, OBJ-19, covers one
+  element drawn across another. A new SizzleCraft stage collects the inputs, refuses
+  stills older than what they show, and writes a hash manifest the report cites. The
+  rubric lives beside that stage. BLOCKING becomes DEFECTS. Repeated findings match a
+  committed per-project rulings file by rule, segment and exact quoted text, and the
+  coach never sees that file.
 - **Only learnings went in git.** The rubric, the protocol, the answer key, the hash
   ledgers, the scorer and `scoring.md` are committed. Extracted inputs, stills and coach
   reports are output, and stay out.
@@ -228,6 +233,13 @@ to find it.
 - **Still open on the engine**: `render.preview` is declared in the template but no script
   implements it, `evidence-pack/` is resolved unconditionally at module load, and
   `voice.mjs` reflows segment windows but not segment-relative trigger times.
+- **`assertCleanExit` cannot see a module-scope crash.** Its stack check matches only a
+  frame with parentheses. A throw from module-scope code, which is where `voice.mjs` and
+  `remix.mjs` do their work, prints `at file:///…:232:35`, with none, so the helper calls
+  it clean. Measured 2026-10-01: widening the check changes none of the 867 tests. A
+  control confirmed that the wider pattern does catch the module-scope frame. It also
+  matches a line like `at 0:01:23`, so the fix should require a path-shaped token. Not
+  scheduled.
 
 ## Watch out for
 
