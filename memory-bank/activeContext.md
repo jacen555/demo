@@ -4,7 +4,7 @@
 
 ## Current focus
 
-**SizzleCraft fixes T1–T5**, from the 2026-09-28 audit and approved by the user. Each is
+**SizzleCraft fixes T1–T5**, from the 2026-09-28 audit and §VIII reviews, approved by the user. Each is
 built test-first on `claude-opus-5.5` and gated by a `gpt-6-sol` review. Alongside them,
 **the video coach graduates as an advisory-only step**: its backtest answered No, and
 ADR 0006 records why (below).
@@ -16,19 +16,25 @@ ADR 0006 records why (below).
 | `b671a2e` | T3 — a baked bed is bound to its narration, crossfade is pinned, an undeliverable duck is refused | **PASS** at round 4 |
 | `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
 | `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
-| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first | not started — spec, then approval |
+| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first. The shape check also gains the schema's segment `id` rule, which closes gap 27's id-less crash | not started — spec, then approval |
+| F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
 | `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
 | validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
 | T5 | Documentation debt | not started |
-| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | Round 1 **FAIL**; round-2 fixes **never re-reviewed** |
-| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | **None** |
-| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | **None** |
-| `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | **None** |
-| `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | **None** |
+| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | 2026-09-28 **FAIL** (pin reviewer; it also confirmed the commit's two round-1 fixes). Findings placed in T3 — round 2 **running** |
+| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | 2026-09-28 **FAIL** (silence reviewer, with `2e5a62e`). Findings placed in T1, T2 and T4 — round 2 **running** |
+| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | 2026-09-28 **FAIL** (duck reviewer, with `34fa0e7`). Findings placed in T3, one in T5 — round 2 **running** |
+| `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | Reviewed with `c3f1e56` |
+| `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | Reviewed with `331ddac` |
+| `d71c605` | The consumer's code-block wrap (`ffe3f82`), with its CSS corrected | **None** until round 2, where the silence reviewer covers it |
 
-**The T1–T4 and F6 reviews cover their own diffs only.** The third-pass commits below them
-still owe a cross-family review (progress, gap 22). SizzleCraft: 883 tests (882 pass, 1 skip)
-at `d1d8d47`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch
+**The third-pass commits had their cross-family review on 2026-09-28: three `gpt-6-sol`
+reviewers, FAIL on all three.** Their findings, with the audit's, became T1–T5. The T1–T4
+and F6 reviews cover their own diffs only, so **round 2** runs now, alongside Q14. It checks
+that every 2026-09-28 finding was carried into the union, placed and closed (progress,
+gap 22). Until 2026-10-02 this file said those commits had no review at all. That was
+written before the verdicts arrived and never corrected. SizzleCraft: 883 tests (882 pass,
+1 skip) at `d1d8d47`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch
 through `013cdc8`, which is 27 commits past `main` with no PR yet. Everything after it, T4 and
 F6 included, is local, and pushes from here return 403.
 
@@ -211,7 +217,7 @@ to find it.
   the sibling capture script is built in `tools/SizzleCraft` under Tier 2 gates.
 - **`eval-loop-demo` is rendered and verified — not merged in its latest form.** This branch
   holds the 4:42 cut. The consumer's branch holds a 4:37 four-facts cut with the ducked mix
-  (`ffe3f82`..`d47cf86`), which neither session can push. The first delivery was
+  (rebased onto `013cdc8`; 13 local commits at `6ef6ca9`), which neither session can push. The first delivery was
   `EvalLoopDemo-with-music.mp4`, 4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
   **42.4 min** (S6 capture is 84% of it, at 2% dedup); an audio-only change is ~30 s.
   **Perceived gaps run ~335 ms long and were accepted deliberately** — both sibling videos

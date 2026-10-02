@@ -22,7 +22,7 @@
 
 | Domain | Kind | Tier | Status | Tests | Notes |
 |---|---|---|---|---|---|
-| `sizzlecraft` | tool (`node`) | 2 | `partial` | 883 (882 pass, 1 skip) at `d1d8d47` | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. **Third pass, for the same consumer:** the gain pin became a registry that fails closed on a knob nobody declared (seven pinned); silent segments must be declared and captioned, never inferred from absence; a licensed bed is ducked in-graph by a solved `sidechaincompress` threshold, verified by decoding at ~10.4 dB of an 11 dB target; and `vo-envelope.json` is bound to the voiceover it measured. **None of the third pass has had an independent review — gap 22.** **Then the fixes from the 2026-09-28 audit (T1–T5), each gated by a cross-family review:** T1 `a0add0b` makes the scene audits fire (C-14 contrast, C-5 clipped code block) and keeps slides on their seams; T2 `cbac96b` makes write-chapters and write-subtitles plan by default and confines their writes; T3 `b671a2e` binds a baked bed to its narration, pins the crossfade and refuses a duck that cannot be delivered. All three passed review. T4 `53424c2` regenerates declared silence in S4 (remix, concat-audio) from the authored window, without a re-voice, and passed at round 8. F6 `d1d8d47` makes voice check its timeline before it writes anything, in its plan and under `--apply`, and passed at round 2. Two High voice defects its review raised are open (gap 27). T5 (documentation) has not started. |
+| `sizzlecraft` | tool (`node`) | 2 | `partial` | 883 (882 pass, 1 skip) at `d1d8d47` | Shared demo-video engine. 20 scripts covering every pipeline stage except S1 (`write-script.mjs`). CLI scripts, not yet a library — most export nothing. Originals do not point here yet. **Group 3 of the audit closed** — engine-chosen writes confined, schema enforcing what it claimed, optional reads keeping absent/unreadable/malformed apart, contiguity and word-budget checks answerable, one enforceable precedence rule for every `SIZZLECRAFT_*` knob. **Then a second pass driven by its own consumer**: level checks treat digital silence as a third state rather than a failed measurement, the `code`-mode guard no longer prints what it refuses, and the music gain pin requires confirmation on first use as well as on change — recording `operator-confirmed`, because a measured bed level is not reachable at pin time. `stamp-lineage` was built and **withdrawn**: no artefact bound to synthesis retains the exact narration, so it could only mint false proof. **Third pass, for the same consumer:** the gain pin became a registry that fails closed on a knob nobody declared (seven pinned); silent segments must be declared and captioned, never inferred from absence; a licensed bed is ducked in-graph by a solved `sidechaincompress` threshold, verified by decoding at ~10.4 dB of an 11 dB target; and `vo-envelope.json` is bound to the voiceover it measured. **The third pass landed unreviewed. The 2026-09-28 cross-family review failed it, its findings became T1–T5, and round 2 is running — gap 22.** **Then the fixes from the 2026-09-28 audit and §VIII reviews (T1–T5), each gated by a cross-family review:** T1 `a0add0b` makes the scene audits fire (C-14 contrast, C-5 clipped code block) and keeps slides on their seams; T2 `cbac96b` makes write-chapters and write-subtitles plan by default and confines their writes; T3 `b671a2e` binds a baked bed to its narration, pins the crossfade and refuses a duck that cannot be delivered. All three passed review. T4 `53424c2` regenerates declared silence in S4 (remix, concat-audio) from the authored window, without a re-voice, and passed at round 8. F6 `d1d8d47` makes voice check its timeline before it writes anything, in its plan and under `--apply`, and passed at round 2. Two High voice defects its review raised are placed in Q14 and F7 (gap 27). T5 (documentation) has not started. |
 | `eval-engine` | lib | 1 | `working` | 2066 passing | Generic eval harness: contracts, assertions, participants, REST/LLM runners, coordinator, statistics (Wilson, McNemar, BH), comparator, baseline providers, impacted selection, machine-path refusal at load, write and read. **Group 2 of the audit closed** — identity-derived seeds, runner and participant attestation frozen pre-dispatch, verdicts refused without their evidence, identifiers guarded at every stage entry, fixtures driven by real runners. `Mcp` and `Ui` scenario kinds are declared stubs. |
 | `eval-loop-demo` | tool (`node`) | 2 | `working` | 32 passing | Demo-video project *"How do you test a conversation?"* — **SizzleCraft's first end-to-end consumer**, and the reason 10 engine defects are known. 8 segments, 4:42 at 4K/JPEG on this branch; a 4:37 four-facts cut with the ducked mix is verified on the consumer's branch and **not merged** (gap 23). Supplies its own S1 (`write-script.mjs`), the one stage the engine deliberately excludes. Tests pin the traps that cost a render: segment-qualified trigger targets, edges needing explicit `drawEdge`, no trigger past a reflowed segment end, diagram viewBox aspect, no-go strings, and the music-attribution ⇒ end-card invariant. |
 | `eval-cli` | tool | 2 | `working` | 758 passing | `run`, `baseline update` and `trend`. Suite discovery, impacted selection, artifact writing, committed-artifact and live-endpoint baselines, JSON + text + Markdown reports, PR comparison and trend reports. **Groups 1 and 2 closed** — input/output collision matrix, `ArtifactBudget`, `--fail-on-regression` refused rather than ignored, and the positional `SeedSchedule` workaround deleted now the engine derives seeds from identity. |
@@ -254,26 +254,38 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     this audit spent forty rounds learning not to. Schedule the traced sweep as its
     own task; grade each sink only once its resolver is known.
 
-22. **SizzleCraft's third pass is in the tree with no independent review.**
-    - `c620c88`: its round-2 fixes followed a round-1 FAIL and were never re-reviewed.
-    - `331ddac` (silent segments), `c3f1e56` (ducking) and `34fa0e7` (the MODELLED label)
-      had no review at all; neither had the consumer's `2e5a62e`.
-
-    This is a §VIII breach on the orchestrator's side, not a policy choice. The
-    2026-09-28 audit ran on `claude-opus-5.5`, the builders' own family, so **it finds
-    defects without satisfying the gate**. A cross-family review is still owed before
-    any of these are called reviewed.
-
-    The T1–T3 fixes (`a0add0b`, `cbac96b`, `b671a2e`) each passed a cross-family review
-    of **their own diff only**. That review does not cover the commits above, even where
-    a fix touches the same file.
-23. **The consumer's branch has diverged from this one, and neither session can push.**
-    - `eval-loop-demo-build` holds three commits this branch lacks: `ffe3f82`, `4134283`
-      and `d47cf86`. One of them is an unreviewed 9-line engine edit to
-      `write-build-html.mjs` (code-block wrapping).
-    - This branch holds `34fa0e7`, which theirs lacks.
-    - Both linked accounts get 403 on push (EMU read-only), so reconciliation waits on
-      someone with write access.
+22. **SizzleCraft's third pass landed unreviewed, failed its retrospective review, and is in
+    round 2.**
+    - Landing `c620c88`, `331ddac`, `c3f1e56` and `34fa0e7` without a cross-family review
+      was a §VIII breach on the orchestrator's side. The 2026-09-28 audit ran on
+      `claude-opus-5.5`, the builders' own family, so **it found defects without
+      satisfying the gate**.
+    - **The cross-family review ran on 2026-09-28**, against `c526a79`. Three `gpt-6-sol`
+      `tooling-reviewer`s split the commits:
+      - pin: `c620c88`; it also confirmed that commit's two round-1 fixes;
+      - silence: `331ddac`, with the consumer's `2e5a62e`;
+      - duck: `c3f1e56`, with `34fa0e7`.
+    - **All three returned FAIL.** On process, because no commit recorded
+      TEST-FIRST-EVIDENCE, which cannot be supplied after the fact. And on substance.
+      Their findings, unioned with the audit's, became T1–T5.
+    - T1–T4 and F6 each passed a cross-family review of **their own diff only**. That does
+      not show every 2026-09-28 finding was carried into the union, placed and closed.
+      **Round 2 checks exactly that.** It went to the same three reviewers on 2026-10-02,
+      against a frozen export at `1a9cfa2`, with T5's queued findings excluded.
+    - `d71c605` brought the consumer's code-block wrap (gap 23) into this branch, with its
+      CSS corrected, and was committed as unreviewed. It is in round 2's scope.
+    - **From 2026-09-28 to 2026-10-02 this entry said "no independent review".** It was
+      written in `c526a79`, the commit the reviewers were dispatched against, and not
+      updated when the FAILs arrived that afternoon. The orchestrator repeated the claim in
+      `1a9cfa2` and in a question to the user.
+23. **Neither this branch nor the consumer's can be pushed.**
+    - The consumer rebased `eval-loop-demo-build` onto `013cdc8`. Measured on 2026-10-02:
+      0 behind, 13 local commits at `6ef6ca9`, none touching `tools/SizzleCraft`. Its old
+      `ffe3f82`, `4134283` and `d47cf86` are ancestors of neither branch.
+    - `ffe3f82`'s unreviewed 9-line code-block wrap reached this branch as `d71c605`
+      (gap 22).
+    - Both linked accounts get 403 on push (EMU read-only), so delivery waits on someone
+      with write access.
 24. **Two silent-segment paths have been read, never run.**
     - `voice.mjs` generates a clip for a declared-silent segment and reflows the timeline
       (needs live TTS).
@@ -319,14 +331,17 @@ built through `forge-team` with a real builder and reviewer. That is the next re
       crashes at `seg.id.padEnd` after writing the clips up to and including that
       segment's.
 
-    Neither is scheduled; the user decides where they go.
+    **The user placed both on 2026-10-02.** The id case folds into Q14, whose shape check
+    gains the schema's `id` rule. The end-card case is F7, straight after Q14.
 
 ## Next
 
-**SizzleCraft queue, in the user's order (2026-10-01):** F6 (done, `d1d8d47`) → Q14 → the
-`assertCleanExit` fix → validate-scene → T5, with the T4 follow-ups batched in → Prettier
-adoption → coach graduation G5, G1, G2+G3, G4, G6, G7. Each is Tier 2: a plan, pre-edit
-approval, a failing test first, then a cross-family review. Gap 27 is not yet placed.
+**SizzleCraft queue, in the user's order (2026-10-01, extended 2026-10-02):** F6 (done,
+`d1d8d47`) → Q14, with the segment-id check → F7 → the `assertCleanExit` fix →
+validate-scene → T5, with the T4 follow-ups batched in → Prettier adoption → coach
+graduation G5, G1, G2+G3, G4, G6, G7. Each is Tier 2: a plan, pre-edit approval, a failing
+test first, then a cross-family review. Round 2 of the 2026-09-28 reviews runs alongside
+Q14 (gap 22).
 
 1. Close the environment gaps in `memory-bank/techContext.md` (CSharpier, PSScriptAnalyzer,
    Pester).
