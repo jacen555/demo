@@ -1,6 +1,6 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-10-01
+> **Last updated:** 2026-10-02
 
 ## Current focus
 
@@ -15,7 +15,9 @@ ADR 0006 records why (below).
 | `cbac96b` | T2 — write-chapters and write-subtitles plan by default and confine their writes | **PASS** at round 2 |
 | `b671a2e` | T3 — a baked bed is bound to its narration, crossfade is pinned, an undeliverable duck is refused | **PASS** at round 4 |
 | `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
-| F6 | voice checks every silence declaration before any synthesis or write, in plan and `--apply` | not started — needs pre-edit approval |
+| `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
+| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first | not started — spec, then approval |
+| `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
 | validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
 | T5 | Documentation debt | not started |
 | `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | Round 1 **FAIL**; round-2 fixes **never re-reviewed** |
@@ -24,11 +26,11 @@ ADR 0006 records why (below).
 | `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | **None** |
 | `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | **None** |
 
-**The T1–T3 reviews cover their own diffs only.** The third-pass commits below them still
-owe a cross-family review (progress, gap 22). SizzleCraft: 867 tests (866 pass, 1 skip) at
-`53424c2`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch through
-`013cdc8`, which is 27 commits past `main` with no PR yet; `53424c2` is local, and pushes from
-here return 403.
+**The T1–T4 and F6 reviews cover their own diffs only.** The third-pass commits below them
+still owe a cross-family review (progress, gap 22). SizzleCraft: 883 tests (882 pass, 1 skip)
+at `d1d8d47`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch
+through `013cdc8`, which is 27 commits past `main` with no PR yet. Everything after it, T4 and
+F6 included, is local, and pushes from here return 403.
 
 The 2026-09-28 audit ran on `claude-opus-5.5` (4 slices) at the user's request. It finds
 defects, but **it does not satisfy §VIII**, so T1–T5 each carry their own cross-family
@@ -229,7 +231,25 @@ to find it.
   --apply to proceed" after saying `--apply` would refuse; write-subtitles can repeat a word
   or a fact for a malformed declaration; validate-timing:607 calls re-running voice "the only
   route" even where voice would refuse; the four round-6 wording and bound items; the
-  zero-file-ids preload's documented limits. Ask the user before scheduling any of them.
+  zero-file-ids preload's documented limits. **The user placed them on 2026-10-01:** the
+  TypeError is Q14, next in the queue; the round-6 items and the three wording fixes go into
+  T5. The preloads' limits were not placed.
+- **F6's follow-ups, not yet scheduled** (the F6 commit message lists them):
+  - **Two High defects, pre-existing, raised by F6's round-1 review.** Both plan as runnable
+    (exit 0) and fail only after voice has written. Measured with the fake audio backends:
+    - an enabled end card with an outro over 3,600,000 ms exits 1 after overwriting every
+      clip; one with no `builderVersion` exits 1, with a stack, after overwriting every clip
+      and `voiceover.mp3`;
+    - a segment with no string `id`, narrated or silent, passes the gate; under `--apply`
+      voice writes the clips up to and including that segment's, then crashes at
+      `seg.id.padEnd` (exit 1).
+  - The label for a segment with no id: voice and both gates print its 0-based index,
+    quoted like an id (`segment "2"`); remix prints `segment "undefined"`.
+  - The all-silent and shape refusals carry no remedy, so voice prints the fact alone.
+  - voice's C-11 and brand allow-list failures are uncaught throws: exit 1 with a stack.
+  - The README's exit-code table row for 2 does not mention a refused timeline.
+
+  The user decides where the two Highs go.
 - **Still open on the engine**: `render.preview` is declared in the template but no script
   implements it, `evidence-pack/` is resolved unconditionally at module load, and
   `voice.mjs` reflows segment windows but not segment-relative trigger times.
@@ -238,8 +258,8 @@ to find it.
   `remix.mjs` do their work, prints `at file:///…:232:35`, with none, so the helper calls
   it clean. Measured 2026-10-01: widening the check changes none of the 867 tests. A
   control confirmed that the wider pattern does catch the module-scope frame. It also
-  matches a line like `at 0:01:23`, so the fix should require a path-shaped token. Not
-  scheduled.
+  matches a line like `at 0:01:23`, so the fix should require a path-shaped token. Queued
+  after Q14, in the user's order of 2026-10-01.
 
 ## Watch out for
 
@@ -251,6 +271,10 @@ to find it.
   the gate it enforces.**
 - **A same-family review is not the gate.** Opus reviewing Opus finds real defects and
   still cannot satisfy §VIII; report it as an audit, never as a verdict.
+- **A surviving mutant of changed behaviour is a missing test, not a question.** F6 round 1
+  changed voice's label for a segment with no id, and my own mutation run showed no test
+  would notice (M8). I put it to the reviewer as a question; the reviewer ruled it blocking,
+  and round 2 added the test. Write that test before the review.
 - **The two branches diverge silently.** Each holds commits the other lacks, including a
   consumer-side engine edit to `write-build-html.mjs`. Check `git log A..B` both ways
   before calling either one current.
