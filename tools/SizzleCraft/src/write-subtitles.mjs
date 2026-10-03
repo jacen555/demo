@@ -550,8 +550,48 @@ function timelineProblems(t, root) {
  * simply wrong for an intermission. The `silence` declaration separates them, and only an
  * undeclared segment reaches this. The voice stage is named as the step only where it
  * would run, and the declaration it offers instead is one every stage accepts.
+ *
+ * AND THE ONE SEQUENCE CUE TEXT CANNOT HOLD. MEASURED in Chromium, through a <track>
+ * element reading back track.cues against a well-formed two-cue control: a cue whose TEXT
+ * line contains "-->" parses with EMPTY text. The caption does not render wrongly, it
+ * silently disappears — standalone ("the arrow --> points right") and embedded ("a-->b")
+ * alike — and cue text that is itself a whole timing line builds a phantom second cue
+ * spanning those times. All of it at exit 0, with both sidecars written and nothing
+ * reported. It is refused rather than escaped because an escape changes what the viewer
+ * reads, while a refusal is the one outcome the author can actually see.
+ *
+ * This is the NARRATED half of the rule silentSegmentProblems applies to an authored
+ * caption, and the two are meant to read as one. Only "-->" is refused here. Of Unicode's
+ * seven mandatory line breaks six — LF, VT, FF, CR, U+2028 and U+2029 — are split away by
+ * /\s+/ before they can reach a cue; U+0085 (NEL) is NOT, because JS \s does not match it
+ * (MEASURED), so it survives the split and does reach cue text. One can also reach a cue
+ * as a raw measured word, through the alignment fallback described below. Neither is
+ * refused here, because neither is destructive: MEASURED in Chromium, a cue holding a NEL
+ * is one intact cue that keeps it as an invisible character, and a cue holding a line
+ * break keeps its text too. They belong to the deferred line-break item, not to this rule.
+ * Nothing is claimed about any other player.
+ *
+ * Both sources of cue text are checked: restorePunctuation normally emits the voiceoverText
+ * token, but where alignment fails it falls back to the RAW measured word. Alignment fails
+ * for "-->" UNLESS a token whose bare() key is EMPTY sits inside the four-token lookahead —
+ * punctuation-only ("!", "...") or blank, since "".trim().split(/\s+/) is [""] and bare("")
+ * is "" too. bare() maps all of those to the same empty key as "-->", so such a token
+ * matches it and the SOURCE token is emitted instead (MEASURED — narration "a ! b" with a
+ * measured "-->" writes the cue text "a! b", no arrow). The word-level refusal is therefore
+ * deliberately conservative: whether the arrow would really reach a sidecar depends on
+ * narration this check would have to simulate, so it refuses on the possibility, and its
+ * message says "can reach" rather than claiming it is written.
  */
 function wordProblems(seg, where, gates) {
+  // Declared here, not at module scope: this module calls readTimeline at the top level,
+  // above these lines, so a module-scope const would be in its temporal dead zone.
+  const ARROW = '-->';
+  // The consequence only. Each source supplies its own lead, because only the narration is
+  // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
+  // message says what is being prevented rather than asserting an outcome.
+  const ARROW_HARM =
+    'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, and cue ' +
+    'text that is itself a whole timing line forges a second cue';
   const w = seg.audio?.words;
   if (!Array.isArray(w) || !w.length) {
     const voice = gates.voice();
@@ -569,6 +609,18 @@ function wordProblems(seg, where, gates) {
         'the captions restore their punctuation from it',
     );
   }
+  // The author edits ONE thing. Where the narration carries the arrow its measured words
+  // repeat it, so reporting both turns a single edit into a list to work through: the
+  // narration is reported alone, and a measured word only where the narration is clean —
+  // which is the alignment-fallback case, and the only way this reaches a cue unseen.
+  const arrowInNarration = typeof seg.voiceoverText === 'string' && seg.voiceoverText.includes(ARROW);
+  if (arrowInNarration) {
+    problems.push(
+      `${where}: voiceoverText contains "${ARROW}" — it is written into both subtitle sidecars as cue text, ` +
+        `where ${ARROW_HARM}. ` +
+        `Write the narration without "${ARROW}" (and re-run voice.mjs (S3) if its words are already measured).`,
+    );
+  }
   w.forEach((x, j) => {
     const at = `${where}: audio.words[${j}]`;
     if (x === null || typeof x !== 'object' || Array.isArray(x)) {
@@ -576,6 +628,12 @@ function wordProblems(seg, where, gates) {
       return;
     }
     if (typeof x.word !== 'string') problems.push(`${at}.word is ${describeValue(x.word)} — it must be text`);
+    else if (!arrowInNarration && x.word.includes(ARROW)) {
+      problems.push(
+        `${at}.word contains "${ARROW}" — it can reach cue text verbatim, and in a sidecar ${ARROW_HARM}. ` +
+          "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.",
+      );
+    }
     const unmeasured = ['startMs', 'endMs'].filter(k => !isMs(x[k]));
     for (const k of unmeasured) {
       problems.push(`${at}.${k} is ${describeValue(x[k])} — it must be a finite number of milliseconds, >= 0`);

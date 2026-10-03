@@ -3108,6 +3108,273 @@ describe("a silent segment's caption is one line, without -->", () => {
   });
 });
 
+// The NARRATED half of the same rule.
+//
+// A silent segment's caption is AUTHORED, and the describe above checks it. Narrated cue
+// text is MEASURED, reaches the sidecars by a different route, and was written unexamined:
+// "the arrow --> points right" left the stage at exit 0 with both sidecars present.
+//
+// MEASURED in Chromium, through a <track> element, reading back track.cues. A well-formed
+// two-cue control parses as 2 cues with the right text, so a count below is a real result
+// and not a broken harness:
+//
+//   cue text "the arrow --> points right"    -> 1 cue, text ""            the caption vanishes
+//   cue text "before a-->b after"            -> 1 cue, text ""            embedded, the same
+//   cue text "00:00:00.000 --> 00:00:09.000" -> 2 cues, one spanning 0-9s a phantom cue
+//
+// So the caption does not render wrong, it renders as NOTHING, and the stage said nothing
+// either. That is why this is refused rather than escaped.
+//
+// Cue text has TWO sources and both are pinned here. restorePunctuation normally emits the
+// voiceoverText token; where alignment fails it falls back to the RAW measured word. For a
+// measured "-->" alignment fails UNLESS a token whose bare() key is EMPTY — punctuation-only
+// ("!", "...") or blank, since "".trim().split(/\s+/) is [""] — sits inside the four-token
+// lookahead, because bare() maps all of those to the same key as "-->" and the SOURCE token
+// is then emitted instead (MEASURED: narration "a ! b" with a measured "-->" writes the cue
+// text "a! b", no arrow). So the fallback is how an arrow reaches a cue from a clean
+// narration, and the word-level refusal is deliberately conservative — it refuses on the
+// possibility rather than simulating the alignment.
+describe('a narrated segment never puts --> into cue text', () => {
+  const timed = (tokens) => tokens.map((word, i) => ({ word, startMs: 100 + i * 300, endMs: 400 + i * 300 }));
+  /** One narrated segment whose window holds every measured word. */
+  const narrated = (voiceoverText, tokens) => {
+    const words = timed(tokens);
+    const endMs = words.at(-1).endMs + 400;
+    return [{
+      id: 'one', startMs: 0, endMs, voiceoverText,
+      audio: { file: 'segment_000.mp3', durationMs: endMs, headMs: 0, tailMs: 0, words },
+    }];
+  };
+
+  /** The TEXT lines of every cue block — never the header, index or timing lines. */
+  const cueTextOf = (body) => body.split('\n\n')
+    .map((b) => b.split('\n').filter((l) => l !== ''))
+    .filter((lines) => lines.length && lines[0] !== 'WEBVTT')
+    .flatMap((lines) => lines.slice(2))
+    .join('\n');
+
+  const ARROW_CASES = [
+    // Through voiceoverText — the normal restorePunctuation path.
+    ['AStandaloneArrow', narrated('the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']),
+      'timing.segments[0] ("one"): voiceoverText contains "-->"'],
+    ['AnArrowInsideALongerToken', narrated('before a-->b after', ['before', 'a-->b', 'after']),
+      'timing.segments[0] ("one"): voiceoverText contains "-->"'],
+    // Cue text that is itself a whole valid timing line: the forged second cue.
+    ['NarrationThatIsAWholeTimingLine',
+      narrated('00:00:00.000 --> 00:00:09.000', ['00:00:00.000', '-->', '00:00:09.000']),
+      'timing.segments[0] ("one"): voiceoverText contains "-->"'],
+    // voiceoverText is CLEAN. The arrow exists only as a measured word and reaches the cue
+    // through the alignment fallback, so a check on voiceoverText alone would miss it.
+    ['AnArrowInAMeasuredWordTheNarrationDoesNotHold', narrated('alpha beta', ['alpha', '-->', 'beta']),
+      'timing.segments[0] ("one"): audio.words[1].word contains "-->"'],
+    // Clean narration AND the arrow embedded in a longer measured word. This is the only
+    // case the word-level check must match as a SUBSTRING: an equality test against "-->"
+    // passes every other row here and still writes this cue. bare("x-->y") is "xy", which
+    // matches no narration token, so alignment fails and the raw word becomes cue text.
+    ['AnEmbeddedArrowInAMeasuredWordTheNarrationDoesNotHold', narrated('alpha beta', ['alpha', 'x-->y', 'beta']),
+      'timing.segments[0] ("one"): audio.words[1].word contains "-->"'],
+  ];
+
+  // Both modes: the refusal belongs to reading the timeline, so it must land before the
+  // plan is printed as well as before the sidecars are written.
+  for (const [scenario, segments, expected] of ARROW_CASES) {
+    for (const [mode, args] of [['InPlan', []], ['InApply', ['--apply']]]) {
+      test(`writeSubtitles_${scenario}${mode}_isRefusedAndWritesNoSidecar`, (t) => {
+        const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+        const r = runScript('write-subtitles.mjs', args, dir);
+
+        assert.equal(r.code, EXIT.FAILED, r.all);
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.match(r.stderr, new RegExp(`^error: ${escapeRe(`${expected} — `)}`, 'm'), r.all);
+        assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'no sidecar may be written');
+      });
+    }
+  }
+
+  // The author edits one thing. Where voiceoverText carries the arrow the measured words
+  // repeat it, and naming all of them turns one edit into a list to work through.
+  test('writeSubtitles_AnArrowInBothTheNarrationAndItsMeasuredWords_reportsOnlyTheNarration', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(narrated('the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right'])),
+    });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.doesNotMatch(r.stderr, /audio\.words\[\d+\]\.word contains/, r.all);
+  });
+
+  // THE WHOLE REFUSAL, not just its opening clause. The rows above anchor on the text up to
+  // the em dash, which pins the subject and that exactly one problem is reported — but it
+  // leaves everything after it unverified, and that is the half doing the real work: it is
+  // what tells an author why a caption they can read in timing.json vanished from the video.
+  // Gutting the explanation left the suite green, so one row per source pins it in full,
+  // remedy included. The silent half of this rule asserts its whole message too.
+  const HARM = 'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, ' +
+    'and cue text that is itself a whole timing line forges a second cue';
+  for (const [scenario, segments, expected] of [
+    ['TheNarration', narrated('the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']),
+      'timing.segments[0] ("one"): voiceoverText contains "-->" — it is written into both subtitle sidecars ' +
+      `as cue text, where ${HARM}. ` +
+      'Write the narration without "-->" (and re-run voice.mjs (S3) if its words are already measured).'],
+    // "can reach", not "is written": a punctuation-only narration token inside the four-token
+    // lookahead absorbs a measured "-->" (bare() maps all punctuation to the same empty key),
+    // so this refusal is conservative and its wording has to be too. MEASURED: narration
+    // "a ! b" with a measured "-->" writes the cue text "a! b", with no arrow in it.
+    ['AMeasuredWord', narrated('alpha beta', ['alpha', '-->', 'beta']),
+      'timing.segments[0] ("one"): audio.words[1].word contains "-->" — it can reach cue text verbatim, and ' +
+      `in a sidecar ${HARM}. ` +
+      "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words."],
+  ]) {
+    test(`writeSubtitles_AnArrowIn${scenario}_refusesWithTheWholeExplanationAndRemedy`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assert.equal(r.code, EXIT.FAILED, r.all);
+      assert.equal(r.stderr.split(/\r?\n/).find((l) => l.startsWith('error: ')), `error: ${expected}`, r.all);
+    });
+  }
+
+  // The boundary: only the three-character sequence is refused. "-", ">" and "->" build an
+  // ordinary cue. These rows cover the accepted side on the NORMAL path: each narration
+  // carries the same punctuation token as the measured word, and both bare() to the empty
+  // key, so alignment MATCHES and the source token is emitted. They do not reach the
+  // fallback — MEASURED with a discriminating fixture, narration "the arrow ->! points
+  // right" against a measured "->" writes "->!", the source token, not the measured one.
+  // The fallback is covered separately below.
+  for (const [scenario, text, tokens] of [
+    ['AShorterArrow', 'the arrow -> points right', ['the', 'arrow', '->', 'points', 'right']],
+    ['AHyphen', 'a well - formed cue', ['a', 'well', '-', 'formed', 'cue']],
+    ['AGreaterThan', 'a > b in theory', ['a', '>', 'b', 'in', 'theory']],
+    ['ASplitArrow', 'the arrow - -> points', ['the', 'arrow', '-', '->', 'points']],
+  ]) {
+    test(`writeSubtitles_NarrationWith${scenario}_isAcceptedAndWritesBothSidecars`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(narrated(text, tokens)) });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assertCleanExit(r, EXIT.OK, `"${text}" must still be captioned: `);
+      assert.ok(fs.existsSync(path.join(dir, 'demo.vtt')), r.all);
+      assert.ok(fs.existsSync(path.join(dir, 'demo.srt')), r.all);
+    });
+  }
+
+  test('writeSubtitles_OrdinaryNarration_isAcceptedAndWritesBothSidecars', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(narrated('hello there friend', ['hello', 'there', 'friend'])) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'ordinary narration must be captioned: ');
+    assert.ok(fs.existsSync(path.join(dir, 'demo.vtt')), r.all);
+    assert.ok(fs.existsSync(path.join(dir, 'demo.srt')), r.all);
+  });
+
+  // GENUINE fallback coverage for the accepted side, mirroring the refused-side fallback
+  // rows above. The narration here holds no token whose bare() key is empty, so a measured
+  // "->", "-" or ">" matches nothing in the lookahead, alignment FAILS, and :140 emits the
+  // RAW measured word — the same route a refused "-->" takes from a clean narration.
+  //
+  // That the fallback really ran is provable from the output: the narration is "alpha beta"
+  // and contains none of these tokens, so a token appearing in cue text can only have come
+  // from the measured word. The rows above cannot show this, because their narration
+  // carries the same token and alignment matches it.
+  for (const [scenario, token] of [['AShorterArrow', '->'], ['AHyphen', '-'], ['AGreaterThan', '>']]) {
+    test(`writeSubtitles_${scenario}ReachingCueTextByTheAlignmentFallback_isAccepted`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(narrated('alpha beta', ['alpha', token, 'beta'])) });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assertCleanExit(r, EXIT.OK, `a measured "${token}" must still be captioned: `);
+      const cue = cueTextOf(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'));
+      assert.ok(cue.includes(token),
+        `the measured "${token}" must have reached cue text by the fallback, proving the route: ${JSON.stringify(cue)}`);
+      assert.ok(!cue.includes('-->'), `no arrow may appear in cue text: ${JSON.stringify(cue)}`);
+    });
+  }
+
+  // U+0085 (NEL) is one of Unicode's seven mandatory line breaks, and the only one JS \s
+  // does NOT match (measured). The other six are split away by /\s+/ before they can reach
+  // a cue; this one is not, and it arrives by the ORDINARY restorePunctuation path rather
+  // than the alignment fallback, because bare() strips it and the SOURCE token is emitted.
+  // So it is the easiest of the seven to hit, not the hardest.
+  //
+  // It is accepted because it is MEASURED as non-destructive in Chromium: one intact cue
+  // that keeps the NEL as an invisible character. This row RECORDS that boundary, it does
+  // not endorse it — narrated line breaks belong to the deferred line-break item, not to
+  // this rule. Pinning the accepted side means tightening the "-->" gate later cannot
+  // silently start refusing a project that renders correctly today.
+  //
+  // Written as an escape: the character has no glyph, and a raw one in this file would be
+  // invisible to every reviewer.
+  test('writeSubtitles_NarrationHoldingANextLine_isAcceptedAndKeepsItInTheCueText', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(narrated('a\u0085b tail', ['ab', 'tail'])) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'U+0085 is not refused by the "-->" rule: ');
+    assert.ok(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8').includes('\u0085'),
+      'U+0085 survives /\\s+/ and reaches cue text — the boundary this row records');
+  });
+
+  /**
+   * The property the gate exists to guarantee, asserted on the BYTES that were written and
+   * independently of how the gate is implemented: in a sidecar "-->" is a timing separator
+   * and nothing else.
+   *
+   * POSITIONAL, not shape-based. The first version of this check only asserted that every
+   * arrow-bearing line LOOKED like a timing line — which `00:00:00.000 --> 00:00:09.000`
+   * does, the exact payload the forged-timing row above exists to keep out. It would have
+   * passed a sidecar built entirely out of the thing being refused. A cue block is
+   * "index / timing / text...", so the arrow is legal on the block's timing line and
+   * nowhere else, whatever the text happens to look like.
+   */
+  const TIMING = /^\d{2}:\d{2}:\d{2}[.,]\d{3} --> \d{2}:\d{2}:\d{2}[.,]\d{3}$/;
+  const assertArrowsOnlyOnTimingLines = (body, what) => {
+    const blocks = body.split('\n\n')
+      .map((b) => b.split('\n').filter((l) => l !== ''))
+      .filter((lines) => lines.length && lines[0] !== 'WEBVTT');
+    assert.ok(blocks.length, `${what}: no cue blocks to check — the invariant would be vacuous`);
+    for (const lines of blocks) {
+      assert.match(lines[0], /^\d+$/, `${what}: cue block does not open with an index: ${JSON.stringify(lines[0])}`);
+      assert.match(lines[1] ?? '', TIMING, `${what}: no timing line where one belongs: ${JSON.stringify(lines[1])}`);
+      for (const text of lines.slice(2)) {
+        assert.ok(!text.includes('-->'), `${what}: "-->" inside cue TEXT: ${JSON.stringify(text)}`);
+      }
+    }
+  };
+
+  // The control for the check itself. Without it the invariant could silently degrade to
+  // vacuous again — a check that cannot fail proves nothing, and this one already did.
+  test('assertArrowsOnlyOnTimingLines_aSidecarWhoseCueTextIsATimingLine_isRejected', () => {
+    const forged = 'WEBVTT\n\n1\n00:00:00.100 --> 00:00:02.500\n00:00:00.000 --> 00:00:09.000\n';
+
+    assert.throws(() => assertArrowsOnlyOnTimingLines(forged, 'forged'), /"-->" inside cue TEXT/);
+  });
+
+  test('assertArrowsOnlyOnTimingLines_aWellFormedSidecar_isAccepted', () => {
+    const good = 'WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nfirst cue\n\n2\n00:00:02.000 --> 00:00:04.000\nsecond cue\n';
+
+    assert.doesNotThrow(() => assertArrowsOnlyOnTimingLines(good, 'control'));
+  });
+
+  test('writeSubtitles_aValidTimeline_writesArrowsOnlyOnTimingLinesInBothSidecars', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith([
+        ...narrated('the arrow -> points right - -> onward', ['the', 'arrow', '->', 'points', 'right', '-', '->', 'onward']),
+        { id: 'gap', startMs: 2900, endMs: 3860, voiceoverText: '', silence: { caption: '[music]' } },
+      ]),
+    });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a valid timeline must be captioned: ');
+    assertArrowsOnlyOnTimingLines(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'), 'demo.vtt');
+    assertArrowsOnlyOnTimingLines(fs.readFileSync(path.join(dir, 'demo.srt'), 'utf8'), 'demo.srt');
+  });
+});
+
 describe("frame-capture checks a silent segment's window and never derives its end from audio", () => {
   const timingOf = (segments) => JSON.stringify({
     project: { name: 'demo', fps: 30, width: 320, height: 240 },
