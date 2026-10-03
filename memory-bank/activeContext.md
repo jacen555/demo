@@ -16,7 +16,7 @@ ADR 0006 records why (below).
 | `b671a2e` | T3 — a baked bed is bound to its narration, crossfade is pinned, an undeliverable duck is refused | **PASS** at round 4 |
 | `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
 | `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
-| Q14 | remix's plan crashes on a timeline with no segment list, and remix never checks the segments' shape, which its gate checks first. The shape check also gains the schema's segment `id` rule, which closes gap 27's id-less crash | spec ready; round 2's silence findings proposed for it — approval pending |
+| `0a5b7f4` | Q14 — remix refuses a shapeless timeline instead of crashing; the shape check gains the schema's segment `id` rule; silent windows are bounded (nonnegative start, finite end, one-hour cap); frame-capture checks every silence declaration before it plans; the caption gate refuses all seven Unicode mandatory line breaks, naming each by code point | **PASS** at round 2. Round 1 **FAIL** (B1: an index printed as an id; B2: U+2028/U+2029 accepted into the sidecars at exit 0). Absorbed S2-1..S2-4 and K4 |
 | F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
 | `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
 | validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
@@ -211,6 +211,32 @@ to find it.
 
 ## Known open work
 
+- **Q14's follow-up queue, in the user's order.** Q14 closed at `0a5b7f4`; these came out of
+  its two review rounds and are not yet scheduled:
+  - **R5 — narrated `-->` reaches the sidecars** (`write-subtitles.mjs:290-294`). High. The
+    user placed it as **its own item, next after Q14**; refuse vs escape is decided when its
+    spec is drafted. Q14 bounded only *silent* captions.
+  - **"Shape-first everywhere" — R1 plus the surviving `?? i` sites.** The deferred record is
+    incomplete, and a spec written from the round-1 verdict's citations would fix one site of
+    four. **Measured complete list** of the quoted-index pattern, all pre-existing at HEAD and
+    untouched by Q14: `concat-audio.mjs:117`, `concat-audio.mjs:207`, `remix.mjs:86`
+    (`labelOf`), `silent-segment.mjs:599` (`defaultLabel`). Separately, the `segment
+    "undefined"` default is `silent-segment.mjs:366`, reachable from `validate-timing.mjs:356`,
+    `write-storyboard.mjs:29` and `concat-audio.mjs:119`. Also here: `segmentLabel` in
+    `write-chapters.mjs:292-295` and `write-subtitles.mjs:632-635` tests only
+    `typeof id === 'string'`, so an empty id still prints `("")` — laxer than the rule Q14
+    enforced. frame-capture is clean: it had zero `?? i` sites at HEAD, round 1 added one,
+    round 2 removed it.
+  - **R4 — a null segment entry is a TypeError, not a refusal.** Sites: `frame-capture.mjs:119`
+    (**re-measured after Q14 shifted it from :112**), `write-storyboard.mjs:37`,
+    `concat-audio.mjs:108`.
+  - **R2/R3 wording**, nested **K4** (`silent-segment.mjs:366-370`), and **`declareSilentRemedy`**
+    (`silent-segment.mjs:985`, was :971) which omits the nonnegative start, the one-hour cap
+    **and now the caption rule**.
+  - **Citations in all of the above are tree-relative.** Q14 shifted `silent-segment.mjs` by
+    **+14** below its hunk and `frame-capture.mjs` by **+7**; anything above a hunk is
+    unchanged. Both the builder and the reviewer cited stale numbers this round. **Re-measure
+    every deferred citation against the tree it will be implemented in.**
 - **`SuiteLoader` path confinement** — accepted as a separate task, not fixed. Unix symlink
   following, a validate-then-open race, a volume-root separator bug. Fix before the harness
   loads a suite file an untrusted party can write.
@@ -273,6 +299,15 @@ to find it.
 
 ## Watch out for
 
+- **A reviewer can return a verdict without doing the review.** Q14 round 2's first
+  submission was a PASS in 185 seconds: no citations, and four of the six required sections
+  missing. Nothing in it could be distinguished from a reading of the builder's report — and
+  the report is the thing the reviewer exists to check. I sent it back naming the missing
+  sections and restating the questions, saying plainly that either conclusion was acceptable
+  but an unsupported verdict was not. The resubmission quoted the loop, worked all four
+  branches of the message logic, and answered the deferred-defect question; the conclusion
+  did not change, but the evidence appeared. **Read the verdict for evidence, not for its
+  verdict.** A PASS is a claim like any other.
 - **Green is not reviewed.** I committed `c620c88` after a FAIL verdict without re-review,
   and three feature commits with no review at all, because the suites were green. The
   consumer had done the same three times, and their unreviewed engine changes produced 16
