@@ -52,7 +52,7 @@ import path from 'node:path';
 import { parseFile } from 'music-metadata';
 
 import { EXIT } from '../src/cli-support.mjs';
-import { renderBlocker, voiceBlocker } from '../src/silent-segment.mjs';
+import { remixBlocker, renderBlocker, voiceBlocker } from '../src/silent-segment.mjs';
 import { FAKE_AUDIO, brandTokens, makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, shortNameOf, zeroFileIds, ZERO_FILE_IDS_ARMED } from './_helpers.mjs';
 import { FRAME_BYTES, FRAME_MS, frames, readFrames, ttsClip } from './fixtures/fake-audio-backends.mjs';
 
@@ -93,6 +93,47 @@ function slice(track, startMs, endMs) {
 
 const windows = (timing) => Object.fromEntries(timing.segments.map((s) => [s.id, [s.startMs, s.endMs]]));
 const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// A caption that forges a cue: in a subtitle sidecar the blank line ends the caption's own cue,
+// and the lines after it read as another cue, with timing of its own.
+const FORGED_CUE = '[music]\n\n00:00.000 --> 00:05.000\nX';
+// The longest silence the engine generates: silence-gen's --ms ceiling, one hour.
+const HOUR_MS = 3_600_000;
+// JSON.stringify writes Infinity as null, but JSON.parse reads 1e999 as Infinity, so a file can
+// hold one. A segment that needs it carries INFINITE_MARK, which infinite() rewrites as 1e999.
+const INFINITE_MARK = 1234.5678;
+const infinite = (text) => {
+  const out = text.replace(`:${INFINITE_MARK}`, ':1e999');
+  assert.notEqual(out, text, 'the marker must be in the timeline');
+  return out;
+};
+// A segment with no id is refused by the shape check before any declaration is read, and is
+// named by its index, since it has no id to be named by.
+const idMissing = (i) =>
+  new RegExp(`^error: timing\\.segments\\[${i}\\]'s id is missing — every segment needs a non-empty string id\\.$`, 'm');
+// Silence edits the gate refuses, each made to the intermission, which is s[2] in both tables
+// below: a bound that is not a finite number, a negative start, a window longer than any
+// silence the engine generates, and a caption that would forge a cue in the subtitle sidecars.
+const SILENCE_ROWS = [
+  ['ASilentStartThatIsNull', (s) => { s[2].startMs = null; },
+    "its startMs is null — a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0"],
+  ['ASilentEndThatIsAString', (s) => { s[2].endMs = String(s[2].endMs); },
+    "its endMs is a string — a silent segment's window is authored, so its endMs must be a finite number of milliseconds"],
+  ['ANegativeSilentStart', (s) => { s[2].startMs = -24; },
+    "its startMs is -24 — a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0"],
+  ['AnInfiniteSilentEnd', (s) => { s[2].endMs = INFINITE_MARK; },
+    "its endMs is Infinity — a silent segment's window is authored, so its endMs must be a finite number of milliseconds", infinite],
+  ['ASilentWindowOverAnHour', (s) => { s[2].endMs = s[2].startMs + HOUR_MS + 1; },
+    "its window is 3600001ms — a silent segment's window, endMs - startMs, must be at most 3600000ms (one hour), the longest silence the engine generates"],
+  ['ACaptionThatForgesACue', (s) => { s[2].silence = { caption: FORGED_CUE }; },
+    'its `silence.caption` contains a line break (U+000A) and "-->" — the caption is written into the subtitle sidecars as one cue, ' +
+    'where a line break can end the cue and "-->" can start another, so write it on one line, without "-->"'],
+  // U+2028 has no glyph and sits unescaped in timing.json, so the refusal names it.
+  ['ACaptionWithALineSeparator', (s) => { s[2].silence = { caption: '[music]\u2028[applause]' }; },
+    'its `silence.caption` contains a line break (U+2028) — the caption is written into the subtitle sidecars as one cue, ' +
+    'where a line break can end the cue and "-->" can start another, so write it on one line, without "-->"'],
+];
+const silencePin = (tail) => new RegExp(`^error: segment "intermission" is declared silent but ${esc(tail)}$`, 'm');
 
 /**
  * One expensive run shared by a suite's tests. The house helpers take a test context for
@@ -480,9 +521,10 @@ describe('voice refuses a timeline its gate refuses before it writes anything', 
     ...(segments === undefined ? {} : { segments }),
   });
 
-  // The gate is asked first, about the project exactly as voice will find it.
-  function runVoice(t, segments, args) {
-    const timingText = body(segments);
+  // The gate is asked first, about the project exactly as voice will find it. `raw` edits the
+  // timeline's text, for a value JSON.stringify cannot write.
+  function runVoice(t, segments, args, raw = (text) => text) {
+    const timingText = raw(body(segments));
     const dir = makeProject(t, { 'timing.json': timingText, 'brand/tokens.json': brandTokens, ...SENTINELS });
     const log = path.join(makeOutsideDir(t), 'tts.jsonl');
     const gate = voiceBlocker(dir, JSON.parse(timingText));
@@ -494,28 +536,38 @@ describe('voice refuses a timeline its gate refuses before it writes anything', 
   }
 
   const MODES = [['plan', []], ['apply', ['--apply', '--replace']]];
+  const silenced = (seg) => ({ ...seg, voiceoverText: '', silence: { caption: '[music]' } });
 
-  for (const [scenario, segments, pinned] of [
+  for (const [scenario, segments, pinned, raw] of [
     ['AMalformedDeclaration', () => { const s = authored(); s[2].silence = false; return s; },
       /^error: segment "intermission" declares `silence` as false — it must be an object, e\.g\. \{"caption": "\[music\]"\}$/m],
-    // No id: labelled by its 0-based index, as the gate labels it. Pinned as printed, not endorsed.
-    ['AnIdlessMalformedDeclaration', () => { const s = authored(); s[2].silence = false; delete s[2].id; return s; },
-      /^error: segment "2" declares `silence` as false — it must be an object, e\.g\. \{"caption": "\[music\]"\}$/m],
+    // No id, wherever the segment sits and whatever it is: the shape check refuses it before any
+    // declaration is read, and names it by its index, since it has no id to be named by.
+    ['AnIdlessMalformedDeclaration', () => { const s = authored(); s[2].silence = false; delete s[2].id; return s; }, idMissing(2)],
+    ['AnIdlessNarratedFirstSegment', () => { const s = authored(); delete s[0].id; return s; }, idMissing(0)],
+    ['AnIdlessNarratedMiddleSegment', () => { const s = authored(); delete s[1].id; return s; }, idMissing(1)],
+    ['AnIdlessNarratedLastSegment', () => { const s = authored(); delete s[3].id; return s; }, idMissing(3)],
+    ['AnIdlessSilentFirstSegment', () => { const s = authored(); s[0] = silenced(s[0]); delete s[0].id; return s; }, idMissing(0)],
+    ['AnIdlessSilentMiddleSegment', () => { const s = authored(); delete s[2].id; return s; }, idMissing(2)],
+    ['AnIdlessSilentLastSegment', () => { const s = authored(); s[3] = silenced(s[3]); delete s[3].id; return s; }, idMissing(3)],
     ['ANarratedSegmentWithNoText', () => { const s = authored(); delete s[2].silence; return s; },
       /\. Write its narration, or, if it is meant to be silent, declare it silent \(a `silence` block with a caption, and no narration text\)\.$/m],
     ['EverySegmentSilent', () => authored().map((s) => ({ ...s, voiceoverText: '', silence: { caption: '[music]' } })), null],
     ['NoSegmentList', () => undefined, null],
     ['AnEmptySegmentList', () => [], null],
     ['ANullSegment', () => { const s = authored(); s[1] = null; return s; }, null],
+    ...SILENCE_ROWS.map(([name, edit, tail, rawEdit]) => [name, () => { const s = authored(); edit(s); return s; }, silencePin(tail), rawEdit]),
   ]) {
     for (const [mode, args] of MODES) {
       test(`voice_${mode}With${scenario}_refusesBeforeAnyWriteOrTtsCall`, (t) => {
-        const { gate, before, r, outcome } = runVoice(t, segments(), args);
+        const { gate, before, r, outcome } = runVoice(t, segments(), args, raw);
 
         assert.ok(gate, 'the gate refuses this timeline');
         assert.deepEqual(outcome, { files: before, ttsCalled: false }, 'a refusal writes nothing and calls no TTS service');
+        assert.equal(r.code, EXIT.USAGE, `a timeline the gate refuses must be refused with exit ${EXIT.USAGE}\n${r.all}`);
         assertCleanExit(r, EXIT.USAGE, 'a timeline the gate refuses must be refused: ');
         assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.doesNotMatch(r.all, /segment "undefined"/, `no segment may be named "undefined"\n${r.all}`);
         // The stage must give its gate's reason, in its gate's words, so the two cannot drift apart.
         assert.ok(r.stderr.includes(gate.fact), `voice must refuse for the gate's reason: ${gate.fact}\n${r.all}`);
         const line = gate.declaration ? `error: ${gate.fact}` : `error: ${renderBlocker(gate)}.`;
@@ -547,6 +599,86 @@ describe('voice refuses a timeline its gate refuses before it writes anything', 
     assert.ok(fs.statSync(log).size > 0, 'and the call logged');
     assertCleanExit(r, EXIT.OK, 'a valid timeline must be voiced: ');
     assert.doesNotMatch(r.stderr, /^error:/m, r.all);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remix refuses a timeline its gate refuses before it writes anything: the timeline's shape
+// first, then every silence declaration, in its plan and under --apply. A segment list remix
+// cannot read crashed it, and a segment with no id was named "undefined". Each cell asserts the
+// exit code and the printed line itself: a crash at module scope prints a stack frame with no
+// parentheses, which assertCleanExit's pattern does not match.
+// ---------------------------------------------------------------------------
+describe('remix refuses a timeline its gate refuses before it writes anything', () => {
+  // VOICED as the voice suite leaves it, with every clip its records name on disk. durationMs
+  // is stated, since a timeline with no segment list, or an empty one, has no last segment.
+  const body = (segments) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 1280, height: 720, lede: 'a lede' },
+    durationMs: 4752,
+    endCard: { enabled: false },
+    intake: INTAKE,
+    ...(segments === undefined ? {} : { segments }),
+    leadInMs: 336,
+  });
+  const voiced = () => structuredClone(VOICED);
+
+  // The gate is asked first, about the project exactly as remix will find it.
+  function runRemix(t, segments, args, raw = (text) => text) {
+    const timingText = raw(body(segments));
+    const dir = makeProject(t, { 'timing.json': timingText, ...CLIPS, 'voiceover.mp3': 'the previous narration' });
+    const gate = remixBlocker(dir, JSON.parse(timingText));
+    const before = snapshot(dir);
+    const r = runScript('remix.mjs', args, dir, { nodeArgs: ['--import', FAKE_AUDIO] });
+    return { gate, before, r, after: snapshot(dir) };
+  }
+
+  const MODES = [['plan', []], ['apply', ['--apply', '--replace']]];
+  const shapeFact = (text) => new RegExp(`^error: ${esc(text)}\\.$`, 'm');
+
+  for (const [scenario, segments, pinned, raw] of [
+    ['NoSegmentList', () => undefined, shapeFact('timing.json declares no segments')],
+    ['AnEmptySegmentList', () => [], shapeFact('timing.json declares no segments')],
+    ['ANullSegment', () => { const s = voiced(); s[1] = null; return s; }, shapeFact('timing.segments[1] is not a segment object')],
+    ['AnIdlessMalformedDeclaration', () => { const s = voiced(); s[2].silence = false; delete s[2].id; return s; }, idMissing(2)],
+    ['AnIdlessNarratedSegment', () => { const s = voiced(); delete s[1].id; return s; }, idMissing(1)],
+    ...SILENCE_ROWS.map(([name, edit, tail, rawEdit]) => [name, () => { const s = voiced(); edit(s); return s; }, silencePin(tail), rawEdit]),
+  ]) {
+    for (const [mode, args] of MODES) {
+      test(`remix_${mode}With${scenario}_refusesBeforeAnyWrite`, (t) => {
+        const { gate, before, r, after } = runRemix(t, segments(), args, raw);
+
+        assert.ok(gate, 'the gate refuses this timeline');
+        assert.deepEqual(after, before, 'a refusal writes nothing');
+        assert.equal(r.code, EXIT.USAGE, `a timeline the gate refuses must be refused with exit ${EXIT.USAGE}\n${r.all}`);
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.doesNotMatch(r.all, /segment "undefined"/, `no segment may be named "undefined"\n${r.all}`);
+        // The stage must give its gate's reason, in its gate's words, so the two cannot drift apart.
+        const line = gate.declaration ? `error: ${gate.fact}` : `error: ${renderBlocker(gate)}.`;
+        assert.match(r.stderr, new RegExp(`^${esc(line)}$`, 'm'), `remix must refuse for its gate's reason: ${line}\n${r.all}`);
+        assert.match(r.stderr, pinned, r.all);
+      });
+    }
+  }
+
+  // The same project, harness and assertions on the timeline the gate accepts: they can see a
+  // successful run, and a write, so their silence above means none happened.
+  test('remix_planWithTheVoicedTimeline_exitsZeroAndWritesNothing', (t) => {
+    const { gate, before, r, after } = runRemix(t, voiced(), []);
+
+    assert.equal(gate, null, 'the gate accepts this timeline');
+    assert.deepEqual(after, before, 'a plan writes nothing');
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.doesNotMatch(r.stderr, /^error:/m, r.all);
+  });
+
+  test('remix_applyWithTheVoicedTimeline_rewritesTheVoiceTrackAndTheTimeline', (t) => {
+    const { gate, before, r, after } = runRemix(t, voiced(), ['--apply', '--replace']);
+
+    assert.equal(gate, null, 'the gate accepts this timeline');
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.doesNotMatch(r.stderr, /^error:/m, r.all);
+    assert.notEqual(after['voiceover.mp3'], before['voiceover.mp3'], 'the voice track must be rewritten');
+    assert.notEqual(after['timing.json'], before['timing.json'], 'the timeline must be rewritten');
   });
 });
 

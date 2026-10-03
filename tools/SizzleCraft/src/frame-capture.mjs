@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob } from './cli-support.mjs';
+import { isSilentSegment, silentSegmentProblems } from './silent-segment.mjs';
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
 // directory wholesale. So the default invocation plans and writes nothing, and the
@@ -93,6 +94,22 @@ try {
 // absence that lowers a maximum is invisible, so it is now named. This is the same
 // in-band-absence defect as the silent-segment conflation elsewhere in this engine — a
 // segment the engine cannot place must say which segment it is.
+//
+// A declared silent segment's window is authored, and is all of its duration, so its end is
+// never derived from a clip: its declaration is checked here as every other stage checks it,
+// by the same function, before anything is planned or written. A silent segment that passes
+// has a finite endMs, which the map below takes as it is.
+for (const [i, s] of (Array.isArray(timing.segments) ? timing.segments : []).entries()) {
+  if (!isSilentSegment(s)) continue;
+  // A segment is named by the id the schema requires — a non-empty string — and by its
+  // position when it has no such id. `segment "1"` states an id, and another segment in
+  // this very timeline may really carry the id "1", so an index dressed as an id sends the
+  // author to the wrong line of the file. `timing.segments[1]` is the form the shape check
+  // and the other stages' labels already use for a segment with no id to be named by.
+  const where = typeof s.id === 'string' && s.id !== '' ? `segment "${s.id}"` : `timing.segments[${i}]`;
+  const [problem] = silentSegmentProblems(s, where);
+  if (problem) { console.error(`error: ${problem}`); process.exit(EXIT.USAGE); }
+}
 const unplaceable = [];
 // Number(null) and Number('') are 0, so a null or blank timestamp read as the start of the
 // video. A null endMs ended its segment at 0 ms, and a null startMs placed it there, both

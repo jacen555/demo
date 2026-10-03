@@ -71,8 +71,16 @@ export function silentMp3DurationMs(targetMs) {
 /**
  * Frame-aligned digital silence. Side info and main_data are left zeroed, which every
  * compliant decoder renders as silence.
+ *
+ * @throws {RangeError} before allocating anything, for a target that is not a number above 0
+ *   and at most SILENCE_MAX_MS. Each caller checks its target first, so this is the backstop
+ *   for one that does not: the allocation is as large as the target asks.
  */
 export function silentMp3(targetMs) {
+  if (typeof targetMs !== 'number' || !(targetMs > 0) || targetMs > SILENCE_MAX_MS) {
+    throw new RangeError(`silentMp3: the target is ${shownKind(targetMs)} — generated silence must be a number of ` +
+      `milliseconds above 0 and at most ${SILENCE_MAX_MS}`);
+  }
   const frames = silentFrameCount(targetMs);
   const buf = Buffer.alloc(SILENCE_FRAME_BYTES * frames);
   for (let i = 0; i < frames; i++) {
@@ -82,9 +90,11 @@ export function silentMp3(targetMs) {
   return buf;
 }
 
-// The range silence-gen.mjs accepts for --ms: a plain positive decimal, at most an hour.
+// The longest silence the engine generates, one hour: the most silence-gen.mjs accepts for
+// --ms, and the most a pause asset or a declared silent segment's window may ask for.
+const SILENCE_MAX_MS = 3_600_000;
+// The form silence-gen.mjs accepts for --ms: a plain positive decimal.
 const PAUSE_TEXT = /^(?:\d+|\d*\.\d+)$/;
-const PAUSE_MAX_MS = 3_600_000;
 
 /**
  * The bytes of a pause asset the engine names itself — lead.mp3, gap_NN.mp3, outro.mp3 —
@@ -103,10 +113,10 @@ const PAUSE_MAX_MS = 3_600_000;
 export function silenceAssetBytes(ms, name) {
   const text = String(ms).trim();
   const value = Number(text);
-  if (!PAUSE_TEXT.test(text) || !(value > 0) || value > PAUSE_MAX_MS) {
+  if (!PAUSE_TEXT.test(text) || !(value > 0) || value > SILENCE_MAX_MS) {
     throw new CliError(
       `${name}: the solved pause is ${text}ms — a pause asset must be a plain number of milliseconds ` +
-      `above 0 and at most ${PAUSE_MAX_MS}. Check the timeline's lead-in, gap and outro values.`,
+      `above 0 and at most ${SILENCE_MAX_MS}. Check the timeline's lead-in, gap and outro values.`,
       EXIT.FAILED);
   }
   return silentMp3(value);
@@ -124,9 +134,12 @@ export function isSilentSegment(seg) {
   return seg !== null && typeof seg === 'object' && Object.hasOwn(seg, 'silence');
 }
 
-/** The authored duration of a silent segment: its window, and nothing else. */
+/**
+ * The authored duration of a silent segment: its window, and nothing else. NaN unless both
+ * bounds are numbers: a null, a string or an array is no window, and is not coerced into one.
+ */
 export function silentDurationMs(seg) {
-  return Number(seg.endMs) - Number(seg.startMs);
+  return typeof seg.startMs === 'number' && typeof seg.endMs === 'number' ? seg.endMs - seg.startMs : NaN;
 }
 
 /**
@@ -144,6 +157,11 @@ export function hasAudioFile(seg) {
 // its content: a number is shown, anything else is named by its type.
 const kindOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'number' ? String(v)
   : typeof v === 'object' ? 'an object' : `a ${typeof v}`);
+// The same, for a value that may be absent.
+const shownKind = (v) => (v === undefined ? 'missing' : kindOf(v));
+// A value a diagnostic quotes, as JSON, except a number JSON cannot write: JSON.stringify
+// writes NaN and Infinity, which JSON.parse reads from 1e999, as null.
+const shownValue = (v) => (typeof v === 'number' ? String(v) : JSON.stringify(v));
 
 /**
  * What a silent segment's audio record says about its window, as one of:
@@ -349,7 +367,7 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
   const problems = [];
   const decl = seg.silence;
   if (decl === null || typeof decl !== 'object' || Array.isArray(decl)) {
-    problems.push(`${where} declares \`silence\` as ${JSON.stringify(decl)} — it must be an object, e.g. {"caption": "[music]"}`);
+    problems.push(`${where} declares \`silence\` as ${shownValue(decl)} — it must be an object, e.g. {"caption": "[music]"}`);
     return problems;
   }
 
@@ -359,9 +377,36 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
   const caption = decl.caption;
   if (typeof caption !== 'string' || caption.trim() === '') {
     problems.push(
-      `${where} is declared silent but its \`silence.caption\` is ${JSON.stringify(caption)} — ` +
+      `${where} is declared silent but its \`silence.caption\` is ${shownValue(caption)} — ` +
       `a silent segment needs an authored accessibility cue (e.g. "[music]" or "[intermission]") ` +
       `because there are no measured word boundaries to caption from`);
+  } else {
+    // The cue is written into the subtitle sidecars as it stands, so a line break can end it
+    // and a "-->" start another, with timing of its own: "[music]\n\n00:00.000 --> 00:05.000\nX"
+    // wrote a second cue into both sidecars.
+    //
+    // Every Unicode mandatory line break is refused, not only the CR and LF a WebVTT file
+    // uses as its own line terminators: UAX #14 classes BK, CR, LF and NL, which is LF, VT,
+    // FF, CR, NEL, U+2028 and U+2029. A cue is one line by construction, and those are the
+    // characters that end a line by definition rather than by one reader's convention, so
+    // none of them is written into a sidecar unexamined. Nothing else is refused — TAB,
+    // U+001C-U+001E and NBSP are accepted.
+    //
+    // Each one found is named by its code point: none of the seven has a glyph, and NEL,
+    // U+2028 and U+2029 can sit unescaped in timing.json, so "a line break" on its own
+    // leaves the author hunting a character they cannot see. Distinct ones only, in order
+    // of first appearance, so the list is a map of the string rather than a tally.
+    const breaks = caption.match(/[\n\v\f\r\u0085\u2028\u2029]/g) ?? [];
+    const arrow = caption.includes('-->');
+    if (breaks.length || arrow) {
+      const points = [...new Set(breaks)].map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+      const named = `a line break (${points.join(', ')})`;
+      const found = points.length && arrow ? `${named} and "-->"` : points.length ? named : '"-->"';
+      problems.push(
+        `${where} is declared silent but its \`silence.caption\` contains ${found} — the caption is written into the ` +
+        'subtitle sidecars as one cue, where a line break can end the cue and "-->" can start another, so write it on ' +
+        'one line, without "-->"');
+    }
   }
 
   // Narration plus a silence declaration is a contradiction with no safe resolution:
@@ -373,11 +418,32 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
       `a silent segment is never spoken, so remove the text or remove the \`silence\` declaration`);
   }
 
-  const durationMs = silentDurationMs(seg);
-  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+  // The window is all of a silent segment's duration, so each bound must be a number as
+  // written: coerced, a null start was 0 and a string end its digits. The start is at least
+  // 0, as the schema says, and the window at most the longest silence the engine generates.
+  const startOk = Number.isFinite(seg.startMs) && seg.startMs >= 0;
+  const endOk = Number.isFinite(seg.endMs);
+  if (!startOk) {
     problems.push(
-      `${where} is declared silent but its window is ${JSON.stringify(durationMs)}ms — ` +
-      `a silent segment's duration is authored as endMs - startMs and must be positive`);
+      `${where} is declared silent but its startMs is ${shownKind(seg.startMs)} — ` +
+      `a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0`);
+  }
+  if (!endOk) {
+    problems.push(
+      `${where} is declared silent but its endMs is ${shownKind(seg.endMs)} — ` +
+      `a silent segment's window is authored, so its endMs must be a finite number of milliseconds`);
+  }
+  if (startOk && endOk) {
+    const durationMs = silentDurationMs(seg);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      problems.push(
+        `${where} is declared silent but its window is ${durationMs}ms — ` +
+        `a silent segment's duration is authored as endMs - startMs and must be positive`);
+    } else if (durationMs > SILENCE_MAX_MS) {
+      problems.push(
+        `${where} is declared silent but its window is ${durationMs}ms — a silent segment's window, endMs - startMs, ` +
+        `must be at most ${SILENCE_MAX_MS}ms (one hour), the longest silence the engine generates`);
+    }
   }
 
   return problems;
@@ -762,11 +828,25 @@ export function remixCollisionBlocker(dir, timing, labelOf, resolved, { cleared 
 
 // ---- the gates ------------------------------------------------------------------------------
 
-function shapeBlocker(timing) {
+/**
+ * Can every stage read this timeline's segment list? null when it can; otherwise the first
+ * problem, as `{fact}`, with no remedy: no list, or an empty one, which the schema's minItems
+ * forbids; else, in index order, the first entry that is not a segment object or has no
+ * non-empty string id, which the schema requires. An entry is named by its index, since it
+ * may have no id to be named by. voice.mjs and remix.mjs each refuse what this refuses before
+ * any other check of their segments, in their plan and under --apply.
+ */
+export function shapeBlocker(timing) {
   const segs = timing?.segments;
   if (!Array.isArray(segs) || segs.length === 0) return { fact: 'timing.json declares no segments' };
-  const bad = segs.findIndex((s) => s === null || typeof s !== 'object' || Array.isArray(s));
-  return bad === -1 ? null : { fact: `timing.segments[${bad}] is not a segment object` };
+  for (const [i, s] of segs.entries()) {
+    if (s === null || typeof s !== 'object' || Array.isArray(s)) return { fact: `timing.segments[${i}] is not a segment object` };
+    if (typeof s.id !== 'string' || s.id === '') {
+      const id = s.id === undefined ? 'missing' : s.id === '' ? 'empty' : kindOf(s.id);
+      return { fact: `timing.segments[${i}]'s id is ${id} — every segment needs a non-empty string id` };
+    }
+  }
+  return null;
 }
 
 // remix and voice each refuse a timeline with a malformed silence declaration before writing
@@ -829,7 +909,8 @@ export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
 /**
  * Would remix.mjs (S4) run on this timeline? null when this model finds nothing to stop it;
  * otherwise the first refusal this model finds, as `{fact, then?, declaration?}`, in remix's
- * own order after the timeline's shape, which remix does not check. `cleared` and `nested`
+ * own order: the timeline's shape, then every silence declaration, both of which remix.mjs
+ * checks before anything else it asks of its segments, then the rest. `cleared` and `nested`
  * are for a remedy asking what remix would do once a narration has a file of its own.
  */
 export function remixBlocker(dir, timing, labelOf = defaultLabel, { cleared = [], nested = false } = {}) {

@@ -86,7 +86,15 @@ the old rule is untouched:
 
 **The duration is the window.** `endMs - startMs` is the authored duration and there is
 deliberately no `silence.durationMs` — two sources of truth for one number are free to
-drift apart, which is the defect class this engine keeps re-shipping.
+drift apart, which is the defect class this engine keeps re-shipping. So the window is
+taken as written: `startMs` and `endMs` must each be a finite number of milliseconds,
+`startMs` at least `0`, and the window must be positive and at most one hour (3600000 ms),
+the longest silence the engine generates. A bound that is missing, `null`, a numeric
+string or `1e999` (which JSON reads as `Infinity`) is refused, never coerced into a window.
+These checks are the declaration's, in `silent-segment.mjs`, and `voice`, `remix`,
+`concat-audio`, `frame-capture`, `validate-timing`, `write-storyboard` and
+`write-subtitles` each make them; a stage that checks bounds of its own may report a bad
+one in its own words first.
 
 **What each stage does with one:**
 
@@ -129,7 +137,11 @@ drift apart, which is the defect class this engine keeps re-shipping.
   name voice gives it (`segment_NN.mp3`), reflows the timeline onto its length, and
   rewrites the record to describe it: that length, no words, no head or tail. A second
   remix changes nothing. This is the route for a silence edit — an intermission's length,
-  silencing a narrated segment — because `voice --apply` re-synthesises every clip. It does
+  silencing a narrated segment — because `voice --apply` re-synthesises every clip. It
+  checks the timeline's shape before anything else it asks of its segments: a missing or
+  empty segment list is refused, and so is an entry that is not a segment object or has no
+  non-empty string `id`, named by its index — exit `2`, in its plan as well as under
+  `--apply`, before anything is written; `voice` refuses the same shapes. It does
   not fill a segment the voice stage never saw: while any segment has no audio record it
   refuses (exit `2`) before writing anything, and its plan names those segments. Every
   output is staged beside its destination and checked before any is published — the voice
@@ -144,8 +156,9 @@ drift apart, which is the defect class this engine keeps re-shipping.
 - **A remedy names a stage only where that stage would run.** Every diagnostic here that
   names `voice` or `remix` as the next step first asks `silent-segment.mjs` whether that
   stage would accept the project as it stands: whether it has a list of segment objects,
-  its silence declarations, its narration text, the clips its records name, and the files
-  the stage writes. Where it would refuse, the message names it as refusing and says why.
+  each with a non-empty string `id`, its silence declarations, its narration text, the
+  clips its records name, and the files the stage writes. Where it would refuse, the
+  message names it as refusing and says why.
   While any silence declaration is malformed, the part of a remedy that would name `voice`
   or `remix` — as the step, or as refusing — reports that declaration in the stage's
   place, since neither stage would run on that timeline: `remix` and `voice` each refuse
@@ -154,8 +167,9 @@ drift apart, which is the defect class this engine keeps re-shipping.
   those is reported first, in its own words, instead of the declaration; for `voice`, a
   failure of its brand voice allow-list (`brand/tokens.json`) exits `1`. When asked
   whether a stage would accept the project, `silent-segment.mjs` asks whether every
-  segment is an object before it asks about declarations, so a segment that is not one can
-  be reported instead, as the stage's refusal. The declaration replaces only part of the
+  segment is an object with a non-empty string `id` before it asks about declarations, so
+  a segment that is not one, or has none, can be reported instead, as the stage's refusal.
+  The declaration replaces only part of the
   message: the explanation around it can still name a stage. The intake, brand tokens, the
   TTS service and the `--replace` guard are not modelled; each stage reports those itself.
   Three limits: `validate-timing --timing <file>` checking a file other than the project's
@@ -170,14 +184,27 @@ drift apart, which is the defect class this engine keeps re-shipping.
   installing it would copy the file onto itself — and where it reports none, it is treated
   as another file. `concat-audio`'s refusal of a missing clip, in a timeline that names no
   clip in any `audio.file` and declares no silence, keeps the wording it always had, which
-  names `voice` without asking; so does `frame-capture`'s refusal of a segment with
-  neither a finite `endMs` nor a `startMs` and `audio.durationMs` to derive one from. And
-  a `remix` run whose publishing fails partway names a re-run of `remix` without asking:
-  that run has just passed every check `remix` makes of this timeline, which it leaves as
-  it was.
+  names `voice` without asking; so does `frame-capture`'s refusal of a narrated segment
+  with neither a finite `endMs` nor a `startMs` and `audio.durationMs` to derive one from.
+  And a `remix` run whose publishing fails partway names a re-run of `remix` without
+  asking: that run has just passed every check `remix` makes of this timeline, which it
+  leaves as it was.
+- **frame-capture (S6)** checks the declaration as the stages above do, refusing a
+  malformed one (exit `2`) before it plans, launches a browser or writes anything, and
+  takes a silent segment's end from its authored `endMs` — never from `startMs` plus
+  `audio.durationMs`, which it derives only for a narrated segment with no finite `endMs`.
 - **write-subtitles (S10)** emits the authored `caption` as one cue spanning the window.
   There are no measured word boundaries to caption from, so the cue text must be authored;
-  a blank one is refused rather than rendered as an empty caption box. The spoken cue just
+  a blank one is refused rather than rendered as an empty caption box, and so is one
+  holding `-->` or any of Unicode's seven mandatory line breaks — U+000A, U+000B, U+000C,
+  U+000D, U+0085, U+2028 and U+2029 (UAX #14 classes BK, CR, LF and NL). CR and LF are a
+  WebVTT file's own line terminators, with CRLF, so either can end the cue there; a
+  cue-text line holding `-->` ends the cue in Chromium's parser (measured). The other five
+  are refused without a per-player measurement: a cue is one line by construction, and
+  those are the characters that end a line by definition rather than by one reader's
+  convention. None of the seven has a glyph, and U+0085, U+2028 and U+2029 can sit
+  unescaped in `timing.json`, so the refusal names each distinct one it found by code
+  point, in order of first appearance — `a line break (U+2028)`. The spoken cue just
   before it keeps its last word on screen until that word ends rather than stopping 40 ms
   short, and never overlaps it; a measured word that runs into a silent window is refused,
   naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter

@@ -16,7 +16,7 @@ import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveEngineOutp
 import {
   isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silentMp3DurationMs, silenceAssetBytes,
   silentRecordState, hasAudioFile, unvoicedNarrationProblem, segmentClipName, gapAssetName, remixWriteSet,
-  remixCollisionBlocker, renderBlocker, voiceBlocker, gatedRemedy, stageRefusal, canonicalName, sameName,
+  remixCollisionBlocker, renderBlocker, voiceBlocker, gatedRemedy, stageRefusal, canonicalName, sameName, shapeBlocker,
 } from './silent-segment.mjs';
 
 const USAGE = `
@@ -91,8 +91,12 @@ const labelOf = (s, i) => `segment "${s?.id ?? i}"`;
 // A name that cannot be asked about is compared as typed: this is accounting, not a guard.
 const nameOf = (p) => { try { return canonicalName(p); } catch { return p; } };
 const sameFile = (a, b) => sameName(nameOf(a), nameOf(b));
-// Every declaration first, as remixBlocker asks after the timeline's shape: a malformed one is
-// refused here, before anything is written, and that gate finds it ahead of all but the shape.
+// The timeline's shape first, as remixBlocker asks it: a list of segment objects, each with a
+// non-empty string id. Every check below reads the list as one, and names a segment by its id.
+const shape = shapeBlocker(timing);
+if (shape) { console.error(`error: ${renderBlocker(shape)}.`); process.exit(EXIT.USAGE); }
+// Then every declaration, as remixBlocker asks them next: a malformed one is refused here,
+// before anything is written, and that gate finds it ahead of all but the shape.
 for (const s of segList) {
   // A declared silent segment is regenerated from its declaration, so the declaration
   // must be one voice.mjs accepts: the same rules, from the same function, the same exit.

@@ -326,7 +326,9 @@ await runCli(async () => {
     for (const field of ['startMs', 'endMs']) {
       const value = s?.[field];
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-        shapeProblems.push(`${where}.${field} is ${JSON.stringify(value)} — must be a finite number >= 0`);
+        // A number is shown as it is: JSON.stringify writes Infinity, which JSON.parse reads
+        // from 1e999, as null.
+        shapeProblems.push(`${where}.${field} is ${typeof value === 'number' ? value : JSON.stringify(value)} — must be a finite number >= 0`);
       }
     }
     if (typeof s?.startMs === 'number' && typeof s?.endMs === 'number' && Number.isFinite(s.startMs) && Number.isFinite(s.endMs) && s.endMs <= s.startMs) {

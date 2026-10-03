@@ -39,7 +39,7 @@ import path from 'node:path';
 import { EXIT, narrationFingerprint } from '../src/cli-support.mjs';
 import {
   FAKE_AUDIO, makeProject, runScript, assertCleanExit, tryMakeFileLink, timingFixture, wordedSegments, shortNameOf, zeroFileIds,
-  ZERO_FILE_IDS_ARMED, failLstat, FAIL_LSTAT_ARMED,
+  ZERO_FILE_IDS_ARMED, failLstat, FAIL_LSTAT_ARMED, BLOCK_PLAYWRIGHT,
 } from './_helpers.mjs';
 
 // ---------------------------------------------------------------------------
@@ -2748,5 +2748,447 @@ describe('canonicalName', () => {
     if (!looped) return t.skip('platform refused to create a file link');
     assert.throws(() => canonicalName(path.join(dir, 'a.mp3')), (err) => err.code === 'ELOOP',
       'a loop of links names no file, and is not an absent one either');
+  });
+});
+
+// ===========================================================================
+// The timeline's shape, and a silent segment's window and caption
+//
+// Every segment has a non-empty string id, as timing-schema.json says: a stage names a
+// segment by its id, and one with none was named "undefined", or crashed the stage. A silent
+// segment's window is authored and is all of its duration, so each bound is a finite number:
+// a null, a string or an array was coerced into a window. The window is at most the hour of
+// silence the engine generates, past which silentMp3 allocated whatever it was asked for. And
+// the caption is written into the subtitle sidecars as one cue, so it holds no line break and
+// no "-->", either of which can forge another cue.
+// ===========================================================================
+const load = () => import('../src/silent-segment.mjs');
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const FORGED_CUE = '[music]\n\n00:00.000 --> 00:05.000\nX';
+const HOUR_MS = 3_600_000;
+
+describe('shapeBlocker', () => {
+  const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+  const idless = () => ({ startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+  const ID_RULE = 'every segment needs a non-empty string id';
+  const CASES = [
+    ['NoSegmentList', {}, 'timing.json declares no segments'],
+    ['AnEmptySegmentList', { segments: [] }, 'timing.json declares no segments'],
+    // One pass in index order: the first entry that is not a segment object, or has no id.
+    ['AnIdlessSegmentBeforeANullOne', { segments: [ok('one'), idless(), null] }, `timing.segments[1]'s id is missing — ${ID_RULE}`],
+    ['ANullSegmentBeforeAnIdlessOne', { segments: [null, idless()] }, 'timing.segments[0] is not a segment object'],
+    ['AnEmptyId', { segments: [ok('one'), ok('')] }, `timing.segments[1]'s id is empty — ${ID_RULE}`],
+    ['ANumericId', { segments: [ok(7), ok('two')] }, `timing.segments[0]'s id is 7 — ${ID_RULE}`],
+    ['ANullId', { segments: [ok('one'), ok(null)] }, `timing.segments[1]'s id is null — ${ID_RULE}`],
+    ['ABooleanId', { segments: [ok('one'), ok('two'), ok(true)] }, `timing.segments[2]'s id is a boolean — ${ID_RULE}`],
+    ['AnArrayEntry', { segments: [ok('one'), []] }, 'timing.segments[1] is not a segment object'],
+  ];
+
+  for (const [scenario, timing, fact] of CASES) {
+    test(`shapeBlocker_${scenario}_isRefusedWithTheFactAlone`, async () => {
+      const { shapeBlocker } = await load();
+      assert.equal(typeof shapeBlocker, 'function', 'silent-segment.mjs must export shapeBlocker');
+
+      assert.deepEqual(shapeBlocker(timing), { fact }, 'the fact, naming the index, and no remedy');
+    });
+  }
+
+  test('shapeBlocker_segmentsEachWithANonEmptyStringId_isAccepted', async () => {
+    const { shapeBlocker } = await load();
+    assert.equal(typeof shapeBlocker, 'function', 'silent-segment.mjs must export shapeBlocker');
+
+    assert.equal(shapeBlocker({ segments: [ok('one'), ok('2'), ok(' ')] }), null);
+  });
+
+  // voice.mjs and remix.mjs each ask their gate's shape check first, so each gate refuses for it.
+  for (const gate of ['voiceTimelineBlocker', 'voiceBlocker', 'remixBlocker']) {
+    for (const [scenario, timing, fact] of CASES) {
+      test(`${gate}_${scenario}_isRefusedByTheShapeCheckFirst`, async (t) => {
+        const ask = (await load())[gate];
+        const dir = makeProject(t);
+
+        assert.deepEqual(gate === 'voiceTimelineBlocker' ? ask(timing) : ask(dir, timing), { fact });
+      });
+    }
+  }
+});
+
+describe("a silent segment's window is two finite numbers, at most an hour apart", () => {
+  const silent = (startMs, endMs, extra = {}) =>
+    ({ id: 'gap', startMs, endMs, voiceoverText: '', silence: { caption: '[music]' }, ...extra });
+  const where = 'segment "gap" is declared silent but';
+  const START = (shown) =>
+    `${where} its startMs is ${shown} — a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0`;
+  const END = (shown) =>
+    `${where} its endMs is ${shown} — a silent segment's window is authored, so its endMs must be a finite number of milliseconds`;
+  const CAP = (ms) =>
+    `${where} its window is ${ms}ms — a silent segment's window, endMs - startMs, must be at most 3600000ms (one hour), the longest silence the engine generates`;
+  const POSITIVE = (ms) =>
+    `${where} its window is ${ms}ms — a silent segment's duration is authored as endMs - startMs and must be positive`;
+  const withoutStart = () => { const s = silent(0, 960); delete s.startMs; return s; };
+
+  for (const [scenario, seg, expected] of [
+    ['ANullStart', silent(null, 960), [START('null')]],
+    ['AMissingStart', withoutStart(), [START('missing')]],
+    ['AStringStart', silent('0', 960), [START('a string')]],
+    ['AnArrayStart', silent([], 960), [START('an array')]],
+    ['ANegativeStart', silent(-1, 960), [START('-1')]],
+    ['ANaNStart', silent(NaN, 960), [START('NaN')]],
+    // JSON.parse reads 1e999 as Infinity, so a timing.json can hold one.
+    ['AnInfiniteStart', silent(JSON.parse('1e999'), 960), [START('Infinity')]],
+    ['ANullEnd', silent(0, null), [END('null')]],
+    ['AStringEnd', silent(0, '960'), [END('a string')]],
+    ['AnInfiniteEnd', silent(0, JSON.parse('1e999')), [END('Infinity')]],
+    ['ANegativeInfiniteEnd', silent(0, JSON.parse('-1e999')), [END('-Infinity')]],
+    ['TwoBadBounds', silent(null, 'x'), [START('null'), END('a string')]],
+    ['AWindowOfAnHourAndAMillisecond', silent(0, HOUR_MS + 1), [CAP(HOUR_MS + 1)]],
+    ['AWindowOfAnHourAndAMillisecondStartingLate', silent(1000, 1000 + HOUR_MS + 1), [CAP(HOUR_MS + 1)]],
+    ['AWindowOfTenBillionMilliseconds', silent(0, 1e10), [CAP(10_000_000_000)]],
+  ]) {
+    test(`silentSegmentProblems_${scenario}_isRefusedNamingTheBoundOrWindow`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(seg), expected);
+    });
+  }
+
+  for (const [scenario, seg, expected] of [
+    ['AWindowOfExactlyAnHour', silent(0, HOUR_MS), []],
+    ['AWindowOfExactlyAnHourStartingLate', silent(1000, 1000 + HOUR_MS), []],
+    ['AStartOfZero', silent(0, 960), []],
+    ['AnEmptyWindow', silent(960, 960), [POSITIVE(0)]],
+    ['AnInvertedWindow', silent(960, 480), [POSITIVE(-480)]],
+  ]) {
+    test(`silentSegmentProblems_${scenario}_isJudgedAsBefore`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(seg), expected);
+    });
+  }
+
+  for (const [scenario, startMs, endMs] of [
+    ['ANullStart', null, 960], ['AStringStart', '0', 960], ['AnArrayStart', [], 960], ['AStringEnd', 0, '960'],
+  ]) {
+    test(`silentDurationMs_${scenario}_isNaNNotAWindow`, async () => {
+      const { silentDurationMs } = await load();
+
+      assert.ok(Number.isNaN(silentDurationMs({ startMs, endMs })),
+        `${JSON.stringify({ startMs, endMs })} is no window, so an ungated caller must see NaN, not a duration`);
+    });
+  }
+
+  test('silentDurationMs_twoNumbers_isTheirDifference', async () => {
+    const { silentDurationMs } = await load();
+
+    assert.equal(silentDurationMs({ startMs: 480, endMs: 1440 }), 960);
+  });
+
+  // A diagnostic shows the value it refuses. JSON.stringify writes NaN and Infinity as null,
+  // which named a number as the one value it was not.
+  for (const [scenario, seg, shown] of [
+    ['AnInfiniteEnd', silent(0, JSON.parse('1e999')), /its endMs is Infinity —/],
+    ['ANaNStart', silent(NaN, 960), /its startMs is NaN —/],
+    ['AWindowOfMinusInfinity', silent(Number.MAX_VALUE, -Number.MAX_VALUE), /its window is -Infinityms —/],
+    ['AnInfiniteDeclaration', silent(0, 960, { silence: JSON.parse('1e999') }), /declares `silence` as Infinity —/],
+    ['AnInfiniteCaption', silent(0, 960, { silence: { caption: JSON.parse('1e999') } }), /`silence\.caption` is Infinity —/],
+  ]) {
+    test(`silentSegmentProblems_${scenario}_showsTheValueNotNull`, async () => {
+      const { silentSegmentProblems } = await load();
+      const problems = silentSegmentProblems(seg);
+
+      assert.equal(problems.length, 1, problems.join('\n'));
+      assert.match(problems[0], shown);
+      assert.doesNotMatch(problems[0], /null/, 'no value here is null');
+    });
+  }
+
+  // validate-timing checks every segment's bounds before it reads a declaration, so a silent
+  // segment's infinite bound is refused there first, by a line that must show the value too.
+  for (const [scenario, field, raw, shown] of [
+    ['AnInfiniteSilentEnd', 'endMs', '1e999', 'Infinity'],
+    ['ANegativeInfiniteSilentStart', 'startMs', '-1e999', '-Infinity'],
+  ]) {
+    test(`validateTiming_${scenario}_showsTheValueNotNull`, (t) => {
+      const segments = silentMiddleSegments();
+      segments[1][field] = 1234.5678;
+      const text = timingWith(segments).replace(':1234.5678', `:${raw}`);
+      assert.equal(JSON.parse(text).segments[1][field], JSON.parse(raw), 'the fixture must hold the infinite bound');
+      const dir = makeProject(t, { 'timing.json': text });
+
+      const r = runScript('validate-timing.mjs', [], dir);
+
+      assert.equal(r.code, EXIT.FAILED, r.all);
+      assert.match(r.stdout, new RegExp(
+        `^  ${escapeRe(`segments[1] ("intermission").${field} is ${shown} — must be a finite number >= 0`)}$`, 'm'), r.all);
+      assert.doesNotMatch(r.all, /\bnull\b/, `no value here is null\n${r.all}`);
+    });
+  }
+});
+
+describe('silentMp3 refuses a target it cannot generate before it allocates', () => {
+  // Buffer.alloc is replaced for one synchronous call. It records the size asked for, and
+  // throws instead of allocating, so a target that reaches it is seen and never allocated.
+  // `allow` returns an empty buffer instead, for a target the guard must let through.
+  function allocations(fn, { allow = false } = {}) {
+    const real = Buffer.alloc;
+    const asked = [];
+    Buffer.alloc = (size) => {
+      asked.push(size);
+      if (allow) return real.call(Buffer, 0);
+      throw new Error(`Buffer.alloc(${size}) was reached`);
+    };
+    try {
+      fn();
+      return { asked, error: null };
+    } catch (error) {
+      return { asked, error };
+    } finally {
+      Buffer.alloc = real;
+    }
+  }
+
+  for (const [scenario, targetMs] of [
+    ['AnHourAndAMillisecond', HOUR_MS + 1], ['NaN', NaN], ['Infinity', Infinity], ['Zero', 0], ['ANegativeTarget', -24],
+    ['ANumericString', '1000'], ['TenBillionMilliseconds', 1e10],
+  ]) {
+    test(`silentMp3_${scenario}_throwsARangeErrorWithoutAllocating`, async () => {
+      const { silentMp3 } = await load();
+      const { asked, error } = allocations(() => silentMp3(targetMs));
+
+      assert.deepEqual(asked, [], 'nothing may be allocated for a target the engine cannot generate');
+      assert.ok(error instanceof RangeError, `a RangeError, not ${error}`);
+      assert.match(error.message, /^silentMp3: /);
+    });
+  }
+
+  test('silentMp3_exactlyAnHour_allocatesItsFramesOnce', async () => {
+    const { silentMp3, SILENCE_FRAME_BYTES } = await load();
+    const { asked, error } = allocations(() => silentMp3(HOUR_MS), { allow: true });
+
+    assert.equal(error, null);
+    assert.deepEqual(asked, [150_000 * SILENCE_FRAME_BYTES], 'the hour silence-gen accepts is 150,000 frames');
+  });
+
+  test('silentMp3_halfAMillisecond_allocatesOneFrame', async () => {
+    const { silentMp3, SILENCE_FRAME_BYTES } = await load();
+    const { asked, error } = allocations(() => silentMp3(0.5), { allow: true });
+
+    assert.equal(error, null);
+    assert.deepEqual(asked, [SILENCE_FRAME_BYTES], 'silence-gen accepts 0.5 ms, as one frame');
+  });
+});
+
+describe("a silent segment's caption is one line, without -->", () => {
+  const silent = (caption) => ({ id: 'gap', startMs: 0, endMs: 960, voiceoverText: '', silence: { caption } });
+  const CAPTION = (found) =>
+    `segment "gap" is declared silent but its \`silence.caption\` contains ${found} — the caption is written into the ` +
+    'subtitle sidecars as one cue, where a line break can end the cue and "-->" can start another, so write it on one line, ' +
+    'without "-->"';
+
+  for (const [scenario, caption, found] of [
+    ['TheForgedCue', FORGED_CUE, 'a line break (U+000A) and "-->"'],
+    ['ALineFeed', '[music]\n[applause]', 'a line break (U+000A)'],
+    ['ACarriageReturn', '[music]\r[applause]', 'a line break (U+000D)'],
+    ['ATrailingLineFeed', '[music]\n', 'a line break (U+000A)'],
+    ['AnArrow', '[music] --> [applause]', '"-->"'],
+  ]) {
+    test(`silentSegmentProblems_aCaptionWith${scenario}_isRefused`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(silent(caption)), [CAPTION(found)]);
+    });
+  }
+
+  // Unicode's seven mandatory line breaks — UAX #14 classes BK, CR, LF and NL. Each is
+  // written as an escape here because none of them has a glyph, and U+0085, U+2028 and
+  // U+2029 can sit unescaped in timing.json, where a reviewer reading the file sees
+  // nothing at all. That is why the refusal names what it found by code point.
+  const LINE_BREAKS = [
+    ['ALineFeed', '\n', 'U+000A'],
+    ['AVerticalTab', '\v', 'U+000B'],
+    ['AFormFeed', '\f', 'U+000C'],
+    ['ACarriageReturn', '\r', 'U+000D'],
+    ['ANextLine', '\u0085', 'U+0085'],
+    ['ALineSeparator', '\u2028', 'U+2028'],
+    ['AParagraphSeparator', '\u2029', 'U+2029'],
+  ];
+
+  for (const [scenario, char, point] of LINE_BREAKS) {
+    test(`silentSegmentProblems_aCaptionWith${scenario}_isRefusedNamingItsCodePoint`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(silent(`[music]${char}[applause]`)), [CAPTION(`a line break (${point})`)]);
+    });
+  }
+
+  // Each DISTINCT break is named once, in order of first appearance: the author has to
+  // find characters they cannot see, so the list is exact rather than a count.
+  for (const [scenario, caption, found] of [
+    ['ACarriageReturnLineFeedPair', '[music]\r\n[applause]', 'a line break (U+000D, U+000A)'],
+    ['OneBreakRepeated', '[a]\u2028[b]\u2028[c]', 'a line break (U+2028)'],
+    ['TwoDifferentBreaks', '[a]\u2029[b]\n[c]', 'a line break (U+2029, U+000A)'],
+  ]) {
+    test(`silentSegmentProblems_aCaptionWith${scenario}_namesEachDistinctBreakInOrderOfFirstAppearance`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(silent(caption)), [CAPTION(found)]);
+    });
+  }
+
+  // The refused set is exactly those seven. Python's str.splitlines() also splits a string
+  // on these four (measured), but they are not Unicode mandatory line breaks, and a
+  // caption is not refused for what some other reader might do with it.
+  for (const [scenario, char] of [
+    ['ATab', '\t'],
+    ['AFileSeparator', '\u001c'],
+    ['AGroupSeparator', '\u001d'],
+    ['ARecordSeparator', '\u001e'],
+  ]) {
+    test(`silentSegmentProblems_aCaptionWith${scenario}_isAccepted`, async () => {
+      const { silentSegmentProblems } = await load();
+
+      assert.deepEqual(silentSegmentProblems(silent(`[music]${char}[applause]`)), []);
+    });
+  }
+
+  test('silentSegmentProblems_aCaptionWithAShorterArrow_isAccepted', async () => {
+    const { silentSegmentProblems } = await load();
+
+    assert.deepEqual(silentSegmentProblems(silent('[music] -> [applause]')), []);
+  });
+
+  test('silentCaption_aCaptionThatForgesACue_throwsItsProblem', async () => {
+    const { silentCaption } = await load();
+
+    assert.throws(() => silentCaption(silent(FORGED_CUE)), (err) => err.message === CAPTION('a line break (U+000A) and "-->"'));
+  });
+
+  test('writeSubtitles_aSilentCaptionThatForgesACue_isRefusedAndWritesNoSidecar', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(silentMiddleSegments({ caption: FORGED_CUE })) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+    assert.match(r.stderr, new RegExp(`^error: ${escapeRe('timing.segments[1] ("intermission") is declared silent but ' +
+      'its `silence.caption` contains a line break (U+000A) and "-->" — ')}`, 'm'), r.all);
+    assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'no sidecar may be written');
+  });
+
+  // The sidecar sink itself, for each break the gate let through before this round. The
+  // stage must refuse each at its own exit code, name the code point, and write no file.
+  for (const [scenario, char, point] of LINE_BREAKS.filter(([, c]) => c !== '\n' && c !== '\r')) {
+    test(`writeSubtitles_aSilentCaptionWith${scenario}_isRefusedAndWritesNoSidecar`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(silentMiddleSegments({ caption: `[music]${char}[applause]` })) });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assert.equal(r.code, EXIT.FAILED, r.all);
+      assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+      assert.match(r.stderr, new RegExp(`^error: ${escapeRe('timing.segments[1] ("intermission") is declared silent but ' +
+        `its \`silence.caption\` contains a line break (${point}) — `)}`, 'm'), r.all);
+      assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'no sidecar may be written');
+    });
+  }
+
+  // The sidecars a valid caption gives, as write-subtitles wrote them before captions were
+  // checked for a line break or "-->": the check must not change them by a byte.
+  test('writeSubtitles_aValidSilentCaption_writesTheSidecarsByteForByteAsBefore', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(silentMiddleSegments({ caption: '[music]' })) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a valid caption must be written: ');
+    assert.equal(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8'),
+      'WEBVTT\n\n1\n00:00:00.000 --> 00:00:00.480\nhello there friend\n\n2\n00:00:00.480 --> 00:00:01.440\n[music]\n\n' +
+      '3\n00:00:01.440 --> 00:00:02.160\nand we are back\n');
+    assert.equal(fs.readFileSync(path.join(dir, 'demo.srt'), 'utf8'),
+      '1\n00:00:00,000 --> 00:00:00,480\nhello there friend\n\n2\n00:00:00,480 --> 00:00:01,440\n[music]\n\n' +
+      '3\n00:00:01,440 --> 00:00:02,160\nand we are back\n');
+  });
+});
+
+describe("frame-capture checks a silent segment's window and never derives its end from audio", () => {
+  const timingOf = (segments) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 320, height: 240 },
+    endCard: { enabled: false },
+    segments,
+  });
+  const narrated = { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello', audio: { durationMs: 960 } };
+  const files = (dir) => Object.fromEntries(fs.readdirSync(dir, { recursive: true })
+    .filter((f) => fs.statSync(path.join(dir, f)).isFile())
+    .map((f) => [f, fs.readFileSync(path.join(dir, f)).toString('base64')]));
+  const project = (t, gap) => makeProject(t, { 'timing.json': timingOf([narrated, gap]), 'video-auto.html': '<!doctype html><title>x</title>' });
+  const MODES = [['plan', [], []], ['apply', ['--apply'], ['--import', BLOCK_PLAYWRIGHT]]];
+
+  for (const [scenario, gap] of [
+    // A stale clip length is the only way to derive an end, and it is not the window.
+    ['AnEndThatIsNullAndAStaleClipLength',
+      { id: 'gap', startMs: 960, endMs: null, voiceoverText: '', silence: { caption: '[music]' }, audio: { durationMs: 960 } }],
+    ['AnEndThatIsANumericString', { id: 'gap', startMs: 960, endMs: '1920', voiceoverText: '', silence: { caption: '[music]' } }],
+  ]) {
+    for (const [mode, args, nodeArgs] of MODES) {
+      test(`frameCapture_${mode}WithASilentSegmentWith${scenario}_isRefusedBeforeAnythingRuns`, async (t) => {
+        const { silentSegmentProblems } = await load();
+        const dir = project(t, gap);
+        const before = files(dir);
+
+        const r = runScript('frame-capture.mjs', args, dir, { nodeArgs });
+
+        const [problem] = silentSegmentProblems(gap, 'segment "gap"');
+        assert.ok(problem, 'the silence check refuses this segment');
+        assert.deepEqual(files(dir), before, 'nothing may be written');
+        assert.equal(r.code, EXIT.USAGE, r.all);
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.match(r.stderr, new RegExp(`^${escapeRe(`error: ${problem}`)}$`, 'm'), `the stage must give its check's words\n${r.all}`);
+        assert.doesNotMatch(r.all, /^plan:/m, 'refused before any plan is printed');
+        assert.doesNotMatch(r.all, /playwright/i, 'refused before the browser is loaded');
+      });
+    }
+  }
+
+  // An index is not an id. A segment with no valid id — the schema requires a non-empty
+  // string — is named by its position, as the shape check names one. Calling it
+  // `segment "1"` states an id, and another segment in the same timeline may really carry
+  // the id "1", so the author is sent to the wrong line of the file.
+  const INDEXED_PROBLEM = 'timing.segments[1] is declared silent but its endMs is null — ' +
+    "a silent segment's window is authored, so its endMs must be a finite number of milliseconds";
+
+  for (const [scenario, idField] of [
+    ['NoId', {}],
+    ['AnEmptyId', { id: '' }],
+    ['ANumberForAnId', { id: 7 }],
+  ]) {
+    const gap = { ...idField, startMs: 960, endMs: null, voiceoverText: '', silence: { caption: '[music]' } };
+    for (const [mode, args, nodeArgs] of MODES) {
+      test(`frameCapture_${mode}WithAMalformedSilentSegmentWith${scenario}_namesItByItsIndexNotAsAnId`, async (t) => {
+        const { silentSegmentProblems } = await load();
+        const dir = project(t, gap);
+        const before = files(dir);
+
+        const r = runScript('frame-capture.mjs', args, dir, { nodeArgs });
+
+        assert.equal(`error: ${silentSegmentProblems(gap, 'timing.segments[1]')[0]}`, `error: ${INDEXED_PROBLEM}`,
+          "the stage's line must be the gate's line, so the two cannot drift apart");
+        assert.deepEqual(files(dir), before, 'nothing may be written');
+        assert.equal(r.code, EXIT.USAGE, r.all);
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.match(r.stderr, new RegExp(`^${escapeRe(`error: ${INDEXED_PROBLEM}`)}$`, 'm'),
+          `the segment must be named by its index\n${r.all}`);
+        assert.doesNotMatch(r.all, /segment "/, `no index may be printed as an id\n${r.all}`);
+        assert.doesNotMatch(r.all, /^plan:/m, 'refused before any plan is printed');
+        assert.doesNotMatch(r.all, /playwright/i, 'refused before the browser is loaded');
+      });
+    }
+  }
+
+  test('frameCapture_planWithAValidSilentSegment_plansItsAuthoredWindow', (t) => {
+    const dir = project(t, { id: 'gap', startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' }, audio: { durationMs: 4800 } });
+
+    const r = runScript('frame-capture.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a valid silent segment must be planned: ');
+    // (1920 + 1000) ms at 30 fps: the authored end, not the 960 + 4800 a stale clip length gives.
+    assert.match(r.stdout, /^ {2}frames {10}88 at 30 fps/m, r.all);
   });
 });
