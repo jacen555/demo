@@ -17,6 +17,7 @@ ADR 0006 records why (below).
 | `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
 | `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
 | `0a5b7f4` | Q14 — remix refuses a shapeless timeline instead of crashing; the shape check gains the schema's segment `id` rule; silent windows are bounded (nonnegative start, finite end, one-hour cap); frame-capture checks every silence declaration before it plans; the caption gate refuses all seven Unicode mandatory line breaks, naming each by code point | **PASS** at round 2. Round 1 **FAIL** (B1: an index printed as an id; B2: U+2028/U+2029 accepted into the sidecars at exit 0). Absorbed S2-1..S2-4 and K4 |
+| `af5aeef` | R5 — narrated text containing `-->` is refused instead of written into both sidecars, where Chromium parses the cue with EMPTY text so the caption silently disappears. The narrated half of Q14's silent-caption rule, checking both sources of cue text | **PASS**. Four findings across three review rounds, all accuracy rather than behaviour: a comment and a diagnostic asserting an outcome alignment can prevent; an output invariant testing a line's SHAPE not its position, which would have passed the exact forged cue it existed to refuse; and two claims left stale after the first correction |
 | F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
 | `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
 | validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
@@ -211,11 +212,20 @@ to find it.
 
 ## Known open work
 
-- **Q14's follow-up queue, in the user's order.** Q14 closed at `0a5b7f4`; these came out of
-  its two review rounds and are not yet scheduled:
-  - **R5 — narrated `-->` reaches the sidecars** (`write-subtitles.mjs:290-294`). High. The
-    user placed it as **its own item, next after Q14**; refuse vs escape is decided when its
-    spec is drafted. Q14 bounded only *silent* captions.
+- **Q14 and R5's follow-up queue, in the user's order.** Q14 closed at `0a5b7f4`, R5 at
+  `af5aeef`; these came out of their review rounds and are not yet scheduled:
+  - **Narrated line breaks** — the piece R5 deliberately did not take. Measured: six of the
+    seven Unicode mandatory line breaks are split away by `/\s+/` before reaching a cue, but
+    **`U+0085` is not matched by JS `\s` at all** and does reach cue text, arriving by the
+    ordinary `restorePunctuation` path because `bare()` strips it. Measured as
+    **non-destructive** in Chromium — the cue is intact and the NEL survives as an invisible
+    character — which is why it was left. Whether such a cue can exceed `MAX_LINES = 2` is
+    **unmeasured**; measure before speccing.
+  - **`voice.mjs` is still ungated** for `-->`, so an author pays for TTS before learning the
+    narration is unusable. R5 gates only the sidecar stage.
+  - **SRT parser behaviour is unmeasured** — ffmpeg is not installed here. The README claims
+    nothing about it, only that the gate lands before either file is written. Measure with a
+    real SRT parser before any claim is made.
   - **"Shape-first everywhere" — R1 plus the surviving `?? i` sites.** The deferred record is
     incomplete, and a spec written from the round-1 verdict's citations would fix one site of
     four. **Measured complete list** of the quoted-index pattern, all pre-existing at HEAD and
@@ -299,6 +309,24 @@ to find it.
 
 ## Watch out for
 
+- **A false claim in a brief propagates into the product, and the first correction is
+  usually too narrow.** In R5 I wrote "JS `\s` covers every Unicode mandatory line break"
+  into the builder's FACTS section after measuring only LF and U+2028. `U+0085` is the
+  exception. The builder restated it as fact in a source comment *and* the README; the
+  correction fixed the source but left the same sentence in the test file; and the widened
+  wording still missed blank narration, whose token also bares to the empty key. **Three
+  passes to land one accurate sentence, each needing a different agent.** Mutation cannot
+  catch this class — nothing executes a comment — so only a reader finds it. Write FACTS
+  sections as measurements with their scope attached, never as generalisations.
+- **A mutant that does not change behaviour proves nothing, and a mutant that breaks the
+  parse proves less than nothing.** Both happened in one session. One inserted an unused
+  `const` and left the message intact — "SURVIVED" meant only that it was equivalent code.
+  The other replaced a string literal's contents without its surrounding quotes, producing
+  `''GUTTED ''`; the module stopped parsing, 103 tests "failed", and it scored as the most
+  decisive kill in the run. The tell was unrelated names like `writeSubtitles_help_...` in
+  the failure list. **The harness now `node --check`s each mutant and asserts the row count
+  against baseline before counting a kill**, and the guard is validated by deliberately
+  reintroducing the defect.
 - **A reviewer can return a verdict without doing the review.** Q14 round 2's first
   submission was a PASS in 185 seconds: no citations, and four of the six required sections
   missing. Nothing in it could be distinguished from a reading of the builder's report — and
@@ -308,6 +336,9 @@ to find it.
   branches of the message logic, and answered the deferred-defect question; the conclusion
   did not change, but the evidence appeared. **Read the verdict for evidence, not for its
   verdict.** A PASS is a claim like any other.
+- **Re-confirm after a fix, even on a PASS.** R5's reviewer passed, then found two more real
+  defects when shown the fix — including the first correction's own sentence left stale in a
+  second file. The confirmation round has now earned its keep twice.
 - **Green is not reviewed.** I committed `c620c88` after a FAIL verdict without re-review,
   and three feature commits with no review at all, because the suites were green. The
   consumer had done the same three times, and their unreviewed engine changes produced 16
