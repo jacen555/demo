@@ -22,9 +22,9 @@ import assert from 'node:assert/strict';
 
 import { CliError, EXIT } from '../src/cli-support.mjs';
 import { MIX_PARAMETERS, createMixAudit } from '../src/mix-parameters.mjs';
-import { classifyGainPin } from '../src/gain-pin.mjs';
+import { classifyGainPin, confirmedLockRecord } from '../src/gain-pin.mjs';
 
-/** Declares the set remux-music declares, at the shipped defaults. */
+/** Declares the set remux-music declares, at the shipped defaults, with ducking OFF. */
 function declaredMix() {
   const mix = createMixAudit();
   mix.declare('voiceGain', { value: 1.14 });
@@ -32,6 +32,8 @@ function declaredMix() {
   mix.declare('ceiling', { value: 1, rendered: 0.891251 });
   mix.declare('crossfade', { value: 3 });
   mix.declare('videoSeconds', { value: 38.5 });
+  // Ducking is opt-in, and a pinned knob must be accounted for on every run either way.
+  for (const name of ['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']) mix.declareAbsent(name);
   return mix;
 }
 
@@ -41,9 +43,37 @@ function loopingGraph(mix, tail = '') {
     `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
     `[2:a][3:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[ml1];` +
     `[ml1][4:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[ml2];` +
-    `[ml2]atrim=0:${mix.use('videoSeconds')},asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
-    `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
+    `[ml2]${mix.structural('atrim=0:')}${mix.use('videoSeconds')},asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
+    `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
     `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled${tail}[out]`
+  );
+}
+
+/** Declares the set remux-music declares with the sidechain duck IN FORCE and no loop. */
+function declaredDuckingMix() {
+  const mix = createMixAudit();
+  mix.declare('voiceGain', { value: 1.4 });
+  mix.declare('musicGain', { value: 0.031 });
+  mix.declare('ceiling', { value: 2, rendered: 0.794328 });
+  mix.declareAbsent('crossfade');
+  mix.declare('videoSeconds', { value: 38.5 });
+  mix.declare('duckDb', { value: 11, rendered: 0.023 });
+  mix.declare('duckRatio', { value: 4 });
+  mix.declare('duckAttack', { value: 150 });
+  mix.declare('duckRelease', { value: 800 });
+  return mix;
+}
+
+/** The ducking shape remux-music builds, with every value taken from the registry. */
+function duckingGraph(mix) {
+  return (
+    `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+    `[2:a]${mix.structural('atrim=0:')}${mix.use('videoSeconds')},asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
+    `[vosc]apad[vop];` +
+    `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
+    `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}[mud];` +
+    `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
+    `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`
   );
 }
 
@@ -62,10 +92,19 @@ describe('mix parameter registry', () => {
     // A voice rebalance is also not the frame-by-frame churn that would train an operator
     // to pass --confirm-gain reflexively (the reason videoSeconds stays unpinned). It is
     // deliberate, rare, and worth a confirmation.
+    // The duck knobs joined this set when file-sourced ducking arrived. Each one moves
+    // the delivered bed level at the ends of its range — --duck-release at 9000 ms never
+    // returns the bed to the gaps level at all.
+    //
+    // --crossfade joined it for the same reason, having been called a "transition shape"
+    // knob. On a looping bed the tri curves on uncorrelated material dip up to -3.01 dB at
+    // each overlap's midpoint, about -1.76 dB averaged over the overlap — so at 30 s it
+    // sets the bed level for a large share of the running time. It is the voiceGain
+    // mistake a second time.
     assert.deepEqual(
       pinned.slice().sort(),
-      ['ceiling', 'musicGain', 'voiceGain'],
-      'every knob that moves the delivered level — both bus gains and the limiter — must be pinned',
+      ['ceiling', 'crossfade', 'duckAttack', 'duckDb', 'duckRatio', 'duckRelease', 'musicGain', 'voiceGain'],
+      'every knob that moves the delivered level — both bus gains, the limiter, the loop crossfade and the duck — must be pinned',
     );
   });
 
@@ -105,6 +144,9 @@ describe('mix parameter registry', () => {
     mix.declare('voiceGain', { value: 1.14 });
     mix.declare('musicGain', { value: 1.5 });
     mix.declare('ceiling', { value: 2, rendered: 0.794328 });
+    // pinnedValues refuses a partial set, so the conditional knobs are accounted for too.
+    mix.declareAbsent('crossfade');
+    for (const name of ['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']) mix.declareAbsent(name);
 
     assert.equal(mix.use('ceiling'), '0.794328', 'the graph carries the linear limit');
     assert.equal(mix.pinnedValues().ceiling, 2, 'the pin records the dB the operator actually typed');
@@ -123,7 +165,18 @@ describe('mix parameter registry', () => {
   });
 
   test('pinnedValues_everyPinnedParameterDeclared_returnsExactlyThatSet', () => {
-    assert.deepEqual(declaredMix().pinnedValues(), { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 });
+    assert.deepEqual(declaredMix().pinnedValues(), {
+      voiceGain: 1.14,
+      musicGain: 1.5,
+      ceiling: 1,
+      crossfade: 3,
+      // NOT_IN_FORCE. Recorded rather than omitted, so turning ducking on is a changed
+      // pinned parameter and demands a fresh confirmation.
+      duckDb: 0,
+      duckRatio: 0,
+      duckAttack: 0,
+      duckRelease: 0,
+    });
   });
 
   // THE WRITE SHAPE AND THE READ SHAPE MUST BE THE SAME SHAPE. `pinnedValues()` produces
@@ -144,6 +197,21 @@ describe('mix parameter registry', () => {
     assert.deepEqual(v.unrecordedParameters, [], 'and must cover every registered member');
     assert.deepEqual(v.changedParameters, []);
   });
+
+  // THE RECORD AS WRITTEN, NOT AS A TEST SPELLS IT. The test above builds its own lock, so
+  // a writer that recorded any other `evidence` would pass it while every pin it wrote read
+  // back as unconfirmed. remux-music writes through confirmedLockRecord; this reads that
+  // back, through the same JSON round trip the lock file takes.
+  test('pinnedValues_roundTrippedThroughTheLockRecordRemuxWrites_isAcceptedByTheClassifier', () => {
+    const current = { source: 'music.wav', sha256: 'b'.repeat(64), mix: declaredMix().pinnedValues() };
+    const written = JSON.parse(JSON.stringify(confirmedLockRecord(current, '2025-01-01T00:00:00.000Z')));
+
+    const v = classifyGainPin(written, { ...current, mix: declaredMix().pinnedValues() });
+
+    assert.equal(v.requiresConfirmation, false, 'the lock remux-music writes must read back as settled');
+    assert.deepEqual(v.unrecordedParameters, []);
+    assert.deepEqual(v.changedParameters, []);
+  });
 });
 
 describe('mix graph audit', () => {
@@ -162,7 +230,7 @@ describe('mix graph audit', () => {
     const graph =
       `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
       `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
-      `[vo][mu]amix=inputs=2:duration=longest:normalize=0[mx];` +
+      `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
       `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
 
     assert.doesNotThrow(() => mix.audit(graph));
@@ -215,6 +283,70 @@ describe('mix graph audit', () => {
     const tampered = declaredMix();
     const graph = loopingGraph(tampered).replace('inputs=2', 'inputs=3');
     assert.throws(() => tampered.audit(graph), CliError);
+  });
+
+  // A STRUCTURAL LITERAL WAS STRIPPED WHEREVER IT APPEARED, AS OFTEN AS IT APPEARED. So a
+  // second split feeding a second mix — which sums two copies of the finished mix, about
+  // +6 dB on everything — left no number the scan could see, and the graph read as fully
+  // accounted for. The literals are now matched whole, at a filter boundary, exactly as
+  // many times as the graph builder emitted them.
+  test('audit_duplicatedSplitAndMixPair_isRefusedRatherThanReadAsStructure', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraph(mix).replace(
+      '[mx];[mx]alimiter',
+      '[mx0];[mx0]asplit=2[d1][d2];[d1][d2]amix=inputs=2:normalize=0[mx];[mx]alimiter',
+    );
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError, 'a doubled bus is a refusal');
+        assert.equal(err.exitCode, EXIT.FAILED);
+        assert.match(err.message, /asplit=2/, 'and the refusal must name the literal that appears too often');
+        return true;
+      },
+      'a second split/mix pair doubles a bus without adding a number, and must not pass as structure',
+    );
+  });
+
+  test('audit_duckingGraphExactlyAsBuilt_passes', () => {
+    const mix = declaredDuckingMix();
+
+    assert.doesNotThrow(() => mix.audit(duckingGraph(mix)));
+  });
+
+  // MATCHED WHOLE OR NOT AT ALL. `normalize=0x1` used to lose its `normalize=0` to the
+  // strip and leave `x1`, which reads as an identifier — so the run passed. Whether ffmpeg
+  // itself would reject 0x1 as a boolean is UNVERIFIED here (no ffmpeg on the machine that
+  // wrote this); the audit must not depend on it either way.
+  test('audit_structuralLiteralRunIntoFurtherCharacters_isNotStripped', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraph(mix).replace('normalize=0[mx]', 'normalize=0x1[mx]');
+
+    assert.throws(() => mix.audit(graph), CliError, 'a literal with more attached is not that literal');
+  });
+
+  // The same property from the other side: the amix literal is the WHOLE filter, so a
+  // change inside it is not the declared structure, even where no new number appears.
+  test('audit_amixWithItsOptionsChanged_isNotReadAsTheDeclaredFilter', () => {
+    for (const changed of ['amix=inputs=2:normalize=0', 'amix=inputs=2:duration=shortest:normalize=0']) {
+      const mix = declaredDuckingMix();
+      const graph = duckingGraph(mix).replace('amix=inputs=2:duration=longest:normalize=0', changed);
+
+      assert.throws(() => mix.audit(graph), CliError, `${changed} is not the amix the builder emits`);
+    }
+  });
+
+  test('audit_structuralLiteralTheGraphBuilderNeverEmitted_isRefused', () => {
+    const mix = declaredMix();
+    // No duck, so the builder emits no split — one appearing is not structure.
+    const graph = loopingGraph(mix).replace('c1=c0[vo]', 'c1=c0,asplit=2[vo][spare]');
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => err instanceof CliError && /asplit=2/.test(err.message),
+      'a literal the builder did not emit must be refused, not stripped',
+    );
   });
 
   // An unspent use would leave slack in the accounting, and slack of exactly the right
@@ -312,13 +444,31 @@ describe('mix graph audit', () => {
   // nothing else. A level-moving argument passed to ffmpeg OUTSIDE -filter_complex is
   // invisible to it, and saying so is the point — the history of this file is claims
   // stronger than their evidence.
+  //
+  // It used to audit a clean graph and call that the limit, which proved nothing: no
+  // `-af` existed anywhere, and a broken audit that accepted everything passed it too. So
+  // the argument is really built, beside the graph remux-music hands the audit, and the
+  // same value is shown to be refused INSIDE the graph.
   test('audit_levelMovingArgumentOutsideTheFilterGraph_isNotDetected', () => {
     const mix = declaredMix();
     const graph = loopingGraph(mix);
+    const ffArgs = [
+      '-i', 'render.mp4', '-i', 'voiceover.mp3', '-i', 'music.wav',
+      '-filter_complex', graph,
+      '-af', 'volume=4',
+      '-map', '0:v', '-c:v', 'copy', '-map', '[out]', '-c:a', 'aac', 'out.mp4',
+    ];
 
     assert.doesNotThrow(
-      () => mix.audit(graph),
-      'the audit sees the graph only; `-af volume=4` or a changed -b:a would pass it unseen',
+      () => mix.audit(ffArgs[ffArgs.indexOf('-filter_complex') + 1]),
+      'the audit sees the graph only; the `-af volume=4` beside it passes unseen',
+    );
+
+    const inside = declaredMix();
+    assert.throws(
+      () => inside.audit(loopingGraph(inside, ',volume=4')),
+      CliError,
+      'the same value inside the graph is refused — so the pass above is the limit, not a broken audit',
     );
   });
 });

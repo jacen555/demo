@@ -39,7 +39,12 @@
  *   4. a `pinned` parameter that was never declared, so the pin cannot silently record a
  *      partial set;
  *   5. a `pinned` parameter that was declared but never reached the graph, so the pin
- *      cannot record a value that was not applied.
+ *      cannot record a value that was not applied;
+ *   6. a STRUCTURAL LITERAL appearing more often, or anywhere other, than the graph
+ *      builder took it through `structural()`. Literals used to be stripped wherever they
+ *      appeared and as many times as they appeared, so a second `asplit=2` / `amix` pair —
+ *      which doubles a bus and carries no number of its own — read as structure. They are
+ *      now accounted for like values, by use-count, and only at a filter boundary.
  *
  * IT DOES NOT DETECT:
  *   a. anything that reaches ffmpeg OUTSIDE the filter graph — `-b:a`, `-ar`, `-ac`, an
@@ -47,7 +52,10 @@
  *      this audit never sees them. It reads one string.
  *   b. a NON-NUMERIC change to the graph: swapping `alimiter` for `acompressor`, or
  *      `level=disabled` for `level=enabled`. No digit appears, so nothing fires. A
- *      future knob whose value is a word rather than a number is invisible here.
+ *      future knob whose value is a word rather than a number is invisible here. The one
+ *      exception is a structural literal that is a whole filter (`asplit=2`, the amix):
+ *      changing anything inside one stops the run, because what remains is no longer
+ *      the literal the builder took.
  *   c. a value hidden inside a `[link label]`, because labels are redacted wholesale
  *      before the scan runs. A label cannot set a level, but the audit's blind spot is
  *      real rather than argued away.
@@ -125,8 +133,14 @@ export const MIX_PARAMETERS = Object.freeze([
     name: 'crossfade',
     flag: '--crossfade',
     summary: 'the crossfade at each loop wrap',
-    // Not pinned: it sets how a wrap is joined, not how loud the bed sits.
-    pinned: false,
+    // PINNED, after being declared `pinned: false` as a "transition shape" knob — how a
+    // wrap is joined, not how loud the bed sits. That is true only of a bed that does not
+    // loop. When it loops, tri curves on uncorrelated material dip up to -3.01 dB at each
+    // overlap's midpoint, about -1.76 dB averaged over the overlap, so at 30 s it sets the
+    // bed level for a large share of the running time: the voiceGain mistake again.
+    // remux-music declares it NOT IN FORCE when the bed does not loop, so a --crossfade
+    // that reaches no wrap asks for no confirmation.
+    pinned: true,
   }),
   Object.freeze({
     name: 'videoSeconds',
@@ -138,23 +152,98 @@ export const MIX_PARAMETERS = Object.freeze([
     // fires constantly stops being a confirmation.
     pinned: false,
   }),
+  // ---- the sidechain duck (file-sourced music) ------------------------------------
+  //
+  // These four are declared AFTER the originals so that `pinnedValues`, which reports the
+  // first pinned parameter it finds undeclared, keeps naming `--ceiling` in the case the
+  // existing suite pins.
+  //
+  // ALL FOUR ARE PINNED, and the test for "is it really a level knob?" is what each one
+  // does at the ends of its range rather than what it is called:
+  //   --duck-db      IS the level. It is the whole feature.
+  //   --duck-ratio   sets how far the delivered depth strays from --duck-db when a
+  //                  syllable is louder or quieter than the average it was solved for.
+  //   --duck-attack  at 2000 ms the duck never engages inside a phrase, so the bed sits
+  //                  a full --duck-db too loud under narration.
+  //   --duck-release at 9000 ms the bed never returns to the gaps level at all — ~7.7 dB
+  //                  below it across a measured 1.83 s gap.
+  // The last two look like "transition shape" knobs, and they are not: they change the
+  // level that is actually delivered for most of the running time. (So, on a looping bed,
+  // does --crossfade, which was once left unpinned on exactly that reasoning.) Calling
+  // them shape knobs and leaving them unpinned would be limit (e) above, committed
+  // knowingly.
+  Object.freeze({
+    name: 'duckDb',
+    flag: '--duck-db',
+    summary: 'how far the bed drops under narration, in dB',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckRatio',
+    flag: '--duck-ratio',
+    summary: 'the sidechain compression ratio the duck threshold is solved against',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckAttack',
+    flag: '--duck-attack',
+    summary: 'how fast the bed ducks when narration starts, in ms',
+    pinned: true,
+  }),
+  Object.freeze({
+    name: 'duckRelease',
+    flag: '--duck-release',
+    summary: 'how fast the bed returns to the gaps level, in ms',
+    pinned: true,
+  }),
 ]);
 
 const BY_NAME = new Map(MIX_PARAMETERS.map((parameter) => [parameter.name, parameter]));
 
 /**
- * The fixed numbers of remux-music's filter graph, with the key they belong to.
+ * The fixed text of remux-music's filter graph that carries a digit.
  *
  * Matched WITH their key rather than as bare numbers on purpose: allowing a bare `2`
- * anywhere would let a future `volume=2` pass unnoticed. These are redacted before
- * numbers are extracted, so adding a constant to the graph without adding it here stops
- * the run rather than widening the hole.
+ * anywhere would let a future `volume=2` pass unnoticed. Adding a constant to the graph
+ * without adding it here stops the run rather than widening the hole.
+ *
+ * ACCOUNTED FOR LIKE VALUES, NOT STRIPPED WHEREVER FOUND. The builder takes each through
+ * `structural()`, which counts it, and `audit` refuses a graph in which one appears a
+ * different number of times, or anywhere but at the start of a filter. `whole` literals
+ * are complete filters, so they must also END at a filter boundary: `normalize=0x1` is
+ * not `normalize=0`, and an amix with its options changed is not the amix built here.
+ * `atrim=0:` is a filter's head; what follows it is the declared trim length.
  */
 const STRUCTURAL_LITERALS = Object.freeze([
-  'atrim=0:', // the trim always starts at the head of the bed
-  'inputs=2', // amix takes exactly two buses: voice and music
-  'normalize=0', // amix must not halve both buses
+  // the trim always starts at the head of the bed
+  Object.freeze({ text: 'atrim=0:', whole: false }),
+  // the voice bus forks in two: one leg to the mix, one to the sidechain
+  Object.freeze({ text: 'asplit=2', whole: true }),
+  // amix takes exactly two buses, voice and music, and must not halve them
+  Object.freeze({ text: 'amix=inputs=2:duration=longest:normalize=0', whole: true }),
 ]);
+
+/** Where a filter starts or ends: the graph's own separators, or a redacted label. */
+const FILTER_EDGE = '[;,\\u0000]';
+
+function structuralPattern({ text, whole }) {
+  const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<=^|${FILTER_EDGE})${escaped}${whole ? `(?=$|${FILTER_EDGE})` : ''}`, 'g');
+}
+
+/**
+ * What the pin records for a pinned knob that was NOT IN FORCE on this run.
+ *
+ * Zero, and specifically a number, because `classifyGainPin` reads a recorded value that
+ * is not a finite number as "this pin does not cover that parameter" and demands a fresh
+ * confirmation forever. A sentinel of `null` would therefore make a pin written with
+ * ducking switched off permanently unconfirmable.
+ *
+ * Zero also reads correctly on its own terms for every knob that can be absent: 0 dB of
+ * duck, 0 ms of attack, 0 ms of release, ratio 0, 0 s of crossfade — none of them a
+ * setting anything could run at, all of them plainly "this was not applied".
+ */
+export const NOT_IN_FORCE = 0;
 
 /**
  * THE ONE NUMERIC GRAMMAR. `declare` may only render this, and `audit` may only read
@@ -213,6 +302,8 @@ function isPlainObject(value) {
 export function createMixAudit() {
   /** name -> { parameter, value, rendered, uses } */
   const declared = new Map();
+  /** structural literal text -> how many times the graph builder took it */
+  const structuralUses = new Map();
 
   /**
    * Declares a value that is about to reach the mix graph.
@@ -248,7 +339,39 @@ export function createMixAudit() {
         EXIT.FAILED,
       );
     }
-    declared.set(name, { parameter, value, rendered: text, uses: 0 });
+    declared.set(name, { parameter, value, rendered: text, uses: 0, inForce: true });
+  }
+
+  /**
+   * Declares that a pinned knob is NOT IN FORCE on this run.
+   *
+   * Every pinned parameter must be accounted for on every run — `pinnedValues` refuses a
+   * partial set, and `audit` refuses a pinned value that never reached the graph. A
+   * CONDITIONAL knob such as the sidechain duck satisfies neither: on a run without
+   * ducking it has no value and touches no filter. Before this existed, the only way to
+   * ship one was to declare it `pinned: false`, which is limit (e) — the knob would move
+   * the delivered level with the pin reporting valid.
+   *
+   * So absence becomes a declared, recorded state rather than an unrepresentable one. The
+   * pin stores NOT_IN_FORCE, which means turning ducking ON later is a CHANGED pinned
+   * parameter and demands a fresh confirmation, exactly as it should: switching the duck
+   * on moves the delivered mix.
+   *
+   * It is not an escape hatch. A parameter declared absent may not then be interpolated —
+   * `use` refuses it — so "not in force" cannot be claimed for a value that is in force.
+   */
+  function declareAbsent(name) {
+    const parameter = BY_NAME.get(name);
+    if (parameter === undefined) {
+      throw new CliError(
+        `"${name}" was declared not-in-force but is not in MIX_PARAMETERS (src/mix-parameters.mjs)`,
+        EXIT.FAILED,
+      );
+    }
+    if (declared.has(name)) {
+      throw new CliError(`${parameter.flag} was declared twice — only one value of it reaches the graph`, EXIT.FAILED);
+    }
+    declared.set(name, { parameter, value: NOT_IN_FORCE, rendered: null, uses: 0, inForce: false });
   }
 
   /**
@@ -263,8 +386,32 @@ export function createMixAudit() {
       const known = BY_NAME.has(name) ? 'declared for this run' : 'declared in MIX_PARAMETERS';
       throw new CliError(`"${name}" reached the mix graph without being ${known}`, EXIT.FAILED);
     }
+    if (!entry.inForce) {
+      throw new CliError(
+        `${entry.parameter.flag} was declared NOT IN FORCE for this run and then taken from the registry.\n` +
+          'A knob cannot both be recorded as unapplied and be interpolated into the filter graph — the pin\n' +
+          'would certify a run that did not happen. Declare it with a value, or do not use it.',
+        EXIT.FAILED,
+      );
+    }
     entry.uses += 1;
     return entry.rendered;
+  }
+
+  /**
+   * Returns a structural literal to interpolate, and counts the use — `use()` for the
+   * graph's fixed parts. `audit` refuses a graph in which the literal appears any other
+   * number of times, so structure the builder did not emit cannot pass as structure.
+   */
+  function structural(text) {
+    if (!STRUCTURAL_LITERALS.some((literal) => literal.text === text)) {
+      throw new CliError(
+        `"${text}" is not a structural literal of the mix graph (STRUCTURAL_LITERALS, src/mix-parameters.mjs)`,
+        EXIT.FAILED,
+      );
+    }
+    structuralUses.set(text, (structuralUses.get(text) ?? 0) + 1);
+    return text;
   }
 
   /**
@@ -299,7 +446,7 @@ export function createMixAudit() {
    */
   function audit(graph) {
     for (const [, entry] of declared) {
-      if (entry.parameter.pinned && entry.uses === 0) {
+      if (entry.parameter.pinned && entry.inForce && entry.uses === 0) {
         throw new CliError(
           `${entry.parameter.flag} is pinned and was declared as ${entry.value}, but never reached the ` +
             'mix graph — the pin would record a value that was not applied',
@@ -310,11 +457,32 @@ export function createMixAudit() {
 
     // Link labels first: `[2:a]` and `[ml1]` are wiring, not filter arguments.
     let residue = String(graph).replace(/\[[^\]]*\]/g, REDACTED);
-    for (const literal of STRUCTURAL_LITERALS) residue = residue.split(literal).join(REDACTED);
+    // Every literal is counted against the graph as built, before any is redacted, so one
+    // literal's redaction cannot manufacture a filter boundary for another.
+    const patterns = STRUCTURAL_LITERALS.map((literal) => [literal, structuralPattern(literal)]);
+    for (const [literal, pattern] of patterns) {
+      const found = residue.match(pattern)?.length ?? 0;
+      const taken = structuralUses.get(literal.text) ?? 0;
+      if (found !== taken) {
+        throw new CliError(
+          `the mix filter graph carries the structural literal "${literal.text}" ${found} time(s) at a filter ` +
+            `boundary, but the graph builder took it ${taken} time(s).\n` +
+            'Structure is accounted for like values are. A second split/mix pair doubles a bus without\n' +
+            'adding a number, so a literal stripped wherever it appeared let exactly that pass as structure.\n' +
+            'Take every structural literal with mix.structural(<text>), and emit nothing else like it.',
+          EXIT.FAILED,
+        );
+      }
+    }
+    for (const [, pattern] of patterns) residue = residue.replace(pattern, REDACTED);
 
     const budget = new Map();
     const flagsFor = new Map();
     for (const [, entry] of declared) {
+      // An absent declaration renders nothing and is used never, so it contributes no
+      // budget. Including it would seed the map with a `null` key for a value the graph
+      // cannot contain.
+      if (!entry.inForce) continue;
       budget.set(entry.rendered, (budget.get(entry.rendered) ?? 0) + entry.uses);
       flagsFor.set(entry.rendered, [...(flagsFor.get(entry.rendered) ?? []), entry.parameter.flag]);
     }
@@ -384,7 +552,7 @@ export function createMixAudit() {
     }
   }
 
-  return { declare, use, pinnedValues, audit };
+  return { declare, declareAbsent, use, structural, pinnedValues, audit };
 }
 
 /** True for a value that can be read as a lock's recorded mix set. */

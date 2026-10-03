@@ -253,9 +253,23 @@ const HOW_TO_PROCEED =
   '  3. read the lead-in window, where the bed plays alone. If the level is wrong, re-run\n' +
   '     step 1 with corrected values; the pin will ask again because they moved.\n' +
   '\n' +
-  '--confirm-gain records that YOU accepted these values. It does not record that anyone\n' +
-  'measured the result, and this tool cannot do that for you — see the gain-pin section\n' +
-  'of the README for why, and for what closing that gap properly would take.';
+  "--confirm-gain is the caller's assertion that a person measured or listened to the mix\n" +
+  'and accepts these values for this source. The tool cannot tell who passed it, and it\n' +
+  `records "${OPERATOR_CONFIRMED}" either way. An agent must not pass it on its own\n` +
+  'authority: ask the person, and pass it only on their answer. What the pin records is\n' +
+  'that assertion, not a measurement of the result — this tool cannot measure that for\n' +
+  'you. See the gain-pin section of the README for why, and for what closing that gap\n' +
+  'properly would take.';
+
+/**
+ * The record a confirmed run writes: the one shape `classifyGainPin` reads back as settled.
+ *
+ * Pure, and kept beside the classifier rather than inline in remux-music's writer, so a
+ * test can round-trip the record that is actually written instead of one it built itself.
+ */
+export function confirmedLockRecord(current, confirmedAt) {
+  return { ...current, evidence: OPERATOR_CONFIRMED, confirmedAt };
+}
 
 /**
  * The refusal text for an unconfirmed mix, naming every cause separately.

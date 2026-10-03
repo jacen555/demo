@@ -46,7 +46,8 @@ Parallelize independent tasks across different domains. For each task:
 1. **Scaffold first if needed.** Run `scaffold-domain` for any unregistered domain before
    any build task targeting it.
 
-2. **Build** — dispatch the task's `*-builder` with `model: "claude-opus-4.8"`, and include:
+2. **Build** — dispatch the task's `*-builder` on the highest-version Claude model,
+   passed explicitly (§VIII). Include:
    - the **domain id** (the builder resolves paths from the registry itself)
    - `TIER: <n>` and what it requires
    - the design checklist path
@@ -60,7 +61,7 @@ Parallelize independent tasks across different domains. For each task:
    Never invoke the reviewer on a red build.
 
 4. **Review** (Tier 1 and 2) — dispatch the paired `*-reviewer` with
-   `model: "gpt-5.6-sol"` — a different family from the builder (§VIII) — passing the
+   the highest-version GPT model, a different family from the builder (§VIII), passing the
    changed files/diff plus the builder's report. Wait for `VERDICT` + `FINDINGS`.
 
 5. **Iterate** — on `FAIL`, hand the FINDINGS back to the builder and repeat. Cap at ~3

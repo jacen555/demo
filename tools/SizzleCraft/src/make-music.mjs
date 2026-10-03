@@ -9,7 +9,22 @@
 //   envelopeJson (optional) = voiceover RMS envelope, used to sidechain-duck the bed under speech.
 //   preset       (optional) = named bed, see BEDS below. Defaults to 'warm'.
 import fs from 'node:fs';
-import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
+import path from 'node:path';
+import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, resolveEngineOutput, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
+import {
+  SPEECH_RMS_THRESHOLD,
+  REFERENCE_ATTACK_MS,
+  REFERENCE_RELEASE_MS,
+  REFERENCE_DUCK_GAIN,
+  BED_DUCK_RECORD_SUFFIX,
+  duckGainTrajectory,
+  fingerprintVoice,
+  fingerprintBuffer,
+  bedDuckRecord,
+  publishBedDuckRecord,
+  classifyEnvelopeLineage,
+  describeEnvelopeRefusal,
+} from './envelope-ducking.mjs';
 
 const USAGE = `
 make-music — synthesise the ambient bed (pipeline stage S8). Nothing sampled or licensed.
@@ -22,13 +37,24 @@ Options
   --out <file>        output WAV (default: music.wav)
   --seconds <number>  duration in seconds, 0..7200 (default: 251.2)
   --envelope <file>   voiceover RMS envelope, used to sidechain-duck the bed under speech
+  --voice <file>      the narration in play, which the envelope must have been measured
+                      from (default: voiceover.mp3 — what remux-music mixes by default)
   --preset <name>     named bed: warm (I-V-ii-IV in F) or bright (vi-IV-I-V in G)
   --project <dir>     project root; no path may escape it (default: current directory)
   --apply             actually write. Without it nothing is written.
-  --replace           permit overwriting an existing --out
+  --replace           permit overwriting an existing --out and its ducking record
   --help              show this message
 
-Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage or refused overwrite
+Beside the bed, --apply writes <out>.duck.json: the narration the bed was ducked against,
+or that it was not ducked. The duck is baked into the samples, so remux-music checks this
+record and refuses a bed ducked against narration that is no longer the one in play.
+Without --replace the record is created only if its name is still free when it is
+published: one that appeared while the bed was synthesised is refused and left as it is,
+and the bed is not written.
+
+Exit codes: 0 success/plan · 1 synthesis failed, or the ducking record could not be
+written · 2 bad usage or refused overwrite, including a ducking record that appeared
+during the run
 `.trimStart();
 
 const cli = (() => {
@@ -39,6 +65,7 @@ const cli = (() => {
         out: { type: 'string' },
         seconds: { type: 'string' },
         envelope: { type: 'string' },
+        voice: { type: 'string' },
         preset: { type: 'string' },
       },
     });
@@ -49,9 +76,16 @@ const cli = (() => {
   }
 })();
 
-let out, DUR, envPath, presetName;
+let out, recordPath, DUR, envPath, presetName;
 try {
   out = resolveOutput(cli.projectDir, cli.values.out ?? 'music.wav', { apply: cli.apply, replace: cli.replace, label: 'output' });
+  // ENGINE-CHOSEN: nobody named it, so a link at it is refused, and an existing one needs
+  // --replace as the bed does. Resolved here, so a refusal costs nothing — not after
+  // minutes of synthesis, and never with a bed written and its record not. This is the
+  // cheap refusal; the guard is the publish, which creates the record exclusively.
+  recordPath = resolveEngineOutput(cli.projectDir, `${out}${BED_DUCK_RECORD_SUFFIX}`, {
+    apply: cli.apply, replace: cli.replace, label: 'ducking record',
+  });
   DUR = requirePositiveNumber(cli.values.seconds ?? 251.2, { name: '--seconds', max: 7200 });
   envPath = cli.values.envelope
     ? requireExistingFile(cli.projectDir, cli.values.envelope, 'envelope file')
@@ -60,6 +94,60 @@ try {
 } catch (err) {
   console.error(`error: ${err.message}`);
   process.exit(err.exitCode ?? EXIT.FAILED);
+}
+
+// ---- envelope lineage ------------------------------------------------------------------------
+// THE ENVELOPE MUST DESCRIBE THE NARRATION ACTUALLY IN PLAY. A stale one parses perfectly
+// and ducks against a cut that no longer exists, drifting further out of alignment the
+// longer the bed runs, with nothing reporting it (see envelope-ducking.mjs).
+//
+// Checked HERE, before the preset line and before synthesis, so a stale envelope costs
+// seconds rather than minutes of pad generation. It is checked AGAIN at the read below,
+// which is the authoritative one: this is a pre-flight, not a substitute.
+let voiceFingerprint = null;
+if (envPath) {
+  try {
+    voiceFingerprint = await resolveVoiceFingerprint();
+    assertEnvelopeCurrent(JSON.parse(fs.readFileSync(envPath, 'utf8')));
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      console.error(`error: ${envPath} is not valid JSON — ${err.message}`);
+      process.exit(EXIT.USAGE);
+    }
+    console.error(`error: ${err.message}`);
+    process.exit(err.exitCode ?? EXIT.USAGE);
+  }
+}
+
+/**
+ * Fingerprints the narration the envelope has to match: `--voice`, else voiceover.mp3 —
+ * the narration remux-music mixes by default.
+ *
+ * NOT the file the envelope names. Checking an envelope against its own `measuredFrom`
+ * proved only that it matched its own source, so a project re-voiced into voiceover.mp3
+ * with the envelope still bound to a draft that was still on disk passed as current. The
+ * name the envelope records appears in a refusal, as information, and nowhere else.
+ */
+async function resolveVoiceFingerprint() {
+  const named = cli.values.voice;
+  const voiceName = typeof named === 'string' && named !== '' ? named : 'voiceover.mp3';
+  const voicePath = requireExistingFile(cli.projectDir, voiceName, 'voice track the envelope must describe');
+  return fingerprintVoice(voicePath, voiceName);
+}
+
+/** Refuses anything but a current envelope, keeping stale/unbound/unreadable distinct. */
+function assertEnvelopeCurrent(parsed) {
+  const verdict = classifyEnvelopeLineage(parsed, voiceFingerprint);
+  if (verdict.state === 'current') return;
+  const named = parsed?.measuredFrom?.file;
+  const namedNote =
+    typeof named === 'string' && named !== voiceFingerprint.file
+      ? `\nThe envelope names ${JSON.stringify(named.slice(0, 64))} as its source. That is information only: the\n` +
+        `narration in play is ${voiceFingerprint.file} (--voice, default voiceover.mp3), and it is what the envelope must describe.`
+      : '';
+  throw new CliError(
+    describeEnvelopeRefusal(verdict, { envelopePath: envPath, voicePath: voiceFingerprint.file }) + namedNote,
+  );
 }
 
 const SR = 48000;
@@ -124,6 +212,10 @@ if (!cli.apply) {
   console.log(`plan: synthesise ${DUR}s of the '${presetName}' bed`);
   console.log(`  ducking ${envPath ? `sidechained to ${envPath}` : 'none (no --envelope given)'}`);
   console.log(`  output  ${out} — ${describeWrite(out, cli.replace)}`);
+  console.log(
+    `  record  ${recordPath} — ${describeWrite(recordPath, cli.replace)} ` +
+      `(${voiceFingerprint ? `ducked against ${voiceFingerprint.file}` : 'not ducked'})`,
+  );
   planFooter();
   process.exit(EXIT.OK);
 }
@@ -315,7 +407,7 @@ console.log(`raw peak ${peak.toFixed(3)} -> normalising x${norm.toFixed(4)} (tar
 
 // ---- sidechain ducking off the voiceover envelope ---------------------------------------------
 // Music sits well under narration and lifts back up in the inter-segment gaps.
-const DUCK = 0.42;          // ≈ -7.5 dB under speech
+const DUCK = REFERENCE_DUCK_GAIN;   // ≈ -7.5 dB under speech
 const HOP_MS = 20;
 let duckGain = null;
 if (envPath) {
@@ -329,6 +421,10 @@ if (envPath) {
     } catch (err) {
       throw new CliError(`${envPath} is not valid JSON — ${err.message}`);
     }
+    // THE AUTHORITATIVE LINEAGE CHECK. The pre-flight above fails fast; this one is over
+    // the bytes actually about to be ducked against, so an envelope swapped between the
+    // two is caught rather than trusted.
+    assertEnvelopeCurrent(parsed);
     // An empty or non-numeric envelope produced an empty gain array, which indexed to
     // `undefined`, multiplied every sample to NaN, and wrote a WAV of NaN floats while
     // reporting success — replacing a good bed with garbage. The ducking curve is the
@@ -347,20 +443,20 @@ if (envPath) {
     }
     return parsed;
   });
-  const rms = env.rms, thresh = 0.004;
-  // one-pole smoothing: duck fast, recover gently, so it never pumps
-  const atk = Math.exp(-HOP_MS / 150), rel = Math.exp(-HOP_MS / 800);
-  const g = new Float32Array(rms.length);
-  let cur = 1;
-  for (let k = 0; k < rms.length; k++) {
-    const target = rms[k] > thresh ? DUCK : 1.0;
-    const c = target < cur ? atk : rel;
-    cur = target + (cur - target) * c;
-    g[k] = cur;
-  }
+  // ONE MODEL, BOTH DUCKING PATHS. This loop used to live here and remux-music now ducks
+  // in the ffmpeg graph from the same envelope; two copies of "duck fast, recover gently"
+  // is two behaviours waiting to drift apart, so both read the same function.
+  const g = duckGainTrajectory({
+    rms: env.rms,
+    hopMs: HOP_MS,
+    duckGain: DUCK,
+    attackMs: REFERENCE_ATTACK_MS,
+    releaseMs: REFERENCE_RELEASE_MS,
+    threshold: SPEECH_RMS_THRESHOLD,
+  });
   duckGain = g;
   const ducked = g.reduce((a, b) => a + (b < 0.7 ? 1 : 0), 0);
-  console.log(`ducking from ${rms.length} envelope frames — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
+  console.log(`ducking from ${env.rms.length} envelope frames — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
 } else {
   console.log('no envelope supplied — flat music level');
 }
@@ -415,6 +511,19 @@ if (nonFinite !== -1) {
   );
   process.exit(EXIT.FAILED);
 }
+// THE RECORD FIRST, THEN THE BED. A new bed never lands without its record: if the bed
+// write fails after the record is published, the record fingerprints bytes that are not
+// on disk, and remux-music refuses it as describing a different bed.
+const record = bedDuckRecord(fingerprintBuffer(buf, path.basename(out)), voiceFingerprint);
+let published;
+try {
+  published = publishBedDuckRecord(cli.projectDir, recordPath, record, { replace: cli.replace });
+} catch (err) {
+  console.error(`error: ${err.message}\n${out} has not been written: a bed never lands without its record.`);
+  process.exit(err.exitCode ?? EXIT.FAILED);
+}
+for (const warning of published.warnings) console.error(`warning: ${warning}`);
 fs.writeFileSync(out, buf);
 const db = v => (20 * Math.log10(v || 1e-9)).toFixed(1);
 console.log(`wrote ${out} — ${(bytes / 1e6).toFixed(1)} MB, peak ${db(outPeak)} dBFS`);
+console.log(`wrote ${recordPath} — ${record.ducked ? `ducked against ${voiceFingerprint.file}` : 'not ducked'}`);

@@ -20,7 +20,42 @@ import { fileURLToPath } from 'node:url';
 import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, CliError } from '../src/cli-support.mjs';
 import { normalizeEndCardFields } from '../src/end-card.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from '../src/gain-pin.mjs';
-import { assertCleanExit } from './_helpers.mjs';
+import { MIX_PARAMETERS, NOT_IN_FORCE } from '../src/mix-parameters.mjs';
+import { assertCleanExit, pcmWav } from './_helpers.mjs';
+
+/**
+ * What a pin records for the CONDITIONAL pinned parameters when they are not in force.
+ *
+ * The sidechain duck is opt-in, and the loop crossfade reaches the mix only when the bed
+ * is shorter than the video, so on a run without them those knobs have no value — but a
+ * pinned parameter must still be accounted for, or the pin records a partial set.
+ * `mix-parameters.declareAbsent` writes NOT_IN_FORCE for exactly this, and these fixtures
+ * have to record what the tool records or they stop describing it.
+ *
+ * DERIVED FROM THE REGISTRY, not written out: when the next conditional knob is added,
+ * these fixtures must not quietly go on asserting a settled pin over a set that no longer
+ * covers everything. That is the defect the pin exists to stop, and a hand-written
+ * fixture is exactly how it would be reintroduced inside its own tests.
+ */
+const NOT_IN_FORCE_MIX = Object.freeze(
+  Object.fromEntries(
+    MIX_PARAMETERS.filter((p) => p.pinned && (p.name.startsWith('duck') || p.name === 'crossfade')).map((p) => [
+      p.name,
+      NOT_IN_FORCE,
+    ]),
+  ),
+);
+
+/**
+ * Music remux-music can DECODE, and a timeline it can size the loop from: 10 s of bed
+ * against a 5 s video, so nothing loops. An --apply run probes the bed before the gain
+ * pin, because whether the bed loops decides whether the crossfade is in the mix the pin
+ * covers — so a refusal from the pin is only reachable past a successful probe.
+ */
+const PROBEABLE_MEDIA = Object.freeze({
+  'music.wav': pcmWav(10),
+  'timing.json': JSON.stringify({ project: { fps: 30 }, durationMs: 4000 }),
+});
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -57,6 +92,16 @@ const timingFixture = (segments, extra = {}) =>
 
 /** An absolute path that is guaranteed not to be an executable, for the "ffmpeg never ran" cases. */
 const MISSING_FFMPEG = path.join(os.tmpdir(), 'sizzlecraft-no-such-dir', 'no-such-ffmpeg-binary.exe');
+
+/** Matches `text` however a help or refusal text happens to wrap it. */
+const phrase = (text) =>
+  new RegExp(
+    text
+      .split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s+'),
+    'i',
+  );
 
 // Schema validation needs ajv. The contract holds either way — with ajv a bad shape must
 // fail, without it the verifier must refuse to report a pass — so the suite asserts
@@ -691,9 +736,11 @@ describe('every producer of a timing file obeys the end-card rule', { skip: ajvA
       const g = runScript('silence-gen.mjs', ['--out', name, '--ms', '2000', '--apply'], dir);
       assert.equal(g.code, EXIT.OK, `fixture audio must build for this test to mean anything\n${g.all}`);
     }
+    // Words recorded as voice.mjs records them: remix refuses a narrated segment whose
+    // record holds none, because its clip cannot be narration voice produced for it.
     const segments = [
-      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
-      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000, words: [{ word: 'hello', startMs: 100, endMs: 600 }, { word: 'there', startMs: 600, endMs: 1100 }] } },
+      { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000, words: [{ word: 'second', startMs: 2100, endMs: 2600 }, { word: 'segment', startMs: 2600, endMs: 3100 }, { word: 'here', startMs: 3100, endMs: 3600 }] } },
     ];
     fs.writeFileSync(
       path.join(dir, 'timing.json'),
@@ -762,12 +809,13 @@ describe('check-levels exit contract', () => {
 // straight into an ffmpeg filter graph, and a video-hash mismatch that only warned.
 // ---------------------------------------------------------------------------
 describe('remux-music safety', () => {
-  const project = (t) =>
+  const project = (t, files = {}) =>
     makeProject(t, {
       'ffmpeg-path.txt': MISSING_FFMPEG,
       'in.mp4': 'video bytes',
       'voiceover.mp3': 'voice bytes',
       'music.wav': 'music bytes',
+      ...files,
     });
 
   test('remuxMusic_noFlags_doesNotWriteOutputAndExitsZero', (t) => {
@@ -845,13 +893,13 @@ describe('remux-music safety', () => {
       JSON.stringify({
         source: 'music.wav',
         sha256,
-        mix: { voiceGain: 1.14, musicGain, ceiling: 1 },
+        mix: { voiceGain: 1.14, musicGain, ceiling: 1, ...NOT_IN_FORCE_MIX },
         evidence: 'operator-confirmed',
       }),
     );
 
   test('remuxMusic_musicSourceChangedButGainDidNot_refusesAndNamesBothTracks', (t) => {
-    const dir = project(t);
+    const dir = project(t, PROBEABLE_MEDIA);
     pinTo(dir, 'a'.repeat(64));
 
     const r = runScript(
@@ -866,8 +914,11 @@ describe('remux-music safety', () => {
     assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
   });
 
+  // It used to assert only that the refusal text was absent — which a run that crashed
+  // before reaching the pin satisfied just as well. It now asserts the run got PAST the
+  // pin: the apply line prints, then the missing ffmpeg fails it.
   test('remuxMusic_changedSourceWithConfirmGain_passesTheGainCheck', (t) => {
-    const dir = project(t);
+    const dir = project(t, PROBEABLE_MEDIA);
     pinTo(dir, 'a'.repeat(64));
 
     const r = runScript(
@@ -878,6 +929,8 @@ describe('remux-music safety', () => {
     );
 
     assert.doesNotMatch(r.all, /music source CHANGED/, '--confirm-gain must clear the pin check');
+    assertCleanExit(r, EXIT.FAILED, 'past the pin, the missing ffmpeg is what stops the run: ');
+    assert.match(r.all, /^voice 1\.14 · music 1\.5/m, 'and the run must actually have reached the mix');
   });
 
   test('remuxMusic_unchangedSource_doesNotRefuseAndPlanSaysSoWithoutColourAlone', (t) => {
@@ -987,7 +1040,7 @@ describe('gain pin classifier', () => {
   const current = {
     source: 'music.wav',
     sha256: 'b'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
   };
   // Named `confirmed`, so it must actually BE confirmed. Without `evidence` this is the
   // self-pinned shape, and a fixture that quietly supplies the defective form is
@@ -995,7 +1048,7 @@ describe('gain pin classifier', () => {
   const confirmed = {
     source: 'music.wav',
     sha256: 'b'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     evidence: 'operator-confirmed',
   };
 
@@ -1055,7 +1108,7 @@ describe('gain pin classifier', () => {
     const noEvidence = {
       source: 'music.wav',
       sha256: 'b'.repeat(64),
-      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     };
 
     const v = classifyGainPin(noEvidence, current);
@@ -1095,7 +1148,7 @@ describe('gain pin classifier', () => {
   const unconfirmed = {
     source: 'music.wav',
     sha256: 'a'.repeat(64),
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
   };
   const pinLineOf = (text, sha) => text.split('\n').find((l) => l.includes(sha.slice(0, 12)));
 
@@ -1146,7 +1199,8 @@ describe('gain pin classifier', () => {
 // which it must ask.
 // ---------------------------------------------------------------------------
 describe('remux-music gain pin', () => {
-  const MUSIC_BYTES = 'music bytes';
+  // Decodable, so an --apply run gets as far as the pin (see PROBEABLE_MEDIA).
+  const MUSIC_BYTES = PROBEABLE_MEDIA['music.wav'];
   const MUSIC_SHA = crypto.createHash('sha256').update(MUSIC_BYTES).digest('hex');
 
   const project = (t, files = {}) =>
@@ -1154,7 +1208,7 @@ describe('remux-music gain pin', () => {
       'ffmpeg-path.txt': MISSING_FFMPEG,
       'in.mp4': 'video bytes',
       'voiceover.mp3': 'voice bytes',
-      'music.wav': MUSIC_BYTES,
+      ...PROBEABLE_MEDIA,
       ...files,
     });
 
@@ -1168,8 +1222,8 @@ describe('remux-music gain pin', () => {
     evidence = 'operator-confirmed' } = {}) =>
     fs.writeFileSync(
       lockFile(dir),
-      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling } }
-        : { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling }, evidence }),
+      JSON.stringify(evidence === null ? { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling, ...NOT_IN_FORCE_MIX } }
+        : { source: 'music.wav', sha256, mix: { voiceGain, musicGain, ceiling, ...NOT_IN_FORCE_MIX }, evidence }),
     );
 
   const remux = (dir, extra = []) =>
@@ -1304,14 +1358,14 @@ describe('gain pin mix parameter coverage', () => {
   const applying = (mix = {}) => ({
     source: 'music.wav',
     sha256: SHA,
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX, ...mix },
   });
 
   /** A pin that genuinely covers every registered parameter and records a confirmation. */
   const settled = (over = {}) => ({
     source: 'music.wav',
     sha256: SHA,
-    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+    mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     evidence: 'operator-confirmed',
     ...over,
   });
@@ -1352,11 +1406,15 @@ describe('gain pin mix parameter coverage', () => {
     assert.match(text, /now asked\s+2\b/, 'and the one now being asked for');
   });
 
+  // The `now` fixture used to omit the not-in-force sentinels, so it described a mix
+  // remux-music never builds — and the classifier, seeing every duck knob go from 0 to
+  // nothing, listed each one as CHANGED. The test could not assert their absence, so a
+  // classifier inventing causes passed it. The fixture now records what the tool records.
   test('describeGainPinRefusal_sourceAndCeilingBothChanged_namesEachCauseSeparately', () => {
     const now = {
       source: 'other.wav',
       sha256: 'c'.repeat(64),
-      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 2 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 2, ...NOT_IN_FORCE_MIX },
     };
     const v = classifyGainPin(settled(), now);
 
@@ -1365,6 +1423,12 @@ describe('gain pin mix parameter coverage', () => {
     assert.match(text, /music source CHANGED/, 'the source cause must be named');
     assert.match(text, /--ceiling CHANGED/, 'and the ceiling cause must be named on its own');
     assert.doesNotMatch(text, /--music-gain CHANGED/, 'a gain that did not move must not be listed');
+    assert.deepEqual(
+      v.changedParameters.map((c) => c.name),
+      ['ceiling'],
+      'and nothing that stayed not-in-force may be listed as a cause',
+    );
+    assert.doesNotMatch(text, /--duck-\w+ CHANGED|--crossfade CHANGED/, 'in the text either');
   });
 
   test('classifyGainPin_musicGainChangedWhileTheCeilingHeld_namesOnlyTheGain', () => {
@@ -1442,7 +1506,7 @@ describe('gain pin mix parameter coverage', () => {
     const partial = {
       source: 'music.wav',
       sha256: SHA,
-      mix: { voiceGain: 1.14, musicGain: 1.5 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ...NOT_IN_FORCE_MIX },
       evidence: 'operator-confirmed',
     };
 
@@ -1507,7 +1571,7 @@ describe('gain pin mix parameter coverage', () => {
   });
 
   test('describeGainPinRefusal_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
-    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX } };
 
     const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
 
@@ -1520,7 +1584,7 @@ describe('gain pin mix parameter coverage', () => {
     const noEvidence = {
       source: 'music.wav',
       sha256: 'a'.repeat(64),
-      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 },
+      mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX },
     };
 
     const text = describeGainPinRefusal(classifyGainPin(noEvidence, applying()), applying());
@@ -1531,7 +1595,7 @@ describe('gain pin mix parameter coverage', () => {
   });
 
   test('describeGainPinPlan_pinRecordingNoConfirmation_doesNotAssertWhoWroteIt', () => {
-    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1 } };
+    const noEvidence = { source: 'music.wav', sha256: SHA, mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX } };
 
     const line = describeGainPinPlan(classifyGainPin(noEvidence, applying()), applying(), false);
 
@@ -1580,28 +1644,33 @@ describe('gain pin mix parameter coverage', () => {
 // remux-music.mjs — the mix parameter registry, end to end.
 // ---------------------------------------------------------------------------
 describe('remux-music mix parameter pin', () => {
-  const MUSIC_BYTES = 'music bytes';
+  // Decodable, so an --apply run gets as far as the pin (see PROBEABLE_MEDIA).
+  const MUSIC_BYTES = PROBEABLE_MEDIA['music.wav'];
   const MUSIC_SHA = crypto.createHash('sha256').update(MUSIC_BYTES).digest('hex');
+
+  // 4 s of bed against the same 5 s video: it loops, two copies and one wrap.
+  const LOOPING_MUSIC = pcmWav(4);
+  const LOOPING_SHA = crypto.createHash('sha256').update(LOOPING_MUSIC).digest('hex');
 
   const project = (t, files = {}) =>
     makeProject(t, {
       'ffmpeg-path.txt': MISSING_FFMPEG,
       'in.mp4': 'video bytes',
       'voiceover.mp3': 'voice bytes',
-      'music.wav': MUSIC_BYTES,
+      ...PROBEABLE_MEDIA,
       ...files,
     });
 
   const lockFile = (dir) => path.join(dir, 'music-gain.lock.json');
 
   /** A settled pin in the registry-aware shape: it records every pinned parameter. */
-  const pin = (dir, mix = {}) =>
+  const pin = (dir, mix = {}, sha256 = MUSIC_SHA) =>
     fs.writeFileSync(
       lockFile(dir),
       JSON.stringify({
         source: 'music.wav',
-        sha256: MUSIC_SHA,
-        mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...mix },
+        sha256,
+        mix: { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX, ...mix },
         evidence: 'operator-confirmed',
       }),
     );
@@ -1708,6 +1777,141 @@ describe('remux-music mix parameter pin', () => {
       /decod/i,
       'and it must say that verifying a dBTP target requires decoding the output, which this tool does not do',
     );
+  });
+
+  // A MODELLED NUMBER SITTING NEXT TO MEASURED ONES READS AS MEASURED — and a modelled
+  // number called a bound reads as a guarantee. The help called the one-pole shortfall a
+  // "PESSIMISTIC UPPER BOUND" and said sidechaincompress "recovers FASTER" than the model.
+  // One render was measured, at three releases, with an 11 dB duck across a 1.82 s median
+  // gap: smaller than modelled at 800 ms, LARGER at 1500 and 2500 ms. So the model bounds
+  // nothing in either direction, and nothing at all was measured below 800 ms.
+  test('remuxMusicHelp_gapsShortfall_isMarkedModelledAndClaimsOnlyWhatWasMeasured', (t) => {
+    const dir = project(t);
+
+    const r = runScript('remux-music.mjs', ['--help'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /MODELLED, NOT MEASURED/, 'the shortfall must be labelled as modelled');
+    assert.match(r.all, phrase('NOT A BOUND in either direction'), 'and must not be offered as a bound');
+    for (const [release, model, measured] of [
+      ['800', '0.67', '0.05-0.12'],
+      ['1500', '2.09', '2.0-3.5'],
+      ['2500', '3.70', '6.1-8.7'],
+    ]) {
+      assert.match(
+        r.all,
+        new RegExp(`${release} ms\\s+${model.replace('.', '\\.')} dB\\s+${measured.replace(/\./g, '\\.')} dB`),
+        `the measurement at ${release} ms must be stated beside the model`,
+      );
+    }
+    assert.match(r.all, phrase('nothing was measured below 800 ms'), 'and must not be extended past its range');
+    assert.match(
+      r.all,
+      phrase('NOT the coefficient to tune by this number'),
+      'and it must say release is not the knob to tune by a modelled figure',
+    );
+    assert.doesNotMatch(r.all, /UPPER BOUND|PESSIMISTIC|recovers FASTER/i, 'the falsified claims must be gone');
+    assert.doesNotMatch(r.all, /0\.66 dB/, 'and so must the figure that disagreed with the plan');
+  });
+
+  // --CROSSFADE MOVES THE DELIVERED LEVEL WHEN THE BED LOOPS (P-h2). Tri curves on
+  // uncorrelated material dip up to -3.01 dB at each overlap's midpoint, about -1.76 dB
+  // averaged over it — at 30 s, for a large share of the running time. It was unpinned,
+  // so a changed crossfade reached the mix with a settled pin reporting valid.
+  test('remuxMusic_crossfadeChangedOnALoopingBedAgainstASettledPin_refusesAndNamesTheCrossfade', (t) => {
+    const dir = project(t, { 'music.wav': LOOPING_MUSIC });
+    pin(dir, { crossfade: 3 }, LOOPING_SHA);
+
+    const r = remux(dir, ['--crossfade', '2', '--apply']);
+
+    assertCleanExit(r, EXIT.USAGE, 'a moved crossfade on a looping bed must be refused: ');
+    assert.match(r.all, /--crossfade CHANGED/, 'the refusal must name the crossfade');
+    assert.match(r.all, /\bconfirmed\s+3\b/, 'and the crossfade that was confirmed');
+    assert.match(r.all, /now asked\s+2\b/, 'and the one now being asked for');
+    assert.equal(fs.existsSync(path.join(dir, 'out.mp4')), false, 'a refused remux writes nothing');
+
+    const settled = remux(dir);
+    assertCleanExit(settled, EXIT.OK);
+    assert.match(settled.all, /2 copies, 3s crossfade/, 'setup: the bed must actually loop');
+    assert.match(settled.all, /confirmed for music\.wav .*--crossfade 3\b/, 'and the pin must cover the crossfade in force');
+  });
+
+  // No wrap, no crossfade in the mix: the pin records it NOT IN FORCE, as the duck is on a
+  // run without --duck-db, so a --crossfade that reaches nothing asks for nothing.
+  test('remuxMusic_bedThatDoesNotLoop_recordsTheCrossfadeAsNotInForceWhateverTheFlagSays', (t) => {
+    const dir = project(t);
+    pin(dir);
+
+    const r = remux(dir, ['--crossfade', '2']);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /loop\s+not needed/, 'setup: the bed must not loop');
+    assert.match(r.all, /confirmed for music\.wav .*--crossfade 0\b/, 'the pin must record the crossfade as not in force');
+    assert.doesNotMatch(r.all, /--confirm-gain/, 'and a crossfade that reaches no wrap must not ask for a confirmation');
+  });
+
+  // THE CONSUMER COST, STATED AS A TEST. Every pin written before --crossfade was pinned
+  // records every other member and not this one, and a pin that does not record a member
+  // cannot certify it. One re-confirmation per project, whether or not the bed loops.
+  test('remuxMusic_pinWrittenBeforeTheCrossfadeWasPinned_refusesAndSaysItDoesNotRecordIt', (t) => {
+    const dir = project(t);
+    const { crossfade: _unrecorded, ...recordedBefore } = { voiceGain: 1.14, musicGain: 1.5, ceiling: 1, ...NOT_IN_FORCE_MIX };
+    fs.writeFileSync(
+      lockFile(dir),
+      JSON.stringify({ source: 'music.wav', sha256: MUSIC_SHA, mix: recordedBefore, evidence: 'operator-confirmed' }),
+    );
+
+    const r = remux(dir, ['--apply']);
+
+    assertCleanExit(r, EXIT.USAGE, 'a pin that does not record the crossfade cannot certify it: ');
+    assert.match(r.all, /DOES NOT RECORD --crossfade/, 'and the refusal must say which member it lacks');
+  });
+
+  // --CONFIRM-GAIN IS AN ASSERTION ABOUT A PERSON (P-m1). The tool cannot tell who passed
+  // it, and it stamps `operator-confirmed` either way — so the text an agent reads at the
+  // refusal, and in --help, has to say whose assertion it is.
+  test('remuxMusic_gainPinRefusal_saysConfirmGainIsAPersonsAssertionThatNoAgentMayMake', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--apply']);
+
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, phrase("the caller's assertion that a person measured or listened to"));
+    assert.match(r.all, phrase('An agent must not pass it on its own authority'));
+    assert.match(r.all, /re-run with --confirm-gain/, 'and the steps themselves are unchanged');
+  });
+
+  test('remuxMusicHelp_confirmGain_saysItIsAPersonsAssertionThatNoAgentMayMake', (t) => {
+    const dir = project(t);
+
+    const r = runScript('remux-music.mjs', ['--help'], dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, phrase("the caller's assertion that a person measured or listened to"));
+    assert.match(r.all, phrase('An agent must not pass it on its own authority'));
+  });
+
+  // A GAIN TOO SMALL TO WRITE AS A PLAIN DECIMAL (P-m2). String(1e-7) is "1e-7", which the
+  // registry refuses as unauditable — rightly, but at exit 1, reporting the operator's
+  // value as the tool failing. It is a value outside what the tool accepts: exit 2.
+  for (const [flag, name] of [['--music-gain', 'musicGain'], ['--voice-gain', 'voiceGain']]) {
+    test(`remuxMusic_${name}BelowTheSmallestRenderableValue_exitsUsageNamingTheRange`, (t) => {
+      const dir = project(t);
+
+      const r = remux(dir, [flag, '0.0000001']);
+
+      assertCleanExit(r, EXIT.USAGE, 'a value outside the accepted range is bad usage: ');
+      assert.ok(r.all.includes(flag), `the refusal must name ${flag}\n${r.all}`);
+      assert.match(r.all, /0\.000001/, 'and the smallest nonzero value it accepts');
+    });
+  }
+
+  test('remuxMusic_gainAtTheEdgesOfTheRenderableRange_isStillAccepted', (t) => {
+    const dir = project(t);
+
+    for (const value of ['0', '0.000001', '8']) {
+      assertCleanExit(remux(dir, ['--music-gain', value]), EXIT.OK, `--music-gain ${value}: `);
+    }
   });
 });
 

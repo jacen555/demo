@@ -1,0 +1,17 @@
+{
+  "name": "@forge/video-coach-backtest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backtest of a pre-render video content coach against past EvalLoopDemo review rounds (spike, tier 0).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "extract": "node src/extract-inputs.mjs",
+    "rubric": "node src/assemble-rubric.mjs",
+    "ledger": "node src/write-ledger.mjs",
+    "score": "node src/write-scoring.mjs",
+    "format": "npx prettier --write ."
+  }
+}

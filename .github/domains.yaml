@@ -94,19 +94,17 @@ kinds:
       retires per constitution §XI.
 
 # ---------------------------------------------------------------------------
-# Model pinning — constitution §VIII. The orchestrator MUST pass these explicitly.
+# Model families — constitution §VIII. Each role pins a FAMILY, not a version. The
+# orchestrator dispatches the highest-version model of that family available at dispatch
+# time and passes the resolved id explicitly. When "highest" is ambiguous, it asks the
+# user and records the answer in memory-bank/techContext.md.
 # Never rely on a default model; never run builder and reviewer in the same family.
 # ---------------------------------------------------------------------------
 models:
-  builder: claude-opus-5
-  reviewer: gpt-6-sol
-  planner: claude-opus-5
-  researcher: claude-opus-5
-  # If a pinned model is unavailable, substitute the newest model of the SAME family.
-  # builder and reviewer MUST stay in different families (constitution SS VIII).
-  families:
-    claude-opus-5: anthropic
-    gpt-6-sol: openai
+  builder: claude
+  reviewer: gpt
+  planner: claude
+  researcher: claude
 
 # ---------------------------------------------------------------------------
 # Repo-wide commands.
@@ -248,4 +246,28 @@ domains:
       with the demo-recording skill, which owns the cost routing and the render approval
       gate. S1/S2 need no dependencies; S3 onward needs npm install in BOTH domains.
       No render has been run — nothing below S2 has executed.
+  - id: video-coach-backtest
+    kind: spike
+    language: node
+    path: spike/video-coach-backtest
+    source: spike/video-coach-backtest/src
+    tests: none
+    project: spike/video-coach-backtest/package.json
+    build: none
+    test_cmd: none
+    tier: 0
+    builder: researcher
+    reviewer: none
+    checklist: none
+    question: 'Would a pre-render content coach, given only a round''s pre-render artifacts (script, timing, storyboard, stills), have caught at least half of the objective defects the user reported across the EvalLoopDemo review rounds, with the user agreeing with at least 4 in 5 of its blocking findings?'
+    status: answered
+    notes: >
+      Answer: No. Commit-backed BLOCKING recall was 1/3 against a 50% bar, with precision
+      4/4, so the coach stays advisory-only and never gates a render. See
+      docs/adr/0006-keep-the-video-coach-advisory-only.md and the spike's scoring.md.
+      Disposition: graduate (the user's decision, 2026-09-30) as an advisory step in the
+      demo pipeline, pass 1 before TTS and pass 2 before frame capture. It must be
+      rewritten under tier-2 gates with its own reviewed rubric, not moved (constitution
+      §XI). Retain until that task lands: this is the reference for the rubric and the
+      protocol. Excluded from Forge.sln; nothing outside spike/ depends on it.
 

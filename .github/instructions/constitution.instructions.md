@@ -305,20 +305,34 @@ Applies at **Tier 1 and Tier 2**. Not required at Tier 0.
 
 ### Model Enforcement
 
-The orchestrator MUST dispatch builders and reviewers with **explicit model assignments**
-— never rely on a default, which may be the same family or a smaller model:
+Each role pins a **model family**, never a version. A version pin goes stale as soon as a
+newer model ships, and every copy of it goes stale separately.
 
-| Role | Model |
+| Role | Family: dispatch the highest-version model available |
 |---|---|
-| All builders (`app-builder`, `service-builder`, `tooling-builder`, scaffolded pairs) | `claude-opus-5` |
-| All reviewers (`app-reviewer`, `service-reviewer`, `tooling-reviewer`, scaffolded pairs) | `gpt-6-sol` |
-| Planner (`forge-team.planner`) | `claude-opus-5` |
-| Researcher (`researcher`) | `claude-opus-5` |
+| All builders (`app-builder`, `service-builder`, `tooling-builder`, scaffolded pairs) | **Claude** (`claude-*`) |
+| All reviewers (`app-reviewer`, `service-reviewer`, `tooling-reviewer`, scaffolded pairs) | **GPT** (`gpt-*`) |
+| Planner (`forge-team.planner`) | **Claude** (`claude-*`) |
+| Researcher (`researcher`) | **Claude** (`claude-*`) |
 
-If either pinned model is unavailable, substitute the latest available model of the
-**same family** — never fall back to the other family, which would collapse independence.
-The two rows above MUST stay in different families; upgrading one requires upgrading the
-other within its own family, not converging them.
+- **Resolve at dispatch time.** "Highest version" means the largest version number among
+  the family's models available in the session, so `claude-opus-5.5` outranks
+  `claude-opus-5`.
+- **When in doubt, ask the user.** "Highest" is ambiguous when several models share the
+  top version (`gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`), when ids do not compare
+  cleanly, or when a candidate is marked internal or preview. Ask which model to use; never
+  pick one silently.
+- **Record the answer** in `memory-bank/techContext.md`, with its date. A recorded answer
+  holds only until a higher version of that family appears; then resolve again, and ask
+  again if needed.
+- **Dispatch explicitly.** The orchestrator MUST pass the resolved model id on every
+  dispatch. Never rely on a default, which may be the same family or a smaller model.
+- **Never cross families.** Builders and reviewers MUST stay in different families. If a
+  family has no available model, stop and ask. Never fall back to the other family, which
+  would collapse independence.
+- **A pre-registered experiment keeps its model.** An evaluation that fixed its model in
+  advance, such as a spike's frozen protocol, runs on that model even after a newer one
+  ships. Changing it mid-protocol would void the result.
 
 Every builder report MUST include `BUILDER-MODEL: <model>`.
 Every reviewer report MUST include `REVIEWER-MODEL: <model>` and

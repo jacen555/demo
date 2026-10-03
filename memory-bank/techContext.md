@@ -87,10 +87,19 @@ Projects are added to the solution by the `scaffold-domain` skill, not by hand.
 
 | Item | Value |
 |---|---|
-| Builder model (pinned, §VIII) | `claude-opus-4.8` |
-| Reviewer model (pinned, §VIII) | `gpt-5.6-sol` |
-| Planner / researcher model | `claude-opus-4.8` |
-| Substitution rule | If a pinned model is unavailable, use the newest of the **same family** — never cross families, which would collapse review independence. |
+| Builder, planner and researcher (§VIII) | The **highest-version Claude** available. Resolved as `claude-opus-5.5` on 2026-09-28 (unambiguous) |
+| Reviewer (§VIII) | The **highest-version GPT** available. Resolved as `gpt-6-sol` on 2026-09-28. The user chose it over `gpt-6-astra` and `gpt-6-luna`, which share version 6 |
+| Resolution rule | Pin the family, not the version. Re-resolve when a higher version ships; when "highest" is ambiguous, ask the user and record the answer here with its date. Never cross families, which would collapse review independence. |
+| Exception | The video-coach backtest runs on `gpt-6-sol` because its protocol fixed that model before it ran (§VIII: a pre-registered experiment keeps its model) |
+
+## Node.js notes
+
+- Node domains run their source directly, as ESM with no build step (constitution §IV).
+  This machine has `node v22.13.0` and `npm 10.9.2`.
+- **Call `main()` last.** A top-level `await main()` placed above later `const`
+  declarations runs while they are still in the temporal dead zone. It throws only when a
+  code path reaches one of them, so a run that skips that path still passes. The
+  backtest's `write-ledger.mjs` hit this.
 
 ## Environment gaps to close
 

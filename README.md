@@ -47,8 +47,8 @@ graph LR
   T -->|spike/**| SP[researcher → spike + ADR]
   T -->|tier 1 or 2| P[forge-team.planner]
   P --> A[Pre-edit approval gate]
-  A -->|approved| B["*-builder (claude-opus-4.8)"]
-  B -->|green| R["*-reviewer (gpt-5.6-sol)"]
+  A -->|approved| B["*-builder (highest Claude)"]
+  B -->|green| R["*-reviewer (highest GPT)"]
   B -.red.-> B
   R -->|FAIL + findings| B
   R -->|PASS| D[Integrate & verify]

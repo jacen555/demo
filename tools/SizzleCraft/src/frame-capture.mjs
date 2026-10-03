@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob } from './cli-support.mjs';
+import { isSilentSegment, silentSegmentProblems } from './silent-segment.mjs';
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
 // directory wholesale. So the default invocation plans and writes nothing, and the
@@ -86,12 +87,48 @@ try {
 // here with an actionable error instead of producing totalFrames=NaN and confusing downstream errors.
 // Per-segment end timestamp: prefer the authored `endMs`; otherwise derive it from
 // `startMs + audio.durationMs` (the only measured-duration field that exists — there is no
-// `audio.endMs`). Segments that supply neither contribute 0 and are caught by the validation below.
-const segEndMs = (timing.segments || []).map(s => {
-  if (Number.isFinite(Number(s.endMs))) return Number(s.endMs);
-  const start = Number(s.startMs), dur = Number(s.audio?.durationMs);
-  return Number.isFinite(start) && Number.isFinite(dur) ? start + dur : 0;
+// `audio.endMs`).
+//
+// A segment supplying NEITHER used to contribute 0 and be swallowed by the Math.max
+// below: the capture ran, exited 0, and simply never covered that segment's window. An
+// absence that lowers a maximum is invisible, so it is now named. This is the same
+// in-band-absence defect as the silent-segment conflation elsewhere in this engine — a
+// segment the engine cannot place must say which segment it is.
+//
+// A declared silent segment's window is authored, and is all of its duration, so its end is
+// never derived from a clip: its declaration is checked here as every other stage checks it,
+// by the same function, before anything is planned or written. A silent segment that passes
+// has a finite endMs, which the map below takes as it is.
+for (const [i, s] of (Array.isArray(timing.segments) ? timing.segments : []).entries()) {
+  if (!isSilentSegment(s)) continue;
+  // A segment is named by the id the schema requires — a non-empty string — and by its
+  // position when it has no such id. `segment "1"` states an id, and another segment in
+  // this very timeline may really carry the id "1", so an index dressed as an id sends the
+  // author to the wrong line of the file. `timing.segments[1]` is the form the shape check
+  // and the other stages' labels already use for a segment with no id to be named by.
+  const where = typeof s.id === 'string' && s.id !== '' ? `segment "${s.id}"` : `timing.segments[${i}]`;
+  const [problem] = silentSegmentProblems(s, where);
+  if (problem) { console.error(`error: ${problem}`); process.exit(EXIT.USAGE); }
+}
+const unplaceable = [];
+// Number(null) and Number('') are 0, so a null or blank timestamp read as the start of the
+// video. A null endMs ended its segment at 0 ms, and a null startMs placed it there, both
+// swallowed by the Math.max below. Only a number, or a numeric string, is a timestamp.
+const msOf = v => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) ? Number(v) : NaN;
+const segEndMs = (timing.segments || []).map((s, i) => {
+  if (Number.isFinite(msOf(s.endMs))) return msOf(s.endMs);
+  const start = msOf(s.startMs), dur = msOf(s.audio?.durationMs);
+  if (Number.isFinite(start) && Number.isFinite(dur)) return start + dur;
+  unplaceable.push(`segments[${i}]${s?.id ? ` ("${s.id}")` : ''}`);
+  return 0;
 });
+if (unplaceable.length) {
+  console.error(
+    `error: ${unplaceable.join(', ')} ${unplaceable.length === 1 ? 'has' : 'have'} neither a finite endMs nor ` +
+    'a startMs + audio.durationMs to derive one from, so the capture cannot know how long to render. ' +
+    'Set endMs, or run voice.mjs (S3) to measure the clip.');
+  process.exit(EXIT.USAGE);
+}
 const segMaxEndMs = segEndMs.length ? Math.max(...segEndMs) : 0;
 const durationMs = Number(timing.durationMs ?? timing.totalDurationMs ?? segMaxEndMs);
 if (!Number.isFinite(durationMs) || durationMs <= 0) {

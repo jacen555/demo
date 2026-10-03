@@ -23,6 +23,7 @@ import {
   runScript,
   timingFixture,
   contiguousSegments,
+  wordedSegments,
   brandTokens,
   tryMakeDirLink,
   tryMakeFileLink,
@@ -363,33 +364,68 @@ describe('drift tolerance validation', () => {
 // make-music: an empty envelope produced undefined gains, NaN samples, and a
 // "success" that replaced a good bed with silence-shaped garbage.
 // ---------------------------------------------------------------------------
+
+/**
+ * The input fingerprint an envelope must carry to be usable.
+ *
+ * An envelope is bound to the audio it MEASURED, so a consumer can tell whether it still
+ * describes the narration in play — a stale one parses perfectly and ducks against a cut
+ * that no longer exists. Computed here rather than pasted, so these fixtures stay valid
+ * envelopes instead of becoming a second, divergent idea of one.
+ */
+const boundTo = (voice) => ({
+  file: 'voiceover.mp3',
+  bytes: voice.length,
+  sha256: crypto.createHash('sha256').update(voice).digest('hex'),
+});
+
 describe('envelope input validation', () => {
+  // EACH FIXTURE REACHES THE CHECK IT IS NAMED FOR. These three used to carry no binding
+  // and no voiceover.mp3, so all three stopped at "voice track not found" — exit 2, the
+  // code they asserted — and deleting the rms validation left them green. Each is now
+  // bound to narration on disk, and each asserts the rms refusal itself.
+  const voice = Buffer.from('narration bytes');
+  const boundEnvelopeProject = (t, envelope) =>
+    makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ ...envelope, measuredFrom: boundTo(voice) }),
+    });
+
   test('makeMusic_envelopeWithEmptyRms_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms: [] }) });
+    const dir = boundEnvelopeProject(t, { rms: [] });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'an empty envelope must not produce NaN samples: ');
+    assert.match(r.stderr, /has an empty "rms" array/, 'and the refusal must be the rms check, not an earlier one');
     assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_envelopeWithNonNumericSamples_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms: [0.1, 'x', 0.2] }) });
+    const dir = boundEnvelopeProject(t, { rms: [0.1, 'x', 0.2] });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'a non-numeric envelope sample must be refused: ');
+    assert.match(r.stderr, /"rms"\[1\] is "x"/, 'the refusal must name the sample');
+    assert.match(r.stderr, /finite non-negative number/, 'and the rule it breaks');
     assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_envelopeMissingRmsArray_refusesBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ durationMs: 100 }) });
+    const dir = boundEnvelopeProject(t, { durationMs: 100 });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'an envelope without an rms array must be refused: ');
+    assert.match(r.stderr, /must contain an "rms" array/, 'and the refusal must be the rms check');
+    assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false);
   });
 
   test('makeMusic_validEnvelope_writesFiniteSamples', (t) => {
     const rms = Array.from({ length: 120 }, (_, i) => (i % 20 < 10 ? 0.2 : 0.001));
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 2400 }) });
+    const voice = Buffer.from('narration bytes');
+    const dir = makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 2400, measuredFrom: boundTo(voice) }),
+    });
     const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--envelope', 'env.json', '--apply'], dir);
 
     assert.equal(r.code, EXIT.OK, r.all);
@@ -581,7 +617,8 @@ describe('complete write set', () => {
   });
 
   test('remix_voiceoverLinkedToTiming_isRefusedBeforeWriting', (t) => {
-    const dir = makeProject(t, { 'timing.json': timingFixture() });
+    // Worded, so the timeline is one remix accepts and the refusal is the link's.
+    const dir = makeProject(t, { 'timing.json': timingFixture(wordedSegments) });
     if (!tryMakeFileLink(path.join(dir, 'voiceover.mp3'), path.join(dir, 'timing.json'))) {
       return t.skip('platform refused to create a file link');
     }
@@ -589,6 +626,7 @@ describe('complete write set', () => {
     const r = runScript('remix.mjs', ['--apply', '--replace'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'voiceover and timing resolving to one file must be refused: ');
+    assert.match(r.all, /is a link/, r.all);
     assert.equal(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'), before);
   });
 
@@ -694,7 +732,14 @@ describe('present-but-invalid is not absent', () => {
     // make-music reads the envelope after synthesising the pad, so deleting it once the
     // preset line appears lands inside a multi-second window, well before the read.
     const rms = Array.from({ length: 600 }, (_, i) => (i % 20 < 10 ? 0.2 : 0.001));
-    const dir = makeProject(t, { 'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 12000 }) });
+    // The envelope must be BOUND to a voice track on disk, or the lineage pre-flight
+    // refuses it before the preset line and the deletion below never lands in the window
+    // this test exists to open.
+    const voice = Buffer.from('narration bytes');
+    const dir = makeProject(t, {
+      'voiceover.mp3': voice,
+      'env.json': JSON.stringify({ rms, hopMs: 20, durationMs: 12000, measuredFrom: boundTo(voice) }),
+    });
     const envPath = path.join(dir, 'env.json');
 
     const r = await runScriptDeletingOnMarker(
@@ -1243,13 +1288,14 @@ describe('engine-chosen outputs refuse links', () => {
   });
 
   test('remix_voiceoverLinkedToAnUnrelatedInRootFile_isRefused', (t) => {
-    const dir = makeProject(t, { 'timing.json': timingFixture(), 'notes.txt': SENTINEL });
+    const dir = makeProject(t, { 'timing.json': timingFixture(wordedSegments), 'notes.txt': SENTINEL });
     if (!tryMakeFileLink(path.join(dir, 'voiceover.mp3'), path.join(dir, 'notes.txt'))) {
       return t.skip('platform refused to create a file link');
     }
     const r = runScript('remix.mjs', ['--apply', '--replace'], dir);
 
     assertCleanExit(r, EXIT.USAGE, 'remix output must not be redirected by a link: ');
+    assert.match(r.all, /is a link/, r.all);
     assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), SENTINEL);
   });
 
@@ -1315,5 +1361,109 @@ describe('boundary root canonicalisation', () => {
     if (!failed) return t.skip('this platform resolves the cycle without an inspection error');
 
     assert.throws(() => createBoundary(a), CliError, 'an uninspectable root must not degrade to a lexical boundary');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JSON has no `undefined`, so an absent timestamp is often written as null. `Number(null)`
+// is 0, which is finite, so a null endMs was read as "ends at zero". It lost the
+// Math.max that sizes the capture, and the render stopped before that segment's
+// narration: no error, and a frame count that looked measured.
+// ---------------------------------------------------------------------------
+describe('a null timestamp is absent, not zero', () => {
+  const timingWithSecondSegment = (second) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 320, height: 240 },
+    endCard: { enabled: false },
+    segments: [
+      { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello', audio: { durationMs: 2000 } },
+      { id: 'two', voiceoverText: 'second segment', ...second },
+    ],
+  });
+
+  test('frameCapture_segmentEndMsNull_derivesItsEndFromTheMeasuredClip', (t) => {
+    const dir = makeProject(t, {
+      ...captureFiles,
+      'timing.json': timingWithSecondSegment({ startMs: 2000, endMs: null, audio: { durationMs: 2000 } }),
+    });
+
+    const r = runScript('frame-capture.mjs', [], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    // (2000 start + 2000 measured + 1000 tail) ms at 30 fps. A null read as 0 gives 90.
+    assert.match(r.all, /frames\s+150 at 30 fps/, `the capture must cover the segment whose endMs is null\n${r.all}`);
+  });
+
+  for (const [scenario, second] of [
+    ['StartMsNull', { startMs: null, audio: { durationMs: 2000 } }],
+    ['MeasuredDurationNull', { startMs: 2000, audio: { durationMs: null } }],
+  ]) {
+    test(`frameCapture_segmentWith${scenario}AndNoEndMs_namesTheSegmentItCannotPlace`, (t) => {
+      const dir = makeProject(t, { ...captureFiles, 'timing.json': timingWithSecondSegment(second) });
+
+      const r = runScript('frame-capture.mjs', [], dir);
+
+      assertCleanExit(r, EXIT.USAGE, 'a segment placed by a null must be refused, not placed at zero: ');
+      assert.match(r.all, /"two"/, 'the refusal must name the segment');
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C-3 caps each slide's hold at the NEXT segment's start, and write-build-html does not
+// run validate-timing, so that start was never checked. A missing startMs became NaN,
+// JSON wrote it as null, and Math.min(hold, null) is 0: the slide before it was switched
+// away at t=0 and the build exited 0. A numeric string is no safer, because the trigger
+// times add to it ("2000" + 500). Only a finite JSON number places a segment.
+// ---------------------------------------------------------------------------
+describe('write-build-html refuses a segment it cannot place', () => {
+  const TOO_LARGE = 987654321; // written as 1e400, which JSON.parse reads as Infinity
+  const sceneWith = (t, segments) =>
+    makeProject(t, {
+      'timing.json': timingFixture(segments, { durationMs: 4000, contentMs: 4000 }).replace(String(TOO_LARGE), '1e400'),
+      'evidence-pack/.keep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* gsap stub */',
+    });
+  const withSecond = (second) => [contiguousSegments[0], { ...contiguousSegments[1], ...second }];
+
+  test('writeBuildHtml_finiteSegmentTimes_buildsTheScene', (t) => {
+    // The control: the fixture the refusals below are built from must build.
+    const dir = sceneWith(t, withSecond({}));
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), true);
+  });
+
+  for (const [scenario, second, field] of [
+    ['startMsMissing', { startMs: undefined }, /startMs/],
+    ['endMsNull', { endMs: null }, /endMs/],
+    ['startMsNonNumericString', { startMs: 'soon' }, /startMs/],
+    ['startMsNumericString', { startMs: '2000' }, /startMs/],
+    ['endMsOverflowingToInfinity', { endMs: TOO_LARGE }, /endMs/],
+  ]) {
+    for (const [mode, args] of [['InPlan', []], ['UnderApply', ['--apply']]]) {
+      test(`writeBuildHtml_${scenario}${mode}_exitsUsageNamingTheSegmentAndWritesNothing`, (t) => {
+        const dir = sceneWith(t, withSecond(second));
+
+        const r = runScript('write-build-html.mjs', args, dir);
+
+        assertCleanExit(r, EXIT.USAGE, `a segment with ${scenario} must be refused: `);
+        assert.match(r.all, /"two"/, 'the refusal must name the segment');
+        assert.match(r.all, field, 'and the time it cannot use');
+        assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false, 'and nothing may be written');
+      });
+    }
+  }
+
+  test('writeBuildHtml_twoSegmentsWithUnusableTimes_namesBothInOneRefusal', (t) => {
+    const dir = sceneWith(t, [{ ...contiguousSegments[0], endMs: undefined }, { ...contiguousSegments[1], startMs: null }]);
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'unusable segment times must be refused: ');
+    assert.match(r.all, /"one"[^\n]*endMs/, 'the first segment must be named with its field');
+    assert.match(r.all, /"two"[^\n]*startMs/, 'and so must the second, in the same refusal');
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
   });
 });

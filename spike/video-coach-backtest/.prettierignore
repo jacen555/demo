@@ -1,0 +1,4 @@
+# The Markdown files and r1-resolution.json are the protocol's records, and several are pinned
+# by hash or blob id in inputs.md and scoring.md. `npm run format` would rewrite every one of them.
+*.md
+r1-resolution.json

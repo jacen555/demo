@@ -29,7 +29,8 @@
     the default template, and the builder/reviewer assignment.
 
 .PARAMETER Name
-    PascalCase folder and project name, e.g. ClipboardHistory.
+    PascalCase folder and project name, e.g. ClipboardHistory. A spike's folder is its -Id
+    instead (spike/<kebab-name>/, constitution section XI); -Name still names its files.
 
 .PARAMETER Question
     The one falsifiable question a spike answers. Mandatory for -Kind spike; a spike
@@ -71,8 +72,8 @@
 .EXAMPLE
     PS> .\New-ForgeDomain.ps1 -Id channel-vs-blockingcollection -Kind spike -Name ChannelVsBlockingCollection -Question 'Is Channel<T> faster than BlockingCollection<T> at our throughput?'
 
-    Creates a tier 0 spike, excluded from Forge.sln, with its question recorded in the
-    README and the registry.
+    Creates a tier 0 spike at spike/channel-vs-blockingcollection, excluded from Forge.sln,
+    with its question recorded in the README and the registry.
 
 .OUTPUTS
     PSCustomObject with Id, Kind, Tier, Path, Project, TestProject, Registered, and
@@ -171,7 +172,10 @@ if ($registryContent -match "(?m)^\s*-\s*id:\s*$([regex]::Escape($Id))\s*$") {
     throw "Domain id '$Id' is already registered in .github/domains.yaml. Pick a different id."
 }
 
-$domainPath = Join-Path $RepoRoot $config.Root $Name
+# A spike lives in spike/<kebab-name>/ (constitution section XI), so its folder is the id.
+# Every other root names the folder after the PascalCase project it contains.
+$folderName = if ($Kind -eq 'spike') { $Id } else { $Name }
+$domainPath = Join-Path $RepoRoot $config.Root $folderName
 if (Test-Path -LiteralPath $domainPath) {
     throw "Folder already exists: $domainPath. An unregistered folder is a defect — register it or remove it before scaffolding."
 }
@@ -187,7 +191,7 @@ else {
 
 # --- Compute paths (forward slashes for the registry) ------------------------------------
 
-$relDomain  = "$($config.Root)/$Name"
+$relDomain  = "$($config.Root)/$folderName"
 $relSource  = "$relDomain/src"
 $relTests   = "$relDomain/tests"
 $projectName = "Forge.$Name"
@@ -573,8 +577,9 @@ if ($WithAgents) {
 
 > **Domain-locked agent.** Generated from the generic ``$(if ($role -eq 'builder') { $config.Builder } else { $config.Reviewer })`` for domain
 > ``$Id`` (``$relDomain``). It is currently an unedited copy — add the domain-specific rules
-> that justified minting it, and delete this note. Model pin (constitution section VIII)
-> is unchanged: builders ``claude-opus-4.8``, reviewers ``gpt-5.6-sol``.
+> that justified minting it, and delete this note. The model families (constitution
+> section VIII) are unchanged: builders on Claude, reviewers on GPT, each the highest
+> version available at dispatch.
 
 "@
             $content = $content -replace "(?s)(^---.*?---\r?\n)", "`$1$lockNote"

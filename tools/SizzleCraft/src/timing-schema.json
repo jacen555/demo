@@ -67,6 +67,19 @@
           "startMs": { "type": "number", "minimum": 0 },
           "endMs": { "type": "number", "exclusiveMinimum": 0 },
           "voiceoverText": { "type": "string" },
+          "silence": {
+            "type": "object",
+            "description": "Declares this segment DELIBERATELY silent — an intro slide, a gap, an intermission. Presence is the declaration; absence means a narrated segment, for which a missing `audio` still means the voice stage has not run. There is deliberately no duration field here: the authored window `endMs - startMs` is the duration, and a second source of truth for one number is free to drift from the first.",
+            "required": ["caption"],
+            "properties": {
+              "caption": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The accessibility cue shown for the whole segment window, e.g. \"[music]\" or \"[intermission]\". Required, because there are no measured word boundaries to caption from — a blank cue is not 'no caption', it is a caption that renders as an empty box."
+              }
+            },
+            "additionalProperties": true
+          },
           "audio": {
             "type": "object",
             "properties": {
@@ -77,6 +90,19 @@
             "additionalProperties": true
           }
         },
+        "allOf": [
+          {
+            "title": "A silent segment carries no narration",
+            "description": "Narration text plus a silence declaration is a contradiction with no safe resolution: whichever one a stage honours, the other was a lie. Stated as `const: \"\"` rather than `maxLength: 0` so ajv names the value it expected instead of reporting a length.",
+            "if": {
+              "type": "object",
+              "required": ["silence"]
+            },
+            "then": {
+              "properties": { "voiceoverText": { "const": "" } }
+            }
+          }
+        ],
         "additionalProperties": true
       }
     }

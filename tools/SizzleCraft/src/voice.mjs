@@ -7,11 +7,10 @@
 // PERCEIVED gap hits its target exactly.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, narrationFingerprint, timingSeal } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { isSilentSegment, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, voiceTimelineBlocker, renderBlocker, segmentClipName, gapAssetName } from './silent-segment.mjs';
 
 const USAGE = `
 voice — synthesise narration per segment and concatenate it (pipeline stage S3).
@@ -22,7 +21,8 @@ voice — synthesise narration per segment and concatenate it (pipeline stage S3
 Options
   --project <dir>   project root; no path may escape it (default: current directory)
   --apply           actually synthesise and write. Without it nothing is written.
-  --replace         permit overwriting the segment clips, voiceover.mp3 and timing.json
+  --replace         permit overwriting the segment clips, the lead-in, gap and outro
+                    silences, voiceover.mp3 and timing.json
   --help            show this message
 
 This stage calls a network TTS service and rewrites the approved timeline, so it does
@@ -35,7 +35,7 @@ reproduce a shipped deliverable. If you need both the re-measurement and the shi
 audio, keep this run's timing.json + calibration-observed.json and restore the previous
 audio files: the narration fingerprint is over the TEXT, so the two are separable.
 
-Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage or refused overwrite
+Exit codes: 0 success/plan · 1 synthesis failed · 2 bad usage, a refused timeline or a refused overwrite
 `.trimStart();
 
 const cli = (() => {
@@ -88,21 +88,33 @@ if (!allowVoices.includes(voice)) throw new Error(`C-11: voice "${voice}" not on
 const probeMs = async f => Math.round(((await parseFile(f, { duration: true })).format.duration ?? 0) * 1000);
 const ratePct = (speed >= 1 ? '+' : '') + Math.round((speed - 1) * 100) + '%';
 
+// ---- the timeline ---------------------------------------------------------------------------
+// Checked before the write set is built, in the plan and under --apply alike: the segments'
+// shape, every silence declaration, the narration text, and that some segment is narrated.
+// A timeline that fails one is refused here, so the plan does not promise a run that --apply
+// would refuse for it, and the refused run writes nothing and calls no TTS service. The
+// checks are voiceTimelineBlocker's, in silent-segment.mjs; the gate other stages ask before
+// naming this stage makes them too, so the two agree. A malformed declaration is reported in
+// its own words, as remix reports one.
+const timelineRefusal = voiceTimelineBlocker(timing);
+if (timelineRefusal) {
+  console.error(timelineRefusal.declaration ? `error: ${timelineRefusal.fact}` : `error: ${renderBlocker(timelineRefusal)}.`);
+  process.exit(EXIT.USAGE);
+}
+
 // ---- the write set --------------------------------------------------------------------------
 // Declared once and used for three things: the plan, the distinctness check, and the
 // actual writes. Every entry is an ENGINE-chosen artifact — the caller names none of
 // these — so each resolves with links refused, not followed.
-const segmentName = (i) => `segment_${String(i + 1).padStart(2, '0')}.mp3`;
-const WRITE_SET = [
-  ...timing.segments.map((seg, i) => ({ key: segmentName(i), label: `segment ${seg.id} output`, append: false })),
-  { key: 'voiceover.mp3', label: 'voiceover.mp3', append: false },
-  { key: 'timing.json', label: 'timing.json', append: false },
-  { key: 'calibration-observed.json', label: 'calibration-observed.json', append: false },
-  { key: 'sync-mapping.md', label: 'sync-mapping.md', append: false },
-  // Appended to on a synthesis retry, so it carries no --replace requirement — but it is
-  // still a write, and still an engine-chosen name.
-  { key: 'heal-log.txt', label: 'heal-log.txt', append: true },
-];
+//
+// That includes the pause assets. lead.mp3, gap_NN.mp3 and outro.mp3 were written by a
+// silence-gen child through the resolver that FOLLOWS an in-root link, and were missing
+// from this list — so the plan never named them and a planted link was written through.
+// Only the ones this run CAN write are listed: a seam touching a declared silent segment
+// never gets a pause, and a silent first segment never gets a lead-in, whatever the solve.
+// The list is built in silent-segment.mjs, where the gate other stages ask before naming
+// this one as a remedy builds it too.
+const WRITE_SET = voiceWriteSet(timing);
 // Resolved without the replace guard first, so the plan can describe replacing a file
 // rather than refusing to talk about it.
 const writeSet = WRITE_SET.map((o) => ({
@@ -113,13 +125,17 @@ guard(() => assertDistinctDestinations(writeSet.map(({ key, path: p }) => ({ key
 
 // ---- the safe default -----------------------------------------------------------------------
 // Prerequisites and the write set are established first, so the plan reports the truth
-// about every file --apply touches. Nothing has been written; a bare run stops here
-// rather than calling the TTS service and rewriting the timeline.
+// about every file --apply touches, pause assets included. Nothing has been written; a
+// bare run stops here rather than calling the TTS service and rewriting the timeline.
 if (!cli.apply) {
   console.log(`plan: synthesise ${timing.segments?.length ?? 0} segment(s) with voice "${voice}" at ${ratePct}`);
   for (const o of writeSet) {
     const status = o.append ? 'would APPEND on a synthesis retry' : describeWrite(o.path, cli.replace);
-    console.log(`  ${o.key.padEnd(26)} ${status}`);
+    console.log(`  ${o.key.padEnd(26)} ${status}${o.solved ? ` (written only if the solve inserts ${o.solved})` : ''}`);
+  }
+  if (writeSet.some((o) => o.solved)) {
+    console.log('  note: a lead-in or pause solved to 0ms writes nothing and leaves any existing file of that');
+    console.log('  name as it is. Each is still held to --replace, because the solve is known only after synthesis.');
   }
   planFooter();
   process.exit(EXIT.OK);
@@ -130,7 +146,7 @@ for (const o of writeSet) {
 }
 
 const pathFor = (key) => writeSet.find((o) => o.key === key).path;
-const segmentTargets = timing.segments.map((seg, i) => ({ key: seg.id, path: pathFor(segmentName(i)) }));
+const segmentTargets = timing.segments.map((seg, i) => ({ key: seg.id, path: pathFor(segmentClipName(i)) }));
 const voiceOutPath = pathFor('voiceover.mp3');
 const timingOutPath = pathFor('timing.json');
 const calibrationPath = pathFor('calibration-observed.json');
@@ -185,28 +201,59 @@ async function synth(text, file, id) {                      // C-14 bounded self
 }
 
 // ---- 1. synthesize -------------------------------------------------------------------------
+// A DECLARED SILENT SEGMENT IS NEVER SENT TO TTS. Synthesising "" returns an empty stream
+// with no word boundaries, which synthOnce correctly rejects ('zero-duration TTS output' /
+// 'no word boundaries returned') — four times, with backoff, before failing the run. Its
+// clip is instead GENERATED at the authored window length, so the segment occupies exactly
+// the time it was authored to occupy and every later segment keeps its place.
 console.log(`voice=${voice} rate=${ratePct} (speed ${speed})\n`);
 const results = [];
 for (let i = 0; i < timing.segments.length; i++) {
   const seg = timing.segments[i];
+  if (isSilentSegment(seg)) {
+    const authoredMs = silentDurationMs(seg);
+    const file = segmentTargets[i].path;
+    fs.writeFileSync(file, silentMp3(authoredMs));
+    // Probed, not assumed: silence is frame-quantised to 24ms, so the clip that exists can
+    // differ from the one that was asked for by up to 12ms. The timeline must describe the
+    // audio on disk, not the request.
+    const durationMs = await probeMs(file);
+    // headMs/tailMs are 0 because there is no speech for silence to lead or trail. The
+    // gap solve below does not consult them for a silent segment anyway — it skips the
+    // seam entirely, because the authored silence already IS the pause.
+    results.push({ file, durationMs, words: [], scale: 1, headMs: 0, tailMs: 0, silent: true });
+    console.log(`silent ${seg.id.padEnd(11)} ${String(durationMs).padStart(6)}ms  (authored ${authoredMs}ms, generated — not synthesised)`);
+    continue;
+  }
   const r = await synth(seg.voiceoverText, segmentTargets[i].path, seg.id);
   results.push(r);
   console.log(`synth ${seg.id.padEnd(11)} ${String(r.durationMs).padStart(6)}ms  head ${String(r.headMs).padStart(4)}ms  tail ${String(r.tailMs).padStart(4)}ms`);
 }
 
 // ---- 2. per-segment fit gate (C-10) --------------------------------------------------------
+// Silent segments are exempt: their clip is generated FROM the window, so comparing the
+// two is comparing a value to itself and can only fail on the 24ms quantisation.
 const overruns = timing.segments
-  .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs) }))
-  .filter(f => f.over > perSegToleranceMs);
+  .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs), silent: results[i].silent }))
+  .filter(f => !f.silent && f.over > perSegToleranceMs);
 if (overruns.length) throw new Error(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}`);
 
 // ---- 3. solve inserted silences so PERCEIVED pacing hits its targets ------------------------
-const leadInsertedMs = alignUp(Math.max(0, LEAD_IN_MS - results[0].headMs));
+// No lead-in before a segment that is itself silence — the author already said how long
+// the opening beat is.
+const leadInsertedMs = results[0].silent ? 0 : alignUp(Math.max(0, LEAD_IN_MS - results[0].headMs));
 const gaps = [];   // gaps[i] = silence inserted AFTER segment i
 console.log('\nperceived-gap solve:');
-console.log(`  lead-in       target ${String(LEAD_IN_MS).padStart(5)}ms  - head ${String(results[0].headMs).padStart(4)}ms  -> insert ${leadInsertedMs}ms`);
+console.log(`  lead-in       target ${String(LEAD_IN_MS).padStart(5)}ms  - head ${String(results[0].headMs).padStart(4)}ms  -> insert ${leadInsertedMs}ms${results[0].silent ? '  (suppressed: segment 1 is declared silent)' : ''}`);
 for (let i = 0; i < timing.segments.length - 1; i++) {
   const after = timing.segments[i].id;
+  // A seam touching a declared silent segment gets no inserted gap: the authored silence
+  // is the pause, and padding it would make the audio longer than the timeline says.
+  if (results[i].silent || results[i + 1].silent) {
+    gaps.push(0);
+    console.log(`  after ${after.padEnd(10)} no gap inserted — a declared silent segment adjoins this seam`);
+    continue;
+  }
   const target = Number(GAP_OVERRIDES[after] ?? GAP_DEFAULT_MS);
   const tail = results[i].tailMs, head = results[i + 1].headMs;
   const inserted = alignUp(Math.max(0, target - tail - head));
@@ -214,21 +261,26 @@ for (let i = 0; i < timing.segments.length - 1; i++) {
   console.log(`  after ${after.padEnd(10)} target ${String(target).padStart(5)}ms  - tail ${String(tail).padStart(4)} - head ${String(head).padStart(4)}  -> insert ${String(inserted).padStart(5)}ms  (perceived ~${tail + inserted + head}ms)`);
 }
 
-// materialise the silence assets we actually need.
-// Resolve the generator next to THIS script rather than relative to the project dir.
-// The write flags are FORWARDED from this stage's own opt-in, never hardcoded: a parent
-// that was not asked to write must not hand a child the flags that make it write.
-const SILENCE_GEN = fileURLToPath(new URL('./silence-gen.mjs', import.meta.url));
-const childWriteFlags = [...(cli.apply ? ['--apply'] : []), ...(cli.replace ? ['--replace'] : [])];
-const silenceFor = (ms, name) => {
+// ---- materialise the pause assets the solve needs --------------------------------------------
+// Written in-process, to the paths resolved and guarded with the rest of the write set
+// before anything was synthesised: each name is engine-chosen, so a link there was refused
+// up front rather than followed now. The bytes are silence-gen's (see silenceAssetBytes),
+// and every one is computed before any is written, so a pause silence-gen would have
+// refused fails the run without leaving half of them behind. A pause solved to 0ms writes
+// nothing, as before.
+const pauseAsset = (ms, name) => {
   if (ms <= 0) return null;
-  execFileSync(process.execPath, [SILENCE_GEN, '--project', dir, '--out', name, '--ms', String(ms), ...childWriteFlags], { cwd: dir, stdio: 'pipe' });
-  return path.join(dir, name);
+  const bytes = guard(() => silenceAssetBytes(ms, name));
+  return { path: pathFor(name), bytes };
 };
-const leadFile = silenceFor(leadInsertedMs, 'lead.mp3');
-const gapFiles = gaps.map((ms, i) => silenceFor(ms, `gap_${String(i + 1).padStart(2, '0')}.mp3`));
+const leadAsset = pauseAsset(leadInsertedMs, 'lead.mp3');
+const gapAssets = gaps.map((ms, i) => pauseAsset(ms, gapAssetName(i)));
 const outroTargetMs = timing.endCard.enabled ? Number(timing.outroMs) : 0;
-const outroFile = outroTargetMs > 0 ? silenceFor(outroTargetMs, 'outro.mp3') : null;
+const outroAsset = outroTargetMs > 0 ? pauseAsset(outroTargetMs, 'outro.mp3') : null;
+for (const a of [leadAsset, ...gapAssets, outroAsset]) if (a) fs.writeFileSync(a.path, a.bytes);
+const leadFile = leadAsset?.path ?? null;
+const gapFiles = gapAssets.map((a) => a?.path ?? null);
+const outroFile = outroAsset?.path ?? null;
 
 const leadRealMs = leadFile ? await probeMs(leadFile) : 0;
 const gapRealMs = [];
@@ -288,19 +340,13 @@ console.log(`\nvoiceover ${voiceMs}ms | timeline ${timing.durationMs}ms | drift 
 if (driftMs > Math.max(toleranceMs, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms exceeds tolerance`);
 
 // ---- 7. calibration evidence + timing hash --------------------------------------------------
+// Silent segments are excluded from the word-rate maths and kept in the record. See
+// buildCalibration: a rate over zero words is NaN, JSON.stringify writes NaN as `null`,
+// and validate-timing then reports a failure that is true about the wrong cause.
 const roundedSpeed = 1 + Math.round((speed - 1) * 100) / 100;
-const calSegs = timing.segments.map((s, i) => {
-  const words = s.voiceoverText.trim().split(/\s+/).filter(Boolean).length;
-  const speechMs = results[i].durationMs - results[i].headMs - results[i].tailMs;
-  return { id: s.id, words, chars: s.voiceoverText.length, clipMs: results[i].durationMs, speechMs, effWps: +(words / (speechMs / 1000)).toFixed(3), textHash: narrationFingerprint(s.voiceoverText) };
-});
-const totW = calSegs.reduce((a, c) => a + c.words, 0), totMs = calSegs.reduce((a, c) => a + c.speechMs, 0);
-const obsEff = totW / (totMs / 1000);
-fs.writeFileSync(calibrationPath, JSON.stringify({
-  voiceId: voice, roundedSpeed,
-  aggregate: { words: totW, speechMs: totMs, observedEffWps: +obsEff.toFixed(3), observedSafeWps: +(obsEff / roundedSpeed).toFixed(3) },
-  segments: calSegs,
-}, null, 2));
+const calibration = buildCalibration(timing.segments, results, { voiceId: voice, roundedSpeed });
+const obsEff = calibration.aggregate.observedEffWps;
+fs.writeFileSync(calibrationPath, JSON.stringify(calibration, null, 2));
 
 delete timing.timingHash;
 timing.timingHash = timingSeal(timing);

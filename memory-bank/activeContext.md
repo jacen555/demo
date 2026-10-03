@@ -1,14 +1,105 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-09-24
+> **Last updated:** 2026-10-02
 
 ## Current focus
 
-**Building the generic evaluation harness** (`libs/EvalEngine` + `tools/EvalCli`), generalized
-from a domain-specific harness in another repo. Running through the multi-agent loop:
-planner → builder → cross-family reviewer → iterate.
+**SizzleCraft fixes T1–T5**, from the 2026-09-28 audit and §VIII reviews, approved by the user. Each is
+built test-first on `claude-opus-5.5` and gated by a `gpt-6-sol` review. Alongside them,
+**the video coach graduates as an advisory-only step**: its backtest answered No, and
+ADR 0006 records why (below).
 
-## Where the harness stands
+| Commit | What | Independent review |
+|---|---|---|
+| `a0add0b` | T1 — the scene audits fire (C-14 contrast, C-5 clipped code block); slides stay on their seams | **PASS** at round 3 |
+| `cbac96b` | T2 — write-chapters and write-subtitles plan by default and confine their writes | **PASS** at round 2 |
+| `b671a2e` | T3 — a baked bed is bound to its narration, crossfade is pinned, an undeliverable duck is refused | **PASS** at round 4 |
+| `53424c2` | T4 — silence edits run in S4 without a re-voice: remix and concat-audio generate declared silence from the authored window; validate and the writers follow | **PASS** at round 8 |
+| `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
+| `0a5b7f4` | Q14 — remix refuses a shapeless timeline instead of crashing; the shape check gains the schema's segment `id` rule; silent windows are bounded (nonnegative start, finite end, one-hour cap); frame-capture checks every silence declaration before it plans; the caption gate refuses all seven Unicode mandatory line breaks, naming each by code point | **PASS** at round 2. Round 1 **FAIL** (B1: an index printed as an id; B2: U+2028/U+2029 accepted into the sidecars at exit 0). Absorbed S2-1..S2-4 and K4 |
+| F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
+| `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
+| validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
+| Duck (round 2) | make-music: write order and links, envelope hop and length, a test that the PCM is ducked; an older bed with no record needs a design call | proposed after F7 — pending the user |
+| Pin (round 2) | `audit` budgets gains by position; a test that publishes a lock | proposed after the duck task — pending the user |
+| T5 | Documentation debt; gain-pin's self-contradicting guidance proposed for it | not started |
+| `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | 2026-09-28 **FAIL** (pin reviewer; it also confirmed the commit's two round-1 fixes). Findings placed in T3. Round 2, 2026-10-02: **FAIL** — placed findings fixed, except that no test publishes a lock (PARTIAL); new: `audit` accepts a gain moved onto the voice chain (High, latent), and gain-pin's guidance contradicts itself (Medium). Placement pending (gap 22) |
+| `331ddac` | Deliberately silent segments — declared and captioned, never inferred | 2026-09-28 **FAIL** (silence reviewer, with `2e5a62e`). Findings placed in T1, T2 and T4. Round 2: **FAIL** — placed findings fixed; new: a non-number silent `startMs` becomes a window and a silent window has no upper bound (High), two Medium. Proposed for Q14 (gap 22) |
+| `c3f1e56` | In-graph ducking of a licensed bed; envelope bound to its voiceover | 2026-09-28 **FAIL** (duck reviewer, with `34fa0e7`). Findings placed in T3, one in T5. Round 2: **FAIL** — two placed findings PARTIAL; new: make-music writes the bed after publishing its record, and ignores the envelope's hop (High); no test checks the PCM is ducked (Medium). Placement pending (gap 22) |
+| `34fa0e7` | Modelled gaps shortfall labelled MODELLED; measured values in help | Reviewed with `c3f1e56` |
+| `2e5a62e` (consumer) | Subtitle options bounded; the stage plans by default | Reviewed with `331ddac` |
+| `d71c605` | The consumer's code-block wrap (`ffe3f82`), byte for byte; T1 `a0add0b` corrected its CSS | Round 2: **FAIL on process only** — no BUILDER-MODEL recorded, no CSS defect left. Since measured: written on `claude-opus-5`, committed on `claude-opus-5.5` (gap 22) |
+
+**The third-pass commits had their cross-family review on 2026-09-28: three `gpt-6-sol`
+reviewers, FAIL on all three.** Their findings, with the audit's, became T1–T5. The T1–T4
+and F6 reviews cover their own diffs only, so **round 2** (2026-10-02) checked that every
+2026-09-28 finding was carried into the union, placed and closed. **It failed all three
+again**: nine new findings and three PARTIALs, each confirmed by the orchestrator, and five
+findings the union had downgraded or narrowed without grounds (progress, gap 22). Until
+2026-10-02 this file said those commits had no review at all. That was
+written before the verdicts arrived and never corrected. SizzleCraft: 883 tests (882 pass,
+1 skip) at `d1d8d47`. `c620c88` reached `main` in PR #14 (`39b8312`). The user pushed the branch
+through `013cdc8`, which is 27 commits past `main` with no PR yet. Everything after it, T4 and
+F6 included, is local, and pushes from here return 403.
+
+The 2026-09-28 audit ran on `claude-opus-5.5` (4 slices) at the user's request. It finds
+defects, but **it does not satisfy §VIII**, so T1–T5 each carry their own cross-family
+gate. Its headline — **the WCAG contrast audit had never fired** (C-14) — is fixed by
+`a0add0b`. The thinner lanes it exposed are still open (progress, gap 25).
+
+### Ducking — measured by the consumer on the real project
+
+- **Depth ~10.4 dB delivered against an 11 dB solved target**, measured on the *isolated*
+  bed. Speech masks the bed in the mix, so the mixed file cannot answer this question.
+- **Gaps recover to within 0.05–0.11 dB.** The one-pole model predicted 0.67 dB — ffmpeg's
+  release is faster than the model. The plan prints the model's figure, labelled MODELLED.
+- **Release 800 ms is right.** 1500 ms leaves gaps 2.0–3.5 dB short; 2500 ms, 6.1–8.7 dB.
+  Slowing release to reduce pumping looked like free headroom and was not — measured.
+- **`--ceiling 2.0` delivers −1.1 dBTP** post-AAC; 1.0 delivers −0.3.
+- Measure gap levels **inside true gaps**, not near segment boundaries.
+
+### Video coach — the backtest answered No; it graduates as advisory-only
+
+The user proposed a second reviewer for **content**: a coach that reads a video's script,
+storyboard and stills before anything expensive is rendered. Before it could block a
+render, it had to pass a backtest against the EvalLoopDemo review rounds
+(`spike/video-coach-backtest`): recall ≥ 50 % and precision ≥ 80 % on BLOCKING findings,
+a bar fixed before any coach output existed.
+
+**The answer is No** (`b3cffb0`; [ADR 0006](../docs/adr/0006-keep-the-video-coach-advisory-only.md)).
+
+| Set | Rounds | Recall (BLOCKING) | Precision |
+|---|---|---|---|
+| Commit-backed (governs) | r6, r7 | 1/3 | 4/4 |
+| Pooled | r2, r6, r7 | 2/5 | 6/6 |
+
+- **The misses are the ones the answer key predicted.**
+  - No rubric rule covers one diagram element drawn over another (R6-13). The engine's
+    layout audit misses it too.
+  - OBJ-07's check procedure and its rule text disagree (R2-06, R6-10).
+  - The coach caught both objective items it had a direct rule for.
+- **Precision rests on few distinct observations.** 3 of the 4 commit-backed BLOCKING
+  findings are one count defect in segment `many`. The user never reported it, and judged
+  it valid every time the coach raised it.
+- **That defect may still be live.** `tools/EvalLoopDemo/script.md:53` still says the
+  three strips "land on three different outputs", while the storyboard emphasises "the one
+  that differs". It is the consumer's to judge, and it has not been reported to them yet.
+- **Disposition: graduate**, the user's decision on 2026-09-30. It becomes an advisory step
+  in the demo pipeline, pass 1 before TTS and pass 2 before frame capture. It is rebuilt
+  under Tier 2 gates with its own reviewed rubric, and it never gates a render.
+- **Plan approved 2026-09-30, on the user's five design answers. Not started**; queued as
+  G1–G7 after T5 and Prettier. The rubric carries over with both holes fixed: OBJ-07 checks
+  the spoken moment against a measured tolerance, and a new rule, OBJ-19, covers one
+  element drawn across another. A new SizzleCraft stage collects the inputs, refuses
+  stills older than what they show, and writes a hash manifest the report cites. The
+  rubric lives beside that stage. BLOCKING becomes DEFECTS. Repeated findings match a
+  committed per-project rulings file by rule, segment and exact quoted text, and the
+  coach never sees that file.
+- **Only learnings went in git.** The rubric, the protocol, the answer key, the hash
+  ledgers, the scorer and `scoring.md` are committed. Extracted inputs, stills and coach
+  reports are output, and stay out.
+
+## Where the harness stands (paused since 2026-09-24)
 
 | Task | State | Tests |
 |---|---|---|
@@ -32,7 +123,7 @@ planner → builder → cross-family reviewer → iterate.
 | T15f CLI consequences of T15d | done | 442 (cli) |
 | T15e stop printing the caller's suite path | done | 1724 |
 | T16 ADR 0004 + 0005 | done | — |
-| **T17 memory bank** | **in flight** | — |
+| T17 memory bank | done (`f388b4c`) | — |
 | T15b trend report | not started | — |
 | T15c per-scenario withholding attribution | not started | — |
 | T15g `scriptedStimuli[].field` classification | not started | — |
@@ -120,6 +211,32 @@ to find it.
 
 ## Known open work
 
+- **Q14's follow-up queue, in the user's order.** Q14 closed at `0a5b7f4`; these came out of
+  its two review rounds and are not yet scheduled:
+  - **R5 — narrated `-->` reaches the sidecars** (`write-subtitles.mjs:290-294`). High. The
+    user placed it as **its own item, next after Q14**; refuse vs escape is decided when its
+    spec is drafted. Q14 bounded only *silent* captions.
+  - **"Shape-first everywhere" — R1 plus the surviving `?? i` sites.** The deferred record is
+    incomplete, and a spec written from the round-1 verdict's citations would fix one site of
+    four. **Measured complete list** of the quoted-index pattern, all pre-existing at HEAD and
+    untouched by Q14: `concat-audio.mjs:117`, `concat-audio.mjs:207`, `remix.mjs:86`
+    (`labelOf`), `silent-segment.mjs:599` (`defaultLabel`). Separately, the `segment
+    "undefined"` default is `silent-segment.mjs:366`, reachable from `validate-timing.mjs:356`,
+    `write-storyboard.mjs:29` and `concat-audio.mjs:119`. Also here: `segmentLabel` in
+    `write-chapters.mjs:292-295` and `write-subtitles.mjs:632-635` tests only
+    `typeof id === 'string'`, so an empty id still prints `("")` — laxer than the rule Q14
+    enforced. frame-capture is clean: it had zero `?? i` sites at HEAD, round 1 added one,
+    round 2 removed it.
+  - **R4 — a null segment entry is a TypeError, not a refusal.** Sites: `frame-capture.mjs:119`
+    (**re-measured after Q14 shifted it from :112**), `write-storyboard.mjs:37`,
+    `concat-audio.mjs:108`.
+  - **R2/R3 wording**, nested **K4** (`silent-segment.mjs:366-370`), and **`declareSilentRemedy`**
+    (`silent-segment.mjs:985`, was :971) which omits the nonnegative start, the one-hour cap
+    **and now the caption rule**.
+  - **Citations in all of the above are tree-relative.** Q14 shifted `silent-segment.mjs` by
+    **+14** below its hunk and `frame-capture.mjs` by **+7**; anything above a hunk is
+    unchanged. Both the builder and the reviewer cited stale numbers this round. **Re-measure
+    every deferred citation against the tree it will be implemented in.**
 - **`SuiteLoader` path confinement** — accepted as a separate task, not fixed. Unix symlink
   following, a validate-then-open race, a volume-root separator bug. Fix before the harness
   loads a suite file an untrusted party can write.
@@ -128,8 +245,10 @@ to find it.
 - **The scripted-prefix check is wired into the conversation runner only.**
 - **`playwright-ui-capture` spike is `answered` but not graduated** — debt under §XI until
   the sibling capture script is built in `tools/SizzleCraft` under Tier 2 gates.
-- **`eval-loop-demo` is rendered and delivered** — `tools/EvalLoopDemo/EvalLoopDemo-with-music.mp4`,
-  4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
+- **`eval-loop-demo` is rendered and verified — not merged in its latest form.** This branch
+  holds the 4:42 cut. The consumer's branch holds a 4:37 four-facts cut with the ducked mix
+  (rebased onto `013cdc8`; 13 local commits at `6ef6ca9`), which neither session can push. The first delivery was
+  `EvalLoopDemo-with-music.mp4`, 4:10.63, narration within **0.27 dB** of the sibling video. Full render measured at
   **42.4 min** (S6 capture is 84% of it, at 2% dedup); an audio-only change is ~30 s.
   **Perceived gaps run ~335 ms long and were accepted deliberately** — both sibling videos
   carry the identical defect, so 1.83 s is continuity-correct. Fixing `voice.mjs` to decode
@@ -142,11 +261,68 @@ to find it.
   filenames hardcoded, which is exactly the disease the extraction claimed to have cured;
   they survived because **no second project had reached S8/S9**. Full ledger in
   `tools/EvalLoopDemo/render-log.md`.
+- **T4's accepted follow-ups, not yet scheduled** (the T4 commit message lists them):
+  remix's plan throws a TypeError for a timing.json with no `segments` list — T4 introduced
+  that, where the plan used to exit 0; remix's plan still prints the shared "Re-run with
+  --apply to proceed" after saying `--apply` would refuse; write-subtitles can repeat a word
+  or a fact for a malformed declaration; validate-timing:607 calls re-running voice "the only
+  route" even where voice would refuse; the four round-6 wording and bound items; the
+  zero-file-ids preload's documented limits. **The user placed them on 2026-10-01:** the
+  TypeError is Q14, next in the queue; the round-6 items and the three wording fixes go into
+  T5. The preloads' limits were not placed.
+- **F6's follow-ups, not yet scheduled** (the F6 commit message lists them):
+  - **Two High defects, pre-existing, raised by F6's round-1 review.** Both plan as runnable
+    (exit 0) and fail only after voice has written. Measured with the fake audio backends:
+    - an enabled end card with an outro over 3,600,000 ms exits 1 after overwriting every
+      clip; one with no `builderVersion` exits 1, with a stack, after overwriting every clip
+      and `voiceover.mp3`;
+    - a segment with no string `id`, narrated or silent, passes the gate; under `--apply`
+      voice writes the clips up to and including that segment's, then crashes at
+      `seg.id.padEnd` (exit 1).
+  - The label for a segment with no id: voice and both gates print its 0-based index,
+    quoted like an id (`segment "2"`); remix prints `segment "undefined"`.
+  - The all-silent and shape refusals carry no remedy, so voice prints the fact alone.
+  - voice's C-11 and brand allow-list failures are uncaught throws: exit 1 with a stack.
+  - The README's exit-code table row for 2 does not mention a refused timeline.
+
+  The user decides where the two Highs go.
 - **Still open on the engine**: `render.preview` is declared in the template but no script
   implements it, `evidence-pack/` is resolved unconditionally at module load, and
   `voice.mjs` reflows segment windows but not segment-relative trigger times.
+- **`assertCleanExit` cannot see a module-scope crash.** Its stack check matches only a
+  frame with parentheses. A throw from module-scope code, which is where `voice.mjs` and
+  `remix.mjs` do their work, prints `at file:///…:232:35`, with none, so the helper calls
+  it clean. Measured 2026-10-01: widening the check changes none of the 867 tests. A
+  control confirmed that the wider pattern does catch the module-scope frame. It also
+  matches a line like `at 0:01:23`, so the fix should require a path-shaped token. Queued
+  after Q14, in the user's order of 2026-10-01.
 
 ## Watch out for
+
+- **A reviewer can return a verdict without doing the review.** Q14 round 2's first
+  submission was a PASS in 185 seconds: no citations, and four of the six required sections
+  missing. Nothing in it could be distinguished from a reading of the builder's report — and
+  the report is the thing the reviewer exists to check. I sent it back naming the missing
+  sections and restating the questions, saying plainly that either conclusion was acceptable
+  but an unsupported verdict was not. The resubmission quoted the loop, worked all four
+  branches of the message logic, and answered the deferred-defect question; the conclusion
+  did not change, but the evidence appeared. **Read the verdict for evidence, not for its
+  verdict.** A PASS is a claim like any other.
+- **Green is not reviewed.** I committed `c620c88` after a FAIL verdict without re-review,
+  and three feature commits with no review at all, because the suites were green. The
+  consumer had done the same three times, and their unreviewed engine changes produced 16
+  findings — so the base rate was known before I repeated it. Tests check what the author
+  thought of; review exists for what they did not. **The orchestrator is not exempt from
+  the gate it enforces.**
+- **A same-family review is not the gate.** Opus reviewing Opus finds real defects and
+  still cannot satisfy §VIII; report it as an audit, never as a verdict.
+- **A surviving mutant of changed behaviour is a missing test, not a question.** F6 round 1
+  changed voice's label for a segment with no id, and my own mutation run showed no test
+  would notice (M8). I put it to the reviewer as a question; the reviewer ruled it blocking,
+  and round 2 added the test. Write that test before the review.
+- **The two branches diverge silently.** Each holds commits the other lacks, including a
+  consumer-side engine edit to `write-build-html.mjs`. Check `git log A..B` both ways
+  before calling either one current.
 
 - **Builders misreport their own model.** Several reported `claude-opus-4.5`, which is not an
   available model here. The dispatch is correct (`read_agent` confirms `model: claude-opus-5`);

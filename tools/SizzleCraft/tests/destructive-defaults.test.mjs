@@ -24,6 +24,7 @@ import {
   runScript,
   timingFixture,
   contiguousSegments,
+  wordedSegments,
   brandTokens,
   MISSING_FFMPEG,
   assertCleanExit,
@@ -89,7 +90,9 @@ describe('concat-audio destroy-by-default', () => {
   itPlansByDefault({
     script: 'concat-audio.mjs',
     files: {
-      'timing.json': timingFixture(),
+      // Worded: a narrated segment whose record holds no words is refused (its clip is not
+      // narration voice.mjs produced for it), and this pins the default, not that refusal.
+      'timing.json': timingFixture(wordedSegments),
       'silence.mp3': 'silence-bytes',
       'segment_000.mp3': 'seg-zero',
       'segment_001.mp3': 'seg-one',
@@ -366,11 +369,14 @@ describe('encode-mp4 publish guard', () => {
 
 // ---------------------------------------------------------------------------
 // remix / voice — round one taught them to forward --apply --replace to silence-gen
-// unconditionally, which moved the destroy-by-default defect up one level.
+// unconditionally, which moved the destroy-by-default defect up one level. Both now write
+// their pauses in-process through the link-refusing resolver, so no child is spawned at
+// all; what stays pinned is that a plan run writes nothing.
 // ---------------------------------------------------------------------------
 describe('parent stages have their own safe default', () => {
   const voiceFiles = {
-    'timing.json': timingFixture(),
+    // Worded: remix refuses a narrated segment whose record holds no words, even in a plan.
+    'timing.json': timingFixture(wordedSegments),
     'voiceover.mp3': SENTINEL,
     'segment_000.mp3': 'seg-zero',
     'segment_001.mp3': 'seg-one',
@@ -395,9 +401,8 @@ describe('parent stages have their own safe default', () => {
     assert.match(r.all, /--apply/);
   });
 
-  test('remix_planRun_doesNotInvokeSilenceGenAtAll', (t) => {
-    // The call-site contract: a parent that was not asked to write must not hand a
-    // child the flags that make it write.
+  test('remix_planRun_writesNoPauseAsset', (t) => {
+    // remix writes its pauses in-process, and only on --apply: a plan run writes none.
     const dir = makeProject(t, voiceFiles);
     const r = runScript('remix.mjs', [], dir);
 
@@ -408,12 +413,12 @@ describe('parent stages have their own safe default', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The silence-gen call-site contract, in the direction that matters: when the parent
-// IS asked to write, the child must actually write. Round one's fix would otherwise
-// regress into a silent no-op.
+// silence-gen's own write contract: asked to write, it writes; not asked, it writes
+// nothing. voice and remix no longer spawn it (they write their pauses in-process), so
+// this pins the standalone tool.
 // ---------------------------------------------------------------------------
-describe('silence-gen call-site contract', () => {
-  test('silenceGen_invokedTheWayParentsInvokeIt_actuallyWrites', (t) => {
+describe('silence-gen write contract', () => {
+  test('silenceGen_withApplyAndReplace_writesTheAsset', (t) => {
     const dir = makeProject(t);
     const r = runScript(
       'silence-gen.mjs',
@@ -425,7 +430,7 @@ describe('silence-gen call-site contract', () => {
     assert.equal(fs.statSync(path.join(dir, 'gap_01.mp3')).size, 20 * 288);
   });
 
-  test('silenceGen_invokedWithoutWriteFlags_producesNoFileSoParentsMustOptIn', (t) => {
+  test('silenceGen_withoutWriteFlags_writesNothing', (t) => {
     const dir = makeProject(t);
     const r = runScript('silence-gen.mjs', ['--project', dir, '--out', 'gap_01.mp3', '--ms', '480'], dir);
 
@@ -481,4 +486,455 @@ describe('remux-music video stream verdict', () => {
       'a failed remux must not leave a pin behind claiming the gain was used',
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// write-chapters (S11) and write-subtitles (S10) — the last two stages still parsing argv
+// by hand. write-chapters had no plan at all: a bare run wrote chapters.ffmeta (before
+// checking its input existed) and handed ffmpeg `-y` over the MP4. write-subtitles planned
+// by default, but ignored --help and typos, let `--hold abc` through as NaN timestamps,
+// and wrote its sidecars before refusing the embed output.
+// ---------------------------------------------------------------------------
+
+/** The ffmpeg command line a plan says it would run, or '' when the plan shows none. */
+const plannedCommand = (r) => r.stdout.match(/would run:\s*\r?\n\s*(.+)/)?.[1] ?? '';
+const hasToken = (cmd, token) => new RegExp(`(?:^|\\s)${token}(?:\\s|$)`).test(cmd);
+
+describe('write-chapters destroy-by-default', () => {
+  const chaptersFiles = {
+    'timing.json': timingFixture(),
+    'demo-with-music.mp4': 'video bytes',
+    'ffmpeg-path.txt': MISSING_FFMPEG,
+  };
+  const CHAPTERED = 'demo-with-music-chaptered.mp4';
+  const META = 'chapters.ffmeta';
+
+  // The metadata file is the first thing a bare run destroyed.
+  itPlansByDefault({ script: 'write-chapters.mjs', files: chaptersFiles, output: META });
+
+  test('writeChapters_noFlags_preservesExistingChapteredMp4AndWritesNoMetadata', (t) => {
+    const dir = makeProject(t, { ...chaptersFiles, [CHAPTERED]: SENTINEL });
+    const r = runScript('write-chapters.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a bare run must plan: ');
+    assert.equal(fs.readFileSync(path.join(dir, CHAPTERED), 'utf8'), SENTINEL);
+    assert.equal(fs.existsSync(path.join(dir, META)), false, 'a plan must not write the chapter metadata either');
+    assert.match(r.all, /--apply/, 'the plan must name the flag that would perform the work');
+  });
+
+  test('writeChapters_applyWithoutReplaceOverExistingChapteredMp4_refusesBeforeWritingAnything', (t) => {
+    const dir = makeProject(t, { ...chaptersFiles, [CHAPTERED]: SENTINEL });
+    const r = runScript('write-chapters.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an existing output must be refused: ');
+    assert.match(r.all, /--replace/, 'the refusal must name the flag that would allow the overwrite');
+    assert.equal(fs.readFileSync(path.join(dir, CHAPTERED), 'utf8'), SENTINEL);
+    assert.equal(fs.existsSync(path.join(dir, META)), false, 'the refusal must come before the metadata is written');
+  });
+
+  test('writeChapters_helpWithApplyAndReplace_printsUsageAndWritesNothing', (t) => {
+    const dir = makeProject(t, { ...chaptersFiles, [META]: SENTINEL });
+    const r = runScript('write-chapters.mjs', ['--help', '--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.OK, '--help must succeed: ');
+    assert.match(r.stdout, /write-chapters/, 'the usage must be printed');
+    assert.equal(fs.readFileSync(path.join(dir, META), 'utf8'), SENTINEL, '--help must never write, whatever else is passed');
+  });
+
+  test('writeChapters_unknownOption_exitsUsageAndWritesNothing', (t) => {
+    const dir = makeProject(t, chaptersFiles);
+    // A typo of --output. The hand-rolled parser ignored it and wrote the default name.
+    const r = runScript('write-chapters.mjs', ['--ouptut', 'mine.mp4', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an unknown option must be refused, not ignored: ');
+    assert.equal(fs.existsSync(path.join(dir, META)), false);
+  });
+
+  test('writeChapters_list_printsChaptersWithoutVideoOrFfmpegAndLeavesMetadataUntouched', (t) => {
+    // REGRESSION GUARD (passed before this change too): --list is the path that works on
+    // every player, so the rewrite must keep it free of every prerequisite the embed needs.
+    const dir = makeProject(t, { 'timing.json': timingFixture(), [META]: SENTINEL });
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.OK, '--list must succeed with no video and no ffmpeg: ');
+    assert.match(r.stdout, /^0:00\s+one$/m);
+    assert.match(r.stdout, /^0:02\s+two$/m);
+    assert.equal(fs.readFileSync(path.join(dir, META), 'utf8'), SENTINEL, '--list writes nothing');
+  });
+
+  test('writeChapters_listWithApply_isRefusedRatherThanIgnoringEitherFlag', (t) => {
+    const dir = makeProject(t, chaptersFiles);
+    const r = runScript('write-chapters.mjs', ['--list', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, '--list and --apply ask for contradictory things: ');
+    assert.match(r.all, /--list/);
+    assert.equal(fs.existsSync(path.join(dir, META)), false);
+  });
+
+  test('writeChapters_plan_decidesTheOverwriteBeforeFfmpegRuns', (t) => {
+    const dir = makeProject(t, chaptersFiles);
+
+    const plan = runScript('write-chapters.mjs', [], dir);
+    assertCleanExit(plan, EXIT.OK);
+    const cmd = plannedCommand(plan);
+    assert.ok(cmd, `the plan must show the ffmpeg command it would run\n${plan.all}`);
+    assert.ok(hasToken(cmd, '-n'), `without --replace, ffmpeg must be told never to overwrite\n${cmd}`);
+    assert.ok(!hasToken(cmd, '-y'), `-y hands the overwrite decision to ffmpeg\n${cmd}`);
+
+    const replacing = runScript('write-chapters.mjs', ['--replace'], dir);
+    assertCleanExit(replacing, EXIT.OK);
+    assert.ok(hasToken(plannedCommand(replacing), '-y'), `--replace is what permits -y\n${replacing.all}`);
+  });
+
+  test('writeChapters_applyReplace_reachesFfmpegAndReportsItsFailureCleanly', (t) => {
+    // POSITIVE CONTROL for every refusal above: with both opt-ins the guards let the run
+    // through to ffmpeg, which is missing here. So: exit 1, the binary named, no stack.
+    const dir = makeProject(t, { ...chaptersFiles, [META]: SENTINEL, [CHAPTERED]: SENTINEL });
+    const r = runScript('write-chapters.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a failed ffmpeg must be reported, not thrown: ');
+    assert.match(r.all, /no-such-ffmpeg/, 'the diagnostic must name the executable it could not run');
+    assert.doesNotMatch(r.all, /^wrote /m, 'and must not claim the output was written');
+    assert.match(fs.readFileSync(path.join(dir, META), 'utf8'), /^;FFMETADATA1/, '--replace permits rewriting the metadata');
+    assert.equal(fs.readFileSync(path.join(dir, CHAPTERED), 'utf8'), SENTINEL);
+  });
+
+  test('writeChapters_inputMissing_refusesBeforeWritingAnything', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingFixture(), 'ffmpeg-path.txt': MISSING_FFMPEG });
+    const r = runScript('write-chapters.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a missing input is a usage error: ');
+    assert.match(r.all, /demo-with-music\.mp4/, 'the diagnostic must name the file it looked for');
+    assert.equal(fs.existsSync(path.join(dir, META)), false, 'the metadata used to be written before the input was checked');
+  });
+
+  test('writeChapters_ffmpegPointerMissing_planRefusesNamingIt', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingFixture(), 'demo-with-music.mp4': 'video bytes' });
+    const r = runScript('write-chapters.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a plan must check its prerequisites, not crash on them: ');
+    assert.match(r.all, /ffmpeg-path\.txt/);
+    assert.equal(fs.existsSync(path.join(dir, META)), false);
+  });
+
+  // An input that exists is not necessarily a video. `--input .` resolves to the project
+  // root, which exists, so the metadata was written and only ffmpeg then refused it.
+  for (const [scenario, args, makeInputADirectory] of [
+    ['inputIsProjectDirectory', ['--input', '.'], () => {}],
+    ['defaultInputIsDirectory', [], (dir) => {
+      fs.rmSync(path.join(dir, 'demo-with-music.mp4'));
+      fs.mkdirSync(path.join(dir, 'demo-with-music.mp4'));
+    }],
+  ]) {
+    test(`writeChapters_${scenario}_refusesBeforeWritingMetadata`, (t) => {
+      const dir = makeProject(t, { ...chaptersFiles, [META]: SENTINEL });
+      makeInputADirectory(dir);
+
+      const r = runScript('write-chapters.mjs', [...args, '--apply', '--replace'], dir);
+
+      assertCleanExit(r, EXIT.USAGE, 'a directory is not a video: ');
+      assert.match(r.all, /input video .+ is a directory/);
+      assert.doesNotMatch(r.all, /ffmpeg failed/, 'the refusal must come before ffmpeg is reached');
+      assert.equal(fs.readFileSync(path.join(dir, META), 'utf8'), SENTINEL, 'the refusal must come before the metadata is written');
+    });
+  }
+
+  // A timeline chapters cannot be cut from still reached chapters.ffmeta: with no durationMs
+  // the last chapter was written as END=undefined, and an unordered timeline as a chapter
+  // that ends where it starts — before ffmpeg ran, so its failure was the only report and the
+  // metadata had already been replaced. The windows are validated before anything is planned.
+  const withSegments = (edit) => {
+    const segments = structuredClone(contiguousSegments);
+    edit(segments);
+    return timingFixture(segments);
+  };
+  for (const [scenario, timing, reason] of [
+    ['durationMsMissing', timingFixture(contiguousSegments, { durationMs: undefined }), /durationMs is missing/],
+    ['durationMsNotFinite', timingFixture().replace('"durationMs":4000', '"durationMs":1e400'), /durationMs is Infinity/],
+    ['durationMsBeforeLastChapterStarts', timingFixture(contiguousSegments, { durationMs: 1000 }), /durationMs is 1000/],
+    ['durationMsBeforeLastSegmentEnds', timingFixture(contiguousSegments, { durationMs: 3000 }), /durationMs is 3000/],
+    ['segmentsOutOfOrder', timingFixture([...contiguousSegments].reverse(), { durationMs: 4000 }), /in time order/],
+    ['segmentsOverlap', withSegments((s) => { s[1].startMs = 1500; }), /in time order/],
+    ['segmentWindowEmpty', withSegments((s) => { s[0].endMs = 0; }), /window is 0ms/],
+    ['segmentWithoutTitle', withSegments((s) => { delete s[0].id; }), /no visual\.title, title or id/],
+    // REGRESSION GUARD (passed before this change too).
+    ['timingIsJsonNull', 'null', /timing/],
+  ]) {
+    test(`writeChapters_${scenario}_exitsFailedWithoutWritingMetadata`, (t) => {
+      const dir = makeProject(t, { ...chaptersFiles, 'timing.json': timing, [META]: SENTINEL, [CHAPTERED]: SENTINEL });
+
+      const r = runScript('write-chapters.mjs', ['--apply', '--replace'], dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a timeline chapters cannot be cut from must be refused: ');
+      assert.match(r.all, reason);
+      assert.doesNotMatch(r.all, /ffmpeg failed/, 'the refusal must come before ffmpeg is reached');
+      assert.equal(fs.readFileSync(path.join(dir, META), 'utf8'), SENTINEL, 'the metadata must be untouched');
+      assert.equal(fs.readFileSync(path.join(dir, CHAPTERED), 'utf8'), SENTINEL);
+    });
+  }
+
+  test('writeChapters_listWithUnorderedTimeline_refusesRatherThanPrintingIt', (t) => {
+    // --list is validated too: a chapter list pasted into a description is published.
+    const dir = makeProject(t, { 'timing.json': timingFixture([...contiguousSegments].reverse(), { durationMs: 4000 }) });
+
+    const r = runScript('write-chapters.mjs', ['--list'], dir);
+
+    assertCleanExit(r, EXIT.FAILED);
+    assert.match(r.all, /in time order/);
+    assert.doesNotMatch(r.stdout, /^0:0\d\s+(one|two)$/m, 'no chapter list may be printed');
+  });
+});
+
+describe('write-subtitles destroy-by-default', () => {
+  const subtitleFiles = { 'timing.json': timingFixture(wordedSegments) };
+  const VTT = 'demo.vtt';
+  const SRT = 'demo.srt';
+
+  itPlansByDefault({ script: 'write-subtitles.mjs', files: subtitleFiles, output: VTT });
+
+  test('writeSubtitles_applyWithOnlySrtPresent_refusesAndWritesNeitherSidecar', (t) => {
+    const dir = makeProject(t, { ...subtitleFiles, [SRT]: SENTINEL });
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an existing sidecar must be refused: ');
+    assert.match(r.all, /--replace/);
+    assert.equal(fs.readFileSync(path.join(dir, SRT), 'utf8'), SENTINEL);
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false, 'a refused pair must not be half-written');
+  });
+
+  test('writeSubtitles_applyReplace_overwritesBothSidecars', (t) => {
+    const dir = makeProject(t, { ...subtitleFiles, [VTT]: SENTINEL, [SRT]: SENTINEL });
+    const r = runScript('write-subtitles.mjs', ['--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.OK, '--apply --replace is the documented way to regenerate: ');
+    assert.match(fs.readFileSync(path.join(dir, VTT), 'utf8'), /^WEBVTT\r?\n/);
+    assert.match(fs.readFileSync(path.join(dir, SRT), 'utf8'), /^1\r?\n00:00:00,100 --> /);
+  });
+
+  test('writeSubtitles_refusal_namesOnlyOptionsThatExist', (t) => {
+    const dir = makeProject(t, { ...subtitleFiles, [VTT]: SENTINEL, [SRT]: SENTINEL });
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /--replace/);
+    // It used to suggest "choose another --name" — an option this script has never read.
+    assert.doesNotMatch(r.all, /--name/);
+  });
+
+  test('writeSubtitles_helpWithApply_printsUsageAndWritesNothing', (t) => {
+    const dir = makeProject(t, subtitleFiles);
+    const r = runScript('write-subtitles.mjs', ['--help', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, '--help must succeed: ');
+    assert.match(r.stdout, /write-subtitles/, 'the usage must be printed');
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false, '--help must never write, whatever else is passed');
+    assert.equal(fs.existsSync(path.join(dir, SRT)), false);
+  });
+
+  test('writeSubtitles_unknownOption_exitsUsageAndWritesNothing', (t) => {
+    const dir = makeProject(t, subtitleFiles);
+    // A typo of --max-line. The hand-rolled parser ignored it and wrote at the default.
+    const r = runScript('write-subtitles.mjs', ['--max-lnie', '30', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an unknown option must be refused, not ignored: ');
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false);
+  });
+
+  // C-2. `Number('abc')` is NaN and every comparison with NaN is false, so the cue-end
+  // arithmetic wrote "NaN:NaN:NaN.NaN" into both sidecars and exited 0. A missing value
+  // quietly became the default instead.
+  for (const [scenario, args] of [
+    ['nonNumericHold', ['--hold', 'abc']],
+    ['holdWithoutValue', ['--apply', '--hold']],
+    ['negativeHold', ['--hold=-200']],
+    ['holdAboveCeiling', ['--hold', '10001']],
+  ]) {
+    test(`writeSubtitles_${scenario}_exitsUsageAndWritesNothing`, (t) => {
+      const dir = makeProject(t, subtitleFiles);
+      const r = runScript('write-subtitles.mjs', args.includes('--apply') ? args : [...args, '--apply'], dir);
+
+      assertCleanExit(r, EXIT.USAGE, 'an invalid --hold must be refused, not written: ');
+      assert.match(r.all, /--hold/, 'the refusal must name the option');
+      assert.equal(fs.existsSync(path.join(dir, VTT)), false);
+      assert.equal(fs.existsSync(path.join(dir, SRT)), false);
+    });
+  }
+
+  test('writeSubtitles_malformedNumericOption_explainsTheRuleInCaptionTermsNotFfmpegTerms', (t) => {
+    // The shared parser explains its strict grammar as "Levels are interpolated into an
+    // ffmpeg filter graph". That is true for remux-music's gains and false for every
+    // caption knob here. A refusal that gives the wrong reason sends the author looking
+    // for an ffmpeg problem they do not have.
+    const dir = makeProject(t, subtitleFiles);
+    for (const [option, value, range] of [['--hold', 'abc', '0 and 10000'], ['--max-line', '4x', '10 and 120']]) {
+      const r = runScript('write-subtitles.mjs', [option, value], dir);
+
+      assertCleanExit(r, EXIT.USAGE);
+      assert.match(r.all, new RegExp(`${option} must be a plain number between ${range} — got "${value}"`));
+      assert.doesNotMatch(r.all, /ffmpeg|filter graph|Levels/, `${option}: the refusal must not blame ffmpeg\n${r.all}`);
+    }
+  });
+
+  test('writeSubtitles_validHold_isHonouredAndDefaultsTo1200', (t) => {
+    // "Hello there." is spoken 100..1100 and the next cue starts at 2100. The default
+    // 1200 ms hold carries it to 2060 (40 ms short of the next cue); --hold 0 ends it on
+    // its last word. Pinned so validation cannot quietly replace a legal value.
+    const dir = makeProject(t, subtitleFiles);
+
+    const held = runScript('write-subtitles.mjs', ['--apply'], dir);
+    assertCleanExit(held, EXIT.OK);
+    assert.match(fs.readFileSync(path.join(dir, VTT), 'utf8'), /00:00:00\.100 --> 00:00:02\.060\r?\nHello there\./);
+
+    const unheld = runScript('write-subtitles.mjs', ['--hold', '0', '--apply', '--replace'], dir);
+    assertCleanExit(unheld, EXIT.OK);
+    assert.match(fs.readFileSync(path.join(dir, VTT), 'utf8'), /00:00:00\.100 --> 00:00:01\.100\r?\nHello there\./);
+  });
+
+  // --embed muxes the SRT into a copy of <name>-with-music.mp4.
+  const embedFiles = { ...subtitleFiles, 'demo-with-music.mp4': 'video bytes', 'ffmpeg-path.txt': MISSING_FFMPEG };
+  const SUBTITLED = 'demo-with-music-subtitled.mp4';
+
+  test('writeSubtitles_embedOverExistingOutputWithoutReplace_refusesBeforeWritingSidecars', (t) => {
+    const dir = makeProject(t, { ...embedFiles, [SUBTITLED]: SENTINEL });
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'an existing embed output must be refused: ');
+    assert.match(r.all, /--replace/);
+    assert.equal(fs.readFileSync(path.join(dir, SUBTITLED), 'utf8'), SENTINEL);
+    // The refusal used to come AFTER both sidecars were written, so a refused run still
+    // changed the project.
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false, 'the refusal must come before any write');
+    assert.equal(fs.existsSync(path.join(dir, SRT)), false);
+  });
+
+  test('writeSubtitles_embedSourceMissing_refusesBeforeWritingSidecars', (t) => {
+    const dir = makeProject(t, { ...subtitleFiles, 'ffmpeg-path.txt': MISSING_FFMPEG });
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a missing embed source is a usage error: ');
+    assert.match(r.all, /demo-with-music\.mp4/, 'the diagnostic must name the file it looked for');
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false, 'the refusal must come before any write');
+  });
+
+  test('writeSubtitles_embedPlanWithoutFfmpegPointer_refusesCleanlyNamingIt', (t) => {
+    const dir = makeProject(t, { ...subtitleFiles, 'demo-with-music.mp4': 'video bytes' });
+    const r = runScript('write-subtitles.mjs', ['--embed'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a plan must check its prerequisites, not crash on them: ');
+    assert.match(r.all, /ffmpeg-path\.txt/);
+  });
+
+  test('writeSubtitles_embedPlan_decidesTheOverwriteBeforeFfmpegRuns', (t) => {
+    const dir = makeProject(t, embedFiles);
+
+    const plan = runScript('write-subtitles.mjs', ['--embed'], dir);
+    assertCleanExit(plan, EXIT.OK);
+    const cmd = plannedCommand(plan);
+    assert.ok(cmd, `the plan must show the ffmpeg command it would run\n${plan.all}`);
+    assert.ok(hasToken(cmd, '-n'), `without --replace, ffmpeg must be told never to overwrite\n${cmd}`);
+    assert.ok(!hasToken(cmd, '-y'), cmd);
+    assert.equal(fs.existsSync(path.join(dir, VTT)), false, 'an embed plan writes nothing either');
+
+    const replacing = runScript('write-subtitles.mjs', ['--embed', '--replace'], dir);
+    assertCleanExit(replacing, EXIT.OK);
+    assert.ok(hasToken(plannedCommand(replacing), '-y'), `--replace is what permits -y\n${replacing.all}`);
+  });
+
+  test('writeSubtitles_embedApplyReplace_reachesFfmpegAndReportsItsFailureCleanly', (t) => {
+    const dir = makeProject(t, embedFiles);
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a failed ffmpeg must be reported, not thrown: ');
+    assert.match(r.all, /no-such-ffmpeg/, 'the diagnostic must name the executable it could not run');
+    assert.doesNotMatch(r.all, /^wrote demo-with-music-subtitled/m, 'and must not claim the embed happened');
+    assert.equal(fs.existsSync(path.join(dir, SUBTITLED)), false);
+  });
+
+  test('writeSubtitles_embedSourceIsDirectory_refusesBeforeWritingSidecars', (t) => {
+    // The same gap as write-chapters' --input: the source existed, so both sidecars were
+    // replaced and only ffmpeg then refused a directory as a video.
+    const dir = makeProject(t, { ...subtitleFiles, 'ffmpeg-path.txt': MISSING_FFMPEG, [VTT]: SENTINEL, [SRT]: SENTINEL });
+    fs.mkdirSync(path.join(dir, 'demo-with-music.mp4'));
+
+    const r = runScript('write-subtitles.mjs', ['--embed', '--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'a directory is not a video: ');
+    assert.match(r.all, /embed source .+ is a directory/);
+    assert.doesNotMatch(r.all, /ffmpeg failed/, 'the refusal must come before ffmpeg is reached');
+    assert.equal(fs.readFileSync(path.join(dir, VTT), 'utf8'), SENTINEL, 'the refusal must come before any write');
+    assert.equal(fs.readFileSync(path.join(dir, SRT), 'utf8'), SENTINEL);
+  });
+
+  // A timeline that cannot be captioned was captioned anyway. With no durationMs the last
+  // cue's hold ceiling was NaN, and "NaN:NaN:NaN.NaN" was written into both sidecars at exit
+  // 0; an empty timeline wrote two empty sidecars as success; and a segment with no words, a
+  // malformed silence declaration or a null timeline escaped as a stack trace. Every case is
+  // refused before either sidecar is touched — even under --replace, which permits
+  // overwriting a sidecar, not replacing a good one with garbage.
+  const wordedWith = (edit) => {
+    const segments = structuredClone(wordedSegments);
+    edit(segments);
+    return timingFixture(segments);
+  };
+  for (const [scenario, timing, reason] of [
+    ['durationMsMissing', timingFixture(wordedSegments, { durationMs: undefined }), /durationMs is missing/],
+    ['durationMsNotFinite', timingFixture(wordedSegments).replace('"durationMs":4000', '"durationMs":1e400'), /durationMs is Infinity/],
+    ['durationMsBeforeLastSegmentEnds', timingFixture(wordedSegments, { durationMs: 3000 }), /durationMs is 3000/],
+    ['segmentsEmpty', timingFixture(wordedSegments, { segments: [] }), /segments is empty/],
+    ['segmentsMissing', timingFixture(wordedSegments, { segments: undefined }), /segments is missing/],
+    ['segmentIsNotAnObject', timingFixture(wordedSegments, { segments: [1] }), /segments\[0\] is 1, not a segment/],
+    ['segmentsOutOfOrder', timingFixture([...wordedSegments].reverse(), { durationMs: 4000 }), /in time order/],
+    ['segmentWithoutStartMs', wordedWith((s) => { delete s[1].startMs; }), /startMs is missing/],
+    ['segmentWindowEmpty', wordedWith((s) => { s[1].endMs = 2000; }), /window is 0ms/],
+    ['wordWithoutEndMs', wordedWith((s) => { delete s[0].audio.words[1].endMs; }), /words\[1\]\.endMs is missing/],
+    ['wordEndsBeforeItStarts', wordedWith((s) => { s[0].audio.words[1].endMs = 500; }), /words\[1\] ends before it starts/],
+    ['wordStartsBeforeZero', wordedWith((s) => { s[0].audio.words[0].startMs = -100; }), /words\[0\]\.startMs is -100/],
+    ['wordTextNotAString', wordedWith((s) => { s[0].audio.words[0].word = 42; }), /words\[0\]\.word is 42/],
+    ['spokenSegmentWithoutWords', wordedWith((s) => { delete s[1].audio.words; }), /run voice\.mjs/],
+    ['voiceoverTextMissing', wordedWith((s) => { delete s[0].voiceoverText; }), /voiceoverText/],
+    ['silentSegmentWithoutCaption', wordedWith((s) => {
+      s[1] = { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: '', silence: {} };
+    }), /caption/],
+    ['timingIsJsonNull', 'null', /not a timeline object/],
+  ]) {
+    test(`writeSubtitles_${scenario}_exitsFailedWithoutWritingEitherSidecar`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timing, [VTT]: SENTINEL, [SRT]: SENTINEL });
+      const before = fs.readdirSync(dir).sort();
+
+      const r = runScript('write-subtitles.mjs', ['--apply', '--replace'], dir);
+
+      assertCleanExit(r, EXIT.FAILED, 'a timeline that cannot be captioned must be refused: ');
+      assert.match(r.all, reason);
+      assert.doesNotMatch(r.all, /NaN/);
+      assert.equal(fs.readFileSync(path.join(dir, VTT), 'utf8'), SENTINEL, 'the WebVTT sidecar must be untouched');
+      assert.equal(fs.readFileSync(path.join(dir, SRT), 'utf8'), SENTINEL, 'the SRT sidecar must be untouched');
+      assert.deepEqual(fs.readdirSync(dir).sort(), before, 'nothing may be created either');
+    });
+  }
+});
+
+// S-m3(a). The usage is the one place a user checks before running a script, and it said a
+// bare invocation writes both sidecars — while --help was not an option at all. Pinned for
+// both S10 and S11, which share the plan-by-default contract.
+describe('write-subtitles and write-chapters usage', () => {
+  for (const [method, script, applyWrites, replaceLine] of [
+    ['writeSubtitles', 'write-subtitles.mjs', 'write <project>.vtt and <project>.srt', 'overwrite existing sidecars'],
+    ['writeChapters', 'write-chapters.mjs', 'write chapters.ffmeta and the chaptered MP4', 'overwrite either one if it already exists'],
+  ]) {
+    const line = (flags, text) =>
+      new RegExp(`^\\s*node ${script.replace('.', '\\.')}${flags}\\s+${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+
+    test(`${method}_help_describesABareRunAsPlanOnlyAndApplyAsTheWrite`, (t) => {
+      const dir = makeProject(t);
+      const r = runScript(script, ['--help'], dir);
+
+      assertCleanExit(r, EXIT.OK, '--help must succeed: ');
+      assert.match(r.stdout, line('', 'plan only (default)'), `a bare run must be documented as a plan\n${r.stdout}`);
+      assert.match(r.stdout, line(' --apply', applyWrites), `--apply must be documented as the write\n${r.stdout}`);
+      assert.match(r.stdout, line(' --apply --replace', replaceLine), r.stdout);
+      assert.match(r.stdout, /--apply\s+actually write\. Without it nothing is written\./, r.stdout);
+      assert.match(r.stdout.replace(/\s+/g, ' '), /Exit codes: 0 success\/plan\S* · 1 unusable timeline or ffmpeg failed · 2 bad usage/, r.stdout);
+      assert.deepEqual(fs.readdirSync(dir), [], '--help writes nothing');
+    });
+  }
 });

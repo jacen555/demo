@@ -1,0 +1,4 @@
+# Files whose SHA-256 the ledger records are stored and checked out byte for byte, so the
+# hashes in inputs.md can be re-checked on any platform, whatever core.autocrlf says.
+rubric.md -text
+rubric-brief.md -text

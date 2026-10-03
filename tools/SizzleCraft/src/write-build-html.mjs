@@ -50,6 +50,22 @@ for (const s of (timing.segments || [])) {
   (v.nodes || []).forEach((n, i) => { if (n && n.id != null) assertTok(n.id, `${s.id}.nodes[${i}].id`); });
   (v.edges || []).forEach((e, i) => { if (!e) return; if (e.id != null) assertTok(e.id, `${s.id}.edges[${i}].id`); if (e.from != null) assertTok(e.from, `${s.id}.edges[${i}].from`); if (e.to != null) assertTok(e.to, `${s.id}.edges[${i}].to`); });
 }
+// Every slide switch, hold and trigger time is computed from startMs/endMs, and this stage does not
+// run validate-timing. A missing time became NaN, which JSON writes as null, and the hold cap
+// Math.min(hold, null) is 0: the slide before it was switched away at t=0 while the build exited 0.
+// A numeric string is no safer, since trigger times add to it ("2000" + 500). Only a finite JSON
+// number places a segment. Ordering and overlap stay validate-timing's job.
+guard(() => {
+  const describeMs = v => v === undefined ? 'missing' : typeof v === 'number' ? String(v) : typeof v === 'string' ? `the string ${JSON.stringify(v.slice(0, 40))}` : v === null ? 'null' : `a ${Array.isArray(v) ? 'list' : typeof v}`;
+  const unusable = [];
+  (timing.segments || []).forEach((s, i) => {
+    for (const k of ['startMs', 'endMs']) {
+      const v = s?.[k];
+      if (typeof v !== 'number' || !Number.isFinite(v)) unusable.push(`segments[${i}] ${JSON.stringify(s?.id ?? null)}: ${k} is ${describeMs(v)}`);
+    }
+  });
+  if (unusable.length) throw new CliError(`cannot place ${unusable.length === 1 ? 'a segment' : 'segments'} on the timeline; startMs and endMs must be finite numbers of milliseconds (fix timing.json and re-run validate-timing):\n  ${unusable.join('\n  ')}`);
+});
 const w = timing.project?.width || 3840, h = timing.project?.height || 2160;
 // Repair the classic "UTF-8 bytes read back as Latin-1/CP1252" mojibake (e.g. "Â·" -> "·", "â€™" -> "'")
 // that upstream tools can bake into titles/labels/watermarks on Windows. Guarded: it only re-decodes when
@@ -337,12 +353,12 @@ function diagram(seg) {
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     return `<text id="${seg.id}-edgelabel-${e.id || j}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label)}</text>`;
   }).join('');
-  // Arrowhead size is per-visual so a dense diagram can shrink it without changing every
-  // other diagram in every project. Default 10 (raised from 7 so direction reads at video
-  // scale); refX tracks the width at the same 0.8 ratio so the head still meets the line.
-  // Default 6, not 10. At 10 the heads read as heavy blobs on a 4K frame — reported across
-// three separate segments before it was recognised as a global default rather than a
-// per-diagram choice. A project can still raise it per segment via visual.arrowSize.
+  // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
+  // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
+  // direction read at video scale, but at 10 the heads read as heavy blobs on a 4K frame —
+  // reported across three separate segments before it was recognised as a global default
+  // rather than a per-diagram choice. refX tracks the width at the same 0.8 ratio so the
+  // head still meets the line.
 const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
   const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
@@ -652,6 +668,9 @@ const endCardText = endCardOn ? `${String(timing.endCard.tagline || 'Created by 
 const endCardSlide = endCardOn ? `<section id="seg-${endCardIndex}" class="sl" data-mode="endcard"><div class="safe" style="--fit:1"><h1 id="endcard-title" class="title">${esc(endCardText)}</h1></div></section>` : '';
 
 // ---- styles + runtime -----------------------------------------------------
+// The opacity of a code field dimmed around the focused one. The CSS rule and the
+// runtime's release fade both read it, so the fade starts from what is on screen.
+const CODE_DIM_OPACITY = 0.28;
 const css = `:root{--color-bg-primary:#0B1020;--color-bg-secondary:#0c1a3a;--color-accent-1:#50E6FF;--color-accent-2:#9BF00B;--color-text-primary:#fff;--color-text-secondary:#8aa4c8;--color-card-bg:rgba(255,255,255,.04);--color-card-border:rgba(255,255,255,.10);--font-display:'Aptos Display','Segoe UI Variable Display',sans-serif;--font-body:'Aptos','Segoe UI Variable Text',sans-serif}
 html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden;font-family:var(--font-body);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
 #stage{width:${w}px;height:${h}px;position:relative;overflow:hidden;color:var(--color-text-primary);background:${bg ? bg.stage : theme.stage};background-size:${bg ? 'auto' : theme.size}${bg ? ';' + bgVars : (theme.vars ? ';' + theme.vars : '')}}
@@ -678,8 +697,18 @@ ${bg ? '' : theme.anim}
    is being discussed, because the box and the contrast difference carry it. */
 .codewrap{width:100%;max-width:92%;margin:0}
 .codeblock{font-family:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
-  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;white-space:pre;
-  overflow:hidden;max-height:calc(var(--fit) * 62vh);margin:0;padding:calc(var(--fit) * 2.2vh);
+  font-size:calc(var(--fit) * 1.55vh);line-height:1.5;text-align:left;
+  /* pre-WRAP, not pre. A long string value used to run past the panel and be clipped by
+     overflow:hidden — content on screen, cut off mid-sentence, with nothing reporting it.
+     Wrapping keeps every character visible across the width. A wrapped continuation
+     starts at the block's left edge. There is no hanging indent: text-indent is a single
+     offset from the block's edge, not from a line's own indentation, so it cannot tuck a
+     continuation under its key at every nesting depth.
+     Wrapping moves the overflow from the right edge to the bottom, where max-height still
+     clips it. auditLayout checks each block against its own box, so that clip fails the
+     audit instead of shipping. */
+  white-space:pre-wrap;overflow-wrap:anywhere;
+  overflow:hidden;max-height:calc(var(--fit) * 68vh);margin:0;padding:calc(var(--fit) * 2.2vh);
   border-radius:calc(var(--fit) * 1vh);background:var(--code-bg,#f6f7f9);
   border:1px solid var(--code-br,#d6dae0);color:var(--code-fg,#1b1f24)}
 .j-key{color:var(--code-key,#8250df);font-weight:600}
@@ -691,7 +720,7 @@ ${bg ? '' : theme.anim}
 /* a multi-line array/object cannot carry a clean outline as an inline box — it steps
    around the text flow. Block-level containers give the highlight a real rectangle. */
 .j-entry.j-block{display:block}
-.codeblock.is-dim .j-entry.is-off{opacity:.28}
+.codeblock.is-dim .j-entry.is-off{opacity:${CODE_DIM_OPACITY}}
 .j-entry.is-focus{outline:calc(var(--fit) * 0.34vh) solid var(--code-focus,#1b1f24);
   outline-offset:calc(var(--fit) * 0.5vh);background:var(--code-focus-bg,#fff3c4);
   font-weight:700;opacity:1}
@@ -773,14 +802,86 @@ const elementTriggers=${jsonScript(trs, 2)};
 const audio=document.getElementById('vo'),LINGER=2;let currentSlide=1;const fired=new Set();
 function safeOverflow(safe){return safe.scrollHeight>safe.clientHeight+2||safe.scrollWidth>safe.clientWidth+2;}
 window.fitLayout=function(){document.querySelectorAll('.sl').forEach(sl=>{const safe=sl.querySelector('.safe');if(!safe)return;const on=sl.classList.contains('on');sl.classList.add('on');let fit=1;safe.style.setProperty('--fit',fit);let g=0;while(g++<10&&safeOverflow(safe)){fit=Math.max(0.6,fit-0.06);safe.style.setProperty('--fit',fit);}if(!on)sl.classList.remove('on');});};
-window.auditLayout=function(){const out=[];document.querySelectorAll('.sl').forEach(sl=>{const safe=sl.querySelector('.safe');if(!safe)return;const on=sl.classList.contains('on');sl.classList.add('on');if(safeOverflow(safe))out.push({id:sl.id,reason:'overflow-after-fit'});if(!on)sl.classList.remove('on');});return out;};
+// A code block is capped at a max-height and clips its own overflow, so the safe area around a
+// clipped block still fits. Each block is therefore also checked against its own box.
+window.auditLayout=function(){const out=[];document.querySelectorAll('.sl').forEach(sl=>{const safe=sl.querySelector('.safe');if(!safe)return;const on=sl.classList.contains('on');sl.classList.add('on');if(safeOverflow(safe))out.push({id:sl.id,reason:'overflow-after-fit'});sl.querySelectorAll('.codeblock').forEach(cb=>{if(safeOverflow(cb))out.push({id:sl.id,seg:cb.dataset.seg,reason:'codeblock-clipped',scroll:[cb.scrollWidth,cb.scrollHeight],client:[cb.clientWidth,cb.clientHeight]});});if(!on)sl.classList.remove('on');});return out;};
 // Legibility guard: flags low-contrast (WCAG-AA) or too-small visible text so a "text not readable"
 // regression is caught early. Advisory by default (Recorder logs it); Builder self-checks it at build.
 function _lum(r,g,b){const f=v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);};return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b);}
-function _rgb(s){const m=String(s).match(/rgba?\(([^)]+)\)/);if(!m)return null;const p=m[1].split(',').map(x=>parseFloat(x));if(p.length>=4&&p[3]===0)return null;return [p[0],p[1],p[2]];}
+// This script is emitted from a template literal, which halves every backslash, so the regex
+// escapes below are written doubled. Written singly, the colour regex shipped as /rgba?(([^)]+))/,
+// which read every red channel as NaN, so no contrast issue was ever reported.
+function _rgba(s){const m=String(s).match(/rgba?\\(([^)]+)\\)/);if(!m)return null;const p=m[1].split(/[\\s,\\/]+/).filter(Boolean).map(x=>parseFloat(x));if(p.length<3||!p.slice(0,3).every(Number.isFinite))return null;return [p[0],p[1],p[2],Number.isFinite(p[3])?p[3]:1];}
+function _rgb(s){const c=_rgba(s);return c&&c[3]>0?c.slice(0,3):null;}
 function _hex(s){const m=String(s).trim().match(/^#?([0-9a-fA-F]{6})$/);if(!m)return null;const h=m[1];return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
-function _bgOf(el){let n=el;while(n){const c=_rgb(getComputedStyle(n).backgroundColor);if(c)return c;n=n.parentElement;}const src=el||document.getElementById('stage')||document.documentElement;const base=getComputedStyle(src).getPropertyValue('--color-bg-primary');return _hex(base)||_rgb(base)||_rgb(getComputedStyle(document.body).backgroundColor)||[11,16,32];}
-window.auditLegibility=function(){const out=[];const stageH=(document.getElementById('stage')||document.body).clientHeight||1080;const minPx=Math.max(14,stageH*0.014);document.querySelectorAll('.sl.on .kicker,.sl.on .title,.sl.on .subtitle,.sl.on .body,.sl.on .label,.sl.on .value,.sl.on .text,.sl.on .lt-title,.sl.on .lt-sub,.sl.on svg text').forEach(el=>{if(!el.textContent.trim())return;const eid=el.id||el.className||el.tagName.toLowerCase();const cs=getComputedStyle(el);if(cs.visibility==='hidden'||parseFloat(cs.opacity)<0.5)return;const fg=_rgb(cs.color)||_rgb(cs.fill)||_hex(cs.fill),bg=_bgOf(el);const px=parseFloat(cs.fontSize);if(px&&px<minPx)out.push({id:eid,reason:'text-too-small',px:Math.round(px),minPx:Math.round(minPx)});if(fg&&bg){const L1=_lum(...fg),L2=_lum(...bg);const ratio=(Math.max(L1,L2)+0.05)/(Math.min(L1,L2)+0.05);const fw=cs.fontWeight==='bold'?700:(cs.fontWeight==='normal'?400:(parseInt(cs.fontWeight,10)||400));const large=px>=stageH*0.033||(fw>=600&&px>=stageH*0.026);const need=large?3.0:4.5;if(ratio<need)out.push({id:eid,reason:'low-contrast',ratio:Math.round(ratio*10)/10,need});}});return out;};
+// What the text sits on is what the browser paints under it. elementsFromPoint lists the elements that
+// hit testing finds at a point, in paint order, top first, so everything after the text in that list
+// is painted beneath it, including a backdrop that is not an ancestor, such as a footage layer. Hit
+// testing is not painting, though. It skips an element whose pointer-events is none, however much it
+// paints, and _hittable lifts that for the length of the audit. It still skips paint that no
+// pointer-events value makes hit-testable, which the audit therefore never sees: an inert subtree,
+// the contents of an SVG marker, such as a diagram's arrowheads, and paint outside an element's
+// border box, such as a box-shadow or an outline. A ::before or ::after box is listed as its element,
+// and only the element's own paint is read. Each element paints its background images over its
+// background colour. Colours are premultiplied [r,g,b,a] in 0..1, the space CSS gradients
+// interpolate in. Composition multiplies candidates, so many translucent layers of many stops could
+// stall the audit: past 2^18 combinations _over gives up and returns null, and the backdrop is
+// reported as too complex to certify.
+function _pm(c){const a=c[3];return [c[0]/255*a,c[1]/255*a,c[2]/255*a,a];}
+function _over(top,under){let work=0;for(const p of top)work+=p[3]>=0.999?1:under.length;if(work>262144)return null;const out=[],seen=new Set();for(const p of top){for(const q of (p[3]>=0.999?[[0,0,0,0]]:under)){const k=1-p[3],r=[p[0]+k*q[0],p[1]+k*q[1],p[2]+k*q[2],Math.min(1,p[3]+k*q[3])],key=r.map(v=>Math.round(v*1024)).join();if(!seen.has(key)){seen.add(key);out.push(r);}}}return out;}
+function _split(s){const out=[];let d=0,cur='';for(const ch of String(s)){if(ch==='(')d++;else if(ch===')')d--;if(ch===','&&!d){out.push(cur.trim());cur='';}else cur+=ch;}if(cur.trim())out.push(cur.trim());return out;}
+function _at(list,i){const a=_split(list);return a[i%a.length]||'';}
+// A computed gradient: its head (direction or shape), and its stops as premultiplied colours with
+// positions as fractions of the gradient line when they are percentages. Null if any colour is not
+// one this audit can read, or if it interpolates in a colour space other than sRGB.
+function _grad(img){const m=String(img).match(/^(repeating-)?(linear|radial|conic)-gradient\\((.*)\\)$/);if(!m)return null;const g={rep:!!m[1],kind:m[2],head:'',stops:[],hint:false,pct:true,bad:false};_split(m[3]).forEach((part,i)=>{const c=part.match(/^(rgba?\\([^)]*\\))\\s*(.*)$/);if(!c){if(i===0)g.head=part;else if(/^-?[\\d.]+(%|[a-z]+)?$/.test(part))g.hint=true;else g.bad=true;return;}const col=_rgba(c[1]);if(!col){g.bad=true;return;}const pos=c[2]?c[2].split(/\\s+/):[];if(!pos.length)g.stops.push({c:_pm(col),p:null});pos.forEach(x=>{const v=x.match(/^(-?[\\d.]+)%$/);if(!v)g.pct=false;g.stops.push({c:_pm(col),p:v?parseFloat(v[1])/100:null});});});return g.bad||g.stops.length<2||/(^|\\s)in\\s/.test(g.head)?null:g;}
+function _fix(stops){const s=stops.map(x=>({c:x.c,p:x.p}));if(s[0].p==null)s[0].p=0;if(s[s.length-1].p==null)s[s.length-1].p=1;let max=-Infinity;for(const x of s){if(x.p!=null){x.p=Math.max(x.p,max);max=x.p;}}for(let i=1;i<s.length;i++){if(s[i].p!=null)continue;let j=i;while(s[j].p==null)j++;for(let k=i;k<j;k++)s[k].p=s[i-1].p+(s[j].p-s[i-1].p)*(k-i+1)/(j-i+1);i=j;}return s;}
+// The colours a gradient takes over [lo,hi] of its line, or over all of it when range is null. Luminance
+// can dip between two stops below both (red to green does), so every piece is sampled, with neighbouring
+// samples at most 1/16 of full scale apart in any channel. Luminance is convex along a piece, so its
+// maximum is always a sample and its minimum is missed by at most 0.0015: about 0.03 of a contrast
+// ratio for black text.
+function _gradColours(g,range){const s=range?_fix(g.stops):g.stops.map((x,i)=>({c:x.c,p:i})),lo=range?range[0]:0,hi=range?range[1]:s.length-1,out=[],mix=(a,b,f)=>a.map((v,k)=>v+(b[k]-v)*f);if(lo<s[0].p)out.push(s[0].c);if(hi>s[s.length-1].p)out.push(s[s.length-1].c);for(let i=1;i<s.length;i++){const a=s[i-1],b=s[i];if(b.p<lo||a.p>hi)continue;if(b.p<=a.p){out.push(a.c,b.c);continue;}const u=mix(a.c,b.c,(Math.max(lo,a.p)-a.p)/(b.p-a.p)),v=mix(a.c,b.c,(Math.min(hi,b.p)-a.p)/(b.p-a.p));let d=0;for(let k=0;k<3;k++)d=Math.max(d,Math.abs(v[k]-u[k]),Math.abs(v[k]-u[k]-(v[3]-u[3])));const n=Math.max(1,Math.ceil(16*d));for(let j=0;j<=n;j++)out.push(mix(u,v,j/n));}return out;}
+// The span of the gradient line that rectangle R covers, in a W x H gradient box. Null when the
+// geometry is not one this audit models.
+function _tRange(g,W,H,R){const cs=[[R.l,R.t],[R.r,R.t],[R.l,R.b],[R.r,R.b]],h=g.head.trim(),P=(t,len)=>{const v=String(t).match(/^(-?[\\d.]+)(%|px)$/);return v?(v[2]==='%'?parseFloat(v[1])/100*len:parseFloat(v[1])):null;};if(g.kind==='linear'){let A=Math.PI;if(h){const m=h.match(/^(-?[\\d.]+)(deg|rad|turn|grad)$/),to=h.match(/^to ((?:left|right|top|bottom)(?: (?:left|right|top|bottom))?)$/);if(m){const v=parseFloat(m[1]);A=m[2]==='deg'?v*Math.PI/180:m[2]==='rad'?v:m[2]==='turn'?v*2*Math.PI:v*Math.PI/200;}else if(to){const w=to[1].split(' '),sx=w.includes('right')?1:w.includes('left')?-1:0,sy=w.includes('bottom')?1:w.includes('top')?-1:0;A=Math.atan2(sx*(sy?H:1),-sy*(sx?W:1));}else return null;}const dx=Math.sin(A),dy=-Math.cos(A),len=Math.abs(W*dx)+Math.abs(H*dy);if(!(len>0))return null;const ts=cs.map(([x,y])=>((x-W/2)*dx+(y-H/2)*dy)/len+0.5);return [Math.min(...ts),Math.max(...ts)];}if(g.kind!=='radial')return null;const i=h.search(/(^|\\s)at\\s/),shape=(i<0?h:h.slice(0,i)).trim(),pos=i<0?[]:h.slice(i).trim().replace(/^at\\s+/,'').split(/\\s+/);if(pos.length>2)return null;const cx=pos.length?P(pos[0],W):W/2,cy=pos.length>1?P(pos[1],H):H/2;if(cx==null||cy==null)return null;const st=shape?shape.split(/\\s+/):[],kw=st.find(x=>/^(closest|farthest)-(side|corner)$/.test(x))||'farthest-corner',lens=st.filter(x=>P(x,1)!=null);if(st.some(x=>x!=='circle'&&x!=='ellipse'&&x!==kw&&!lens.includes(x)))return null;const circle=st.includes('circle')||lens.length===1,L=Math.abs(cx),Rt=Math.abs(W-cx),T=Math.abs(cy),B=Math.abs(H-cy);let rx,ry;if(lens.length){if(circle){if(lens.length!==1||!/px$/.test(lens[0]))return null;rx=ry=parseFloat(lens[0]);}else{if(lens.length!==2)return null;rx=P(lens[0],W);ry=P(lens[1],H);}}else{const f=kw.startsWith('farthest')?Math.max:Math.min;if(kw.endsWith('side')){rx=circle?f(L,Rt,T,B):f(L,Rt);ry=circle?rx:f(T,B);}else if(circle){rx=ry=f(Math.hypot(L,T),Math.hypot(Rt,T),Math.hypot(L,B),Math.hypot(Rt,B));}else{rx=f(L,Rt)*Math.SQRT2;ry=f(T,B)*Math.SQRT2;}}if(!(rx>0&&ry>0))return null;const nx=Math.min(Math.max(cx,R.l),R.r),ny=Math.min(Math.max(cy,R.t),R.b);return [Math.hypot((nx-cx)/rx,(ny-cy)/ry),Math.max(...cs.map(([x,y])=>Math.hypot((x-cx)/rx,(y-cy)/ry)))];}
+// A background-position or -size component as a percentage plus a length, so values in different units
+// interpolate the way calc() does. Null for anything else.
+function _lp(v){v=String(v).trim();if(v==='0')return {p:0,x:0};let m=v.match(/^(-?[\\d.]+)(%|px)$/);if(m)return m[2]==='%'?{p:+m[1],x:0}:{p:0,x:+m[1]};m=v.match(/^calc\\((-?[\\d.]+)% ([+-]) ([\\d.]+)px\\)$/);return m?{p:+m[1],x:(m[2]==='-'?-1:1)*m[3]}:null;}
+// Where an element's backgrounds can be: steps [from, to] of positions ([x list, y list]) between which
+// they move in a straight line. Not animated, the one step is its current position. Animated, each
+// keyframe to the next in 16 steps, since an easing that does not overshoot keeps the backgrounds on
+// the line between two keyframes. Null when an animation moves them in a way this audit does not model.
+function _bgStates(n,cs){const pos=(x,y)=>{const X=_split(x).map(_lp),Y=_split(y).map(_lp);return X.length&&Y.length&&X.every(Boolean)&&Y.every(Boolean)?[X,Y]:null;},ease=s=>/^(linear|ease|ease-in|ease-out|ease-in-out|step-start|step-end|steps\\(.*\\))$/.test(s)||(m=>!!m&&+m[2]>=0&&+m[2]<=1&&+m[4]>=0&&+m[4]<=1)(String(s).match(/^cubic-bezier\\(([^,]+),([^,]+),([^,]+),([^,]+)\\)$/));const an=(n.getAnimations?n.getAnimations():[]).filter(a=>a.effect&&a.effect.getKeyframes&&a.effect.getKeyframes().some(k=>Object.keys(k).some(p=>/^background/.test(p))));if(!an.length){const s=pos(cs.backgroundPositionX,cs.backgroundPositionY);return s&&[[s,s]];}if(an.length>1)return null;const e=an[0].effect,tm=e.getTiming(),kf=e.getKeyframes(),ks=[];if(tm.easing!=='linear'||tm.iterations!==Infinity||tm.delay>0||e.composite!=='replace'||kf.length<2||kf[0].computedOffset!==0||kf[kf.length-1].computedOffset!==1)return null;for(const k of kf){if(Object.keys(k).some(p=>!/^(offset|computedOffset|easing|composite|backgroundPositionX|backgroundPositionY)$/.test(p))||!ease(k.easing)||!/^(auto|replace)$/.test(k.composite))return null;for(const p of ['backgroundPositionX','backgroundPositionY'])if((p in k)!==(p in kf[0]))return null;const s=pos('backgroundPositionX' in k?k.backgroundPositionX:cs.backgroundPositionX,'backgroundPositionY' in k?k.backgroundPositionY:cs.backgroundPositionY);if(!s||(ks.length&&(s[0].length!==ks[0][0].length||s[1].length!==ks[0][1].length)))return null;ks.push(s);}const mix=(a,b,f)=>a.map((L,d)=>L.map((c,j)=>({p:c.p+(b[d][j].p-c.p)*f,x:c.x+(b[d][j].x-c.x)*f}))),out=[];for(let i=1;i<ks.length;i++)for(let j=0;j<16;j++)out.push([mix(ks[i-1],ks[i],j/16),mix(ks[i-1],ks[i],(j+1)/16)]);return out;}
+// The colours of gradient layer i behind the text during one step iv: the text box relative to the
+// layer's tile at both ends of the step, and everything between, which their bounding box contains.
+// Without a step, or where the geometry is not one this audit models, all of the gradient's colours;
+// a layer that does not repeat may then also leave the text over whatever is below it.
+function _gradCands(g,n,cs,i,tr,iv){let range=null;if(iv&&!g.rep&&!g.hint&&g.pct&&_at(cs.backgroundOrigin,i)==='padding-box'&&_at(cs.backgroundAttachment,i)==='scroll'&&n.offsetWidth){const b=n.getBoundingClientRect(),W=n.clientWidth,H=n.clientHeight,sz=_at(cs.backgroundSize,i).split(' '),fit=/^(cover|contain)$/.test(sz[0]),dim=(v,len)=>{if(fit||!v||v==='auto')return len;const c=_lp(v);return c?c.p/100*len+c.x:NaN;},Wi=dim(sz[0],W),Hi=dim(sz[1],H);if(W>0&&H>0&&Wi>0&&Hi>0&&Math.abs(b.width-n.offsetWidth)<1&&Math.abs(b.height-n.offsetHeight)<1){const x0=b.left+n.clientLeft,y0=b.top+n.clientTop,R={l:Math.max(0,tr.left-x0),t:Math.max(0,tr.top-y0),r:Math.min(W,tr.right-x0),b:Math.min(H,tr.bottom-y0)},at=s=>{const X=s[0][i%s[0].length],Y=s[1][i%s[1].length],ox=X.p/100*(W-Wi)+X.x,oy=Y.p/100*(H-Hi)+Y.x;return {l:R.l-ox,t:R.t-oy,r:R.r-ox,b:R.b-oy};},A=at(iv[0]),B=at(iv[1]),U={l:Math.min(A.l,B.l),t:Math.min(A.t,B.t),r:Math.max(A.r,B.r),b:Math.max(A.b,B.b)};if(R.l<=R.r&&R.t<=R.b&&U.l>=-0.5&&U.t>=-0.5&&U.r<=Wi+0.5&&U.b<=Hi+0.5)range=_tRange(g,Wi,Hi,U);}}const out=_gradColours(g,range);if(!range&&!/^repeat( repeat)?$/.test(_at(cs.backgroundRepeat,i)))out.push([0,0,0,0]);return out;}
+// One element's own paint, top layer first, as candidate colours. A string names a backdrop whose
+// pixels this audit cannot read. An SVG text halo (paint-order:stroke) is painted directly under
+// the glyphs, so it is their backdrop. Gradient layers are composed one step at a time, so colours
+// that two moving layers never show together are never combined.
+function _paint(n,el,tr){if(n.classList&&n.classList.contains('footage-layer'))return 'footage';if(/^(img|video|canvas|iframe|object|embed|image)$/i.test(n.tagName))return 'image';const cs=getComputedStyle(n),op=parseFloat(cs.opacity),top=[],grads=[],under=[],alpha=(c,o)=>{const k=parseFloat(o);c[3]*=Number.isFinite(k)?k:1;return _pm(c);};if(!(op>0))return [];if(n===el&&/^stroke/.test(cs.paintOrder)&&cs.stroke!=='none'&&parseFloat(cs.strokeWidth)>0){const s=_rgba(cs.stroke);if(!s)return 'paint-server';top.push([alpha(s,cs.strokeOpacity)]);}const imgs=_split(cs.backgroundImage);for(let i=0;i<imgs.length;i++){if(imgs[i]==='none')continue;if(!/gradient\\(/.test(imgs[i]))return 'image';const g=_grad(imgs[i]);if(!g)return 'gradient';grads.push([g,i]);}const bg=_rgba(cs.backgroundColor);if(!bg)return 'colour';if(bg[3]>0)under.push([_pm(bg)]);if(typeof SVGGeometryElement!=='undefined'&&n instanceof SVGGeometryElement){const alts=[];for(const [p,o] of [[cs.fill,cs.fillOpacity],[cs.stroke,cs.strokeOpacity]]){if(p==='none')continue;const c=_rgba(p);if(!c)return 'paint-server';alts.push(alpha(c,o));}if(alts.length)under.push(alts);}const seen=new Set(),paint=[];for(const iv of (grads.length&&_bgStates(n,cs))||[null]){let p=[[0,0,0,0]];for(const l of [...top,...grads.map(([g,i])=>_gradCands(g,n,cs,i,tr,iv)),...under]){p=_over(p,l);if(!p)return 'complex';}for(const c of p){const k=c.map(v=>Math.round(v*1024)).join();if(!seen.has(k)){seen.add(k);paint.push(c);}}if(paint.length>16384)return 'complex';}return op<1?paint.map(c=>c.map(v=>v*op)):paint;}
+// The element stacks under the text at nine points across it. A point that misses the text, such as
+// a gap between SVG glyphs, says nothing about what is under it: what it lists may be painted above
+// the text or below it, and without the text in the list nothing separates the two. So when no point
+// on screen lands on the text, its backdrop is unsampled, a reason in place of a stack. A box with no
+// area paints no text, and a box none of whose points is on screen is taken to be out of the frame.
+function _stacks(el){const r=el.getBoundingClientRect(),hit=[],add=(a,st)=>{if(!a.some(o=>o.length===st.length&&o.every((n,k)=>n===st[k])))a.push(st);};let seen=false;if(!(r.width>0&&r.height>0))return hit;for(const fy of [.15,.5,.85])for(const fx of [.15,.5,.85]){const hits=document.elementsFromPoint(r.left+r.width*fx,r.top+r.height*fy),i=hits.indexOf(el);if(i>=0)add(hit,hits.slice(i));else if(hits.length)seen=true;}return hit.length||!seen?hit:['unsampled'];}
+// Every colour that can be behind the text in one stack, or the reason none can be certified. The
+// stacks under one text share elements, and memo keeps each element's paint for that text.
+function _backdrop(st,el,tr,memo){if(typeof st==='string')return st;let acc=[[0,0,0,0]];for(const n of st){let p=memo.get(n);if(p===undefined){p=_paint(n,el,tr);memo.set(n,p);}if(typeof p==='string')return p;if(!p.length)continue;acc=_over(acc,p);if(!acc||acc.length>16384)return 'complex';if(acc.every(c=>c[3]>=0.999))return acc.map(c=>[c[0]/c[3]*255,c[1]/c[3]*255,c[2]/c[3]*255]);}return 'unknown';}
+// Makes every element that is not hit-testable by its own pointer-events, including one that only
+// inherits none, hit-testable with an inline pointer-events:auto !important, which outranks every
+// author declaration, inline or not, and every animation. On SVG, auto hits a shape only where it
+// paints. Returns what puts each style attribute back exactly as it was. Chrome writes a style
+// attribute set through el.style only when it is next read, and removing it before then leaves an
+// empty one behind, so an attribute that was absent is set empty and then removed. All reads come
+// before any write, so style is recomputed once, and the audit is synchronous, so no frame is
+// painted between.
+function _hittable(){const saved=[];for(const n of document.querySelectorAll('*'))if(n.style&&getComputedStyle(n).pointerEvents!=='auto')saved.push([n,n.getAttribute('style')]);for(const [n] of saved)n.style.setProperty('pointer-events','auto','important');return ()=>{for(const [n,s] of saved){n.setAttribute('style',s===null?'':s);if(s===null)n.removeAttribute('style');}};}
+window.auditLegibility=function(){const out=[];const stageH=(document.getElementById('stage')||document.body).clientHeight||1080;const minPx=Math.max(14,stageH*0.014);const restore=_hittable();try{document.querySelectorAll('.sl.on .kicker,.sl.on .title,.sl.on .subtitle,.sl.on .body,.sl.on .label,.sl.on .value,.sl.on .text,.sl.on .lt-title,.sl.on .lt-sub,.sl.on svg text').forEach(el=>{if(!el.textContent.trim())return;const eid=el.id||el.className||el.tagName.toLowerCase();const cs=getComputedStyle(el);if(cs.visibility==='hidden'||parseFloat(cs.opacity)<0.5)return;const fg=_rgb(cs.color)||_rgb(cs.fill)||_hex(cs.fill);const px=parseFloat(cs.fontSize);if(px&&px<minPx)out.push({id:eid,reason:'text-too-small',px:Math.round(px),minPx:Math.round(minPx)});if(!fg)return;const fw=cs.fontWeight==='bold'?700:(cs.fontWeight==='normal'?400:(parseInt(cs.fontWeight,10)||400));const large=px>=stageH*0.033||(fw>=600&&px>=stageH*0.026);const need=large?3.0:4.5;const tr=el.getBoundingClientRect(),L1=_lum(...fg);let worst=Infinity,unverified=null;const memo=new Map();for(const st of _stacks(el)){const b=_backdrop(st,el,tr,memo);if(typeof b==='string'){unverified=unverified||b;continue;}for(const c of b){const L2=_lum(...c);worst=Math.min(worst,(Math.max(L1,L2)+0.05)/(Math.min(L1,L2)+0.05));}}if(worst<need)out.push({id:eid,reason:'low-contrast',ratio:Math.floor(worst*10)/10,need});else if(unverified)out.push({id:eid,reason:'contrast-unverified',backdrop:unverified});});}finally{restore();}return out;};
 function show(el){if(el)el.classList.add('show');}
 // Deterministic effect driver: GSAP flourishes must be a pure function of VIDEO time, not wall-clock, so
 // seek(t)/frame capture yields the same pixels regardless of worker scheduling. Each effect tween is
@@ -800,7 +901,11 @@ const fxDone=new Set();function once(tr){const k=tr.kind+'|'+tr.a+'|'+tr.t;if(fx
 function fxHost(tr,id){const el=id&&document.getElementById(id);return (el&&el.closest('.sl'))||document.getElementById('seg-'+((tr.s||1)-1));}
 function fxRect(id){const el=document.getElementById(id);if(!el)return null;const host=el.closest('.sl');if(!host)return null;const hb=host.getBoundingClientRect(),r=el.getBoundingClientRect();return{el,host,hb,x:r.left-hb.left,y:r.top-hb.top,w:r.width,h:r.height};}
 function spotlight(id,tr){const host=fxHost(tr,id);if(!host)return;if(tr.payload&&tr.payload.release){host.querySelectorAll('.fx-spot').forEach(n=>n.remove());return;}const r=fxRect(id);if(!r)return;show(r.el);const pad=Math.min(r.w,r.h)*0.25+14,d=document.createElement('div');d.className='fx-spot';d.style.left=(r.x-pad)+'px';d.style.top=(r.y-pad)+'px';d.style.width=(r.w+2*pad)+'px';d.style.height=(r.h+2*pad)+'px';host.appendChild(d);__sch(gsap.fromTo(d,{opacity:0},{opacity:1,duration:.4}));}
-function codeFocus(id,tr){const p=tr.payload||{};if(p.release){document.querySelectorAll('.codeblock.is-dim').forEach(b=>{b.classList.remove('is-dim');b.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off','is-focus'));});return;}
+function codeFocus(id,tr){const p=tr.payload||{};if(p.release){document.querySelectorAll('.codeblock.is-dim').forEach(b=>{
+/* the dimmed fields fade back over video time; dropping the classes alone jumped them to full
+   opacity in one frame. Only a field that shows the dim fades from it. A field with an inline
+   opacity is held there by its focus tween, and starting it from the dim value would flicker it. */
+const off=Array.from(b.querySelectorAll('.j-entry.is-off')).filter(n=>!n.style.opacity);b.classList.remove('is-dim');b.querySelectorAll('.j-entry').forEach(n=>n.classList.remove('is-off','is-focus'));if(off.length)__sch(gsap.fromTo(off,{opacity:${CODE_DIM_OPACITY}},{opacity:1,duration:.45,ease:'power2.out',clearProps:'opacity'}));});return;}
 const el=document.getElementById(id);if(!el)return;const blk=el.closest('.codeblock');if(!blk)return;show(blk);
 /* showing a field cannot show its hidden .el ancestor, so walk up */
 for(let a=blk;a;a=a.parentElement){if(a.classList&&a.classList.contains('el'))show(a);if(a.classList&&a.classList.contains('sl'))break;}
@@ -828,7 +933,9 @@ function pulsePath(tr){const chain=(tr.payload&&tr.payload.chain&&tr.payload.cha
 function stepBadge(id,tr){const r=fxRect(id);if(!r)return;show(r.el);const b=document.createElement('div');b.className='stepbadge';b.textContent=String((tr.payload&&tr.payload.stepIndex)||'');b.style.left=r.x+'px';b.style.top=r.y+'px';r.host.appendChild(b);__sch(gsap.fromTo(b,{scale:0},{scale:1,duration:.4,ease:'back.out(2)'}));}
 function progressBar(tr){const host=fxHost(tr,null);if(!host)return;let bar=host.querySelector('.progress');if(!bar){bar=document.createElement('div');bar.className='progress';const i=document.createElement('i');bar.appendChild(i);host.appendChild(bar);}const v=Math.max(0,Math.min(1,(tr.payload&&tr.payload.value!=null)?tr.payload.value:1));__sch(gsap.to(bar.querySelector('i'),{width:(v*100)+'%',duration:.5,ease:'power2.out'}));}
 function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'codeFocus':return void(once(tr)&&codeFocus(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
-const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:segments[i].audioEnd+LINGER});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ''}
+// A slide lingers LINGER seconds past its narration, but never into the next narration. Uncapped,
+// a seam shorter than LINGER showed the next slide late, after its opening triggers had fired unseen.
+const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:Math.min(segments[i].audioEnd+LINGER,segments[i+1].audioStart)});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ''}
 // --- footage frame injection (real user clip). Maps absolute time -> extracted frame file and swaps
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.
 // Preview calls it fire-and-forget from fireTriggersUpTo; the capture script awaits it before screenshot.
@@ -840,7 +947,7 @@ let __lastFireT=0;
 // __drv tweens) and injected overlays (.fx-spot/.callout/.rollover-tip/.stepbadge/.flow-dot/.progress)
 // would otherwise persist and once()/fired would short-circuit re-creation. Reset them, then re-apply
 // triggers up to the new time so the frame is reconstructed deterministically from scratch.
-function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>n.remove());document.querySelectorAll('.show,.clicked,.hovered,.pulsing').forEach(el=>el.classList.remove('show','clicked','hovered','pulsing'));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
+function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>n.remove());document.querySelectorAll('.show,.clicked,.hovered,.pulsing,.is-marked,.is-dim,.is-off,.is-focus').forEach(el=>el.classList.remove('show','clicked','hovered','pulsing','is-marked','is-dim','is-off','is-focus'));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
 function fireTriggersUpTo(time){if(time<__lastFireT-0.0005)__resetSeekState();__lastFireT=time;window.__t=time;let target=1;for(const s of slideShowTimes)if(time>=s.showAt)target=s.slide;setSlide(target);for(const tr of elementTriggers)if(time>=tr.t)apply(tr);window.__syncTweens(time);if(window.__footage)window.__setFootageFrame(time*1000);}
 window.fireTriggersUpTo=fireTriggersUpTo;
 // Deterministic per-frame visual-state signature for capture-time dedup (dedupHolds). Two frames are
@@ -862,7 +969,7 @@ window.__frameSig=function(frameNo){
   p.push('S'+(on?on.id:'-')); // on-screen slide identity (covers inter-segment flips + end-card)
   const ids=sel=>Array.from(document.querySelectorAll(sel)).map((el,i)=>el.id||('#'+i)).sort().join(',');
   p.push('V'+ids('.show')); // every revealed/shown element (reveal/drawEdge + effect-shown elements)
-  p.push('C'+ids('.clicked')+'|'+ids('.hovered')+'|'+ids('.pulsing')); // discrete stateful classes
+  p.push('C'+ids('.clicked')+'|'+ids('.hovered')+'|'+ids('.pulsing')+'|'+ids('.is-marked')+'|'+ids('.is-dim')+'|'+ids('.is-off')+'|'+ids('.is-focus')); // discrete stateful classes, incl. held marks + code-focus dimming
   const ov=[];document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>ov.push(n.className+':'+(n.textContent||'')+':'+(n.style.left||'')+','+(n.style.top||'')+','+(n.style.width||'')+','+(n.style.height||'')+','+(n.style.transform||'')+','+(n.style.opacity||'')));
   const pw=[];document.querySelectorAll('.progress i').forEach(i=>pw.push(i.style.width||''));
   p.push('O'+ov.sort().join(';')+'|'+pw.join(',')); // dynamic overlays: EVERY inline pixel-affecting prop

@@ -1,6 +1,7 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from 'node:fs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment } from './silent-segment.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -21,6 +22,13 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
 
 const { values, projectDir, apply, replace } = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
 const t = JSON.parse(fs.readFileSync(guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file')), 'utf8'));
+// A silent segment's caption is its accessibility cue, and the storyboard is where an author
+// reviews it. A blank caption rendered as an empty cue under the SILENT label and exited 0.
+// Refuse the declarations validate-timing, voice and write-subtitles refuse, before planning.
+guard(() => {
+  const problems = (t.segments || []).filter(isSilentSegment).flatMap((s) => silentSegmentProblems(s));
+  if (problems.length) throw new CliError(problems.join('\n'));
+});
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const PAL = ['#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C'];
 const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}`;
@@ -28,7 +36,11 @@ const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 
 const panel = (s, i) => {
   const v = s.visual || {}, ca = PAL[i % PAL.length];
   const win = ((s.endMs - s.startMs) / 1000).toFixed(1);
-  const words = s.voiceoverText.trim().split(/\s+/).length;
+  // `''.split(/\s+/)` is `['']` — length 1 — so a segment with no narration reported ONE
+  // word. A number that looks measured and is not is worse than no number, because the
+  // storyboard is what an author reviews the pacing against.
+  const words = wordsInSegment(s);
+  const silent = isSilentSegment(s);
 
   const cards = (v.items || []).map((it, j) => `
     <div class="card" style="border-top:4px solid ${PAL[j % PAL.length]}">
@@ -75,12 +87,12 @@ const panel = (s, i) => {
       </div>
       <div class="meta">
         <b>${clock(s.startMs)} – ${clock(s.endMs)}</b>
-        <span>${win}s · ${words} words</span>
+        <span>${win}s · ${silent ? 'silent' : `${words} words`}</span>
         <span class="mode">${esc(v.mode || 'narrative')}${v.layout ? ' / ' + esc(v.layout) : ''}</span>
       </div>
     </header>
     <div class="grid2">
-      <div class="vo"><div class="volabel">VOICEOVER</div><p>${esc(s.voiceoverText)}</p><div class="claims">${claims}</div></div>
+      <div class="vo"><div class="volabel">${silent ? 'SILENT — ACCESSIBILITY CUE' : 'VOICEOVER'}</div><p>${silent ? esc(silentCaption(s)) : esc(s.voiceoverText)}</p><div class="claims">${claims}</div></div>
       <div class="viz">${diagram || shots || `<div class="cards">${cards}</div>`}</div>
     </div>
   </section>`;

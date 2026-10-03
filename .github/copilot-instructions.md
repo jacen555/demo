@@ -43,6 +43,7 @@ path that determined it in every report.
 | `service-builder` / `service-reviewer` | Services and shared libraries | `services/**`, `libs/**` |
 | `tooling-builder` / `tooling-reviewer` | CLIs, generators, PowerShell | `tools/**`, `scripts/**` |
 | `researcher` | Investigates a technology, builds a spike, writes an ADR | `spike/**`, `docs/adr/` |
+| `video-coach` | Content coach — reviews a video's script and storyboard **before** render; flags objective defects, advises on craft, never waives. Advisory only (ADR 0006) | demo and educational videos |
 
 Builders and reviewers are **parameterized by domain** — the orchestrator passes the
 domain id and the builder resolves paths and commands from `.github/domains.yaml`. When a

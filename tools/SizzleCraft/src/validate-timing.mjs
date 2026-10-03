@@ -11,12 +11,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { EXIT, CliError, runCli, requireExistingFile, requireFiniteNumber, narrationFingerprint } from './cli-support.mjs';
+import { EXIT, CliError, runCli, requireExistingFile, requireFiniteNumber, narrationFingerprint, createBoundary, resolveWithinRoot } from './cli-support.mjs';
+import {
+  isSilentSegment, silentSegmentProblems, silentDurationMs, silentRecordState, hasAudioFile, wordsInSegment,
+  voiceBlocker, remixBlocker, gatedRemedy, stageRefusal, startSentence, sameIdentity, sameName, canonicalName,
+} from './silent-segment.mjs';
 
 const SHIPPED_SCHEMA = fileURLToPath(new URL('./timing-schema.json', import.meta.url));
 
-/** Words in a segment's narration, counted the same way voice.mjs counts them. */
-const wordsIn = (s) => String(s?.voiceoverText ?? '').trim().split(/\s+/).filter(Boolean).length;
+/**
+ * Words in a segment's narration, counted the same way voice.mjs counts them.
+ *
+ * Imported rather than reimplemented: calibrationLineage compares THIS count against the
+ * `words` recorded by the calibration builder, so two copies of the rule that drifted
+ * apart would report every project as stale on evidence that is really just two different
+ * definitions of a word.
+ */
+const wordsIn = wordsInSegment;
 
 /**
  * Does this calibration measure THIS script?
@@ -55,7 +66,13 @@ const wordsIn = (s) => String(s?.voiceoverText ?? '').trim().split(/\s+/).filter
  * measured rate stays the best available predictor (same voice, same speed), so it is used
  * as a PREDICTION against the now-stale windows, with the safety margin restored.
  *
- * @returns {{covers: boolean, reason?: string}}
+ * Declared silence is bound in too: each row records whether the segment was measured as
+ * silence, and a segment silenced or un-silenced since then is reported as a DECLARATION
+ * change (`declaration`), because the remedy differs — a silence edit is S4 work, while a
+ * segment that now expects narration needs the voice stage. A silent segment's WINDOW, on
+ * the other hand, is not compared: it is authored, and S4 regenerates its silence from it.
+ *
+ * @returns {{covers: boolean, reason?: string, unproven?: boolean, declaration?: 'silenced'|'unsilenced', hasText?: boolean, index?: number}}
  */
 function calibrationLineage(segs, calibrationSegments) {
   if (!Array.isArray(calibrationSegments) || calibrationSegments.length === 0) {
@@ -71,6 +88,10 @@ function calibrationLineage(segs, calibrationSegments) {
       reason: `the timeline has ${segs.length} segment(s) but the calibration measured ${calibrationSegments.length}`,
     };
   }
+  // A silence edit found on the way is remembered rather than returned: its advice is "no
+  // re-voice", so returning it first would mask a narration change further on that DOES
+  // need the voice stage. Every other mismatch still returns at once.
+  let silenced = null;
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
     const c = calibrationSegments[i];
@@ -89,6 +110,25 @@ function calibrationLineage(segs, calibrationSegments) {
           + `— segments were renamed or reordered since the voice stage ran`,
       };
     }
+    // The declaration is part of what was measured. voice.mjs marks a silent segment's row
+    // `silent: true` and a narrated one's not at all, so a row WITHOUT the flag measured
+    // narration: absence is not permission. Checked before the text, because a segment
+    // silenced or un-silenced since the run is a declaration change first, and the remedy
+    // depends on which way it went.
+    const silentNow = isSilentSegment(s);
+    if (silentNow !== (c?.silent === true)) {
+      if (!silentNow) {
+        return {
+          covers: false, declaration: 'unsilenced', hasText: wordsIn(s) > 0, index: i,
+          reason: `segment "${s.id}" is no longer declared silent, but the calibration measured it as silence`,
+        };
+      }
+      silenced ??= {
+        covers: false, declaration: 'silenced',
+        reason: `segment "${s.id}" is declared silent now, but the calibration measured it as narration`,
+      };
+      continue;
+    }
     const words = wordsIn(s);
     const chars = String(s.voiceoverText ?? '').length;
     if (Number(c.words) !== words) {
@@ -97,10 +137,18 @@ function calibrationLineage(segs, calibrationSegments) {
     if (Number(c.chars) !== chars) {
       return { covers: false, reason: `segment "${s.id}" text changed since it was measured (${chars} chars now, ${c.chars} then)` };
     }
-    if (Number(c.clipMs) !== s.endMs - s.startMs) {
+    // A declared silent segment's window is AUTHORED, and its silence is regenerated from
+    // it by S4 (remix, concat) with no re-voice, so a silence edit changes the window and
+    // nothing the calibration measured: the calibration measures narration, and a silent
+    // row never enters the rate. Comparing that window here would call every silence edit
+    // a narration change and send the author to re-synthesise speech that did not change.
+    if (!silentNow && Number(c.clipMs) !== s.endMs - s.startMs) {
       return { covers: false, reason: `segment "${s.id}" window is ${s.endMs - s.startMs}ms but the measured clip was ${c.clipMs}ms` };
     }
     if (c.textHash === undefined || c.textHash === null) {
+      // With a silence edit already found, something DOES disagree, so "unproven" would be
+      // false; the remaining rows are still checked for a narration change.
+      if (silenced) continue;
       return {
         covers: false,
         // Distinguished from a real mismatch: this calibration may describe the current
@@ -119,7 +167,61 @@ function calibrationLineage(segs, calibrationSegments) {
       };
     }
   }
-  return { covers: true };
+  return silenced ?? { covers: true };
+}
+
+// The timeline as it would be once segment `index` is given narration text, for asking
+// whether the voice stage would then run. The text itself is a placeholder: the stage is
+// only asked whether it would refuse, and no stage reads this copy.
+function withNarrationText(timing, index) {
+  const copy = structuredClone(timing);
+  copy.segments[index].voiceoverText = 'narration';
+  return copy;
+}
+
+/**
+ * Where --timing selected a file other than the project's timing.json, the sentence that
+ * says so in place of a stage; otherwise null. Every stage reads the project's timing.json
+ * and only this check takes --timing, so a stage named for another file would act on a
+ * different timeline, or on none — and whether it would run on the file installed is for
+ * the next run of this check to decide, on the timeline the stages will read.
+ *
+ * "The same file" is decided once, by canonical name: the name the platform gives each
+ * file with every link followed, compared as the platform compares names. A case variant,
+ * an 8.3 short name and an in-root link of timing.json all have that name: each is the
+ * file the stages read. Once a stage replaces it, a case variant or a link names the new
+ * file, and a short name names it or nothing. A hard link has a name of its own: it is
+ * another entry for the file, and a stage that publishes timing.json by rename leaves it
+ * holding the old timeline. So a hard link, found by identity where the volume reports
+ * file IDs, gets a sentence of its own, with no install step — installing it would copy
+ * the file onto itself. Anything not shown to be either is treated as another file.
+ */
+function elsewhereRemedy(projectDir, timingPath, chosen) {
+  if (chosen === undefined) return null;
+  const projectTiming = path.join(createBoundary(projectDir).root, 'timing.json');
+  let present = true;
+  try {
+    present = fs.lstatSync(projectTiming, { throwIfNoEntry: false }) !== undefined;
+  } catch { /* could not be inspected: assume there is one, so its replacement is not hidden */ }
+  if (present) {
+    try {
+      const resolved = resolveWithinRoot(projectDir, 'timing.json', 'timing file');
+      if (sameName(canonicalName(resolved), canonicalName(timingPath))) return null;
+      const idOf = (p) => {
+        const st = fs.statSync(p, { bigint: true });
+        return st.ino === 0n ? null : st;
+      };
+      if (sameIdentity(idOf(resolved), idOf(timingPath))) {
+        return `${timingPath} is a hard link to ${resolved}, the file the stages read. A stage that rewrites the ` +
+          'timeline can replace that file with a new one rather than write through it, which would leave ' +
+          `${timingPath} holding the timeline this run checked. Run validate-timing again without --timing: that run ` +
+          'decides the stage, on the file the stages read';
+      }
+    } catch { /* not shown to be the same file */ }
+  }
+  return `the stages read ${projectTiming}, not ${timingPath}. To act on the file this run checked, install it as ` +
+    `timing.json${present ? ' (replacing the timing.json there now)' : ''} and run validate-timing again without ` +
+    '--timing: that run decides the stage';
 }
 
 const USAGE = `
@@ -168,6 +270,10 @@ await runCli(async () => {
 
   const projectDir = path.resolve(values.project ?? process.cwd());
   const timingPath = requireExistingFile(projectDir, values.timing ?? 'timing.json', 'timing file');
+  // The stages read the project's timing.json, whatever file this run checks. Where that is
+  // another file, no stage is named as the step for it: the stage would act on a different
+  // timeline, or on none.
+  const elsewhere = elsewhereRemedy(projectDir, timingPath, values.timing);
 
   let timing;
   try {
@@ -178,6 +284,13 @@ await runCli(async () => {
 
   // Every check appends here; the exit code is decided once, at the end, from its contents.
   const failures = [];
+
+  // A remedy names a stage as the step only where that stage would run on this project
+  // (see silent-segment.mjs), and otherwise says why it refuses. Each stage is asked once,
+  // and only if a remedy names it.
+  const gate = {};
+  const voiceGate = () => (gate.voice !== undefined ? gate.voice : (gate.voice = voiceBlocker(projectDir, timing)));
+  const remixGate = () => (gate.remix !== undefined ? gate.remix : (gate.remix = remixBlocker(projectDir, timing)));
 
   // --- Schema -------------------------------------------------------------
   if (values['no-schema']) {
@@ -213,7 +326,9 @@ await runCli(async () => {
     for (const field of ['startMs', 'endMs']) {
       const value = s?.[field];
       if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-        shapeProblems.push(`${where}.${field} is ${JSON.stringify(value)} — must be a finite number >= 0`);
+        // A number is shown as it is: JSON.stringify writes Infinity, which JSON.parse reads
+        // from 1e999, as null.
+        shapeProblems.push(`${where}.${field} is ${typeof value === 'number' ? value : JSON.stringify(value)} — must be a finite number >= 0`);
       }
     }
     if (typeof s?.startMs === 'number' && typeof s?.endMs === 'number' && Number.isFinite(s.startMs) && Number.isFinite(s.endMs) && s.endMs <= s.startMs) {
@@ -229,6 +344,104 @@ await runCli(async () => {
     console.log('word budget: NOT evaluated — segment timings are malformed');
     console.error(`\nFAILED: ${failures.join('; ')}`);
     return EXIT.FAILED;
+  }
+
+  // --- Declared silence ---------------------------------------------------
+  // Checked here, before anything reasons about rates, because a malformed declaration
+  // makes every later answer meaningless: a silent segment with narration text has no
+  // defensible word count, and one with a blank caption renders an empty caption box that
+  // nothing downstream can detect. Reported as its own block so the reason is never
+  // mistaken for a narration problem.
+  const silentSegs = segs.filter(isSilentSegment);
+  const declarationProblems = silentSegs.flatMap((s) => silentSegmentProblems(s));
+  // A silent segment's record must describe silence too. Measured words on it are the
+  // record of speech — typically a narrated segment declared silent and then concatenated
+  // without remix, the S4 stage that regenerates its silence AND rewrites the record.
+  // A failure rather than a note: the timeline contradicts itself, stages that trust the
+  // record would reason about speech that is not in the track, and the fix costs no TTS.
+  // Counted, never quoted: a diagnostic describes the file's shape, not its content.
+  const staleRecords = silentSegs.filter((s) => Array.isArray(s.audio?.words) && s.audio.words.length > 0);
+  // A silent window is authored and the silence in the track is generated from it, so a
+  // record whose generated length is not the window means the window was edited after that
+  // silence was made and nothing has reflowed the timeline onto it since: the record, and
+  // any voice track built before the edit, still describe the old length. remix.mjs keeps
+  // or resets plannedDurationMs on the same test, from the same function, so the two stages
+  // cannot define "edited since" differently. A record that is there but gives no length
+  // vouches for no window, so it fails too; both stages that generate a silent clip record
+  // its length. Only a segment with no record at all — declared after voice ran and filled
+  // only by concat, say — has nothing to disagree with: it is reported as unchecked, and is
+  // not counted as OK. Only a well-formed declaration is compared: a malformed one is
+  // reported above, and its window may not be a length at all.
+  const wellFormed = silentSegs.filter((s) => silentSegmentProblems(s).length === 0);
+  const recordStates = new Map(wellFormed.map((s) => [s, silentRecordState(s)]));
+  const inState = (state) => wellFormed.filter((s) => recordStates.get(s).state === state);
+  const unreflowed = inState('differs');
+  const incomplete = inState('unusable');
+  const unchecked = inState('absent');
+  const checked = inState('matches');
+  // The stage that can rewrite a silent segment's record. remix does it with no re-voice,
+  // but it re-measures only clips that exist and refuses a segment whose record names none,
+  // so for that one the remedy is the voice stage. Either is named as the step only where
+  // it would run, and neither where this run checked a file the stages do not read.
+  const repair = (s, what) => {
+    if (elsewhere !== null) return `${startSentence(elsewhere)}.`;
+    if (hasAudioFile(s)) {
+      const remix = remixGate();
+      return remix === null ? `Run remix.mjs (S4): it ${what}.`
+        : `${startSentence(gatedRemedy(remix, { stem: `remix.mjs (S4) ${what}` }))}.`;
+    }
+    const voice = voiceGate();
+    return voice === null
+      ? 'Its record names no clip, so no stage that works from existing audio can repair it: run voice.mjs (S3), ' +
+        'which generates its silence and writes a complete record (re-synthesising the narration as it does).'
+      : 'Its record names no clip, so no stage that works from existing audio can repair it. ' +
+        `${startSentence(gatedRemedy(voice, { stem: 'voice.mjs (S3) generates its silence and writes a complete record' }))}.`;
+  };
+  if (declarationProblems.length > 0) {
+    console.log('declared silence: INVALID');
+    for (const p of declarationProblems) console.log(`  ${p}`);
+    failures.push(`${declarationProblems.length} malformed silence declaration(s)`);
+  }
+  if (staleRecords.length > 0) {
+    console.log('declared silence: STALE RECORD');
+    for (const s of staleRecords) {
+      console.log(
+        `  segment "${s.id}" is declared silent but its audio record still carries ${s.audio.words.length} measured ` +
+        'word(s) — a record of speech, which a silent segment does not have. ' + repair(s,
+        "regenerates the segment's silence from its authored window and rewrites the record, with no re-voice"));
+    }
+    failures.push(`${staleRecords.length} declared-silent segment record(s) still carrying measured words`);
+  }
+  if (unreflowed.length > 0) {
+    console.log('declared silence: NOT REFLOWED');
+    for (const s of unreflowed) {
+      console.log(
+        `  segment "${s.id}" window is ${silentDurationMs(s)}ms, but its audio record describes ${s.audio.durationMs}ms of ` +
+        'generated silence — the window was edited after that silence was made, and the timeline has not been reflowed ' +
+        'onto it since. ' + repair(s, 'regenerates the silence from the authored window, reflows ' +
+        'the timeline and rewrites the record, with no re-voice'));
+    }
+    failures.push(`${unreflowed.length} declared-silent segment window(s) edited since their silence was generated`);
+  }
+  if (incomplete.length > 0) {
+    console.log('declared silence: INCOMPLETE RECORD');
+    for (const s of incomplete) {
+      console.log(
+        `  segment "${s.id}" is declared silent, but ${recordStates.get(s).why} — so nothing says how long the silence ` +
+        `generated for it is, and its ${silentDurationMs(s)}ms window cannot be checked. Every stage that generates ` +
+        'its clip records its length. ' + repair(s, 'regenerates the silence from the ' +
+        'authored window, reflows the timeline and rewrites the record, with no re-voice'));
+    }
+    failures.push(`${incomplete.length} declared-silent segment record(s) with no usable generated length`);
+  }
+  const silenceFailed = declarationProblems.length > 0 || staleRecords.length > 0 || unreflowed.length > 0 || incomplete.length > 0;
+  if (!silenceFailed && checked.length > 0) {
+    console.log(`declared silence: OK (${checked.length} segment(s): ${checked.map((s) => s.id).join(', ')})`);
+  }
+  if (unchecked.length > 0) {
+    console.log(
+      `declared silence: UNCHECKED (${unchecked.length} segment(s): ${unchecked.map((s) => s.id).join(', ')}) — ` +
+      'no audio record yet, so there is no generated length to check the window against');
   }
 
   // --- Contiguity ---------------------------------------------------------
@@ -267,7 +480,7 @@ await runCli(async () => {
   }
 
   // --- Word rate ----------------------------------------------------------
-  const { rate, margin, marginConfigured, source, measuredRate, calibrationSegments } = resolveWordRate(timing, projectDir);
+  const { rate, margin, marginConfigured, source, measuredRate, calibrationSegments } = resolveWordRate(timing, projectDir, elsewhere);
 
   // Windows measured, or authored estimates? voice.mjs sets
   // `seg.endMs = seg.startMs + <measured clip duration>` and records that same duration at
@@ -275,10 +488,27 @@ await runCli(async () => {
   // real audio. This is necessary for the suppression below but NOT sufficient — see
   // calibrationLineage: it proves the windows came from some audio, not that the
   // calibration measures the text that is in the file now.
-  const measuredWindows = segs.every((s) => {
+  //
+  // DECLARED SILENT SEGMENTS ARE NOT PART OF THIS QUESTION. Their window is authored, and
+  // the silence that fills it is generated from that window — by voice.mjs, and again by
+  // remix.mjs and concat-audio.mjs after a silence edit — never measured from speech. So
+  // it neither supports nor undermines the claim that `words / window` is the measured
+  // rate. Note that only a DECLARED silent segment is skipped: a narrated segment with no
+  // `audio` still fails the predicate, so a project whose voice stage never ran keeps its
+  // word budget.
+  const spokenSegs = segs.filter((s) => !isSilentSegment(s));
+  const measuredWindows = spokenSegs.length > 0 && spokenSegs.every((s) => {
     const clipMs = Number(s.audio?.durationMs);
     return Number.isFinite(clipMs) && s.endMs - s.startMs === clipMs;
   });
+  // "Measured" is claimed for the narrated windows only: a silent window is authored, and
+  // the length check above is all that can be said about it.
+  const windowsLabel = measuredWindows
+    ? `MEASURED from synthesised audio${silentSegs.length ? ' — narrated windows only' : ''}`
+    : 'AUTHORED estimates';
+  const silentExcluded = silentSegs.length
+    ? ` (${silentSegs.length} declared-silent segment(s) excluded — their windows are authored and filled with generated silence)`
+    : '';
 
   const lineage = measuredRate
     ? calibrationLineage(segs, calibrationSegments)
@@ -311,7 +541,7 @@ await runCli(async () => {
   let over = 0;
   if (measuredRate && measuredWindows && lineage.covers) {
     console.log(`\nword rate: ${rate} wps — MEASURED (source: ${source})`);
-    console.log('segment windows: MEASURED from synthesised audio');
+    console.log(`segment windows: ${windowsLabel}${silentExcluded}`);
     console.log(
       '\nword budget: NOT EVALUATED — these windows were measured FROM this audio, so\n' +
         '  words/window is that same measured rate by construction. Rate variance against the\n' +
@@ -322,6 +552,12 @@ await runCli(async () => {
     for (const s of segs) {
       const win = (s.endMs - s.startMs) / 1000;
       const w = wordsIn(s);
+      // A rate over zero words is not a slow rate — it is not a rate. "n/a" claims the
+      // measurement was attempted and failed; "silent" states the fact.
+      if (isSilentSegment(s)) {
+        console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${'silent'.padStart(5)}  ${'silent'.padStart(6)}  ${'—'.padStart(8)}`);
+        continue;
+      }
       const speechMs = speechMsOf(s);
       const segRate = speechMs > 0 ? w / (speechMs / 1000) : NaN;
       const delta = Number.isFinite(segRate) ? ((segRate - rate) / rate) * 100 : NaN;
@@ -347,7 +583,7 @@ await runCli(async () => {
     const WPS = rate * margin;
     const rateKind = measuredRate ? 'MEASURED rate' : 'ESTIMATE';
     console.log(`\nword rate: ${rate} wps x ${margin} margin = ${WPS.toFixed(2)} effective — ${rateKind} (source: ${source})`);
-    console.log(`segment windows: ${measuredWindows ? 'MEASURED from synthesised audio' : 'AUTHORED estimates'}`);
+    console.log(`segment windows: ${windowsLabel}${silentExcluded}`);
     if (measuredRate && !lineage.covers) {
       if (lineage.unproven) {
         // NOT stale — unproven. Nothing disagrees; there is only no evidence.
@@ -375,25 +611,81 @@ await runCli(async () => {
         console.log('  voiceover.mp3. The new audio is length-deterministic but NOT byte-deterministic —');
         console.log('  same durations to the millisecond, same byte lengths, different samples — so every');
         console.log('  cheap check agrees and only a content hash disagrees.');
+        if (elsewhere !== null) console.log(`  ${startSentence(elsewhere)}.`);
+        else if (voiceGate() !== null) console.log(`  ${stageRefusal('voice.mjs (S3)', voiceGate())}.`);
         console.log('\n  If you need the proof AND the shipped artefact, you can have both: the fingerprint');
         console.log('  is over the TEXT, so keep the re-run calibration and timeline and restore the');
         console.log('  previously rendered audio files. Lineage proven, deliverable bit-reproducible.');
         console.log('\n  If you do not need the proof, leaving this UNPROVEN is a correct outcome. It costs');
         console.log('  only the word budget below, which is evaluated rather than suppressed.');
-      } else {
-        // The audio no longer matches the script. Loud, because every later stage renders
-        // the stale clips, and because this is the case the budget exists to catch.
+      } else if (lineage.declaration === 'silenced') {
+        // A silence edit. The narration that was measured did not change into different
+        // narration — there is simply less of it — so re-synthesising would re-voice every
+        // clip to fix a record, not the audio.
         console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
         console.log('  The measured rate is still the best predictor available, so it is applied as a');
-        console.log('  PREDICTION against these windows, with the safety margin restored. Re-run the');
-        console.log('  voice stage to re-measure before rendering — here that IS the right move, because');
-        console.log('  the narration really has changed and the audio on disk is for the old text.');
+        console.log('  PREDICTION against these windows, with the safety margin restored. No re-voice is');
+        console.log('  needed: silencing a segment is a silence edit, and remix.mjs (S4) regenerates its');
+        console.log('  silence and reflows the timeline. Only the voice stage writes the calibration, so');
+        console.log('  until it next runs this costs only the word budget below, which is evaluated');
+        console.log('  rather than suppressed.');
+        if (elsewhere !== null) console.log(`  ${startSentence(elsewhere)}.`);
+        else if (remixGate() !== null) console.log(`  ${stageRefusal('remix.mjs (S4)', remixGate())}.`);
+      } else if (lineage.declaration === 'unsilenced') {
+        console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
+        console.log('  The measured rate is still applied as a PREDICTION against these windows, with the');
+        console.log('  safety margin restored. The segment now expects narration, which only voice.mjs (S3)');
+        console.log('  can synthesise: remix and concat refuse it if its record names a clip and has no words.');
+        // A declaration is accepted only with a caption and no narration text, so restoring
+        // it is named with whatever else that takes. Running the voice stage is named as the
+        // step only where it would run — asked of the timeline as the first edit named leaves
+        // it, with its narration text — and only where this run checked the file it reads.
+        const voice = elsewhere !== null ? null
+          : lineage.hasText ? voiceGate() : voiceBlocker(projectDir, withNarrationText(timing, lineage.index));
+        const synthesises = (b) => gatedRemedy(b, { stem: 'voice.mjs (S3) synthesises it' });
+        if (elsewhere === null && voice === null) {
+          if (lineage.hasText) {
+            console.log('  Run that stage, or restore its `silence` declaration (with a caption)');
+            console.log('  and remove its narration text if it is meant to be silent.');
+          } else {
+            console.log('  Give it its narration text and run that stage, or restore its `silence` declaration');
+            console.log('  (with a caption) if it is meant to be silent.');
+          }
+        } else if (lineage.hasText) {
+          console.log('  If it is meant to be silent, restore its `silence` declaration (with a caption)');
+          console.log(`  and remove its narration text.${voice === null ? '' : ` Otherwise, ${synthesises(voice)}.`}`);
+        } else {
+          console.log('  If it is meant to be silent, restore its `silence` declaration (with a caption).');
+          console.log(`  Otherwise, give it its narration text${voice === null ? '.' : `; ${synthesises(voice)}.`}`);
+        }
+        if (elsewhere !== null) console.log(`  ${startSentence(elsewhere)}.`);
+      } else {
+        // The audio no longer matches the script. Loud, because every later stage renders
+        // the stale clips, and because this is the case the budget exists to catch. The
+        // voice stage is named as the step only where it would run, on the file it reads.
+        console.log(`\ncalibration lineage: STALE — ${lineage.reason}.`);
+        console.log('  The measured rate is still the best predictor available, so it is applied as a');
+        if (elsewhere === null && voiceGate() === null) {
+          console.log('  PREDICTION against these windows, with the safety margin restored. Re-run the');
+          console.log('  voice stage to re-measure before rendering — here that IS the right move, because');
+          console.log('  the narration really has changed and the audio on disk is for the old text.');
+        } else {
+          console.log('  PREDICTION against these windows, with the safety margin restored. The narration');
+          console.log('  really has changed, and the audio on disk is for the old text.');
+          console.log(`  ${startSentence(elsewhere ?? gatedRemedy(voiceGate(), { stem: 'voice.mjs (S3) re-synthesises and re-measures it' }))}.`);
+        }
       }
     }
     console.log('\nsegment            window(s)  words  budget  headroom');
     for (const s of segs) {
       const win = (s.endMs - s.startMs) / 1000;
       const w = wordsIn(s);
+      // A silent segment has no narration to fit, so it has no budget to be over. Giving
+      // it one would make its headroom look like slack a writer could spend.
+      if (isSilentSegment(s)) {
+        console.log(`${String(s.id).padEnd(18)} ${String(win).padStart(7)}  ${'silent'.padStart(5)}  ${'—'.padStart(6)}  ${'—'.padStart(8)}`);
+        continue;
+      }
       const budget = Math.floor(win * WPS);
       if (w > budget) over++;
       const flag = w > budget ? '  <-- OVER' : '';
@@ -494,7 +786,7 @@ async function validateAgainstSchema(timing, schemaPath) {
  *
  * @returns {{rate: number, margin: number, source: string, measuredRate: boolean}}
  */
-function resolveWordRate(timing, projectDir) {
+function resolveWordRate(timing, projectDir, elsewhere = null) {
   const calibrationPath = path.join(projectDir, 'calibration-observed.json');
   let observed = null;
   let raw = null;
@@ -529,12 +821,20 @@ function resolveWordRate(timing, projectDir) {
   if (observed !== null) {
     const aggregate = observed.aggregate;
     if (aggregate === null || typeof aggregate !== 'object' || !Object.hasOwn(aggregate, 'observedEffWps')) {
+      // The voice stage is named as the step only where it would run on this project as it
+      // stands, and only where this run checked the timing file it reads; otherwise the
+      // message says why it refuses, or which file the stages read.
+      const voice = elsewhere !== null ? null : voiceBlocker(projectDir, timing);
+      const regenerate = elsewhere === null && voice === null
+        ? 'Re-run the voice stage to regenerate it, or delete it to fall back to intake.wordsPerSecond deliberately.'
+        : 'Delete it to fall back to intake.wordsPerSecond deliberately. ' +
+          `${startSentence(elsewhere ?? gatedRemedy(voice, { stem: 'voice.mjs (S3) regenerates it' }))}.`;
       throw new CliError(
         `${calibrationPath} was read and parsed but carries no \`aggregate.observedEffWps\` — ` +
           `that is the key voice.mjs writes the measured rate to, and it is the only rate this file supplies. ` +
           `Present-but-empty is reported rather than treated as absent, because a calibration that silently ` +
           `degrades to the planning estimate is indistinguishable from one that was used. ` +
-          `Re-run the voice stage to regenerate it, or delete it to fall back to intake.wordsPerSecond deliberately.`,
+          regenerate,
       );
     }
     const rate = requireFiniteNumber(aggregate.observedEffWps, {

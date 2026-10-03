@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-import { spawnSync, spawn } from 'node:child_process';
+import { spawnSync, spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -34,6 +34,22 @@ export function makeOutsideDir(t, files = {}) {
   return makeProject(t, files);
 }
 
+/**
+ * A silent 16-bit mono PCM WAV that music-metadata, the engine's real probe, measures at
+ * exactly `seconds`. remux-music decides whether the bed loops BEFORE its gain pin, so a
+ * test that reaches the pin on --apply needs music whose length can actually be read.
+ */
+export function pcmWav(seconds, sampleRate = 8000) {
+  const dataBytes = Math.round(seconds * sampleRate) * 2;
+  const buf = Buffer.alloc(44 + dataBytes);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataBytes, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataBytes, 40);
+  return buf;
+}
+
 /** Runs an engine script as a real CLI in `cwd` and returns its exit code + streams. */
 export function runScript(script, args, cwd, { env = {}, nodeArgs = [] } = {}) {
   const r = spawnSync(process.execPath, [...nodeArgs, path.join(srcDir, script), ...args], {
@@ -56,6 +72,96 @@ export const BLOCK_PLAYWRIGHT = pathToFileURL(
 ).href;
 
 /**
+ * The loader that swaps `msedge-tts` and `playwright` for deterministic fakes in one child
+ * process, so the voice/remix --apply paths run with no network and no browser. Pass it as
+ * `nodeArgs: ['--import', FAKE_AUDIO]`. See tests/fixtures/fake-audio.mjs.
+ */
+export const FAKE_AUDIO = pathToFileURL(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-audio.mjs'),
+).href;
+
+/**
+ * The --import URL of a preload that creates `target` (holding `body`) inside the child's
+ * own console.log call for the first line containing `marker`, so it lands before the
+ * script's next statement with no race. `target` must be in a makeProject/makeOutsideDir
+ * directory. Pass it as `nodeArgs: ['--import', plantOnMarker({...})]`.
+ * See tests/fixtures/plant-on-marker.mjs.
+ */
+export function plantOnMarker({ marker, target, body }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plant-on-marker.mjs'));
+  url.search = new URLSearchParams({ marker, target, body }).toString();
+  return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes fs.unlinkSync fail with EPERM for entries of
+ * `dir` whose names contain `fragment`, announcing each refusal on stderr. `dir` must be a
+ * makeProject/makeOutsideDir directory. See tests/fixtures/refuse-unlink.mjs.
+ */
+export function refuseUnlink({ dir, fragment }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'refuse-unlink.mjs'));
+  url.search = new URLSearchParams({ dir, fragment }).toString();
+  return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes fs.closeSync fail with EIO, after really closing
+ * the descriptor, for descriptors fs.openSync opened on entries of `dir` whose names contain
+ * `fragment`, announcing each failure on stderr. `dir` must be a makeProject/makeOutsideDir
+ * directory. See tests/fixtures/fail-close.mjs.
+ */
+export function failClose({ dir, fragment }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-close.mjs'));
+  url.search = new URLSearchParams({ dir, fragment }).toString();
+  return url.href;
+}
+
+/**
+ * The --import URL of a preload that makes every stat the engine reads report inode 0 for
+ * the paths inside `dir`, as a volume with no file IDs does, announcing itself on stderr.
+ * `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/zero-file-ids.mjs.
+ */
+export function zeroFileIds({ dir }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'zero-file-ids.mjs'));
+  url.search = new URLSearchParams({ dir }).toString();
+  return url.href;
+}
+
+/** The line zero-file-ids.mjs writes once armed, which a test asserts so the IDs were really withheld. */
+export const ZERO_FILE_IDS_ARMED = /^zero-file-ids: armed — inode 0 for every path inside /m;
+
+/**
+ * The --import URL of a preload that makes fs.lstatSync fail with EPERM for the entries of
+ * `dir` whose names are exactly one of `names`, announcing itself and each refusal on
+ * stderr. `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/fail-lstat.mjs.
+ */
+export function failLstat({ dir, names }) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-lstat.mjs'));
+  url.search = new URLSearchParams([['dir', dir], ...names.map((name) => ['name', name])]).toString();
+  return url.href;
+}
+
+/** The line fail-lstat.mjs writes once armed, which a test asserts so the failure was really staged. */
+export const FAIL_LSTAT_ARMED = /^fail-lstat: armed — lstat fails for /m;
+
+/**
+ * The 8.3 short name Windows generated for `file`, or null when it has none. Generation is
+ * per volume and can be switched off, so it is asked of the filesystem, never assumed.
+ */
+export function shortNameOf(file) {
+  if (process.platform !== 'win32') return null;
+  let out;
+  try {
+    out = execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"for %I in ("${file}") do @echo %~sI"`],
+      { encoding: 'utf8', windowsVerbatimArguments: true });
+  } catch {
+    return null;
+  }
+  const alias = path.basename(out.trim());
+  return alias !== '' && alias.toLowerCase() !== path.basename(file).toLowerCase() ? alias : null;
+}
+
+/**
  * Creates a file symlink, returning false when the platform refuses (symlink creation
  * needs Developer Mode or elevation on Windows), so a test can skip rather than fail.
  */
@@ -71,6 +177,34 @@ export function tryMakeFileLink(linkPath, target) {
 export const contiguousSegments = [
   { id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'hello there', audio: { file: 'segment_000.mp3', durationMs: 2000 } },
   { id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'second segment here', audio: { file: 'segment_001.mp3', durationMs: 2000 } },
+];
+
+/**
+ * contiguousSegments carrying the measured word boundaries voice.mjs records, for the
+ * stages that read them (write-subtitles). The words are BARE, as TTS metadata delivers
+ * them; punctuation lives only in voiceoverText.
+ *
+ * Cues this produces: "Hello there." 100..1100 and "Second segment here." 2100..3600.
+ */
+export const wordedSegments = [
+  {
+    id: 'one', startMs: 0, endMs: 2000, voiceoverText: 'Hello there.',
+    audio: {
+      file: 'segment_000.mp3', durationMs: 2000,
+      words: [{ word: 'Hello', startMs: 100, endMs: 600 }, { word: 'there', startMs: 600, endMs: 1100 }],
+    },
+  },
+  {
+    id: 'two', startMs: 2000, endMs: 4000, voiceoverText: 'Second segment here.',
+    audio: {
+      file: 'segment_001.mp3', durationMs: 2000,
+      words: [
+        { word: 'Second', startMs: 2100, endMs: 2600 },
+        { word: 'segment', startMs: 2600, endMs: 3100 },
+        { word: 'here', startMs: 3100, endMs: 3600 },
+      ],
+    },
+  },
 ];
 
 /** A timing.json body that satisfies every stage's minimum expectations. */
