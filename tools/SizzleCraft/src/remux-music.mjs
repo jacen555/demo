@@ -54,6 +54,8 @@ import {
   describeEnvelopeRefusal,
   classifyBedDuckRecord,
   describeBedDuckRefusal,
+  requireEnvelopeHopMs,
+  assertEnvelopeSpansAgree,
   measureSpeech,
   calibrateDuckThreshold,
   achievedDuckDb,
@@ -819,17 +821,10 @@ function readDuckEnvelope(envelopePath) {
       'finite non-negative number', EXIT.FAILED,
     );
   }
-  // hopMs turns frame counts into the gap lengths the plan reports. It was read as
-  // `Number(hopMs) || 20`, so a hand-edited -20 reported NO GAP, 1e9 reported gaps of
-  // days, and 0, "20" and an absent field all quietly became 20. vo-envelope writes 20.
-  const { hopMs } = parsed;
-  if (typeof hopMs !== 'number' || !Number.isFinite(hopMs) || hopMs < 1 || hopMs > 1000) {
-    throw new CliError(
-      `${envelopePath} "hopMs" is ${hopMs === undefined ? 'absent' : JSON.stringify(hopMs).slice(0, 32)} — it must be ` +
-      'a number of milliseconds from 1 to 1000 (vo-envelope writes 20). It sets every gap length this plan reports.',
-      EXIT.FAILED,
-    );
-  }
+  // hopMs turns frame counts into the gap lengths the plan reports, and it places every
+  // dip make-music bakes into a bed. ONE RULE FOR BOTH PATHS, in envelope-ducking.mjs.
+  requireEnvelopeHopMs(parsed, envelopePath, EXIT.FAILED);
+  assertEnvelopeSpansAgree(parsed, envelopePath, EXIT.FAILED);
   return parsed;
 }
 

@@ -172,6 +172,76 @@ export function timeToWithinDb({ duckDb, releaseMs, withinDb }) {
 // --------------------------------------------------------------------------------------
 
 /**
+ * The hop an envelope was measured at, refusing anything that is not one.
+ *
+ * ONE RULE, BOTH DUCKING PATHS, the same way the trajectory is one model. The hop decides
+ * where every dip lands: make-music multiplies it into the samples and remux-music turns
+ * frame counts into the gap lengths its plan reports, so two copies of "what is a valid
+ * hop" is two behaviours waiting to drift apart.
+ *
+ * `Number(hopMs) || 20` let a hand-edited -20 report NO GAP, let 1e9 report gaps of
+ * eleven days, and quietly read 0, "20" and an ABSENT field as 20. Absence is not 20:
+ * 20 is what vo-envelope writes, not what an envelope means when it says nothing.
+ *
+ * @param {unknown} envelope the parsed envelope
+ * @param {string} envelopePath named in the refusal
+ * @param {number} exitCode the caller's contract — a bad envelope is a usage error to
+ *   make-music, which was handed it as `--envelope`, and a failed input to remux-music.
+ * @returns {number} the hop, in milliseconds
+ */
+export function requireEnvelopeHopMs(envelope, envelopePath, exitCode = EXIT.USAGE) {
+  const hopMs = envelope?.hopMs;
+  if (typeof hopMs !== 'number' || !Number.isFinite(hopMs) || hopMs < 1 || hopMs > 1000) {
+    throw new CliError(
+      `${envelopePath} "hopMs" is ${hopMs === undefined ? 'absent' : JSON.stringify(hopMs).slice(0, 32)} — it must be ` +
+      'a number of milliseconds from 1 to 1000 (vo-envelope writes 20). It is what places every dip the duck makes.',
+      exitCode,
+    );
+  }
+  return hopMs;
+}
+
+/**
+ * Refuses an envelope whose `durationMs` and whose own frames describe different spans,
+ * and one that does not state a span at all.
+ *
+ * The two halves say the same thing twice, so a disagreement means one of them is wrong
+ * and nothing here can tell which: an envelope truncated to half its frames ducks the
+ * start of the narration and leaves the rest of the bed flat, and a padded one holds the
+ * duck past the last word. Both parsed, both ducked, both exited 0.
+ *
+ * ONE HOP OF SLACK, PLUS A MILLISECOND. vo-envelope measures in whole hops and rounds the
+ * duration, so its last hop is partial and the two halves legitimately differ by up to a
+ * hop. Anything beyond that is not rounding.
+ */
+export function assertEnvelopeSpansAgree(envelope, envelopePath, exitCode = EXIT.USAGE) {
+  const { durationMs } = envelope;
+  const hopMs = requireEnvelopeHopMs(envelope, envelopePath, exitCode);
+  const spanMs = envelope.rms.length * hopMs;
+  // ABSENCE IS NOT AGREEMENT. vo-envelope is the only writer and it always records the
+  // duration, so an envelope without one did not come from it — and skipping the check
+  // for exactly those envelopes exempted the hand-edited ones it exists to catch.
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 0) {
+    throw new CliError(
+      `${envelopePath} "durationMs" is ${durationMs === undefined ? 'absent' : JSON.stringify(durationMs).slice(0, 32)} — ` +
+      'it must be a non-negative number of milliseconds (vo-envelope writes one for every envelope it measures). ' +
+      `Its ${envelope.rms.length} frames at ${hopMs} ms describe ${spanMs} ms, and nothing can check that against ` +
+      'a span the envelope does not state.',
+      exitCode,
+    );
+  }
+  if (Math.abs(spanMs - durationMs) > hopMs + 1) {
+    throw new CliError(
+      `${envelopePath} contradicts itself: "durationMs" says ${durationMs} ms, but its ${envelope.rms.length} ` +
+      `frames at ${hopMs} ms describe ${spanMs} ms. One of them is wrong and which cannot be told from here — ` +
+      'an envelope short of its narration ducks the start and leaves the rest flat, and a padded one holds the ' +
+      'duck past the last word.\nRe-measure it: node src/vo-envelope.mjs --apply --replace',
+      exitCode,
+    );
+  }
+}
+
+/**
  * Separates speech from silence in an envelope and measures both.
  *
  * `speechRms` is the energy-average level of the frames above threshold — the level the
@@ -663,8 +733,24 @@ function withCloseNote({ notes, closeFailure }) {
  * The publish asks it of the temp file before writing to it, of the record's name once it
  * is published, and of the temp name before removing it.
  */
+/**
+ * Whether the file open as `fd` is the one at `name`. See openedAtVerdict for the states
+ * this collapses; a caller that must report WHY should ask for the verdict instead.
+ */
 export function isOpenedAt(fd, name) {
   return openedAtVerdict(fd, name) === 'same';
+}
+
+/**
+ * The verdict itself, for a caller that reports what it found rather than only whether it
+ * matched. 'same' | 'absent' | 'different' | 'unavailable' | 'unchecked'.
+ *
+ * Collapsing these to a boolean and then naming one of them in the message states a cause
+ * that was never established: "another entry took its place" and "this volume gives no
+ * file identity" are different facts, and only one of them is about a substitution.
+ */
+export function openedAtState(fd, name) {
+  return openedAtVerdict(fd, name);
 }
 
 /**
