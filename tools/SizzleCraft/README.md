@@ -204,7 +204,21 @@ one in its own words first.
   those are the characters that end a line by definition rather than by one reader's
   convention. None of the seven has a glyph, and U+0085, U+2028 and U+2029 can sit
   unescaped in `timing.json`, so the refusal names each distinct one it found by code
-  point, in order of first appearance — `a line break (U+2028)`. The spoken cue just
+  point, in order of first appearance — `a line break (U+2028)`. NARRATED cue text is
+  refused for `-->` on the same grounds, so the two halves read as one rule: a cue-text
+  line holding `-->` is parsed with EMPTY text by Chromium's WebVTT parser (measured, via
+  a `<track>` element read back against a well-formed control), so the caption silently
+  disappears rather than rendering wrongly, and cue text that is itself a whole timing
+  line forges a second cue spanning those times. Nothing is claimed here about any other
+  player. Both sources of cue text are checked — `voiceoverText`, and the raw measured
+  `audio.words[].word` a cue falls back to where alignment fails — and the refusal names
+  whichever carries it, the narration alone where both do. It lands before either file is
+  written, so `.srt` is covered by the same gate. A line break in `voiceoverText` is not
+  refused, but for a narrower reason than "it cannot get there": six of the seven —
+  U+000A, U+000B, U+000C, U+000D, U+2028 and U+2029 — are split away as whitespace before
+  they reach a cue, while `U+0085` is not matched by JS `\s` at all and does reach cue
+  text. It is left unrefused because it is not destructive there: measured in Chromium,
+  the cue is intact and the NEL survives as an invisible character. The spoken cue just
   before it keeps its last word on screen until that word ends rather than stopping 40 ms
   short, and never overlaps it; a measured word that runs into a silent window is refused,
   naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter
