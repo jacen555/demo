@@ -1049,7 +1049,8 @@ await runCli(async () => {
     report.absences.push('calibration-observed.json: ABSENT — 1 check NOT evaluated');
   }
 
-  const knobsPath = resolveWithinRoot(projectDir, values.knobs ?? 'knobs.json', 'knobs file');
+  const knobsName = values.knobs ?? 'knobs.json';
+  const knobsPath = resolveWithinRoot(projectDir, knobsName, 'knobs file');
   const knobsIds = ['C4', 'E1', 'E2', 'E3'];
   if (fs.existsSync(knobsPath)) {
     const knobs = readJson(knobsPath, 'knobs file');
@@ -1059,10 +1060,13 @@ await runCli(async () => {
     checkE2(knobs, report);
     checkE3(timing, knobs, report);
   } else {
+    // Name the file the CALLER asked for. Hardcoding "knobs.json" sent an author who
+    // passed `--knobs manifest.json` to look for a file they never mentioned, found
+    // legitimately absent, while the path that actually failed to resolve went unreported.
     for (const id of knobsIds) {
-      report.skipped(id, 'knobs.json is absent');
+      report.skipped(id, `${knobsName} is absent`);
     }
-    report.absences.push(`knobs.json: ABSENT — ${knobsIds.length} checks NOT evaluated`);
+    report.absences.push(`${knobsName}: ABSENT — ${knobsIds.length} checks NOT evaluated`);
   }
 
   printReport(report, timingPath);

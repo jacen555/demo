@@ -568,6 +568,34 @@ describe('knobs.json · C4 and E1-E3', () => {
     );
   });
 
+  test('knobsAbsent_namesTheFileTheCallerActuallyAskedFor', (t) => {
+    // Found while verifying the README's own `--knobs` example. With a named file that is
+    // missing, the absence line said `knobs.json: ABSENT` — naming a file the caller never
+    // mentioned, while the one they DID name went unreported. The author then goes looking
+    // for knobs.json, finds it legitimately absent, and never learns that the path they
+    // passed is what did not resolve.
+    //
+    // Same class as the progress-marker parse that blamed pattern 0 for pattern 1's stall:
+    // a confident, specific, wrong diagnosis, which is worse than a vague one because it
+    // sends someone to the wrong place with conviction.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = run(dir, ['--knobs', 'manifest.json']);
+    assertCleanExit(r, EXIT.OK);
+    assert.match(r.all, /manifest\.json: ABSENT — 4 checks NOT evaluated/, `expected the named file\n${r.all}`);
+    assert.doesNotMatch(r.all, /knobs\.json: ABSENT/, `it named a file the caller never asked for\n${r.all}`);
+    // The per-check rows carry the same name and are changed by the same fix. Asserting
+    // only the summary would let those four regress to "knobs.json is absent" silently —
+    // and they are what a reader actually scans.
+    for (const id of ['C4', 'E1', 'E2', 'E3']) {
+      assert.match(
+        r.all,
+        new RegExp(`^\\s*${id}\\s+.*NOT evaluated — manifest\\.json is absent`, 'm'),
+        `the ${id} row must name the file the caller asked for\n${r.all}`,
+      );
+    }
+    assert.doesNotMatch(r.all, /NOT evaluated — knobs\.json is absent/, `a per-check row named the wrong file\n${r.all}`);
+  });
+
   test('C4_fpsDriftBetweenTheTwoFiles_isRefused', (t) => {
     // CAUGHT: drift after editing one file and not the other; also the 24 dB music-gain
     // divergence, where knobs recorded 0.055 and the shipped mix used 0.85.
