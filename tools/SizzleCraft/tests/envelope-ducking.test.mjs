@@ -548,7 +548,7 @@ describe('ducking reaches the filter graph under the registry', () => {
     const mix = createMixAudit();
     mix.declare('duckDb', { value: 11, rendered: 0.023286 });
 
-    assert.equal(mix.use('duckDb'), '0.023286', 'the graph carries the solved threshold');
+    assert.equal(mix.use('duckDb', 'mud'), '0.023286', 'the graph carries the solved threshold');
   });
 
   // A pinned knob has to be accounted for on EVERY run, including the runs where it is
@@ -590,13 +590,13 @@ describe('ducking reaches the filter graph under the registry', () => {
 
     // `knee=2.5` is the smuggled one: a real sidechaincompress option, never declared.
     const graph =
-      `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+      `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
       `[vosc]apad[vop];` +
-      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
-      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
-      `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}:knee=2.5[mud];` +
+      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
+      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
+      `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}:knee=2.5[mud];` +
       `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-      `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
 
     assert.throws(
       () => mix.audit(graph),

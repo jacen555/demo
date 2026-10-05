@@ -19,10 +19,16 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 import { CliError, EXIT } from '../src/cli-support.mjs';
 import { MIX_PARAMETERS, createMixAudit } from '../src/mix-parameters.mjs';
 import { classifyGainPin, confirmedLockRecord } from '../src/gain-pin.mjs';
+import { makeProject, runScript, assertCleanExit, pcmWav } from './_helpers.mjs';
 
 /** Declares the set remux-music declares, at the shipped defaults, with ducking OFF. */
 function declaredMix() {
@@ -40,12 +46,12 @@ function declaredMix() {
 /** The shape remux-music actually builds, looping, with every value taken from the registry. */
 function loopingGraph(mix, tail = '') {
   return (
-    `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
-    `[2:a][3:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[ml1];` +
-    `[ml1][4:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[ml2];` +
-    `[ml2]${mix.structural('atrim=0:')}${mix.use('videoSeconds')},asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
+    `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0[vo];` +
+    `[2:a][3:a]acrossfade=d=${mix.use('crossfade', 'ml1')}:c1=tri:c2=tri[ml1];` +
+    `[ml1][4:a]acrossfade=d=${mix.use('crossfade', 'ml2')}:c1=tri:c2=tri[ml2];` +
+    `[ml2]${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
     `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-    `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled${tail}[out]`
+    `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled${tail}[out]`
   );
 }
 
@@ -67,13 +73,13 @@ function declaredDuckingMix() {
 /** The ducking shape remux-music builds, with every value taken from the registry. */
 function duckingGraph(mix) {
   return (
-    `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
-    `[2:a]${mix.structural('atrim=0:')}${mix.use('videoSeconds')},asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
+    `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+    `[2:a]${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
     `[vosc]apad[vop];` +
-    `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
-    `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}[mud];` +
+    `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
+    `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}[mud];` +
     `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-    `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`
+    `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`
   );
 }
 
@@ -136,7 +142,7 @@ describe('mix parameter registry', () => {
   test('use_parameterThatWasNeverDeclared_refuses', () => {
     const mix = createMixAudit();
 
-    assert.throws(() => mix.use('ceiling'), CliError, 'a value cannot be used before it is declared');
+    assert.throws(() => mix.use('ceiling', 'out'), CliError, 'a value cannot be used before it is declared');
   });
 
   test('use_declaredParameter_returnsTheRenderedLiteralNotTheOperatorFacingValue', () => {
@@ -148,7 +154,7 @@ describe('mix parameter registry', () => {
     mix.declareAbsent('crossfade');
     for (const name of ['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']) mix.declareAbsent(name);
 
-    assert.equal(mix.use('ceiling'), '0.794328', 'the graph carries the linear limit');
+    assert.equal(mix.use('ceiling', 'out'), '0.794328', 'the graph carries the linear limit');
     assert.equal(mix.pinnedValues().ceiling, 2, 'the pin records the dB the operator actually typed');
   });
 
@@ -228,10 +234,10 @@ describe('mix graph audit', () => {
     mix.declare('ceiling', { value: 1, rendered: 0.891251 });
 
     const graph =
-      `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];` +
-      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
+      `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0[vo];` +
+      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
       `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-      `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
 
     assert.doesNotThrow(() => mix.audit(graph));
   });
@@ -355,7 +361,7 @@ describe('mix graph audit', () => {
     const mix = declaredMix();
     const graph = loopingGraph(mix);
 
-    mix.use('musicGain'); // taken, and the string thrown away
+    mix.use('musicGain', 'mu'); // taken, and the string thrown away
 
     assert.throws(
       () => mix.audit(graph),
@@ -470,5 +476,261 @@ describe('mix graph audit', () => {
       CliError,
       'the same value inside the graph is refused — so the pass above is the limit, not a broken audit',
     );
+  });
+});
+
+// --------------------------------------------------------------------------------------
+// P2-1 — A VALUE MUST BE WHERE IT WAS TAKEN, NOT MERELY PRESENT
+//
+// The audit accounted for values as a multiset over the whole graph string: value and
+// use-count, never position. So a gain MOVED onto another chain was accepted — the same
+// two literals, the same two counts, a completely different mix. Measured against the
+// ducking graph at voiceGain 1.4 / musicGain 0.031 / ceiling 0.794328, all three of the
+// substitutions below PASSED, while a smuggled 0.9 was correctly refused: the audit was
+// not vacuous, it simply had no notion of where a value landed.
+//
+// `use()` now names the chain the value is being interpolated into, and the audit checks
+// the chain, so a value that moved is a value that is missing from where it belongs.
+// --------------------------------------------------------------------------------------
+
+describe('a mix value must appear in the chain it was taken for', () => {
+  /** The ducking graph, built with `pick` choosing which parameter goes on which chain. */
+  const duckingGraphWith = (mix, pick) =>
+    `[1:a]volume=${pick.voice}` + `,pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+    `[2:a]${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},asetpts=N/SR/TB,volume=${pick.music}[mu];` +
+    `[vosc]apad[vop];` +
+    `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
+    `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}[mud];` +
+    `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
+    `[mx]alimiter=limit=${pick.ceiling}:level=disabled[out]`;
+
+  // THE POSITIVE CONTROL. The graph remux-music actually builds must still pass, or the
+  // refusals below would just be an audit that refuses everything.
+  test('audit_duckingGraphWithEveryValueOnTheChainItWasTakenFor_passes', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('voiceGain', 'vo'),
+      music: mix.use('musicGain', 'mu'),
+      ceiling: mix.use('ceiling', 'out'),
+    });
+
+    assert.doesNotThrow(() => mix.audit(graph));
+  });
+
+  test('audit_loopingGraphWithEveryValueOnTheChainItWasTakenFor_passes', () => {
+    const mix = declaredMix();
+
+    assert.doesNotThrow(() => mix.audit(loopingGraph(mix)));
+  });
+
+  // THE SUBSTITUTION. The bed's gain lands on the narration and the narration's on the
+  // bed: at 1.4 and 0.031 that is a mix with the music 33 dB over the voice, and the pin
+  // records the declared values and reports valid.
+  test('audit_voiceAndMusicGainsSwappedOntoEachOthersChains_isRefusedNamingThem', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('musicGain', 'mu'),
+      music: mix.use('voiceGain', 'vo'),
+      ceiling: mix.use('ceiling', 'out'),
+    });
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError, 'a value that is not where it was taken is a refusal');
+        assert.equal(err.exitCode, EXIT.FAILED);
+        assert.match(err.message, /--voice-gain/, 'the refusal must name the parameter');
+        return true;
+      },
+    );
+  });
+
+  // The same hole with only ONE value moved, so it cannot be passed by a check that merely
+  // notices two parameters have exchanged places.
+  test('audit_ceilingMovedOntoTheVoiceChain_isRefusedNamingIt', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('ceiling', 'out'),
+      music: mix.use('musicGain', 'mu'),
+      ceiling: mix.use('voiceGain', 'vo'),
+    });
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => err instanceof CliError && /--ceiling|--voice-gain/.test(err.message),
+      'a limiter ceiling applied as a voice gain must stop the run',
+    );
+  });
+
+  // A duck parameter moved WITHIN the one chain it belongs to is NOT caught, and must not
+  // be claimed to be: threshold and ratio are both taken for `mud`, so swapping them is
+  // invisible here. Stating the limit as a test keeps it honest rather than argued away.
+  test('audit_twoValuesSwappedWithinTheSameChain_isNotDetected', () => {
+    const mix = declaredDuckingMix();
+    const graph =
+      `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+      `[2:a]${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
+      `[vosc]apad[vop];` +
+      `[mu][vop]sidechaincompress=threshold=${mix.use('duckRatio', 'mud')}:ratio=${mix.use('duckDb', 'mud')}` +
+      `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}[mud];` +
+      `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
+
+    assert.doesNotThrow(
+      () => mix.audit(graph),
+      'the chain is the unit of accounting — a value moved within one chain is a stated blind spot',
+    );
+  });
+
+  // THE SITE IS NOT OPTIONAL. A `use()` with no site would silently opt that value out of
+  // the check, which is exactly the "closed by construction, nothing fails when it grows"
+  // shape this module exists to stop.
+  test('use_withoutASite_refusesRatherThanSkippingTheCheckForThatValue', () => {
+    const mix = declaredDuckingMix();
+
+    assert.throws(
+      () => mix.use('musicGain'),
+      (err) => err instanceof CliError && err.exitCode === EXIT.FAILED,
+      'a value with no site cannot be checked, so it cannot be taken',
+    );
+  });
+
+  test('use_siteThatIsNotAnOutputLabelOfTheGraph_isRefusedByTheAudit', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('voiceGain', 'vo'),
+      music: mix.use('musicGain', 'nosuchchain'),
+      ceiling: mix.use('ceiling', 'out'),
+    });
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => err instanceof CliError && /nosuchchain/.test(err.message),
+      'a site no chain produces cannot be checked, so it must stop the run',
+    );
+  });
+});
+// --------------------------------------------------------------------------------------
+// P2-3 — THE PIN IS ACTUALLY PUBLISHED
+//
+// Everything above tests the registry as a function. Nothing tested that remux-music ever
+// WRITES the lock: --apply dies at the missing ffmpeg three checks before the publish, so
+// a mutant deleting the `writeGainLock(...)` call entirely left the whole suite green —
+// 1107 tests, 0 failures, the same as the unmutated run.
+//
+// These drive the real CLI to completion behind a controlled ffmpeg (see
+// tests/fixtures/fake-ffmpeg.mjs) and read the file back.
+// --------------------------------------------------------------------------------------
+
+describe('remux-music publishes the gain pin', () => {
+  const LOCK = 'music-gain.lock.json';
+  /** A path that is not an executable: the fake intercepts it by name, nothing runs it. */
+  const FAKE_FFMPEG = path.join(os.tmpdir(), 'sizzlecraft-fake-ffmpeg', 'ffmpeg.exe');
+
+  const project = (t, extra = {}) =>
+    makeProject(t, {
+      'render.mp4': 'a stub video stream',
+      'voiceover.mp3': 'a stub narration',
+      'music.wav': pcmWav(10),
+      'timing.json': JSON.stringify({ project: { fps: 30 }, durationMs: 4000 }),
+      ...extra,
+    });
+
+  const fakeFfmpeg = (dir, extra = {}) => {
+    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'fake-ffmpeg.mjs'));
+    url.search = new URLSearchParams({ dir, ffmpeg: FAKE_FFMPEG, ...extra }).toString();
+    return url.href;
+  };
+
+  const remux = (dir, extra = []) =>
+    runScript(
+      'remux-music.mjs',
+      ['--video', 'render.mp4', '--out', 'out.mp4', '--ffmpeg', FAKE_FFMPEG, '--apply', ...extra],
+      dir,
+      { nodeArgs: ['--import', fakeFfmpeg(dir)] },
+    );
+
+  // MUTANT MP3: deleting the writeGainLock call leaves this at "no lock on disk" and fails
+  // on the first assertion. Nothing else in the suite moves.
+  test('remuxMusic_applyWithConfirmGain_publishesTheLockRecordingTheMixThatWasBuilt', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--confirm-gain']);
+
+    assertCleanExit(r, EXIT.OK, `the remux must complete for the pin to be reachable: ${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, LOCK)), true, 'the pin must be on disk');
+    const lock = JSON.parse(fs.readFileSync(path.join(dir, LOCK), 'utf8'));
+    assert.equal(lock.evidence, 'operator-confirmed', 'and it must record how it was earned');
+    assert.equal(typeof lock.confirmedAt, 'string', 'and when');
+    assert.equal(
+      lock.sha256,
+      crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, 'music.wav'))).digest('hex'),
+      'and the bed it covers',
+    );
+    // Every PINNED parameter, at the value the run actually built with.
+    for (const parameter of MIX_PARAMETERS.filter((p) => p.pinned)) {
+      assert.ok(
+        Object.hasOwn(lock.mix, parameter.name),
+        `the pin must cover ${parameter.name}: ${JSON.stringify(lock.mix)}`,
+      );
+      assert.equal(typeof lock.mix[parameter.name], 'number', `${parameter.name} must be a comparable number`);
+    }
+    assert.equal(lock.mix.voiceGain, 1.14, 'at the shipped default');
+    assert.equal(lock.mix.musicGain, 1.5, 'at the shipped default');
+    assert.match(r.all, new RegExp(LOCK.replace(/\./g, '\\.')), 'and the run must say it wrote it');
+  });
+
+  // THE PIN IS A CONFIRMATION, NOT A SIDE EFFECT OF RUNNING. A second --apply over a
+  // settled pin must not refresh `confirmedAt`: that would stamp an acceptance nobody
+  // gave on this run, which is a false record on its own terms.
+  test('remuxMusic_applyOverASettledPinWithoutConfirmGain_leavesThePinExactlyAsItWas', (t) => {
+    const dir = project(t);
+
+    const first = remux(dir, ['--confirm-gain']);
+    assertCleanExit(first, EXIT.OK, `the pin must be settled before this tests anything: ${first.all}`);
+    const settled = fs.readFileSync(path.join(dir, LOCK), 'utf8');
+
+    const again = remux(dir, ['--replace']);
+
+    assertCleanExit(again, EXIT.OK, `a settled pin needs no fresh confirmation: ${again.all}`);
+    assert.doesNotMatch(again.all, /--confirm-gain/, 'and must not nag for one it already has');
+    assert.equal(
+      fs.readFileSync(path.join(dir, LOCK), 'utf8'),
+      settled,
+      'the pin must be byte-identical — a refreshed confirmedAt records a confirmation nobody gave',
+    );
+  });
+
+  // The gains the pin records are the gains the run was given, not the defaults it would
+  // have used — a pin that always records 1.14/1.5 would pass the test above and certify
+  // nothing.
+  test('remuxMusic_applyWithConfirmGainAtNonDefaultGains_recordsThoseGainsNotTheDefaults', (t) => {
+    const dir = project(t);
+
+    const r = remux(dir, ['--confirm-gain', '--voice-gain', '1.4', '--music-gain', '0.8']);
+
+    assertCleanExit(r, EXIT.OK, r.all);
+    const lock = JSON.parse(fs.readFileSync(path.join(dir, LOCK), 'utf8'));
+    assert.equal(lock.mix.voiceGain, 1.4);
+    assert.equal(lock.mix.musicGain, 0.8);
+  });
+
+  // THE VERDICT IS LIVE, AND THE PIN IS BEHIND IT. remux-music publishes only after
+  // proving the video stream came through untouched. Without this control, a fake whose
+  // digests always matched would make that proof — and every pin assertion above —
+  // vacuous. `corruptVideo` makes the copy not a copy.
+  test('remuxMusic_remuxedVideoStreamDiffersFromTheSource_failsAndPublishesNoPin', (t) => {
+    const dir = project(t);
+
+    const r = runScript(
+      'remux-music.mjs',
+      ['--video', 'render.mp4', '--out', 'out.mp4', '--ffmpeg', FAKE_FFMPEG, '--apply', '--confirm-gain'],
+      dir,
+      { nodeArgs: ['--import', fakeFfmpeg(dir, { corruptVideo: 'true' })] },
+    );
+
+    assert.notEqual(r.code, EXIT.OK, `a changed video stream must not be published\n${r.all}`);
+    assert.match(r.all, /FAILED/, 'and the run must say so');
+    assert.equal(fs.existsSync(path.join(dir, LOCK)), false, 'and a failed verdict must publish no pin');
   });
 });
