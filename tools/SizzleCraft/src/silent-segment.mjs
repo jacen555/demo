@@ -897,10 +897,10 @@ export function segmentEntryFact(s, i) {
  * behaviours under the cover of a crash fix. This function refuses entries; it does not have an
  * opinion about lists.
  *
- * CONSUMERS(segmentEntryBlocker): none
- * The intended callers are frame-capture.mjs, write-storyboard.mjs and concat-audio.mjs, each of
- * which currently throws an uncaught TypeError on a null entry. Update the line above when they
- * land; a test compares it against the real importers.
+ * CONSUMERS(segmentEntryBlocker): concat-audio.mjs, frame-capture.mjs, write-storyboard.mjs
+ * Each of them threw an uncaught TypeError on a null entry before they called this. The line
+ * above is compared against the real importers by a test, and must change in the SAME COMMIT as
+ * an importer: it is only true relative to the modules in one working tree.
  */
 export function segmentEntryBlocker(segs) {
   if (!Array.isArray(segs)) return null;

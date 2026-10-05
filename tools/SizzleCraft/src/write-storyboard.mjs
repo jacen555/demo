@@ -1,7 +1,7 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from 'node:fs';
 import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
-import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment } from './silent-segment.mjs';
+import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker } from './silent-segment.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -22,6 +22,18 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
 
 const { values, projectDir, apply, replace } = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
 const t = JSON.parse(fs.readFileSync(guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file')), 'utf8'));
+// SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
+// `panel` and throw an uncaught TypeError on `s.visual` — a crash with a stack, not a
+// refusal, and the path had no exit code of its own. Asked before the declaration check
+// below, so a malformed entry is named as what it is rather than crashing the check that
+// would have described it.
+//
+// THE ENTRY RULE ONLY: segmentEntryBlocker returns null for a non-array and says nothing
+// about ids, so this stage's handling of an absent, empty or id-less list is unchanged.
+guard(() => {
+  const bad = segmentEntryBlocker(t.segments);
+  if (bad) throw new CliError(bad.fact);
+});
 // A silent segment's caption is its accessibility cue, and the storyboard is where an author
 // reviews it. A blank caption rendered as an empty cue under the SILENT label and exited 0.
 // Refuse the declarations validate-timing, voice and write-subtitles refuse, before planning.
