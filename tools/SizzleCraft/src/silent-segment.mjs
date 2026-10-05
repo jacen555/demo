@@ -95,6 +95,35 @@ export function silentMp3(targetMs) {
 const SILENCE_MAX_MS = 3_600_000;
 // The form silence-gen.mjs accepts for --ms: a plain positive decimal.
 const PAUSE_TEXT = /^(?:\d+|\d*\.\d+)$/;
+// The shortest pause the engine can generate — NOT a separate rule, but where PAUSE_TEXT stops
+// matching, named so a refusal can give the author a number they can actually write.
+//
+// String() switches to exponential notation below 1e-6 ("9.99999e-7"), and the generator takes
+// only plain decimal text. Notation is not a lever the author has: JSON.parse normalises
+// "0.0000001" in timing.json to the Number 1e-7 either way, so NO positive value under this
+// floor has a form the generator accepts, however it is written. A remedy that asked for "a
+// plain decimal" therefore sent the author in a circle; one that names this floor does not.
+//
+// For ADVICE only. The refusal itself stays isGenerablePause's, so the gate and the generator
+// go on agreeing by construction — do not restate this as the check.
+const PAUSE_MIN_MS = 0.000001;
+
+/**
+ * Can the engine generate a pause of `ms`? THE ONE RULE — the gate that refuses an ungenerable
+ * pause before anything is written and the generator that refuses it at the point of writing
+ * both call this, so they cannot disagree. Neither restates it.
+ *
+ * Three parts, and the TEXT form is the one that is easy to miss: silence-gen accepts a plain
+ * decimal, and that is tested against String(ms), which switches to exponential notation below
+ * 1e-6 ("1e-7") and at or above 1e21 ("1e+21"). So a pause can be above 0 AND far under the
+ * ceiling and still be ungenerable. A gate that mirrored only the ceiling let exactly that
+ * through, to fail inside the generator after the clips were written and the TTS calls spent.
+ */
+function isGenerablePause(ms) {
+  const text = String(ms).trim();
+  const value = Number(text);
+  return PAUSE_TEXT.test(text) && value > 0 && value <= SILENCE_MAX_MS;
+}
 
 /**
  * The bytes of a pause asset the engine names itself — lead.mp3, gap_NN.mp3, outro.mp3 —
@@ -113,7 +142,7 @@ const PAUSE_TEXT = /^(?:\d+|\d*\.\d+)$/;
 export function silenceAssetBytes(ms, name) {
   const text = String(ms).trim();
   const value = Number(text);
-  if (!PAUSE_TEXT.test(text) || !(value > 0) || value > SILENCE_MAX_MS) {
+  if (!isGenerablePause(ms)) {
     throw new CliError(
       `${name}: the solved pause is ${text}ms — a pause asset must be a plain number of milliseconds ` +
       `above 0 and at most ${SILENCE_MAX_MS}. Check the timeline's lead-in, gap and outro values.`,
@@ -863,14 +892,63 @@ function declarationBlocker(segs, labelOf) {
 }
 
 /**
+ * What an ENABLED end card's stamp or outro is wrong about, as `{fact, then}`, or null. A
+ * DISABLED end card is unaffected: the schema forbids these fields when there is no end card,
+ * and a timeline that does not declare one is not judged here at all, so the gate other stages
+ * ask does not start refusing timelines that never had an end card.
+ *
+ * The builderVersion rule MUST AGREE WITH voice.mjs's own check on the stamped timeline — a
+ * string, non-empty after trimming, and not the text "undefined" or "null", case-insensitively.
+ * voice.mjs makes that check again after it writes; if the two ever disagree, the later one
+ * fires after every clip and voiceover.mp3 are on disk, which is the defect this check removes.
+ * Change them together.
+ *
+ * The outro rule is the pause GENERATOR's own, called rather than restated: isGenerablePause,
+ * which silenceAssetBytes also calls, so the gate and the generator cannot disagree about any
+ * value. It refuses exactly what that generator refuses and no more: voice turns the outro into
+ * a pause asset only when it solves ABOVE 0, so 0 — and any value that does not solve above 0 —
+ * is not an outro the engine cannot make, it is no outro at all, which voice accepts and writes
+ * nothing for. Refusing those here would refuse timelines the stage runs happily today.
+ */
+function endCardBlocker(timing) {
+  if (timing?.endCard?.enabled !== true) return null;
+  const bv = timing.builderVersion;
+  const trimmed = typeof bv === 'string' ? bv.trim() : null;
+  const wrong = trimmed === null ? shownKind(bv)
+    : trimmed === '' ? (bv === '' ? 'empty' : 'blank')
+      : ['undefined', 'null'].includes(trimmed.toLowerCase()) ? `the text ${JSON.stringify(bv)}`
+        : null;
+  if (wrong !== null) {
+    return {
+      fact: `the end card is enabled, but the timeline's builderVersion is ${wrong} — an enabled end card is ` +
+        'stamped with the builder version, so it must be a non-empty string, and not the text "undefined" or "null"',
+      then: 'set builderVersion to the version this build was made with, or set endCard.enabled to false',
+    };
+  }
+  const outroMs = Number(timing.outroMs);
+  // Judged only where voice would actually generate it — above 0 (voice.mjs:278-279).
+  if (outroMs > 0 && !isGenerablePause(outroMs)) {
+    return {
+      fact: `the end card is enabled, but the timeline's outroMs is ${shownValue(outroMs)}ms — the outro is a ` +
+        `generated pause, so it must be from ${PAUSE_MIN_MS} to ${SILENCE_MAX_MS}ms (one hour), the longest ` +
+        'silence the engine generates',
+      then: `set outroMs to at least ${PAUSE_MIN_MS} and at most ${SILENCE_MAX_MS}, or 0 for an end card with ` +
+        'no outro, or set endCard.enabled to false',
+    };
+  }
+  return null;
+}
+
+/**
  * Would voice.mjs (S3) accept this timeline's segments? null when it would; otherwise the
  * first refusal, as `{fact, then?, declaration?}`, from these checks in this order: the
- * segments' shape, every silence declaration, the narration text, and whether any segment is
- * narrated. voice.mjs makes exactly these checks, by calling this, before it builds its write
- * set, in its plan and under --apply; voiceBlocker makes them before it asks about that write
- * set. So the stage and its gate cannot disagree about any of them. It judges a timing object
- * already parsed: voice.mjs calls it after parsing its arguments, reading timing.json, and
- * checking its intake, its end-card decision and its brand voice allow-list.
+ * segments' shape, every silence declaration, the narration text, whether any segment is
+ * narrated, and an enabled end card's builderVersion and outro length. voice.mjs makes exactly
+ * these checks, by calling this, before it builds its write set, in its plan and under --apply;
+ * voiceBlocker makes them before it asks about that write set. So the stage and its gate cannot
+ * disagree about any of them. It judges a timing object already parsed: voice.mjs calls it
+ * after parsing its arguments, reading timing.json, and checking its intake, its end-card
+ * decision and its brand voice allow-list.
  */
 export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
   const shape = shapeBlocker(timing);
@@ -888,7 +966,8 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
   if (segs.every(isSilentSegment)) {
     return { fact: 'every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from' };
   }
-  return null;
+  // Last, so a timeline already refused for its segments keeps reporting that reason.
+  return endCardBlocker(timing);
 }
 
 /**
@@ -899,8 +978,10 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
  * The rest it checks itself, and this model does not: before them, its intake, its end-card
  * decision and the brand voice allow-list; after them, under --apply, the replace guard, so
  * this model answers for a run given --replace; and from synthesis on, the TTS service, the
- * per-segment fit (C-10), the pause assets' lengths, an enabled end card's builderVersion and
- * the drift check (C-6).
+ * per-segment fit (C-10), the lead-in and gap pauses' solved lengths and the drift check (C-6).
+ * An enabled end card's builderVersion and outro length are NOT in that list: they are the
+ * timeline's own, knowable before anything is written, so voiceTimelineBlocker judges them and
+ * this model answers for them too.
  */
 export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
   return voiceTimelineBlocker(timing, labelOf) ?? writeSetBlocker(dir, voiceWriteSet(timing)).blocker ?? null;
