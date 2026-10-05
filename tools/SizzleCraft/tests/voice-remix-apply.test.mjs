@@ -52,7 +52,7 @@ import path from 'node:path';
 import { parseFile } from 'music-metadata';
 
 import { EXIT } from '../src/cli-support.mjs';
-import { remixBlocker, renderBlocker, voiceBlocker } from '../src/silent-segment.mjs';
+import { remixBlocker, renderBlocker, voiceBlocker, voiceTimelineBlocker, silenceAssetBytes } from '../src/silent-segment.mjs';
 import { FAKE_AUDIO, brandTokens, makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, shortNameOf, zeroFileIds, ZERO_FILE_IDS_ARMED } from './_helpers.mjs';
 import { FRAME_BYTES, FRAME_MS, frames, readFrames, ttsClip } from './fixtures/fake-audio-backends.mjs';
 
@@ -458,7 +458,9 @@ describe('voice writes its pause assets as engine-chosen outputs', () => {
 
   test('voice_plan_listsEveryPauseAssetItMayWrite', (t) => {
     const enabled = makeProject(t, {
-      'timing.json': timingBody(TWO, { endCard: { enabled: true }, outroMs: 2500 }),
+      // An enabled end card carries a builderVersion: without one the gate refuses the
+      // timeline before the plan, which is what F7 added and what this row is not about.
+      'timing.json': timingBody(TWO, { endCard: { enabled: true }, outroMs: 2500, builderVersion: '0.0.0-test' }),
       'brand/tokens.json': brandTokens,
     });
     const r = runScript('voice.mjs', [], enabled);
@@ -513,18 +515,20 @@ describe('voice refuses a timeline its gate refuses before it writes anything', 
   };
   // timingBody takes durationMs from the last segment, which a timeline with no segment list,
   // or an empty one, does not have. So this states it: 3840 ms, where `four` ends.
-  const body = (segments) => JSON.stringify({
+  // `extra` overrides the top-level fields, for the end-card rows below.
+  const body = (segments, extra = {}) => JSON.stringify({
     project: { name: 'demo', fps: 30, width: 1280, height: 720, lede: 'a lede' },
     durationMs: 3840,
     endCard: { enabled: false },
     intake: INTAKE,
     ...(segments === undefined ? {} : { segments }),
+    ...extra,
   });
 
   // The gate is asked first, about the project exactly as voice will find it. `raw` edits the
   // timeline's text, for a value JSON.stringify cannot write.
-  function runVoice(t, segments, args, raw = (text) => text) {
-    const timingText = raw(body(segments));
+  function runVoice(t, segments, args, raw = (text) => text, extra = {}) {
+    const timingText = raw(body(segments, extra));
     const dir = makeProject(t, { 'timing.json': timingText, 'brand/tokens.json': brandTokens, ...SENTINELS });
     const log = path.join(makeOutsideDir(t), 'tts.jsonl');
     const gate = voiceBlocker(dir, JSON.parse(timingText));
@@ -599,6 +603,195 @@ describe('voice refuses a timeline its gate refuses before it writes anything', 
     assert.ok(fs.statSync(log).size > 0, 'and the call logged');
     assertCleanExit(r, EXIT.OK, 'a valid timeline must be voiced: ');
     assert.doesNotMatch(r.stderr, /^error:/m, r.all);
+  });
+
+  // ---------------------------------------------------------------------------
+  // F7 — an ENABLED end card is judged by the SAME gate, in the plan and under --apply,
+  // before any write and before any TTS call.
+  //
+  // voice checked an enabled end card's builderVersion at voice.mjs:329 — AFTER synthesising
+  // every clip, writing the lead-in, gap and outro pauses and overwriting voiceover.mp3: six
+  // files and two TTS calls, and it surfaced as an uncaught stack. An outroMs the pause
+  // generator cannot make was left to that generator, which refused it after two TTS calls and
+  // two clips. BOTH PLANNED AT EXIT 0, promising a run that --apply then refused — exactly what
+  // voice.mjs:94 says this gate exists to prevent.
+  //
+  // The exit code is EXIT.USAGE (2), not 1: voice.mjs:38 documents 2 as "a refused timeline"
+  // and 1 as "synthesis failed", and a timeline refused before synthesis is not a synthesis
+  // failure.
+  // ---------------------------------------------------------------------------
+  const endCardTimeline = (extra) => ({ endCard: { enabled: true }, outroMs: 2500, builderVersion: 'v1.2.3', ...extra });
+  const withoutBuilderVersion = () => { const e = endCardTimeline({}); delete e.builderVersion; return e; };
+  const bvPin = (shown) =>
+    new RegExp(`^error: the end card is enabled, but the timeline's builderVersion is ${esc(shown)} — `, 'm');
+  const outroPin = (shown) =>
+    new RegExp(`^error: the end card is enabled, but the timeline's outroMs is ${esc(shown)}ms — `, 'm');
+
+  const END_CARD_ROWS = [
+    ['NoBuilderVersion', withoutBuilderVersion(), bvPin('missing')],
+    ['AnEmptyBuilderVersion', endCardTimeline({ builderVersion: '' }), bvPin('empty')],
+    ['ABlankBuilderVersion', endCardTimeline({ builderVersion: '   ' }), bvPin('blank')],
+    ['ABuilderVersionOfTheTextUndefined', endCardTimeline({ builderVersion: 'undefined' }), bvPin('the text "undefined"')],
+    // Case-insensitively, as voice.mjs:327 compares it.
+    ['ABuilderVersionOfTheTextNull', endCardTimeline({ builderVersion: 'NULL' }), bvPin('the text "NULL"')],
+    ['ANullBuilderVersion', endCardTimeline({ builderVersion: null }), bvPin('null')],
+    ['ANumericBuilderVersion', endCardTimeline({ builderVersion: 3 }), bvPin('3')],
+    // The pause generator's ceiling, one hour: past it, voice cannot make the outro it promises.
+    ['AnOutroOverAnHour', endCardTimeline({ outroMs: HOUR_MS + 1 }), outroPin('3600001')],
+    ['AnInfiniteOutro', endCardTimeline({ outroMs: INFINITE_MARK }), outroPin('Infinity'), infinite],
+    // An outro above 0 that String() writes in EXPONENTIAL notation. The generator's rule has
+    // three parts — plain-decimal TEXT, above 0, at most the ceiling — and it tests the text
+    // form against String(value) (silent-segment.mjs:116). Below 1e-6 JS stringifies
+    // exponentially, so these are above 0 and far under the ceiling yet ungenerable. They used
+    // to pass the gate and die in the generator, after both clips and both TTS calls.
+    ['AnExponentiallyTinyOutro', endCardTimeline({ outroMs: 0.0000001 }), outroPin('1e-7')],
+    ['AnOutroJustBelowTheGenerableFloor', endCardTimeline({ outroMs: 9.99999e-7 }), outroPin('9.99999e-7')],
+    ['AnOutroAtTheSmallestRepresentableNumber', endCardTimeline({ outroMs: 5e-324 }), outroPin('5e-324')],
+    ['AnExponentiallyHugeOutro', endCardTimeline({ outroMs: 1e21 }), outroPin('1e+21')],
+  ];
+
+  for (const [scenario, extra, pinned, raw] of END_CARD_ROWS) {
+    for (const [mode, args] of MODES) {
+      test(`voice_${mode}WithAnEnabledEndCardAnd${scenario}_refusesBeforeAnyWriteOrTtsCall`, (t) => {
+        const { gate, before, r, outcome } = runVoice(t, authored(), args, raw, extra);
+
+        assert.ok(gate, 'the gate refuses this timeline');
+        assert.deepEqual(outcome, { files: before, ttsCalled: false }, 'a refusal writes nothing and calls no TTS service');
+        assert.equal(r.code, EXIT.USAGE,
+          `a refused timeline must exit ${EXIT.USAGE}, not ${EXIT.FAILED} — it is refused, not a failed synthesis\n${r.all}`);
+        assertCleanExit(r, EXIT.USAGE, 'a timeline the gate refuses must be refused: ');
+        // The old check threw, so the refusal arrived as an uncaught stack. It must not now.
+        assert.doesNotMatch(r.all, /^\s+at \S/m, `the refusal must print no stack\n${r.all}`);
+        assert.doesNotMatch(r.all, /approved enabled endCard requires a valid builderVersion/,
+          `the refusal must come from the gate, not voice.mjs's post-write throw\n${r.all}`);
+        assert.ok(r.stderr.includes(gate.fact), `voice must refuse for the gate's reason: ${gate.fact}\n${r.all}`);
+        assert.match(r.stderr, new RegExp(`^${esc(`error: ${renderBlocker(gate)}.`)}$`, 'm'), r.all);
+        assert.match(r.stderr, pinned, r.all);
+      });
+    }
+  }
+
+  // The controls that BOUND the rule. Each is accepted today and must stay accepted: without
+  // them a gate that refused every enabled end card would pass every row above.
+  test('voice_applyWithAValidEnabledEndCard_synthesisesAndWritesItsFiles', (t) => {
+    const { gate, before, r, outcome } = runVoice(t, authored(), ['--apply', '--replace'], undefined, endCardTimeline({}));
+
+    assert.equal(gate, null, 'the gate accepts a valid enabled end card');
+    assert.notDeepEqual(outcome.files, before, 'the run must write');
+    assert.equal(outcome.ttsCalled, true, 'the TTS service must be called');
+    assert.ok('outro.mp3' in outcome.files, 'an enabled end card with a positive outro writes outro.mp3');
+    assertCleanExit(r, EXIT.OK, 'a valid enabled end card must be voiced: ');
+  });
+
+  // MEASURED at HEAD 5cc3600, not decided: an enabled end card with outroMs 0 is ACCEPTED and
+  // writes no outro asset, because voice.mjs only generates the outro when it solves above 0.
+  // The gate must not refuse what the stage accepts, so 0 is not "too short" — it is no outro.
+  test('voice_applyWithAnEnabledEndCardAndZeroOutro_isAcceptedAndWritesNoOutroAsset', (t) => {
+    const { gate, r, outcome } = runVoice(t, authored(), ['--apply', '--replace'], undefined, endCardTimeline({ outroMs: 0 }));
+
+    assert.equal(gate, null, 'the gate accepts an enabled end card with no outro');
+    assert.equal(outcome.ttsCalled, true, 'the TTS service must be called');
+    assert.ok(!('outro.mp3' in outcome.files), 'an outro solved to 0ms writes nothing');
+    assertCleanExit(r, EXIT.OK, 'an enabled end card with outroMs 0 must be voiced: ');
+  });
+
+  // The smallest outro that IS generated: a sub-millisecond plain decimal. It bounds the new
+  // rule from below — the refusal must bite on exponential notation, not on smallness.
+  test('voice_applyWithAnEnabledEndCardAndAFractionalOutro_isAcceptedAndWritesTheOutroAsset', (t) => {
+    const { gate, r, outcome } = runVoice(t, authored(), ['--apply', '--replace'], undefined, endCardTimeline({ outroMs: 0.5 }));
+
+    assert.equal(gate, null, 'the gate accepts a generable fractional outro');
+    assert.equal(outcome.ttsCalled, true, 'the TTS service must be called');
+    assert.ok('outro.mp3' in outcome.files, 'a pause above 0 is generated and written');
+    assertCleanExit(r, EXIT.OK, 'an enabled end card with outroMs 0.5 must be voiced: ');
+  });
+
+  // The boundary itself, at the gate, where the rule lives: one hour is the longest silence the
+  // engine generates, so it is ACCEPTED, and only past it is refused.
+  test('voiceTimelineBlocker_withAnOutroExactlyAtTheSilenceCeiling_acceptsTheTimeline', () => {
+    const at = JSON.parse(body(authored(), endCardTimeline({ outroMs: HOUR_MS })));
+    const past = JSON.parse(body(authored(), endCardTimeline({ outroMs: HOUR_MS + 1 })));
+
+    assert.equal(voiceTimelineBlocker(at), null, `${HOUR_MS}ms is the ceiling, not past it`);
+    assert.ok(voiceTimelineBlocker(past), `${HOUR_MS + 1}ms is past the ceiling`);
+  });
+
+  // The OTHER end of the generator's rule, which a ceiling check alone does not reach: 1e-6 is
+  // the smallest value String() still writes as a plain decimal ("0.000001"), so it is the
+  // smallest generable pause. One step smaller stringifies as "1e-7" and is not generable.
+  //
+  // The floor is also LOAD-BEARING ADVICE. Notation is not a lever the author has: JSON.parse
+  // normalises "0.0000001" to the Number 1e-7 whatever the file says, so a remedy that asked
+  // for "a plain decimal" sent them in a circle. The remedy must name the floor instead.
+  test('voiceTimelineBlocker_withAnOutroBelowTheGenerableFloor_refusesAndNamesTheFloor', () => {
+    const atFloor = JSON.parse(body(authored(), endCardTimeline({ outroMs: 0.000001 })));
+    const justBelow = JSON.parse(body(authored(), endCardTimeline({ outroMs: 9.99999e-7 })));
+    const wellBelow = JSON.parse(body(authored(), endCardTimeline({ outroMs: 0.0000001 })));
+
+    assert.equal(String(0.000001), '0.000001', 'the premise: the floor stringifies plainly');
+    assert.equal(String(9.99999e-7), '9.99999e-7', 'the premise: just below it stringifies exponentially');
+    assert.equal(voiceTimelineBlocker(atFloor), null, '0.000001 is generable, so it is accepted');
+
+    for (const [label, timing] of [['just below', justBelow], ['well below', wellBelow]]) {
+      const gate = voiceTimelineBlocker(timing);
+      assert.ok(gate, `${label} the floor is not generable, so it is refused`);
+      const text = renderBlocker(gate);
+      assert.match(text, /must be from 0\.000001 to 3600000ms/, `${label}: the fact must name the floor`);
+      assert.match(gate.then, /at least 0\.000001/, `${label}: the remedy must name a value the author can write`);
+      // The advice the review caught: for any value this fires on, there IS no plain-decimal
+      // form, so telling the author to write one is advice that cannot be followed.
+      assert.doesNotMatch(text, /plain decimal|plain number/,
+        `${label}: the remedy must not ask for a notation the author cannot produce`);
+    }
+  });
+
+  // THE PIN THAT MATTERS: the gate must refuse EXACTLY what the pause generator refuses, for
+  // every value, so the two cannot drift apart again. The first version of this gate mirrored
+  // only the generator's ceiling and let an exponentially-notated outro through to die after
+  // the clips were written. This compares the two rules directly rather than by eye.
+  test('voiceTimelineBlocker_forEveryOutroValue_refusesExactlyWhatThePauseGeneratorRefuses', () => {
+    const timingWith = (outroMs) => ({
+      project: { name: 'demo', fps: 30, width: 1280, height: 720, lede: 'a lede' },
+      durationMs: 3840, endCard: { enabled: true }, builderVersion: 'v1.2.3',
+      intake: INTAKE, segments: authored(), outroMs,
+    });
+
+    for (const outroMs of [
+      0, -1, -5000, -1e-7, NaN, null, undefined, 5e-324, 1e-7, 2.5e-7, 1e-6, 0.5, 1, 2500,
+      2500.5, HOUR_MS - 1, HOUR_MS, HOUR_MS + 1, 1e21, Infinity, -Infinity,
+    ]) {
+      const gateRefuses = voiceTimelineBlocker(timingWith(outroMs)) !== null;
+      // voice hands the generator the outro only when it solves ABOVE 0 (voice.mjs:278-279);
+      // anything else is no outro at all and is never generated.
+      let generatorRefuses = false;
+      if (Number(outroMs) > 0) {
+        try { silenceAssetBytes(Number(outroMs), 'outro.mp3'); } catch { generatorRefuses = true; }
+      }
+      assert.equal(gateRefuses, generatorRefuses,
+        `outroMs ${String(outroMs)}: the gate ${gateRefuses ? 'refuses' : 'accepts'} but the generator ` +
+        `${generatorRefuses ? 'refuses' : 'accepts'} it`);
+    }
+  });
+
+  // The SECOND EFFECT. voiceBlocker delegates to voiceTimelineBlocker, so a stage asking
+  // whether voice is a remedy now learns that it is not — before it sends the author to a
+  // stage that would refuse them. remix names voice for a segment with no audio.file.
+  test('remixBlocker_withAnEnabledEndCardAndNoBuilderVersion_stopsNamingVoiceAsAnOpenRemedy', (t) => {
+    const valid = JSON.parse(body(authored(), endCardTimeline({})));
+    const broken = JSON.parse(body(authored(), withoutBuilderVersion()));
+    const dir = makeProject(t, { 'timing.json': JSON.stringify(valid), 'brand/tokens.json': brandTokens });
+
+    assert.equal(voiceBlocker(dir, valid), null, 'voice would run on the valid timeline');
+    assert.match(renderBlocker(remixBlocker(dir, valid)), /Run voice\.mjs \(S3\), which generates its clip and writes its record/,
+      'remix names voice as an open remedy while voice would run');
+
+    const gate = voiceBlocker(dir, broken);
+    assert.ok(gate, 'voiceBlocker refuses the timeline voiceTimelineBlocker refuses');
+    assert.equal(gate.fact, voiceTimelineBlocker(broken).fact, 'and refuses it for the same reason');
+    const gated = renderBlocker(remixBlocker(dir, broken));
+    assert.match(gated, /but it refuses this timeline as it stands: the end card is enabled, but the timeline's builderVersion is missing/,
+      'remix must report why voice would refuse rather than send the author to it');
+    assert.doesNotMatch(gated, /run voice\.mjs \(S3\), which generates/i, 'and must not name it as an open remedy');
   });
 });
 

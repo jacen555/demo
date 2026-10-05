@@ -2813,6 +2813,158 @@ describe('shapeBlocker', () => {
   }
 });
 
+describe('segmentEntryFact — the one statement of the entry-shape rule', () => {
+  const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+  const idless = () => ({ startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+  const notAnObject = (i) => `timing.segments[${i}] is not a segment object`;
+
+  // Every shape that is not a segment object. The index travels with the entry because an entry
+  // that is not an object has no id to be named by, so its position is the only handle an author
+  // has on it.
+  const REFUSED = [
+    ['ANullEntry', null, 0],
+    ['AnArrayEntry', [], 3],
+    ['ANumberEntry', 7, 1],
+    ['AStringEntry', 'one', 2],
+    ['ABooleanEntry', true, 0],
+    ['AnUndefinedEntry', undefined, 5],
+  ];
+
+  for (const [scenario, entry, index] of REFUSED) {
+    test(`segmentEntryFact_${scenario}_isRefusedNamingItsIndex`, async () => {
+      const { segmentEntryFact } = await load();
+      assert.equal(typeof segmentEntryFact, 'function', 'silent-segment.mjs must export segmentEntryFact');
+
+      assert.equal(segmentEntryFact(entry, index), notAnObject(index));
+    });
+  }
+
+  // The positive control for the six rows above, in the same call shape. Without it, a
+  // segmentEntryFact that returned the refusal string unconditionally would satisfy all six.
+  test('segmentEntryFact_aSegmentObject_isAccepted', async () => {
+    const { segmentEntryFact } = await load();
+    assert.equal(typeof segmentEntryFact, 'function', 'silent-segment.mjs must export segmentEntryFact');
+
+    assert.equal(segmentEntryFact(ok('one'), 0), null);
+  });
+
+  // This rule is the ENTRY's shape and nothing else. An id-less segment IS an object, so it is
+  // accepted here: frame-capture.mjs:104-109 deliberately tolerates one and labels it by index,
+  // and this predicate must never start refusing what that decision was written to serve.
+  test('segmentEntryFact_anIdlessSegment_isAcceptedBecauseTheIdRuleIsNotThisRule', async () => {
+    const { segmentEntryFact } = await load();
+    assert.equal(typeof segmentEntryFact, 'function', 'silent-segment.mjs must export segmentEntryFact');
+
+    assert.equal(segmentEntryFact(idless(), 0), null);
+  });
+});
+
+describe('segmentEntryBlocker — the entry rule across a whole list', () => {
+  const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+  const idless = () => ({ startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+
+  test('segmentEntryBlocker_aNullEntry_isRefusedNamingItsIndex', async () => {
+    const { segmentEntryBlocker } = await load();
+    assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+    assert.deepEqual(segmentEntryBlocker([ok('one'), null, ok('three')]), {
+      fact: 'timing.segments[1] is not a segment object',
+    });
+  });
+
+  test('segmentEntryBlocker_severalBadEntries_reportsTheFirstInIndexOrder', async () => {
+    const { segmentEntryBlocker } = await load();
+    assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+    assert.deepEqual(segmentEntryBlocker([ok('one'), 7, null]), {
+      fact: 'timing.segments[1] is not a segment object',
+    });
+  });
+
+  // The positive control: the same call, a well-formed list.
+  test('segmentEntryBlocker_everyEntryASegmentObject_isAccepted', async () => {
+    const { segmentEntryBlocker } = await load();
+    assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+    assert.equal(segmentEntryBlocker([ok('one'), ok('two')]), null);
+  });
+
+  // The three deliberate non-responsibilities. Each is a rule shapeBlocker DOES enforce and this
+  // predicate does not, which is the entire reason it was extracted rather than shapeBlocker
+  // being adopted wholesale: frame-capture, write-storyboard and concat-audio each handle an
+  // absent or empty list their own way, and all three accept an id-less segment on purpose.
+  test('segmentEntryBlocker_anIdlessSegment_isAccepted', async () => {
+    const { segmentEntryBlocker } = await load();
+    assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+    assert.equal(segmentEntryBlocker([ok('one'), idless()]), null);
+  });
+
+  test('segmentEntryBlocker_anEmptyList_isAcceptedBecauseTheListRuleIsNotThisRule', async () => {
+    const { segmentEntryBlocker } = await load();
+    assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+    assert.equal(segmentEntryBlocker([]), null);
+  });
+
+  for (const [scenario, segs] of [['Undefined', undefined], ['Null', null], ['AnObject', {}], ['AString', 'two of them']]) {
+    test(`segmentEntryBlocker_segmentsIs${scenario}_isAcceptedBecauseTheListRuleIsNotThisRule`, async () => {
+      const { segmentEntryBlocker } = await load();
+      assert.equal(typeof segmentEntryBlocker, 'function', 'silent-segment.mjs must export segmentEntryBlocker');
+
+      assert.equal(segmentEntryBlocker(segs), null);
+    });
+  }
+});
+
+describe('the entry rule has exactly one statement, and its consumers are enumerated', () => {
+  const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
+
+  // shapeBlocker must refuse an entry shape if and only if segmentEntryFact does, and with the
+  // same words. They agree because shapeBlocker CALLS it — this test is what keeps that true, so
+  // the two cannot drift into two statements of one rule the way PLAIN_DECIMAL and the end-card
+  // gate did before F7.
+  test('shapeBlocker_everyEntryShape_agreesWithSegmentEntryFactByConstruction', async () => {
+    const { shapeBlocker, segmentEntryFact } = await load();
+    assert.equal(typeof shapeBlocker, 'function', 'silent-segment.mjs must export shapeBlocker');
+    assert.equal(typeof segmentEntryFact, 'function', 'silent-segment.mjs must export segmentEntryFact');
+
+    for (const entry of [null, [], 7, 'one', true, undefined]) {
+      const fact = segmentEntryFact(entry, 1);
+      assert.equal(typeof fact, 'string', 'the predicate must refuse this shape for the test to mean anything');
+      assert.deepEqual(shapeBlocker({ segments: [ok('one'), entry] }), { fact });
+    }
+  });
+
+  // A doc comment that names a rule's consumers is an index AND an audit — the stages missing
+  // from shapeBlocker's sentence were exactly the four that crashed on a null entry. A comment
+  // cannot be trusted to stay honest on its own, so this asserts the declared list against the
+  // modules that actually import the symbol. Update the comment when you add a caller; that is
+  // the point.
+  for (const symbol of ['segmentEntryFact', 'segmentEntryBlocker']) {
+    test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
+      const srcDir = new URL('../src/', import.meta.url);
+      const source = fs.readFileSync(new URL('silent-segment.mjs', srcDir), 'utf8');
+
+      const line = new RegExp(`^\\s*\\*\\s*CONSUMERS\\(${symbol}\\):\\s*(.+)$`, 'm').exec(source);
+      assert.ok(line, `silent-segment.mjs must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
+      const declared = line[1].trim() === 'none' ? [] : line[1].split(',').map((s) => s.trim()).filter(Boolean);
+
+      const actual = fs
+        .readdirSync(srcDir)
+        .filter((f) => f.endsWith('.mjs') && f !== 'silent-segment.mjs')
+        .filter((f) => {
+          const block = /import\s*\{([^}]*)\}\s*from\s*'\.\/silent-segment\.mjs'/s.exec(
+            fs.readFileSync(new URL(f, srcDir), 'utf8'));
+          return block !== null && block[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).includes(symbol);
+        });
+
+      assert.deepEqual(actual.sort(), declared.sort(),
+        `the CONSUMERS(${symbol}) line and the modules that actually import it have drifted apart`);
+    });
+  }
+});
+
 describe("a silent segment's window is two finite numbers, at most an hour apart", () => {
   const silent = (startMs, endMs, extra = {}) =>
     ({ id: 'gap', startMs, endMs, voiceoverText: '', silence: { caption: '[music]' }, ...extra });
