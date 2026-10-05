@@ -1153,9 +1153,42 @@ its own adapter.
 
 ### Output contract
 
-Results go to **stdout**; diagnostics, warnings, log records, usage errors, and help shown because
-of an error go to **stderr**. A caller can pipe stdout into another process without contaminating
-it.
+Results go to **stdout**; diagnostics, warnings, log records, progress, usage errors, and help
+shown because of an error go to **stderr**. A caller can pipe stdout into another process without
+contaminating it.
+
+### Progress
+
+A suite reports its progress on stderr while it runs, so a long run is not silent between being
+started and its report. `run` and `baseline update` both do this; `--dry-run` conducts nothing and
+reports nothing. Which form you get is Spectre.Console's own detection, not a flag:
+
+- **On an interactive terminal**, a live bar redrawn in place: runs completed over runs planned,
+  with failures and errors counted as they happen. Log records are written above the bar rather
+  than spliced into it, and the final count stays on screen above the report.
+- **Redirected or in CI** — a file, a pipe, a build log — plain lines with no escape codes: a start
+  line before anything is dispatched, then one line per completed run.
+
+```
+eval-cli: starting suite 'smoke-noisy' - 8 run(s) planned across 4 scenario(s).
+eval-cli: [2/8] scenario 'checkout' repetition 2: pass
+eval-cli: [2/8] scenario 'checkout' repetition 1: pass
+eval-cli: [3/8] scenario 'drop-billing' repetition 1: error
+```
+
+The bracketed count is the **greatest** number of runs known to have completed, not the position of
+the line. Above `--max-concurrency 1` runs finish out of order — the two `[2/8]` lines above are a
+real run reporting two before one — so a count can repeat but never goes backwards. Scenario ids
+pass through the same redaction as every other value on stderr.
+
+Progress never changes stdout, the artifact, or the exit code. A fault in the display itself is
+logged as a warning and the suite carries on without it: the display is not the system under test,
+and a finished run is never discarded because something failed to draw it.
+
+**A live baseline's suite reports no progress.** With `--baseline-endpoint`, the second suite is
+conducted by the engine's live-baseline provider, which offers no way to attach progress to it, so
+that stretch is still silent — as long again as the candidate suite. That needs an engine change;
+it is not something this tool can draw around.
 
 ## Exit codes
 

@@ -3,12 +3,15 @@ using System.CommandLine.IO;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Forge.EvalCli.Diagnostics;
 using Forge.EvalEngine.Baselines;
 using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Scenarios;
 using Forge.EvalEngine.Serialization;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Forge.EvalCli.Cli;
 
@@ -315,10 +318,12 @@ internal static class SuiteDiscovery
         MarkdownReport.Display(plan.RootDirectory, plan.BaselinePath ?? string.Empty);
 
     /// <summary>
-    /// Conducts the suite, turning the coordinator's planning refusal into this tool's vocabulary.
+    /// Conducts the suite, showing its progress, and turns the coordinator's planning refusal into
+    /// this tool's vocabulary.
     /// </summary>
-    /// <param name="coordinator">The coordinator.</param>
+    /// <param name="provider">The invocation's composition root, for the coordinator and its logger.</param>
     /// <param name="suite">The suite to conduct.</param>
+    /// <param name="display">Shows the suite's progress while it runs.</param>
     /// <param name="cancellationToken">Cancels the run.</param>
     /// <returns>The result.</returns>
     /// <remarks>
@@ -342,22 +347,48 @@ internal static class SuiteDiscovery
     /// message reaches the build log. The budget and the option that sets it are what a caller
     /// acts on.
     /// </para>
+    /// <para>
+    /// <b>Progress is shown only where the engine will accept it, and that is decided by asking
+    /// the engine's question first.</b> The coordinator refuses a progress sink unless its logger
+    /// admits warnings — a fault in a sink is logged and nowhere else — and refuses it with
+    /// <see cref="InvalidOperationException"/>, which nothing here translates: it would reach the
+    /// defect handler and print a stack trace, for a run that was only ever asked to be quiet. So
+    /// the coordinator's own logger is asked the same question first, and when it would not admit
+    /// a warning the suite is conducted without a sink, which is exactly the run with no display.
+    /// This composition root never configures such a logger — the threshold is warning, or debug
+    /// with <c>--verbose</c> — so today this only keeps a future quieter setting from turning
+    /// every run into a defect report.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="EvalCliException">The plan exceeds the coordinator's run budget.</exception>
     /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
     public static async Task<SuiteResult> ConductAsync(
-        RunCoordinator coordinator,
+        IServiceProvider provider,
         Suite suite,
+        RunProgressDisplay display,
         CancellationToken cancellationToken
     )
     {
-        ArgumentNullException.ThrowIfNull(coordinator);
+        ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(suite);
+        ArgumentNullException.ThrowIfNull(display);
+
+        var coordinator = provider.GetRequiredService<RunCoordinator>();
+        var progressAdmitted = provider.GetRequiredService<ILogger<RunCoordinator>>().IsEnabled(LogLevel.Warning);
 
         try
         {
-            return await coordinator.RunAsync(suite, cancellationToken).ConfigureAwait(false);
+            return progressAdmitted
+                ? await display
+                    .ShowAsync(
+                        suite,
+                        provider.GetRequiredService<ILogger<RunProgressDisplay>>(),
+                        sink => coordinator.RunAsync(suite, sink, cancellationToken),
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false)
+                : await coordinator.RunAsync(suite, cancellationToken).ConfigureAwait(false);
         }
         catch (ArgumentException)
         {

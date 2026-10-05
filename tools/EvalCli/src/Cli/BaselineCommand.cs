@@ -5,9 +5,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Forge.EvalCli.Composition;
+using Forge.EvalCli.Diagnostics;
 using Forge.EvalEngine.Baselines;
 using Forge.EvalEngine.Comparison;
-using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
 using Microsoft.Extensions.DependencyInjection;
@@ -231,7 +231,9 @@ internal static class BaselineCommand
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var provider = EvalCliServices.Build(plan, console.Error.CreateTextWriter());
+        // One writer for log records and streamed progress, so neither splits the other's lines.
+        using var diagnostics = new DiagnosticsWriter(console.Error.CreateTextWriter());
+        using var provider = EvalCliServices.Build(plan, diagnostics);
 
         var suite = await SuiteDiscovery
             .LoadSuiteAsync(provider.GetRequiredService<SuiteLoader>(), plan, console, cancellationToken)
@@ -259,7 +261,7 @@ internal static class BaselineCommand
         // from a narrowed run records only the scenarios that ran, and every later comparison
         // would read the missing ones as removed.
         var candidate = await SuiteDiscovery
-            .ConductAsync(provider.GetRequiredService<RunCoordinator>(), suite, cancellationToken)
+            .ConductAsync(provider, suite, RunProgressDisplay.For(console, diagnostics), cancellationToken)
             .ConfigureAwait(false);
 
         RequireEveryRunWasConducted(candidate, plan);
