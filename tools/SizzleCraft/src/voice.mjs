@@ -7,9 +7,10 @@
 // PERCEIVED gap hits its target exactly.
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveInternalArtifact, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
 import { isSilentSegment, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, voiceTimelineBlocker, renderBlocker, segmentClipName, gapAssetName } from './silent-segment.mjs';
 
 const USAGE = `
@@ -188,17 +189,81 @@ for (const o of writeSet) {
 }
 
 const pathFor = (key) => writeSet.find((o) => o.key === key).path;
-const segmentTargets = timing.segments.map((seg, i) => ({ key: seg.id, path: pathFor(segmentClipName(i)) }));
-const voiceOutPath = pathFor('voiceover.mp3');
-const timingOutPath = pathFor('timing.json');
-const calibrationPath = pathFor('calibration-observed.json');
-const syncMappingPath = pathFor('sync-mapping.md');
+// Only the heal log keeps a resolved destination of its own now: everything else is
+// written to a staging file and renamed by the publish loop, which takes each destination
+// from pathFor at stage() time.
 const healLogPath = pathFor('heal-log.txt');
+
+// ---- staging ---------------------------------------------------------------------------------
+// MEASURED BEFORE THIS EXISTED: a C-10 failure and an end-card failure each left new audio
+// on disk beside a timeline still describing the old. remix.mjs already solved exactly this
+// — its own test says "A C-6 failure used to exit with a stack trace after the silent clips,
+// the pauses and the voice track had already been overwritten, leaving new audio beside a
+// timeline that described the old." This stage simply never got the same treatment, and it
+// is the most expensive one in the engine to fail late.
+//
+// So every output is written to an exclusive `.part-` file beside its destination and
+// renamed into place only once the whole run has succeeded. The staging files are real
+// files, which is what makes this work here: probeMs and the concatenation read a staged
+// path exactly as they read a final one.
+//
+// heal-log.txt is DELIBERATELY NOT STAGED. It records the retry attempts, so it is written
+// DURING a failure and has to survive it — a log of what went wrong is worthless if it is
+// rolled back with everything else. That is why this stage cannot borrow remix's phrase
+// "nothing was written": here one thing was, on purpose, and the refusals below say so.
+const staged = [];
+const stage = (key, bytes) => {
+  let handle;
+  try {
+    handle = openExclusiveEngineFile(dir, `${key}.part-${process.pid}-${crypto.randomBytes(8).toString('hex')}`, `${key} staging file`);
+  } catch (err) {
+    // `abandon`, not `refuse`: a staging failure on the fifth file must not strand the four
+    // before it. The entry for THIS file is not in `staged` yet — openExclusiveEngineFile
+    // only returns a handle when it created the file — so there is nothing of its own to
+    // remove, but everything already staged has to go.
+    abandon(`could not stage ${key}: ${err.message} No audio or timeline output was published.`, EXIT.FAILED);
+  }
+  const entry = { key, dest: pathFor(key), path: handle.path, handle, published: false };
+  staged.push(entry);
+  try {
+    fs.writeFileSync(handle.fd, bytes);
+    fs.closeSync(handle.fd);
+  } catch (err) {
+    // Pushed before the write, so this file's own handle is in `staged` and `abandon`
+    // cleans it up along with the rest.
+    abandon(`could not write the ${key} staging file (${err.code ?? err.message}). No audio or timeline output was published.`, EXIT.FAILED);
+  }
+  return entry.path;
+};
+
+/** Removes staging files, newest first, and reports any it could not remove. */
+const discardFrom = (mark = 0) => {
+  const leftovers = [];
+  for (const e of staged.splice(mark).filter((x) => !x.published)) {
+    const outcome = e.handle.cleanup();
+    if (outcome) leftovers.push(outcome.message);
+  }
+  return leftovers;
+};
+
+/**
+ * Ends the run without publishing anything.
+ *
+ * Every refusal after synthesis begins goes through here, so there is one place that knows
+ * the staging files must go first. Reporting a clean abort while leaving `.part-` files
+ * behind would claim a guarantee that was not honoured, so what could not be removed is
+ * named rather than swallowed.
+ */
+const abandon = (message, code = EXIT.FAILED) => {
+  for (const left of discardFrom(0)) console.error(`warning: ${left}`);
+  refuse(message, code);
+};
+
 
 // Loaded only on the --apply path: a plan must not need the TTS client.
 const { MsEdgeTTS } = await import('msedge-tts');
 
-async function synthOnce(text, file) {
+async function synthOnce(text, stageBytes) {
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, 'audio-24khz-96kbitrate-mono-mp3', { wordBoundaryEnabled: true });
   const { audioStream, metadataStream } = tts.toStream(text, { rate: ratePct });
@@ -218,7 +283,9 @@ async function synthOnce(text, file) {
   await new Promise(r => setTimeout(r, 400));
   const buf = Buffer.concat(chunks);
   if (!buf.length) throw new Error('empty TTS stream');
-  fs.writeFileSync(file, buf);
+  // Staged, not written to the destination. The clip still has to exist as a real file for
+  // probeMs to measure it — a staging file is one, so nothing about the measurement changes.
+  const file = stageBytes(buf);
   const durationMs = await probeMs(file);
   if (!durationMs) throw new Error('zero-duration TTS output');
   if (!words.length) throw new Error('no word boundaries returned');
@@ -230,10 +297,16 @@ async function synthOnce(text, file) {
   return { file, durationMs, words, scale, headMs, tailMs };
 }
 
-async function synth(text, file, id) {                      // C-14 bounded self-heal
+async function synth(text, key, id) {                       // C-14 bounded self-heal
   for (let attempt = 1; attempt <= 4; attempt++) {
-    try { return await synthOnce(text, file); }
+    // Each attempt stages its own file, and a failed one discards only what IT staged.
+    // Without the mark, a retry would leave the previous attempt's staging file behind and
+    // publish the first of several clips claiming the same destination.
+    const mark = staged.length;
+    try { return await synthOnce(text, (bytes) => stage(key, bytes)); }
     catch (e) {
+      for (const left of discardFrom(mark)) console.error(`warning: ${left}`);
+      // Written straight to its destination, not staged: see the staging block above.
       fs.appendFileSync(healLogPath, `[voice] ${id} attempt ${attempt}: ${e.message}\n`);
       console.log(`[voice] ${id} attempt ${attempt} failed: ${e.message}`);
       if (attempt === 4) throw e;
@@ -243,6 +316,12 @@ async function synth(text, file, id) {                      // C-14 bounded self
 }
 
 // ---- 1. synthesize -------------------------------------------------------------------------
+// EVERYTHING FROM HERE TO THE PUBLISH LOOP RUNS INSIDE ONE HANDLER. Staging only protects
+// the failures it can see: the refusals below route through `abandon`, but a rejected
+// probeMs, a corrupt clip or any other unexpected throw would otherwise escape at module
+// scope and leave `.part-` files behind — a run that reports nothing was published while
+// littering the project with staged audio. remix.mjs wraps its staged region the same way.
+try {
 // A DECLARED SILENT SEGMENT IS NEVER SENT TO TTS. Synthesising "" returns an empty stream
 // with no word boundaries, which synthOnce correctly rejects ('zero-duration TTS output' /
 // 'no word boundaries returned') — four times, with backoff, before failing the run. Its
@@ -254,8 +333,7 @@ for (let i = 0; i < timing.segments.length; i++) {
   const seg = timing.segments[i];
   if (isSilentSegment(seg)) {
     const authoredMs = silentDurationMs(seg);
-    const file = segmentTargets[i].path;
-    fs.writeFileSync(file, silentMp3(authoredMs));
+    const file = stage(segmentClipName(i), silentMp3(authoredMs));
     // Probed, not assumed: silence is frame-quantised to 24ms, so the clip that exists can
     // differ from the one that was asked for by up to 12ms. The timeline must describe the
     // audio on disk, not the request.
@@ -263,7 +341,9 @@ for (let i = 0; i < timing.segments.length; i++) {
     // headMs/tailMs are 0 because there is no speech for silence to lead or trail. The
     // gap solve below does not consult them for a silent segment anyway — it skips the
     // seam entirely, because the authored silence already IS the pause.
-    results.push({ file, durationMs, words: [], scale: 1, headMs: 0, tailMs: 0, silent: true });
+    // `name` is the FINAL clip name, never the staging one: the timeline records where the
+    // audio will live, not where it is being assembled.
+    results.push({ file, name: segmentClipName(i), durationMs, words: [], scale: 1, headMs: 0, tailMs: 0, silent: true });
     console.log(`silent ${seg.id.padEnd(11)} ${String(durationMs).padStart(6)}ms  (authored ${authoredMs}ms, generated — not synthesised)`);
     continue;
   }
@@ -272,10 +352,11 @@ for (let i = 0; i < timing.segments.length; i++) {
   // than escaping as the raw service error, which named no segment.
   let r;
   try {
-    r = await synth(seg.voiceoverText, segmentTargets[i].path, seg.id);
+    r = await synth(seg.voiceoverText, segmentClipName(i), seg.id);
   } catch (err) {
-    refuse(`C-14: segment "${seg.id}" could not be synthesised after 4 attempts — ${err.message}`, EXIT.FAILED);
+    abandon(`C-14: segment "${seg.id}" could not be synthesised after 4 attempts — ${err.message} No audio or timeline output was published; heal-log.txt records the attempts.`, EXIT.FAILED);
   }
+  r.name = segmentClipName(i);
   results.push(r);
   console.log(`synth ${seg.id.padEnd(11)} ${String(r.durationMs).padStart(6)}ms  head ${String(r.headMs).padStart(4)}ms  tail ${String(r.tailMs).padStart(4)}ms`);
 }
@@ -286,10 +367,10 @@ for (let i = 0; i < timing.segments.length; i++) {
 const overruns = timing.segments
   .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs), silent: results[i].silent }))
   .filter(f => !f.silent && f.over > perSegToleranceMs);
-// MEASURED: by the time this fires, every clip is already on disk. The report is the only
-// thing between the author and a directory of audio that does not fit its timeline, so it
-// names each segment and by how much it overran.
-if (overruns.length) refuse(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}`, EXIT.FAILED);
+// MEASURED: by the time this fires, every clip has been synthesised. Before staging it
+// also meant they were already at their destinations, so the run left new audio beside a
+// timeline describing the old. Now nothing is published and the report says so.
+if (overruns.length) abandon(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}. No audio or timeline output was published: each is as it was.`, EXIT.FAILED);
 
 // ---- 3. solve inserted silences so PERCEIVED pacing hits its targets ------------------------
 // No lead-in before a segment that is itself silence — the author already said how long
@@ -323,17 +404,27 @@ for (let i = 0; i < timing.segments.length - 1; i++) {
 // nothing, as before.
 const pauseAsset = (ms, name) => {
   if (ms <= 0) return null;
-  const bytes = guard(() => silenceAssetBytes(ms, name));
-  return { path: pathFor(name), bytes };
+  // NOT `guard()`. guard() calls process.exit() itself, which would walk straight past the
+  // outer handler and strand every clip already staged — a refusal that leaves the mess it
+  // exists to prevent. silenceAssetBytes refuses a pause outside its limits, and by this
+  // point every clip is staged, so the refusal has to go through `abandon`. Its own exit
+  // code is preserved: this is still the caller's bad input, not a failed run.
+  let bytes;
+  try {
+    bytes = silenceAssetBytes(ms, name);
+  } catch (err) {
+    abandon(`${err.message} No audio or timeline output was published: each is as it was.`, err.exitCode ?? EXIT.USAGE);
+  }
+  return { name, bytes };
 };
 const leadAsset = pauseAsset(leadInsertedMs, 'lead.mp3');
 const gapAssets = gaps.map((ms, i) => pauseAsset(ms, gapAssetName(i)));
 const outroTargetMs = timing.endCard.enabled ? Number(timing.outroMs) : 0;
 const outroAsset = outroTargetMs > 0 ? pauseAsset(outroTargetMs, 'outro.mp3') : null;
-for (const a of [leadAsset, ...gapAssets, outroAsset]) if (a) fs.writeFileSync(a.path, a.bytes);
-const leadFile = leadAsset?.path ?? null;
-const gapFiles = gapAssets.map((a) => a?.path ?? null);
-const outroFile = outroAsset?.path ?? null;
+const stagedPause = (a) => (a ? stage(a.name, a.bytes) : null);
+const leadFile = stagedPause(leadAsset);
+const gapFiles = gapAssets.map(stagedPause);
+const outroFile = stagedPause(outroAsset);
 
 const leadRealMs = leadFile ? await probeMs(leadFile) : 0;
 const gapRealMs = [];
@@ -351,7 +442,10 @@ for (let i = 0; i < timing.segments.length; i++) {
   seg.startMs = cursor;
   seg.endMs = cursor + r.durationMs;
   seg.audio = {
-    file: path.basename(r.file), durationMs: r.durationMs,
+    // The FINAL clip name, not the staging path it is being assembled at. Recording
+    // path.basename(r.file) here would have written `segment_01.mp3.part-1234-ab…` into
+    // the published timeline, naming a file that is renamed away moments later.
+    file: r.name, durationMs: r.durationMs,
     headMs: r.headMs, tailMs: r.tailMs,
     words: r.words.map(w => ({ word: w.word, startMs: cursor + Math.round(w.localStartMs * r.scale), endMs: cursor + Math.round(w.localEndMs * r.scale) })),
   };
@@ -373,13 +467,19 @@ for (let i = 0; i < results.length; i++) {
   if (i < results.length - 1 && gapFiles[i]) parts.push(gapFiles[i]);
 }
 if (outroFile) parts.push(outroFile);
-fs.writeFileSync(voiceOutPath,
+const voiceStagedPath = stage('voiceover.mp3',
   Buffer.concat(parts.map((p, i) => { const b = fs.readFileSync(p); return i === 0 ? b : b.subarray(audioStart(b)); })));
 
 // ---- 6. end-card fields + drift gate (C-6) --------------------------------------------------
 const bvOk = typeof timing.builderVersion === 'string' && timing.builderVersion.trim() !== ''
   && !['undefined', 'null'].includes(timing.builderVersion.trim().toLowerCase());
-if (timing.endCard.enabled && !bvOk) throw new Error('approved enabled endCard requires a valid builderVersion');
+// NOW A CLEAN REFUSAL, AND NOW HARMLESS. Measured before staging, this fired after
+// voiceover.mp3 had already been overwritten, leaving new audio beside the old timeline —
+// it was the last site in this stage still ending in an uncaught throw. Nothing is
+// published until every check below has passed.
+if (timing.endCard.enabled && !bvOk) {
+  abandon('approved enabled endCard requires a valid builderVersion. No audio or timeline output was published: each is as it was.', EXIT.FAILED);
+}
 // A disabled end card must leave NONE of its three fields behind. This stripped contentMs
 // and outroMs and kept builderVersion, which was invisible until the schema enforced the
 // rule — at which point no run could have produced a schema-valid disabled-end-card
@@ -387,7 +487,7 @@ if (timing.endCard.enabled && !bvOk) throw new Error('approved enabled endCard r
 normalizeEndCardFields(timing, { contentMs, outroMs: outroRealMs });
 timing.leadInMs = leadRealMs;
 
-const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));
+const voiceMs = await probeMs(voiceStagedPath);
 const driftMs = Math.abs(voiceMs - timing.durationMs);
 console.log(`\nvoiceover ${voiceMs}ms | timeline ${timing.durationMs}ms | drift ${driftMs}ms`);
 // LEFT AS A THROW, DELIBERATELY. Every other crash site in this stage was converted and
@@ -406,18 +506,63 @@ if (driftMs > Math.max(toleranceMs, 1500)) throw new Error(`C-6 voice drift ${dr
 const roundedSpeed = 1 + Math.round((speed - 1) * 100) / 100;
 const calibration = buildCalibration(timing.segments, results, { voiceId: voice, roundedSpeed });
 const obsEff = calibration.aggregate.observedEffWps;
-fs.writeFileSync(calibrationPath, JSON.stringify(calibration, null, 2));
+stage('calibration-observed.json', JSON.stringify(calibration, null, 2));
 
-delete timing.timingHash;
-timing.timingHash = timingSeal(timing);
-fs.writeFileSync(timingOutPath, JSON.stringify(timing, null, 2));
-
-fs.writeFileSync(syncMappingPath,
+// Staged BEFORE timing.json, so the timeline stays last in publish order. Staged after it,
+// a failed rename of the mapping happened once the timeline was already published — while
+// the error below still said "timing.json was not updated", which was then false.
+stage('sync-mapping.md',
   `# Sync Mapping\n\nvoice=${voice}\nrate=${ratePct}\nvoiceoverMs=${voiceMs}\ntimingMs=${timing.durationMs}\n` +
   `contentMs=${contentMs}\nleadInMs=${leadRealMs}\noutroMs=${outroRealMs}\n` +
   `perceivedGapTargetMs=${GAP_DEFAULT_MS}\ninsertedGapsMs=${gapRealMs.join(',')}\ndriftMs=${driftMs}\n` +
   `observedEffWps=${obsEff.toFixed(3)}\nstatus=pass\n`);
 
+delete timing.timingHash;
+timing.timingHash = timingSeal(timing);
+// LAST. Every other artifact is in place before the timeline that describes them.
+stage('timing.json', JSON.stringify(timing, null, 2));
+
+// ---- 8. publish ------------------------------------------------------------------------------
+// Renamed in the order staged — clips, pauses, the voice track, the mapping, then
+// timing.json last — so the timeline is never updated to describe audio that is not yet in
+// place. Nothing is rolled back: a rename that fails leaves those before it published, so
+// the report names exactly which were and which were not rather than guessing.
+for (const e of staged) {
+  try {
+    fs.renameSync(e.path, e.dest);
+    e.published = true;
+  } catch (err) {
+    const published = staged.filter((x) => x.published).map((x) => x.key);
+    const unpublished = staged.filter((x) => !x.published).map((x) => x.key);
+    // `timing.json` is staged LAST, so it is never among the published when this handler
+    // runs — if its own rename is the one that failed, it is in `unpublished` like any
+    // other. The statement below is therefore unconditional and true.
+    //
+    // An earlier version made it conditional on `published.includes('timing.json')`. That
+    // branch cannot be reached, which makes it exactly the dead defence this stage removed
+    // from C-6: a line that looks like rigour and can never run. The ordering is what makes
+    // the claim safe, so the ordering is what is documented.
+    for (const left of discardFrom(0)) console.error(`warning: ${left}`);
+    refuse(
+      `could not publish ${e.key} (${err.code ?? err.message}). ` +
+      `Published: ${published.length ? published.join(', ') : 'nothing'}. Not published: ${unpublished.join(', ')}. ` +
+      'timing.json was not updated, so it still describes the audio from before this run' +
+      (published.length ? ', while the files published above hold this run\'s' : '') +
+      '. Fix the cause and re-run voice.mjs --apply --replace.',
+      EXIT.FAILED);
+  }
+}
+
 const mm = ms => `${Math.floor(ms / 60000)}:${String(Math.round(ms % 60000 / 1000)).padStart(2, '0')}`;
 console.log(`\nwrote voiceover.mp3 — final length ${mm(timing.durationMs)} (${timing.durationMs}ms)`);
 console.log(`speech-only rate ${obsEff.toFixed(2)} words/sec at ${speed}x`);
+
+} catch (err) {
+  // The backstop for anything the refusals above do not model: a rejected probe, a clip
+  // music-metadata cannot read, a bug here. Staging files go first, so the project is left
+  // as it was found whichever way the run ended, and an unexpected error is still reported
+  // as unexpected rather than dressed up as a refusal.
+  for (const left of discardFrom(0)) console.error(`warning: ${left}`);
+  console.error(`error: voice.mjs failed after synthesis began — ${err?.message ?? String(err)}. No audio or timeline output was published: each is as it was.`);
+  process.exit(EXIT.FAILED);
+}

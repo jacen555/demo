@@ -33,6 +33,16 @@ import path from 'node:path';
 
 import { EXIT } from '../src/cli-support.mjs';
 import { makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, FAKE_AUDIO, brandTokens } from './_helpers.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const fixture = (name) => pathToFileURL(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', name),
+).href;
+
+/** Makes music-metadata's parseFile throw after N real calls. */
+const FAIL_PROBE = fixture('fail-probe.mjs');
+/** Makes one publish rename fail, inside the child, with no race. */
+const FAIL_RENAME = fixture('fail-rename.mjs');
 
 /** Two narrated segments whose windows comfortably fit the fake service's output. */
 const narrated = () => [
@@ -200,6 +210,244 @@ describe('voice.mjs · the brand allow-list (C-11) refuses rather than crashes',
     const r = voice(dir);
     assertRefused(r, EXIT.USAGE);
     assert.doesNotMatch(r.all, /not valid JSON/, `a read failure was reported as a parse failure\n${r.all}`);
+  });
+});
+
+describe('voice.mjs · a failed run publishes nothing (stage-then-publish)', () => {
+  // MEASURED BEFORE THIS CHANGE: a C-10 failure and an end-card failure each left new
+  // audio on disk beside a timeline still describing the old. That is the sentence
+  // remix.mjs's own test uses for the defect it already fixed
+  // (voice-remix-apply.test.mjs:1086) — this stage simply never got the same treatment.
+  //
+  // Two fixture facts, both learned by getting them wrong first:
+  //   - The fake TTS is deterministic, so re-synthesising UNCHANGED text produces
+  //     byte-identical clips. A test that does not change the narration cannot see whether
+  //     a clip was rewritten.
+  //   - voice REFLOWS the timeline, so after any successful run every window equals its
+  //     measured clip exactly. Any text edit therefore overruns C-10, which fires before
+  //     the end-card check — so a test for the end-card path must NOT edit narration.
+
+  const ARTIFACTS = ['timing.json', 'voiceover.mp3', 'segment_01.mp3', 'segment_02.mp3', 'calibration-observed.json', 'sync-mapping.md'];
+  const snapshot = (dir) => Object.fromEntries(ARTIFACTS.map((f) => {
+    const p = path.join(dir, f);
+    return [f, fs.existsSync(p) ? fs.readFileSync(p).toString('base64') : null];
+  }));
+  const partFiles = (dir) => fs.readdirSync(dir).filter((n) => n.includes('.part-'));
+
+  /** A project whose prior voice run completed, so every artifact is in place. */
+  function completed(t) {
+    const dir = project(t);
+    const first = voice(dir);
+    assertCleanExit(first, EXIT.OK, 'the prior run must succeed or the fixture proves nothing: ');
+    return dir;
+  }
+
+  const editTiming = (dir, fn) => {
+    const p = path.join(dir, 'timing.json');
+    const timing = JSON.parse(fs.readFileSync(p, 'utf8'));
+    fn(timing);
+    fs.writeFileSync(p, JSON.stringify(timing, null, 2));
+  };
+
+  test('applyThatFailsTheFitGate_publishesNothing', (t) => {
+    const dir = completed(t);
+    // The narration changes so the new clips genuinely differ from the ones on disk, and
+    // the window shrinks so C-10 fires after they have been synthesised.
+    editTiming(dir, (timing) => {
+      timing.segments[1].voiceoverText = 'A completely different second line of narration entirely.';
+      timing.segments[0].endMs = timing.segments[0].startMs + 80;
+    });
+    const before = snapshot(dir);
+
+    const r = voice(dir);
+
+    assertRefused(r, EXIT.FAILED);
+    assert.deepEqual(snapshot(dir), before, 'a run that fails C-10 must leave every file exactly as it was');
+    assert.deepEqual(partFiles(dir), [], 'no staging file may be left behind');
+  });
+
+  test('applyThatFailsTheEndCardCheck_publishesNothing', (t) => {
+    const dir = completed(t);
+    // No narration edit — see the note above. Enabling the end card alone still diverges
+    // the audio, because the outro is concatenated into voiceover.mp3.
+    editTiming(dir, (timing) => {
+      timing.endCard = { enabled: true };
+      timing.outroMs = 2500;
+      delete timing.builderVersion;
+    });
+    const before = snapshot(dir);
+
+    const r = voice(dir);
+
+    assertRefused(r, EXIT.FAILED);
+    assert.deepEqual(snapshot(dir), before, 'a run that fails the end-card check must leave every file as it was');
+    assert.deepEqual(partFiles(dir), [], 'no staging file may be left behind');
+  });
+
+  test('applyWhoseProbeFailsAfterAClipIsStaged_leavesNoStagingFile', (t) => {
+    // THE WINDOW THE PER-ATTEMPT CLEANUP EXISTS FOR, and nothing else could reach it: every
+    // failure the fake TTS can raise (empty stream, no word boundaries) happens BEFORE the
+    // clip is staged. So `discardFrom(mark)` was unreachable from the tests that claimed to
+    // cover it — a cleanup path that could not be made to run.
+    //
+    // fail-probe substitutes music-metadata so parseFile throws after N real calls, putting
+    // a genuine failure between stage() and the measurement. The run must still end with
+    // the project exactly as it was and no `.part-` file left behind.
+    const dir = completed(t);
+    const before = snapshot(dir);
+
+    const r = runScript('voice.mjs', ['--project', dir, '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', FAKE_AUDIO, '--import', FAIL_PROBE],
+      env: { FAIL_PROBE_AFTER: '0' },   // throw on the very first probe, after staging
+    });
+
+    assert.notEqual(r.code, 0, `the run must fail\n${r.all}`);
+    assert.deepEqual(snapshot(dir), before, 'a probe failure must leave every file exactly as it was');
+    assert.deepEqual(partFiles(dir), [], `no staging file may survive a probe failure\n${r.all}`);
+  });
+
+  test('applyWhoseProbeFailsPartWayThrough_leavesNoStagingFile', (t) => {
+    // The same window, reached later: the first clip measures, the second does not. This is
+    // the case where staging files from EARLIER successful work are already accumulated, so
+    // it exercises discardFrom(0) over a non-empty set rather than a single entry.
+    const dir = completed(t);
+    const before = snapshot(dir);
+
+    const r = runScript('voice.mjs', ['--project', dir, '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', FAKE_AUDIO, '--import', FAIL_PROBE],
+      env: { FAIL_PROBE_AFTER: '1' },
+    });
+
+    assert.notEqual(r.code, 0, `the run must fail\n${r.all}`);
+    assert.deepEqual(snapshot(dir), before, 'a later probe failure must still leave every file as it was');
+    assert.deepEqual(partFiles(dir), [], `no staging file may survive a probe failure\n${r.all}`);
+  });
+
+  test('applyWhoseFirstProbeFailsThenRecovers_publishesOneCleanResult', (t) => {
+    // Retry RECOVERY, which the two tests above cannot reach: FAIL_PROBE_AFTER throws on
+    // every later call, so the run can only exhaust its attempts. One-shot failure lets
+    // attempt 1 fail after its clip is staged and attempt 2 succeed.
+    //
+    // DISCLOSED: this does not prove `discardFrom(mark)` is NECESSARY. I removed that line
+    // and the two probe-failure tests above still passed, because the outer handler's
+    // discardFrom(0) cleans up at the end regardless. What the per-attempt call prevents is
+    // narrower — a failed attempt's staging file surviving in `staged` and being renamed
+    // onto the live destination just before the good one — and that is not observable from
+    // outside the process. Recorded rather than implied by a passing test.
+    const dir = completed(t);
+    // The narration must change for "did it publish" to be answerable at all — the fake is
+    // deterministic, so re-running the same text republishes identical bytes and the
+    // snapshot cannot tell a successful publish from a no-op. The window is widened with
+    // it, because the prior run reflowed every window onto its measured clip and a longer
+    // line would otherwise trip C-10 before the probe is reached. I hit exactly that
+    // writing the first version of this test, which is the third time this fixture's
+    // determinism has caught me.
+    editTiming(dir, (timing) => {
+      timing.segments[1].voiceoverText = 'A completely different second line of narration entirely.';
+      timing.segments[1].endMs = timing.segments[1].startMs + 8000;
+    });
+    const before = snapshot(dir);
+
+    const r = runScript('voice.mjs', ['--project', dir, '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', FAKE_AUDIO, '--import', FAIL_PROBE],
+      env: { FAIL_PROBE_ONLY: '1' },
+    });
+
+    assertCleanExit(r, EXIT.OK, 'the retry must recover: ');
+    assert.match(r.all, /attempt 1 failed/, `the first attempt must actually have failed\n${r.all}`);
+    assert.notDeepEqual(snapshot(dir), before, 'a recovered run must still publish its work');
+    assert.deepEqual(partFiles(dir), [], `no staging file may survive a recovered run\n${r.all}`);
+  });
+
+  test('applyWhoseLaterPublishFails_namesWhatLandedAndLeavesTheTimeline', (t) => {
+    // The partial-publish report had no test. The lever must make ONE late rename fail
+    // while earlier ones succeed — deterministically, on any platform.
+    //
+    // Two earlier attempts were rejected for good reasons, both recorded because each is a
+    // way this test could have passed for the wrong reason:
+    //   - A read-only destination is NOT portable: it fails rename on Windows but not on
+    //     POSIX, where replacement is governed by the directory's permission.
+    //   - Planting a directory mid-run from the PARENT, triggered by a marker in the
+    //     child's output, is a RACE: the child keeps running while the pipe is delivered,
+    //     so it can publish before the plant lands and the test then asserts against an
+    //     ordinary successful run.
+    // Failing the rename inside the child removes both problems.
+    const dir = completed(t);
+    editTiming(dir, (timing) => {
+      timing.segments[1].voiceoverText = 'A completely different second line of narration entirely.';
+      timing.segments[1].endMs = timing.segments[1].startMs + 8000;
+    });
+    const timingBefore = fs.readFileSync(path.join(dir, 'timing.json'), 'utf8');
+
+    const r = runScript('voice.mjs', ['--project', dir, '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', FAKE_AUDIO, '--import', FAIL_RENAME],
+      env: { FAIL_RENAME_DEST: 'sync-mapping.md' },
+    });
+
+    assertRefused(r, EXIT.FAILED);
+    assert.match(r.all, /could not publish sync-mapping\.md/, `it must name the artifact that failed\n${r.all}`);
+    assert.match(r.all, /Published: .*voiceover\.mp3/, `it must name what DID land\n${r.all}`);
+    assert.match(r.all, /timing\.json was not updated/, `the timeline's state is the recovery decision\n${r.all}`);
+    assert.equal(
+      fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'), timingBefore,
+      'the timeline must still describe the audio from before this run',
+    );
+    assert.deepEqual(partFiles(dir), [], `no staging file may be left behind\n${r.all}`);
+  });
+
+  test('applyWhoseOutroIsRefusedAfterClipsAreStaged_leavesNoStagingFile', (t) => {
+    // `silenceAssetBytes` refuses a pause outside its limits, and it is called AFTER every
+    // clip has been staged. That refusal used to go through `guard()`, which calls
+    // process.exit() itself and so walked straight past the outer handler, stranding every
+    // staged clip — a refusal leaving exactly the mess it exists to prevent.
+    const dir = completed(t);
+    editTiming(dir, (timing) => {
+      timing.endCard = { enabled: true };
+      timing.builderVersion = '1.2.3';
+      timing.outroMs = 7_200_000;            // two hours of outro
+    });
+    const before = snapshot(dir);
+
+    const r = voice(dir);
+
+    assert.notEqual(r.code, 0, `the run must fail\n${r.all}`);
+    assert.deepEqual(snapshot(dir), before, 'a refused pause must leave every file exactly as it was');
+    assert.deepEqual(partFiles(dir), [], `no staging file may survive a refused pause\n${r.all}`);
+  });
+
+  test('applyThatSucceeds_publishesEverythingAndLeavesNoStagingFiles', (t) => {
+    // THE CONTROL. Every test above asserts that nothing moved, which is exactly what a
+    // stage that silently published nothing would also produce. This is what separates
+    // "refused safely" from "quietly did nothing".
+    const dir = completed(t);
+    editTiming(dir, (timing) => {
+      timing.segments[1].voiceoverText = 'A completely different second line of narration entirely.';
+      timing.segments[1].endMs = timing.segments[1].startMs + 8000;
+    });
+    const before = snapshot(dir);
+
+    const r = voice(dir);
+
+    assertCleanExit(r, EXIT.OK);
+    assert.notDeepEqual(snapshot(dir), before, 'a successful run must actually publish its work');
+    assert.deepEqual(partFiles(dir), [], 'no staging file may survive a successful run');
+  });
+
+  test('applyThatFailsSynthesis_stillWritesTheHealLog', (t) => {
+    // THE DELIBERATE EXCEPTION. heal-log.txt records the retry attempts, so it is written
+    // DURING the failure and must survive it — a log of what went wrong is worthless if it
+    // is rolled back with everything else. This is why this stage cannot copy remix's
+    // phrasing that "nothing was written": here something was, on purpose.
+    const dir = completed(t);
+    editTiming(dir, (timing) => { timing.segments[0].voiceoverText = '...'; });
+    const before = snapshot(dir);
+
+    const r = voice(dir);
+
+    assertRefused(r, EXIT.FAILED);
+    assert.deepEqual(snapshot(dir), before, 'the audio and the timeline must be untouched');
+    assert.ok(fs.existsSync(path.join(dir, 'heal-log.txt')), `the heal log must survive the failure it records\n${r.all}`);
+    assert.deepEqual(partFiles(dir), [], 'no staging file may be left behind');
   });
 });
 
