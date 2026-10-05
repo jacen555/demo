@@ -858,18 +858,84 @@ export function remixCollisionBlocker(dir, timing, labelOf, resolved, { cleared 
 // ---- the gates ------------------------------------------------------------------------------
 
 /**
+ * Is this entry a segment object at all? The refusal as a string, naming the index, or null.
+ *
+ * THE INDEX, NOT THE ID: an entry that is not an object has no id to be named by, so its
+ * position is the only handle an author has on it. `timing.segments[1]` is the form every
+ * stage's label already uses for a segment that cannot name itself.
+ *
+ * THIS RULE IS THE ENTRY'S SHAPE AND NOTHING ELSE. It is deliberately NOT the schema's id rule
+ * and NOT the "declares no segments" list rule, both of which shapeBlocker also enforces. Those
+ * three travelled together until a null entry was found to crash four stages that each wanted
+ * only this one: frame-capture.mjs:104-109 tolerates an id-less segment ON PURPOSE and labels it
+ * by index, because `segment "1"` would send an author to the wrong line when another segment
+ * really carries the id "1". A stage adopting shapeBlocker wholesale to fix the crash would have
+ * silently reversed that decision. Extracted so the rule has ONE statement that every caller
+ * reads, rather than one statement per caller that drift apart — which is how the end-card gate
+ * and PLAIN_DECIMAL came to disagree before F7.
+ *
+ * CONSUMERS(segmentEntryFact): none
+ * Called inside this module by shapeBlocker, so the two agree by construction rather than by
+ * restatement. A test asserts that the list above matches the modules that actually import this
+ * symbol, so adding a caller without updating the line fails the suite — the enumeration is an
+ * audit, not a courtesy.
+ */
+export function segmentEntryFact(s, i) {
+  if (s === null || typeof s !== 'object' || Array.isArray(s)) return `timing.segments[${i}] is not a segment object`;
+  return null;
+}
+
+/**
+ * The first entry in this list that is not a segment object, as `{fact}`, or null when every one
+ * of them is. The whole-list form of segmentEntryFact, for the stages that want the entry rule
+ * without the other two.
+ *
+ * A NON-ARRAY RETURNS NULL, DELIBERATELY. Whether an absent, empty or non-array segment list is
+ * an error is each stage's own question and they answer it differently today — concat-audio
+ * refuses it with its own wording, frame-capture tolerates it, write-storyboard crashes on it
+ * (recorded as open work, not fixed here). Answering it here would change three shipped
+ * behaviours under the cover of a crash fix. This function refuses entries; it does not have an
+ * opinion about lists.
+ *
+ * CONSUMERS(segmentEntryBlocker): none
+ * The intended callers are frame-capture.mjs, write-storyboard.mjs and concat-audio.mjs, each of
+ * which currently throws an uncaught TypeError on a null entry. Update the line above when they
+ * land; a test compares it against the real importers.
+ */
+export function segmentEntryBlocker(segs) {
+  if (!Array.isArray(segs)) return null;
+  for (const [i, s] of segs.entries()) {
+    const fact = segmentEntryFact(s, i);
+    if (fact) return { fact };
+  }
+  return null;
+}
+
+/**
  * Can every stage read this timeline's segment list? null when it can; otherwise the first
  * problem, as `{fact}`, with no remedy: no list, or an empty one, which the schema's minItems
  * forbids; else, in index order, the first entry that is not a segment object or has no
  * non-empty string id, which the schema requires. An entry is named by its index, since it
- * may have no id to be named by. voice.mjs and remix.mjs each refuse what this refuses before
- * any other check of their segments, in their plan and under --apply.
+ * may have no id to be named by.
+ *
+ * THIS IS A BUNDLE OF THREE RULES, and callers rarely want all three. The entry-shape rule is
+ * segmentEntryFact, called below rather than restated. remix.mjs imports this whole gate;
+ * voice.mjs does not import it but refuses exactly what it refuses, because voiceTimelineBlocker
+ * asks it first; validate-scene.mjs calls it directly before any of its own checks. Any stage
+ * that wants only the entry rule should call segmentEntryBlocker and keep its own handling of an
+ * absent or empty list.
+ *
+ * The 'timing.json' in the no-segments fact is a hardcoded input name and is wrong for any caller
+ * that reads a differently-named file — reachable today through validate-scene's --timing. Open
+ * work, tracked separately; it is not corrected here because the string is also what two shipped
+ * stages print.
  */
 export function shapeBlocker(timing) {
   const segs = timing?.segments;
   if (!Array.isArray(segs) || segs.length === 0) return { fact: 'timing.json declares no segments' };
   for (const [i, s] of segs.entries()) {
-    if (s === null || typeof s !== 'object' || Array.isArray(s)) return { fact: `timing.segments[${i}] is not a segment object` };
+    const entry = segmentEntryFact(s, i);
+    if (entry) return { fact: entry };
     if (typeof s.id !== 'string' || s.id === '') {
       const id = s.id === undefined ? 'missing' : s.id === '' ? 'empty' : kindOf(s.id);
       return { fact: `timing.segments[${i}]'s id is ${id} — every segment needs a non-empty string id` };
