@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveInternalArtifact, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
 import { isSilentSegment, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, voiceTimelineBlocker, renderBlocker, segmentClipName, gapAssetName } from './silent-segment.mjs';
 
 const USAGE = `
@@ -81,9 +81,51 @@ const FRAME_MS = 24;                                          // one MPEG-2 L3 f
 const alignUp = ms => Math.max(0, Math.round(ms / FRAME_MS) * FRAME_MS);
 
 // --- C-11: voice must be on the brand allow-list ---------------------------------------------
-const allowVoices = JSON.parse(fs.readFileSync(path.join(dir, 'brand', 'tokens.json'), 'utf8'))?.audio?.ttsVoices;
-if (!Array.isArray(allowVoices) || !allowVoices.length) throw new Error('C-11: cannot load audio.ttsVoices allow-list');
-if (!allowVoices.includes(voice)) throw new Error(`C-11: voice "${voice}" not on allow-list [${allowVoices.join(', ')}]`);
+// REPORTED, NOT THROWN. Every refusal below ends the run the way this file's own USAGE
+// header already says it does: "2 bad usage, a refused timeline or a refused overwrite"
+// for a prerequisite that is missing or unusable, "1 synthesis failed" for work that ran
+// and came back wrong. An uncaught throw also exits 1, but only because that is Node's
+// default for an uncaught exception — it is not a chosen code, and it arrives as a source
+// excerpt, a caret and a stack frame, which reads as a bug in the engine rather than a
+// refusal of the input. This stage calls a network service and rewrites the approved
+// timeline, so the difference is not cosmetic: two of these fire after irreversible writes.
+const refuse = (message, code = EXIT.FAILED) => {
+  console.error(`error: ${message}`);
+  process.exit(code);
+};
+
+// The allow-list is a PREREQUISITE this stage reports for itself. voiceTimelineBlocker
+// deliberately does not model it — silent-segment.mjs says so at its gates: the blockers
+// "do not model the intake, the brand tokens, the TTS service or the replace guard, which
+// each stage reports for itself when it runs."
+//
+// Resolved through the boundary, not joined. brand/tokens.json is ENGINE-CHOSEN — the
+// caller never names it — so a link there was planted rather than requested, and
+// resolveInternalArtifact refuses it outright instead of reading a file nobody asked for.
+// The original `path.join(dir, 'brand', 'tokens.json')` had no boundary at all.
+const tokensPath = guard(() => resolveInternalArtifact(dir, 'brand/tokens.json', 'brand voice allow-list', 'read'));
+let tokensText;
+try {
+  tokensText = fs.readFileSync(tokensPath, 'utf8');
+} catch (err) {
+  // READING and PARSING fail for different reasons and need different remedies. Collapsing
+  // a permission error or a directory-in-the-way into "it is not valid JSON" hands the
+  // author a fix for a problem they do not have. The raw error is not echoed: it carries
+  // an absolute path that tells them nothing they can act on.
+  refuse(`C-11: cannot read the brand voice allow-list at brand/tokens.json — ${err.code === 'ENOENT' ? 'it is not there' : `it could not be opened (${err.code ?? 'unknown error'})`}`, EXIT.USAGE);
+}
+let allowVoices;
+try {
+  allowVoices = JSON.parse(tokensText)?.audio?.ttsVoices;
+} catch {
+  refuse('C-11: cannot read the brand voice allow-list at brand/tokens.json — it is not valid JSON', EXIT.USAGE);
+}
+if (!Array.isArray(allowVoices) || !allowVoices.length) {
+  refuse('C-11: brand/tokens.json declares no audio.ttsVoices allow-list, so no voice can be approved', EXIT.USAGE);
+}
+if (!allowVoices.includes(voice)) {
+  refuse(`C-11: voice "${voice}" is not on the brand/tokens.json allow-list [${allowVoices.join(', ')}]`, EXIT.USAGE);
+}
 
 const probeMs = async f => Math.round(((await parseFile(f, { duration: true })).format.duration ?? 0) * 1000);
 const ratePct = (speed >= 1 ? '+' : '') + Math.round((speed - 1) * 100) + '%';
@@ -225,7 +267,15 @@ for (let i = 0; i < timing.segments.length; i++) {
     console.log(`silent ${seg.id.padEnd(11)} ${String(durationMs).padStart(6)}ms  (authored ${authoredMs}ms, generated — not synthesised)`);
     continue;
   }
-  const r = await synth(seg.voiceoverText, segmentTargets[i].path, seg.id);
+  // C-14's retries are exhausted by the time this rethrows, so there is nothing left to
+  // try. Reported as a synthesis failure — "the work ran and the result is bad" — rather
+  // than escaping as the raw service error, which named no segment.
+  let r;
+  try {
+    r = await synth(seg.voiceoverText, segmentTargets[i].path, seg.id);
+  } catch (err) {
+    refuse(`C-14: segment "${seg.id}" could not be synthesised after 4 attempts — ${err.message}`, EXIT.FAILED);
+  }
   results.push(r);
   console.log(`synth ${seg.id.padEnd(11)} ${String(r.durationMs).padStart(6)}ms  head ${String(r.headMs).padStart(4)}ms  tail ${String(r.tailMs).padStart(4)}ms`);
 }
@@ -236,7 +286,10 @@ for (let i = 0; i < timing.segments.length; i++) {
 const overruns = timing.segments
   .map((s, i) => ({ id: s.id, over: results[i].durationMs - (s.endMs - s.startMs), silent: results[i].silent }))
   .filter(f => !f.silent && f.over > perSegToleranceMs);
-if (overruns.length) throw new Error(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}`);
+// MEASURED: by the time this fires, every clip is already on disk. The report is the only
+// thing between the author and a directory of audio that does not fit its timeline, so it
+// names each segment and by how much it overran.
+if (overruns.length) refuse(`C-10 per-segment fit failed: ${overruns.map(o => `${o.id} (+${o.over}ms)`).join(', ')}`, EXIT.FAILED);
 
 // ---- 3. solve inserted silences so PERCEIVED pacing hits its targets ------------------------
 // No lead-in before a segment that is itself silence — the author already said how long
@@ -337,6 +390,13 @@ timing.leadInMs = leadRealMs;
 const voiceMs = await probeMs(path.join(dir, 'voiceover.mp3'));
 const driftMs = Math.abs(voiceMs - timing.durationMs);
 console.log(`\nvoiceover ${voiceMs}ms | timeline ${timing.durationMs}ms | drift ${driftMs}ms`);
+// LEFT AS A THROW, DELIBERATELY. Every other crash site in this stage was converted and
+// pinned by a test; this one could not be. normalizeEndCardFields above ALWAYS rewrites
+// timing.durationMs from this run's own reflow, immediately before this comparison, so an
+// authored value cannot reach it and no input constructed for this change makes it fire.
+// Converting it would have been an unverifiable behaviour change to a published stage —
+// a diff that looks like progress and proves nothing. It stays until it can be triggered,
+// and the reason is recorded here so the next reader does not take it for an oversight.
 if (driftMs > Math.max(toleranceMs, 1500)) throw new Error(`C-6 voice drift ${driftMs}ms exceeds tolerance`);
 
 // ---- 7. calibration evidence + timing hash --------------------------------------------------
