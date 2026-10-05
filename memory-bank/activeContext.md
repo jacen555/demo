@@ -190,7 +190,7 @@ to find it.
 
 ## The second recurring defect: the engine already had the answer
 
-Distinct from the false-green class above, and newer. **Twice in one session a fix was
+Distinct from the false-green class above, and newer. **Five times in one session a fix was
 written for a rule the engine already contained, exported, and documented — and simply did
 not call from the stage that needed it.**
 
@@ -203,6 +203,20 @@ not call from the stage that needed it.**
    exported and consumed by `remix.mjs:96`. All four crashing stages already import that
    module. Nobody called it.
 
+3. **voice.mjs's late crashes** were already diagnosed and fixed for *remix* —
+   `voice-remix-apply.test.mjs:1086` describes the defect in words that fit voice exactly:
+   "a C-6 failure used to exit with a stack trace after the silent clips, the pauses and the
+   voice track had already been overwritten, leaving new audio beside a timeline that
+   described the old." Same bug, same words, one stage over.
+4. **Five stages stage-then-publish** over the shared primitive at `cli-support.mjs:737`.
+   `voice.mjs` staged nothing — the most expensive stage in the engine to fail late was the
+   only one without the protection (fixed, `94648af`).
+5. **`silent-segment.mjs:588`** is the counter-example that proves the convention works: it
+   states that the blockers deliberately do NOT model the intake, the brand tokens, the TTS
+   service or the replace guard, "which each stage reports for itself". Here the engine does
+   not hold the answer **and says so** — which is why that refusal correctly belongs in the
+   stage.
+
 **The missing artefact is not a rule, it is an index of who reads a rule.** Note what
 made `PLAIN_DECIMAL` findable at all: not the constant, but the sentence above it naming
 the failure mode — *"two grammars is how a value becomes legal to write and impossible to
@@ -214,9 +228,25 @@ is simultaneously the index and the audit** — the four stages missing from it 
 the four that crash. Had it been kept honest, the gap would have been readable without
 measurement.
 
-**Convention, earned twice:** a shared rule's doc comment must name the failure mode it
-prevents *and* enumerate every consumer. A stage absent from that list is either
-deliberately exempt — say why — or a defect waiting to be found.
+**Convention, earned five times:** a shared rule's doc comment must name the failure mode
+it prevents *and* enumerate every consumer. A stage absent from that list is either
+deliberately exempt — say why, as `:588` does — or a defect waiting to be found.
+
+**Now mechanised (`7ae62bb`).** `segmentEntryFact` and `segmentEntryBlocker` each carry a
+`CONSUMERS(<symbol>):` line, and a test compares it against the modules that actually
+import the symbol. Verified to discriminate in BOTH directions by mutation: naming a
+non-importer fails, and adding a real importer while leaving the line stale fails with
+"drifted apart". **It caught its first real case within the hour** — the R4 stream's three
+new importers — naming the symbol and printing the drift on the first run.
+
+**And it exposed a flaw in the process rule wrapped around it.** The CONSUMERS line is a
+**per-tree invariant, not a per-owner one**: it is only true relative to the importers in
+one working tree, so it must change in the SAME COMMIT as the importer that makes it true.
+I had told the consuming stream to send me the line so I could edit my own file — which
+would have named three non-importers in my tree, the exact mutant I had killed to prove the
+audit works. My branch would have gone red and theirs green on the same line of text. A
+self-auditing comment deliberately couples the declaration to the importing commit, so
+strict file ownership cannot be enforced on that one line. Grant a narrow exception.
 
 ### Caution: a shared rule is usually a bundle
 
@@ -227,6 +257,65 @@ which tolerates an id-less segment and labels it by index on the stated grounds 
 `segment "1"` would send an author to the wrong line. So "just call the existing rule" is
 a measurement, not a reflex: count the currently-passing tests that change verdict first.
 
+## How a green suite lies — the 2026-10-05 measurement rules
+
+Five rules, each earned by a defect that survived a green test today. They belong together
+because they are all the same failure: **evidence graded in a context it did not come from.**
+
+1. **A zero from ABSENT COVERAGE is not a zero from PRESERVED BEHAVIOUR.** Two streams hit
+   this independently within an hour, both measuring "0 tests change verdict" and both
+   discovering the zero meant *nothing exercised the changed path*. One found 6 behaviour
+   changes across 3 stages with 0 tests; the other found 4 reclassified shapes in 88 tests.
+   Had either reported "0, no impact" — true — a silent change would have shipped. **I then
+   made the same error on my own work**: a widened regex passed all 1130 tests and was still
+   wrong, because nothing in the suite happens to print a bare clock.
+2. **Measuring something is not defending it.** A matrix is evidence for a decision; only a
+   test keeps the decision true after you leave. A reviewer FAILed a stream for exactly this
+   — a precedence change it had deliberately chosen, written a source comment about, and
+   never tested; and absent/non-array cells present in its own matrix and absent from its
+   tests.
+3. **When the defect is "wrote, then failed", measure STATE, not the exit code.** An exit
+   code is structurally blind to it. Content digests before and after a triggered failure
+   are the only instrument that sees it (`94648af`).
+4. **A check that looks right and discriminates nothing.** A symlink test with an
+   outside-root victim passes against unfixed code, because the project boundary already
+   refuses an escaping link — it proves nothing about link policy. `at 10:30:00` matching a
+   "stack frame" regex is the same shape. Both look like coverage.
+5. **An untested cleanup path is not covered just because a test passes near it.** Proven,
+   not asserted: a stream removed its own `discardFrom(mark)` to check its new test
+   discriminated, and the test **still passed** because an outer handler masks it. It
+   documented the necessity as unobservable rather than implying coverage.
+
+### `assertCleanExit` was blind, and that is the cautionary one
+
+The helper exists to catch "exited plausibly AND printed a stack" — its own comment says
+*"that is how one of these defects survived a round."* Its regex required parentheses, so it
+could not see a top-level ESM frame (`at file:///x.mjs:239:28`), which is the shape a throw
+takes in a CLI's argument handling and first file reads. It guarded ~356 call sites across
+ten test files while blind to the most common modern shape. Found by a stream that noticed
+its own test passing against a source printing a full crash dump. Fixed in `faeb8ed`; the
+widening deliberately requires a path separator or a `node:` scheme, because the obvious
+version reads a printed clock as a frame.
+
+### Stating a contract: mechanism versus observable
+
+The eval progress contract took four review rounds, and the first three were wrong in
+instructive ways — universal, then **temporal** ("throws after this method has moved on"),
+then **locational** ("decided by where work runs", my formulation). Each was closer and each
+still described the MECHANISM rather than the OBSERVABLE CONTRACT. The rule that survives:
+
+> An exception is contained if and only if it **propagates out of the `Report` call** on the
+> thread that made it.
+
+Where the handler runs is the usual *reason*, never the definition — a context may run work
+on another thread, catch it there, and rethrow from `Post`, and that fault IS contained.
+Pinned by a forwarding/keeping pair identical in location and timing and differing only in
+propagation, and the superseded rule was **refuted by measurement, not argument**: the
+builder set an arm to the old rule's prediction and recorded the failure.
+
+**The transferable lesson: when a claim keeps needing narrowing, stop patching sentences and
+ask what the OBSERVABLE is.** Three rounds went to time and place; the answer was neither.
+
 ## Parallel streams — topology, 2026-10-05
 
 Three worktrees on disjoint file sets, after measuring that the candidate tasks had **zero
@@ -234,15 +323,58 @@ overlapping files**. Nothing is pushed; five commits sit across three local bran
 
 | Branch | Commits | Holds |
 |---|---|---|
-| `multi-agent-orchestration` (mine) | `127f2a8`, `7a6dd98` | `silent-segment.mjs`, `tests/_helpers.mjs`, `README.md`, `memory-bank/**` |
-| `validate-scene` | `e0fe668`, `d17c9be` | `validate-scene.mjs` + its tests |
-| `duck-and-pin-round-2` | `995c917`, `e85e355`, `b375d95` | `make-music.mjs`, `envelope-ducking.mjs`, `remux-music.mjs`, `mix-parameters.mjs` + tests |
+| `multi-agent-orchestration` (mine) | `127f2a8`, `7a6dd98`, `694c9e9`, `7ae62bb`, `faeb8ed`, `56fc0c7`, `cbce984` | `silent-segment.mjs`, `tests/_helpers.mjs`, `README.md`, `memory-bank/**`, and the eval domains |
+| `validate-scene` | `e0fe668`, `d17c9be`, `49cef8f`, `4713ffd`, `94648af` | `validate-scene.mjs`, `voice.mjs` + their tests |
+| `duck-and-pin-round-2` | `995c917`, `e85e355`, `b375d95`, `cf266f2`, `a71678d` | `make-music.mjs`, `envelope-ducking.mjs`, `remux-music.mjs`, `mix-parameters.mjs`, `frame-capture.mjs`, `write-storyboard.mjs`, `concat-audio.mjs` + tests |
 
 **The rule that makes this work: one file has exactly one owner.** `silent-segment.mjs` is
-the contended one — it holds `shapeBlocker`, `isSilentSegment` and `isGenerablePause`, so
-every stream eventually wants it. It stays mine; a stream that needs a change there
-reports it and I make it, rather than three branches hand-resolving a conflict in the file
-they all depend on.
+the contended one — it holds `shapeBlocker`, `isSilentSegment`, `isGenerablePause` and now
+`segmentEntryFact`, so every stream eventually wants it. It stays mine; a stream that needs
+a change there reports it and I make it. The sole exception is a `CONSUMERS:` line, which by
+construction must move with its importer (above).
+
+**This worked.** Three streams, zero collisions, five tasks closed on one branch and four on
+another, every one independently reviewed to PASS. The merge was `cf266f2` — a stream merged
+my branch FIRST and proved the combined suite green BEFORE editing, so any later red could
+only be its own. Adopt that ordering every time.
+
+## The eval harness is no longer silent (2026-10-05)
+
+The user asked to see a suite run in progress. Measured first: `libs/EvalEngine` had **no
+progress channel at all** — no `IProgress`, no events, no observer — and `tools/EvalCli`
+printed nothing but help and errors. Built as two ordered tasks across a tier boundary.
+
+| | Task 1 `56fc0c7` — `libs/EvalEngine`, Tier 1 | Task 2 `cbce984` — `tools/EvalCli`, Tier 2 |
+|---|---|---|
+| What | `RunAsync` overload taking `IProgress<RunProgress>?` | auto-detecting renderer, Spectre live bar or streamed lines |
+| Tests | 2066 → 2101 | 758 → 811 |
+| Review | PASS after 3 FAILs | PASS, then re-reviewed after a cancellation fix |
+
+**Measured outcome:** redirected, 6.647 s of zero bytes → a start line at 0.272 s; in a real
+terminal, first text at 9.819 s → a bar at 3.655 s.
+
+**Decisions worth keeping:**
+- An **overload, not a defaulted parameter**: a default deletes the two-argument signature,
+  breaking the XML cref at `RunCoordinator.cs:107` under `TreatWarningsAsErrors`, and is
+  binary-breaking for compiled callers.
+- The sink is **refused before dispatch** unless the logger admits the fault level — the
+  engine's own signature move, used four times in the same method ("nothing has been
+  dispatched, so the suite is refused rather than run"). `IsEnabled`, **not** a `NullLogger`
+  type check, because a logger configured above Warning is equally silent.
+- `InvalidOperationException`, **not** `ArgumentException`, because `SuiteDiscovery.cs:362`
+  wraps `RunAsync` in `catch (ArgumentException)` and would misreport the refusal.
+- The renderer implements `IProgress<T>` **directly and never uses `System.Progress<T>`**:
+  that posts to the thread pool in a console, where a throwing handler is unhandled and
+  terminates the CLI — measured at exit `0xE0434352`, landing both before and after
+  `RunAsync` returned.
+- Threading a token to the start-line write required **overriding
+  `DiagnosticsWriter.WriteLineAsync`**: `TextWriter`'s own implementation writes one
+  character at a time — measured at 1,857 whole lines out of 2,000 across 8 concurrent
+  writers. Closing a cancellation gap would otherwise have opened an interleaving one.
+
+**Open:** `LiveEndpointBaseline.cs:102` calls the two-argument overload with no sink, so a
+`--baseline-endpoint` run shows progress for one suite and 4.3 s of silence for the other.
+Reported by the CLI builder rather than fixed across the boundary; queued as a Tier 1 task.
 
 **A line citation without a commit is not a fact, it is a timestamp.** Proven here:
 `writeGainLock` sat at 769 → 771 → 774 → 774 across four commits. Two sessions "disagreed"
