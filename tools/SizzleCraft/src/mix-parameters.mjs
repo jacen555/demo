@@ -338,9 +338,13 @@ function valuesIn(chainResidue) {
  * redaction removes a `;`, so the two split into the same chains in the same order — and
  * that is checked rather than assumed.
  *
- * It is exact in both directions. A value short in its chain has moved away; a value over
- * its count there has arrived from somewhere else, and saying only "missing" would send a
- * reader looking at the wrong end of the graph.
+ * It is exact in both directions, and WHICH END FIRES IS AN ORDERING, NOT A LAW:
+ * expectations are reached in declaration order, so a balanced move reports the shortage
+ * when the chain the value left is declared first, and the surplus when it is not. An
+ * over-count with nothing short anywhere never reaches here at all — it exceeds the
+ * global budget and the pass above claims it as a value nothing explains. Measured, not
+ * assumed. Because only one end of a move is ever reported, the OTHER end is named inside
+ * that one refusal rather than left for a second one that may never come.
  */
 function auditSites(graph, residue, declared) {
   const rawChains = String(graph).split(';');
@@ -354,10 +358,12 @@ function auditSites(graph, residue, declared) {
   }
 
   const chainOf = new Map();
+  const labelsOf = rawChains.map(() => []);
   rawChains.forEach((chain, index) => {
     const trailing = chain.match(OUTPUT_LABELS)?.[1];
     for (const label of trailing?.match(/\[([^\]]*)\]/g) ?? []) {
       chainOf.set(label.slice(1, -1), index);
+      labelsOf[index].push(label.slice(1, -1));
     }
   });
 
@@ -397,9 +403,24 @@ function auditSites(graph, residue, declared) {
   for (const [, { index, site, literal, want, flags }] of expected) {
     const got = countsByChain[index].get(literal) ?? 0;
     if (got === want) continue;
+    // BOTH ENDS OF THE MOVE. Only one end of a move is ever reported — whichever
+    // expectation is reached first — and on its own it says only that a count is wrong,
+    // leaving a reader to search the rest of the graph. Where the literal actually is, is
+    // known right here, so it is said here. Only counted, never interpreted: the audit
+    // cannot know a value MEANT to go elsewhere, and does not say so. A chain that writes
+    // no label is named as exactly that, rather than given one it does not have.
+    const elsewhere = countsByChain
+      .map((counts, at) => ({ at, found: counts.get(literal) ?? 0 }))
+      .filter(({ at, found }) => at !== index && found > 0)
+      .map(({ at, found }) =>
+        labelsOf[at].length > 0
+          ? `${found} time(s) in the chain writing [${labelsOf[at].join('][')}]`
+          : `${found} time(s) in a chain that writes no label`,
+      );
     throw new CliError(
       `${flags.join('/')} was taken from the registry ${want} time(s) for the mix graph's "${site}" chain, but ` +
         `"${literal}" appears there ${got} time(s).\n` +
+        (elsewhere.length > 0 ? `It appears ${elsewhere.join(', and ')}.\n` : '') +
         'A value accounted for only by number and count is a value that can MOVE: the same literals in the\n' +
         'same quantity, on the wrong chains, is a different mix entirely — and the pin would record the\n' +
         'values that were declared rather than the ones that were applied.\n' +

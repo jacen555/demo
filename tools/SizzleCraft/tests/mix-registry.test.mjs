@@ -585,6 +585,120 @@ describe('a mix value must appear in the chain it was taken for', () => {
   // THE SITE IS NOT OPTIONAL. A `use()` with no site would silently opt that value out of
   // the check, which is exactly the "closed by construction, nothing fails when it grows"
   // shape this module exists to stop.
+
+  // BOTH ENDS OF THE MOVE. In THIS graph the refusal fires at the chain the value LEFT,
+  // because that expectation is reached first — so on its own it tells a reader a value is
+  // missing and leaves them to search the rest of the graph for it. A move has two ends
+  // and the message must name both.
+  //
+  // Which end fires is an ordering, not a law: see the surplus case below, where the chain
+  // holding the extra copy is reached first instead. Either way only ONE end is ever
+  // reported, and an over-count with nothing short anywhere never reaches the site check
+  // at all — it exceeds the global budget and is claimed by the pass above ("no registered
+  // mix parameter explains"). So "where it went" cannot come from a second refusal; it has
+  // to be part of this one.
+  test('audit_aValueMovedToAnotherChain_namesTheChainItActuallyLandedIn', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('musicGain', 'mu'),
+      music: mix.use('voiceGain', 'vo'),
+      ceiling: mix.use('ceiling', 'out'),
+    });
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError && err.exitCode === EXIT.FAILED);
+        assert.match(err.message, /"1\.4" appears there 0 time\(s\)/, 'the end it left');
+        assert.match(err.message, /in the chain writing \[mu\]/, 'and the chain it actually landed in');
+        return true;
+      },
+    );
+  });
+
+  // The counterpart: when the value is simply ABSENT from the graph rather than moved, the
+  // refusal must not invent a destination for it.
+  test('audit_aValueMissingFromTheGraphEntirely_doesNotClaimItLandedSomewhereElse', () => {
+    const mix = declaredDuckingMix();
+    const graph = duckingGraphWith(mix, {
+      voice: mix.use('voiceGain', 'vo'),
+      music: mix.use('musicGain', 'mu'),
+      ceiling: mix.use('ceiling', 'out'),
+    });
+    // The voice gain is on its chain once; take it a second time so the expectation is 2
+    // and the graph holds 1, with the literal nowhere else in the graph.
+    mix.use('voiceGain', 'vo');
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError);
+        assert.doesNotMatch(err.message, /in the chain writing/, 'nothing may be claimed about where it went');
+        return true;
+      },
+    );
+  });
+
+
+  // A chain need not write a label at all, and "[(no label)]" reads as a label called
+  // "(no label)" — a location a reader would go looking for and never find. A diagnostic
+  // that invents a name is worse than one that admits it has none.
+  test('audit_aValueMovedIntoAChainThatWritesNoLabel_saysSoWithoutInventingOne', () => {
+    const mix = createMixAudit();
+    mix.declare('voiceGain', { value: 1.4 });
+    mix.declare('musicGain', { value: 0.031 });
+    mix.declare('ceiling', { value: 2, rendered: 0.794328 });
+
+    // The voice gain is taken for [vo] and interpolated into a trailing chain that writes
+    // nothing. The global budget still balances, so this reaches the site check.
+    const graph =
+      `[1:a]pan=stereo|c0=c0|c1=c0[vo];` +
+      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
+      `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out];` +
+      `[out]volume=${mix.use('voiceGain', 'vo')}`;
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError && err.exitCode === EXIT.FAILED);
+        assert.doesNotMatch(err.message, /\[\(no label\)\]/, 'it must not render a label that does not exist');
+        assert.match(err.message, /writes no label/, 'and must say the chain has none');
+        return true;
+      },
+    );
+  });
+
+  // WHICH END FIRES IS AN ORDERING, NOT A LAW. The shortage is reached first only when the
+  // chain the value left is declared first. Two parameters rendering the SAME literal onto
+  // the EARLIER chain make the surplus the first mismatch reached — so the over-count
+  // branch is observable, and must read correctly when it is.
+  test('audit_bothCopiesOfALiteralOnTheEarlierChain_reportsTheSurplusEnd', () => {
+    const mix = createMixAudit();
+    mix.declare('voiceGain', { value: 1.5 });
+    mix.declare('musicGain', { value: 1.5 });
+    mix.declare('ceiling', { value: 1, rendered: 0.891251 });
+
+    const graph =
+      `[1:a]volume=${mix.use('voiceGain', 'vo')},volume=${mix.use('musicGain', 'mu')},pan=stereo|c0=c0|c1=c0[vo];` +
+      `[2:a]asetpts=N/SR/TB[mu];` +
+      `[vo][mu]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
+
+    assert.throws(
+      () => mix.audit(graph),
+      (err) => {
+        assert.ok(err instanceof CliError && err.exitCode === EXIT.FAILED);
+        assert.match(
+          err.message,
+          /--voice-gain was taken from the registry 1 time\(s\) for the mix graph's "vo" chain, but "1\.5" appears there 2 time\(s\)/,
+          `the surplus end must read correctly\n${err.message}`,
+        );
+        return true;
+      },
+    );
+  });
+
   test('use_withoutASite_refusesRatherThanSkippingTheCheckForThatValue', () => {
     const mix = declaredDuckingMix();
 
