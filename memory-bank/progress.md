@@ -372,17 +372,61 @@ built through `forge-team` with a real builder and reviewer. That is the next re
     **The user placed both on 2026-10-02.** The id case folds into Q14, whose shape check
     gains the schema's `id` rule. The end-card case is F7, straight after Q14.
 
+    **Both are now closed.** The id case by Q14 (`0a5b7f4`) — verified by measurement, not
+    by assumption: exit 2, zero TTS calls, nothing written. The end-card case by F7
+    (`127f2a8`) — `endCardBlocker`, reached from `voiceTimelineBlocker`, so the gate other
+    stages ask and the pre-write gate are the same check.
+
+    **What F7 cost, and why it is worth recording:** the defect was in
+    `tests/_helpers.mjs`'s own `timingFixture`, which declared an enabled end card with no
+    `builderVersion` and was inherited by 105 test references. So `README.md:156`'s stated
+    invariant — "a remedy names a stage only where that stage would run" — was already
+    violated at HEAD for every fixture-derived timeline. Fixture isolation was proven
+    rather than asserted: HEAD-plus-fixture-only produces a pass/fail set identical to HEAD
+    across all 1189 entries (0 only-in-A, 0 only-in-B, 0 verdict changes), with a control
+    that detects an injected flip.
+
+28. **R4 — a null `timing.segments` entry crashes four stages**, each with a stack:
+    `frame-capture.mjs:119` (`msOf(s.endMs)`), `write-storyboard.mjs:37` (`s.visual || {}`),
+    `concat-audio.mjs:108` (`s.audio?.file` — the optional chain guards `audio`, not `s`),
+    and `validate-scene.mjs` before `checkC1`. A number or an array entry is handled
+    correctly at all four (exit 1, no stack), which is what makes the null a defect rather
+    than a missing feature.
+
+    **The refusal already exists** — `shapeBlocker` (`silent-segment.mjs:868`) returns
+    ``timing.segments[${i}] is not a segment object``, which is exactly the behaviour the
+    user chose. All four stages already import that module. See activeContext, "the engine
+    already had the answer". In flight across two streams, split pre-capture/downstream.
+
+    `frame-capture.mjs:122` already writes ``segments[${i}]${s?.id ? …}`` — defensive
+    against a null that `:119` prevents from ever arriving. R4 is finishing a half-written
+    guard, not adding one.
+
 ## Next
 
 **SizzleCraft queue, in the user's order (2026-10-01, extended 2026-10-02):** F6 (done,
-`d1d8d47`) → Q14 (done, `0a5b7f4`) → R5 (done, `af5aeef`) → F7 → the `assertCleanExit` fix →
-validate-scene → T5, with the T4 follow-ups batched in → Prettier adoption → coach graduation
-G5, G1, G2+G3, G4, G6, G7. "Shape-first everywhere" (R1 plus the three uncited `?? i` sites),
-R4, narrated line breaks, and gating `voice.mjs` are unplaced; the measured site lists are in
-`activeContext.md`. Each is Tier 2: a plan, pre-edit approval, a failing test first, then a
-cross-family review. Round 2 of the 2026-09-28 reviews failed on 2026-10-02 (gap 22). Its
-silence findings (S2-1..S2-4, K4) were absorbed into Q14 and are closed; the duck and pin
-findings are still proposed for tasks after F7, pending the user.
+`d1d8d47`) → Q14 (done, `0a5b7f4`) → R5 (done, `af5aeef`) → F7 (done, `127f2a8` + docs
+`7a6dd98`) → the `assertCleanExit` fix → validate-scene (done, `e0fe668` + `d17c9be`) →
+T5, with the T4 follow-ups batched in → Prettier adoption (**must be last** — it reformats
+everything) → coach graduation G5, G1, G2+G3, G4, G6, G7. "Shape-first everywhere" (R1 plus
+the three uncited `?? i` sites), R4 (in flight, gap 28), narrated line breaks, and gating
+`voice.mjs` are unplaced; the measured site lists are in `activeContext.md`. Each is Tier 2:
+a plan, pre-edit approval, a failing test first, then a cross-family review. Round 2 of the
+2026-09-28 reviews failed on 2026-10-02 (gap 22). Its silence findings (S2-1..S2-4, K4) were
+absorbed into Q14 and are closed; the duck and pin findings were approved by the user and are
+now done (`995c917`, `e85e355`, `b375d95`), each reviewed to PASS.
+
+**2026-10-05 — three parallel streams, nothing pushed.** Five commits across three local
+branches: `multi-agent-orchestration` (2), `validate-scene` (2), `duck-and-pin-round-2` (3).
+Chosen after measuring that the candidate tasks had **zero overlapping files**. Suite stands
+at 1165/1164 pass/0 fail/1 skip on the validate-scene branch, 1122/1121/0/1 on duck-and-pin.
+Topology and the one-owner-per-file rule are in `activeContext.md`.
+
+**Residual risk carried deliberately:** a bed with no `.duck.json` is accepted and disclosed
+as `absent` (`remux-music.mjs:513`) — licensed beds legitimately have none, the user's call.
+And `auditSites` accounts by chain, so two values swapped WITHIN one chain are undetectable;
+that is pinned as a passing test (`audit_twoValuesSwappedWithinTheSameChain_isNotDetected`)
+rather than left as a comment, which is the convention `mix-parameters.mjs` already uses.
 
 1. Close the environment gaps in `memory-bank/techContext.md` (CSharpier, PSScriptAnalyzer,
    Pester).
