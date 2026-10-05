@@ -1,6 +1,6 @@
 # Active Context — Forge
 
-> **Last updated:** 2026-10-02
+> **Last updated:** 2026-10-05
 
 ## Current focus
 
@@ -18,11 +18,13 @@ ADR 0006 records why (below).
 | `d1d8d47` | F6 — voice checks its timeline before it writes anything, in plan and `--apply`: the segments' shape, every silence declaration, the narration text, and that some segment is narrated | **PASS** at round 2 |
 | `0a5b7f4` | Q14 — remix refuses a shapeless timeline instead of crashing; the shape check gains the schema's segment `id` rule; silent windows are bounded (nonnegative start, finite end, one-hour cap); frame-capture checks every silence declaration before it plans; the caption gate refuses all seven Unicode mandatory line breaks, naming each by code point | **PASS** at round 2. Round 1 **FAIL** (B1: an index printed as an id; B2: U+2028/U+2029 accepted into the sidecars at exit 0). Absorbed S2-1..S2-4 and K4 |
 | `af5aeef` | R5 — narrated text containing `-->` is refused instead of written into both sidecars, where Chromium parses the cue with EMPTY text so the caption silently disappears. The narrated half of Q14's silent-caption rule, checking both sources of cue text | **PASS**. Four findings across three review rounds, all accuracy rather than behaviour: a comment and a diagnostic asserting an outcome alignment can prevent; an output invariant testing a line's SHAPE not its position, which would have passed the exact forged cue it existed to refuse; and two claims left stale after the first correction |
-| F7 | voice checks an enabled end card (`builderVersion`, outro length) before it writes anything — gap 27's other case | not started — spec, then approval |
+| `127f2a8` | F7 — voice checks an enabled end card (`builderVersion`, outro length) before it writes anything; gap 27's other case. The gate calls the pause GENERATOR's own predicate (`isGenerablePause`) rather than restating it, so the two cannot disagree | **PASS** at round 3. Round 1 **FAIL** (High): the gate mirrored `outroMs > SILENCE_MAX_MS`, but `String(1e-7)` is `"1e-7"` and the plain-decimal rule rejects it, so `outroMs: 0.0000001` passed the gate and died after 2 TTS calls. Round 2 (Medium): the remedy advised "write it as a plain decimal" for a value that already was one — `0.000001` is the floor, verified exact over 600,015 samples both directions |
+| `7a6dd98` | F7 docs — the README gate enumeration at `:156-161` now names the end card | wording supplied verbatim by the builder |
+| `e0fe668` → `d17c9be` | validate-scene — new pre-capture stage, 88 tests. The README commit found a real bug by FOLLOWING ITS OWN EXAMPLE: a missing `--knobs manifest.json` reported `knobs.json` as absent, sending the author to a file they never named | **PASS** at round 6, then **PASS**. On branch `validate-scene` |
+| `995c917` | Duck (round 2) — make-music: pre-synthesis and mid-run link policy, the envelope's own hop, span agreement, publish/retire of the bed temp | **PASS** at round 6. Four High findings across four FAILs, every one real and reproduced as a failing test before being fixed. On branch `duck-and-pin-round-2` |
+| `e85e355` | Pin (round 2) — `audit` budgets gains by position: `use(name, site)` is now a required two-argument call, plus `auditSites`. Pre-fix, a voice/music gain swap and a ceiling moved onto the voice chain both AUDIT PASSED | **PASS** at round 1 — the full evidence block was supplied up front rather than on request |
+| `b375d95` | Duck/pin follow-up | **PASS** |
 | `assertCleanExit` | The test helper sees a crash from module-scope code | not started — spec, then approval |
-| validate-scene | New pre-capture scene checks, from the consumer's 32 project tests | not started — spec, then approval |
-| Duck (round 2) | make-music: write order and links, envelope hop and length, a test that the PCM is ducked; an older bed with no record needs a design call | proposed after F7 — pending the user |
-| Pin (round 2) | `audit` budgets gains by position; a test that publishes a lock | proposed after the duck task — pending the user |
 | T5 | Documentation debt; gain-pin's self-contradicting guidance proposed for it | not started |
 | `c620c88` | Gain pin fails closed — `mix-parameters.mjs` registry, 7 pinned knobs | 2026-09-28 **FAIL** (pin reviewer; it also confirmed the commit's two round-1 fixes). Findings placed in T3. Round 2, 2026-10-02: **FAIL** — placed findings fixed, except that no test publishes a lock (PARTIAL); new: `audit` accepts a gain moved onto the voice chain (High, latent), and gain-pin's guidance contradicts itself (Medium). Placement pending (gap 22) |
 | `331ddac` | Deliberately silent segments — declared and captioned, never inferred | 2026-09-28 **FAIL** (silence reviewer, with `2e5a62e`). Findings placed in T1, T2 and T4. Round 2: **FAIL** — placed findings fixed; new: a non-number silent `startMs` becomes a window and a silent window has no upper bound (High), two Medium. Proposed for Q14 (gap 22) |
@@ -185,6 +187,67 @@ vacuous — and a wrong conclusion had already been written before the tell was 
 **This is structural, not incidental.** Keep the cross-family reviewer on every remaining
 task, and design each new layer against cross-context bleed rather than waiting for review
 to find it.
+
+## The second recurring defect: the engine already had the answer
+
+Distinct from the false-green class above, and newer. **Twice in one session a fix was
+written for a rule the engine already contained, exported, and documented — and simply did
+not call from the stage that needed it.**
+
+1. **F7** restated a plain-decimal rule that `PLAIN_DECIMAL` (`mix-parameters.mjs:269`,
+   read at `:318`, `:476`, `:659`) had already solved, with the same value, by
+   construction. The fix was to call the pause generator's own predicate instead.
+2. **R4** — a null `timing.segments` entry crashing four stages — is already refused,
+   verbatim and with the chosen index-naming, by `shapeBlocker`
+   (`silent-segment.mjs:868`): `timing.segments[${i}] is not a segment object`. It is
+   exported and consumed by `remix.mjs:96`. All four crashing stages already import that
+   module. Nobody called it.
+
+**The missing artefact is not a rule, it is an index of who reads a rule.** Note what
+made `PLAIN_DECIMAL` findable at all: not the constant, but the sentence above it naming
+the failure mode — *"two grammars is how a value becomes legal to write and impossible to
+read."* A convention recorded as "use one grammar constant" would not have been found.
+
+`shapeBlocker` goes one better and enumerates its consumers: *"voice.mjs and remix.mjs
+each refuse what this refuses before any other check of their segments."* **That sentence
+is simultaneously the index and the audit** — the four stages missing from it are exactly
+the four that crash. Had it been kept honest, the gap would have been readable without
+measurement.
+
+**Convention, earned twice:** a shared rule's doc comment must name the failure mode it
+prevents *and* enumerate every consumer. A stage absent from that list is either
+deliberately exempt — say why — or a defect waiting to be found.
+
+### Caution: a shared rule is usually a bundle
+
+`shapeBlocker` refuses three things, not one: an absent/empty segment list, a non-object
+entry, and a missing/non-string `id`. Adopting it wholesale imports all three, and the
+third **contradicts a deliberate, documented decision** in `frame-capture.mjs:104-109`,
+which tolerates an id-less segment and labels it by index on the stated grounds that
+`segment "1"` would send an author to the wrong line. So "just call the existing rule" is
+a measurement, not a reflex: count the currently-passing tests that change verdict first.
+
+## Parallel streams — topology, 2026-10-05
+
+Three worktrees on disjoint file sets, after measuring that the candidate tasks had **zero
+overlapping files**. Nothing is pushed; five commits sit across three local branches.
+
+| Branch | Commits | Holds |
+|---|---|---|
+| `multi-agent-orchestration` (mine) | `127f2a8`, `7a6dd98` | `silent-segment.mjs`, `tests/_helpers.mjs`, `README.md`, `memory-bank/**` |
+| `validate-scene` | `e0fe668`, `d17c9be` | `validate-scene.mjs` + its tests |
+| `duck-and-pin-round-2` | `995c917`, `e85e355`, `b375d95` | `make-music.mjs`, `envelope-ducking.mjs`, `remux-music.mjs`, `mix-parameters.mjs` + tests |
+
+**The rule that makes this work: one file has exactly one owner.** `silent-segment.mjs` is
+the contended one — it holds `shapeBlocker`, `isSilentSegment` and `isGenerablePause`, so
+every stream eventually wants it. It stays mine; a stream that needs a change there
+reports it and I make it, rather than three branches hand-resolving a conflict in the file
+they all depend on.
+
+**A line citation without a commit is not a fact, it is a timestamp.** Proven here:
+`writeGainLock` sat at 769 → 771 → 774 → 774 across four commits. Two sessions "disagreed"
+about its line; both were right, at different commits, and one of them had moved it itself
+within the same task. Pin citations to a commit-ish or to a symbol.
 
 ## Open decisions
 

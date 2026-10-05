@@ -215,6 +215,7 @@ export function timingFixture(segments = contiguousSegments, extra = {}) {
     contentMs: segments.at(-1).endMs,
     outroMs: 2500,
     endCard: { enabled: true },
+    builderVersion: '0.0.0-test',
     intake: {
       leadInMs: 2000,
       perceivedGapMs: 2000,

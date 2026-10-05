@@ -156,9 +156,10 @@ one in its own words first.
 - **A remedy names a stage only where that stage would run.** Every diagnostic here that
   names `voice` or `remix` as the next step first asks `silent-segment.mjs` whether that
   stage would accept the project as it stands: whether it has a list of segment objects,
-  each with a non-empty string `id`, its silence declarations, its narration text, the
-  clips its records name, and the files the stage writes. Where it would refuse, the
-  message names it as refusing and says why.
+  each with a non-empty string `id`, its silence declarations, its narration text, an
+  enabled end card's `builderVersion` and outro length, the clips its records name, and
+  the files the stage writes. Where it would refuse, the message names it as refusing and
+  says why.
   While any silence declaration is malformed, the part of a remedy that would name `voice`
   or `remix` — as the step, or as refusing — reports that declaration in the stage's
   place, since neither stage would run on that timeline: `remix` and `voice` each refuse
