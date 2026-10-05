@@ -32,7 +32,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { EXIT, CliError, runCli, requireExistingFile, resolveWithinRoot } from './cli-support.mjs';
-import { isSilentSegment } from './silent-segment.mjs';
+import { isSilentSegment, shapeBlocker } from './silent-segment.mjs';
 
 const USAGE = `usage: node src/validate-scene.mjs [--project DIR] [--timing FILE] [--knobs FILE]
 
@@ -995,8 +995,26 @@ await runCli(async () => {
 
   const timingPath = requireExistingFile(projectDir, values.timing ?? 'timing.json', 'timing file');
   const timing = readJson(timingPath, 'timing file');
-  if (!Array.isArray(timing.segments) || timing.segments.length === 0) {
-    throw new CliError(`timing file: ${timingPath} declares no segments — there is no scene to validate`);
+
+  // Can every check below read this segment list at all? Asked FIRST, because a malformed
+  // entry is not one failed check — it makes the segment unreadable, so every check would
+  // report nonsense about it. A null entry used to reach A1 and die on `seg.visual` with a
+  // TypeError and a stack trace: no index, no remedy, and a failure that reads as a bug in
+  // the tool rather than a refusal of the input.
+  //
+  // The rule is NOT restated here. `shapeBlocker` owns it, and `voice` and `remix` already
+  // refuse exactly what it refuses before any other check of their segments — so this
+  // stage cannot disagree with its siblings about what a segment is. This call replaced a
+  // hand-rolled "declares no segments" check that was a second statement of one clause of
+  // it. Exit 2 matches those stages: a timing.json shaped wrongly is bad input, like the
+  // unparseable JSON refused above, not a scene that failed a check.
+  const shape = shapeBlocker(timing);
+  if (shape) {
+    // The fact is passed through verbatim. It is already a complete sentence, and the
+    // trailer this once appended ("— there is no scene to validate") read as a non-sequitur
+    // on the id case. Wrapping a message the engine owns in prose of my own is the same
+    // mistake as restating the rule, one layer out.
+    throw new CliError(`timing file: ${shape.fact}`);
   }
 
   const report = createReport();

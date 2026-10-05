@@ -179,6 +179,118 @@ describe('validate-scene: the clean baseline', () => {
 });
 
 // ---------------------------------------------------------------------------
+// R4 · a malformed segment entry
+//
+// A null entry crashed with `TypeError: Cannot read properties of null (reading
+// 'visual')` and a stack trace: no index, no remedy, and a failure that looks like a bug
+// in the tool rather than a refusal of the input. Every other malformed shape — a number,
+// an array, a string, a boolean — was already handled cleanly, which is why the controls
+// below matter as much as the fix: they are the evidence that `null` was fixed
+// specifically, rather than a guard being widened until the symptom disappeared.
+//
+// The rule itself is NOT restated here. `shapeBlocker` in `silent-segment.mjs:839` owns
+// it, and `voice` and `remix` already refuse exactly what it refuses before any other
+// check of their segments. A third statement of one rule is how two of them drift.
+// ---------------------------------------------------------------------------
+
+describe('R4 · a malformed segment entry is refused, not crashed on', () => {
+  /** A timing.json whose second segment is whatever the case supplies. */
+  const withSecond = (raw) =>
+    `{ "project": { "name": "r4", "fps": 30, "width": 1920, "height": 1080, "noGoPatterns": [] },
+       "durationMs": 8000, "endCard": { "enabled": true },
+       "segments": [
+         { "id": "a", "startMs": 0, "endMs": 4000, "voiceoverText": "Hi.",
+           "visual": { "mode": "narrative", "title": "T" }, "triggers": [] },
+         ${raw}
+       ] }`;
+
+  test('nullSegmentEntry_isRefusedByIndexWithNoStackTrace', (t) => {
+    const dir = makeProject(t, { 'timing.json': withSecond('null') });
+    const r = run(dir);
+    // assertCleanExit also asserts no stack trace escaped, which is the whole defect:
+    // the old behaviour exited non-zero AND printed a stack, so a test written as
+    // `notEqual(code, 0)` would have passed while the tool reported a bug in itself.
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /segments\[1\]/, `the refusal must name the index\n${r.all}`);
+    assert.doesNotMatch(r.all, /TypeError/, `it still crashed rather than refusing\n${r.all}`);
+  });
+
+  test('nullSegmentEntry_namesTheFirstBadIndexNotTheLast', (t) => {
+    const dir = makeProject(t, { 'timing.json': withSecond('null, null') });
+    const r = run(dir);
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /segments\[1\]/, `expected the FIRST bad entry\n${r.all}`);
+    assert.doesNotMatch(r.all, /segments\[2\]/, `it named a later entry than the first\n${r.all}`);
+  });
+
+  // CONTROLS — but NOT unchanged ones, and the distinction matters. Before the fix each of
+  // these was already handled *cleanly*: no crash, exit 1, counted as an ordinary check
+  // failure. Adopting shapeBlocker reclassifies them as what they actually are — a
+  // malformed entry, refused by index at exit 2, the same as voice and remix.
+  //
+  // I described these as "already work and must keep working" at the approval gate. That
+  // was wrong: their exit code moves from 1 to 2. Recorded here rather than quietly
+  // absorbed, because a control whose behaviour changes is not a control until you say so.
+  for (const [label, raw] of [['a number', '7'], ['an array', '[]'], ['a string', '"text"'], ['a boolean', 'true']]) {
+    test(`segmentEntryThatIs${label.replace(/\W/g, '')}_isRefusedByIndex`, (t) => {
+      const dir = makeProject(t, { 'timing.json': withSecond(raw) });
+      const r = run(dir);
+      assertCleanExit(r, EXIT.USAGE);
+      assert.match(r.all, /segments\[1\]/, `${label}: the refusal must name the index\n${r.all}`);
+    });
+  }
+
+  test('segmentWithNoId_isRefused', (t) => {
+    // Accepted at the approval gate as a deliberate widening beyond the null crash:
+    // `timing-schema.json:64,66` requires a non-empty string id, and without one every
+    // emitted target becomes `undefined-node-…`, so the scene cannot render anyway.
+    const dir = makeProject(t, {
+      'timing.json': withSecond('{ "startMs": 4000, "endMs": 8000, "voiceoverText": "Yo.", "visual": { "mode": "narrative", "title": "U" } }'),
+    });
+    const r = run(dir);
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /segments\[1\]/, `the refusal must name the index — it has no id to be named by\n${r.all}`);
+  });
+
+  test('segmentWithAnEmptyStringId_isRefused', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': withSecond('{ "id": "", "startMs": 4000, "endMs": 8000, "voiceoverText": "Yo.", "visual": { "mode": "narrative", "title": "U" } }'),
+    });
+    assertCleanExit(run(dir), EXIT.USAGE);
+  });
+
+  test('segmentWithANonStringId_isRefused', (t) => {
+    // shapeBlocker's id clause has three branches — missing, empty, and wrong type — and
+    // the first two were covered while this one was not. An untested branch of a guard I
+    // newly adopted is a branch I am asserting works on the strength of having read it.
+    const dir = makeProject(t, {
+      'timing.json': withSecond('{ "id": 7, "startMs": 4000, "endMs": 8000, "voiceoverText": "Yo.", "visual": { "mode": "narrative", "title": "U" } }'),
+    });
+    const r = run(dir);
+    assertCleanExit(r, EXIT.USAGE);
+    assert.match(r.all, /segments\[1\]/, `the refusal must name the index\n${r.all}`);
+  });
+
+  test('wellFormedSegments_areStillAccepted', (t) => {
+    // The control that keeps the whole block honest: if this ever fails, the refusal is
+    // rejecting valid input and every test above is passing for the wrong reason.
+    const dir = makeProject(t, {
+      'timing.json': withSecond('{ "id": "b", "startMs": 4000, "endMs": 8000, "voiceoverText": "Yo.", "visual": { "mode": "narrative", "title": "U" }, "triggers": [] }'),
+    });
+    assertClean(run(dir));
+  });
+
+  test('emptySegmentList_isRefusedByTheSameRule', (t) => {
+    // Previously a bespoke check in this file's entry point, stating a rule shapeBlocker
+    // already owned. Same refusal, now from one place.
+    const dir = makeProject(t, {
+      'timing.json': '{ "project": { "name": "r4", "noGoPatterns": [] }, "segments": [] }',
+    });
+    assertCleanExit(run(dir), EXIT.USAGE);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A · Trigger and element integrity
 // ---------------------------------------------------------------------------
 

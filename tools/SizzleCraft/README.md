@@ -386,6 +386,12 @@ manifest must never read as a clean bill of health. `calibration-observed.json` 
 the same way for the one check that needs measured audio. The stage also leaves the
 end-card canonical form to `validate-timing`, which owns it — run both.
 
+It checks the timeline's shape before anything else, by the same rule and with the same
+exit `2` as `voice` and `remix` — a missing or empty segment list, an entry that is not a
+segment object, or one with no non-empty string `id`, named by its index. A malformed
+entry is not one failed check; it makes the segment unreadable, so every check would
+report nonsense about it.
+
 **A silent window is a measurement, not a failure.** `check-levels` reports three states,
 not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
 pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1`. Treating
