@@ -389,7 +389,7 @@ public sealed partial class RunCoordinator
         // refuses rather than records. NullLogger, which the constructors without a logger install, is
         // never enabled. This guards the configuration the suite starts with; it cannot hold a logger
         // to it, and a logger reconfigured mid-suite is documented on this method rather than refused.
-        if (progress is not null && !_logger.IsEnabled(ProgressFaultLevel))
+        if (progress is not null && !AdmitsProgress())
         {
             throw new InvalidOperationException(
                 "A progress sink was supplied, but this coordinator's logger is not enabled for warnings. An "
@@ -590,6 +590,22 @@ public sealed partial class RunCoordinator
 
         return Assemble(suite, results, startedAt, attested);
     }
+
+    /// <summary>
+    /// Whether <see cref="RunAsync(Suite, IProgress{RunProgress}, CancellationToken)"/> would accept a
+    /// progress sink if a suite started now: the condition it refuses one on, read the same way.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when this coordinator's logger admits the level a fault in a sink is
+    /// logged at.
+    /// </returns>
+    /// <remarks>
+    /// One predicate, read by the refusal and by any caller in this library that has to ask first, so
+    /// the two cannot come to disagree about the level or the logger. It is read when it is called,
+    /// exactly as the refusal is: a logger reconfigured between this read and the refusal's is still
+    /// refused by <c>RunAsync</c>.
+    /// </remarks>
+    internal bool AdmitsProgress() => _logger.IsEnabled(ProgressFaultLevel);
 
     /// <summary>
     /// Calls the sink for a run that has completed, without letting the sink decide anything about the

@@ -71,7 +71,9 @@ public sealed class LiveEndpointBaseline : IBaselineProvider
     /// <inheritdoc/>
     /// <remarks>
     /// <paramref name="reference"/> is the absolute <c>http</c> or <c>https</c> address of the
-    /// baseline system.
+    /// baseline system. The baseline suite reports nothing while it runs: this is
+    /// <see cref="TryGetBaselineAsync(string, IProgress{RunProgress}, CancellationToken)"/> with no
+    /// sink, so there is no sink to refuse, whatever logger the factory's coordinator has.
     /// </remarks>
     /// <exception cref="ArgumentException">
     /// <paramref name="reference"/> is empty, is not an absolute URI, names a scheme other than
@@ -86,7 +88,98 @@ public sealed class LiveEndpointBaseline : IBaselineProvider
     /// asked for.
     /// </exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
-    public async Task<SuiteResult?> TryGetBaselineAsync(string reference, CancellationToken cancellationToken)
+    public Task<SuiteResult?> TryGetBaselineAsync(string reference, CancellationToken cancellationToken) =>
+        TryGetBaselineAsync(reference, progress: null, cancellationToken);
+
+    /// <summary>
+    /// Attempts to retrieve a baseline artifact, reporting each run of the baseline suite to
+    /// <paramref name="progress"/> as it completes.
+    /// </summary>
+    /// <param name="reference">
+    /// The absolute <c>http</c> or <c>https</c> address of the baseline system. It is untrusted, and
+    /// is validated exactly as <see cref="TryGetBaselineAsync(string, CancellationToken)"/> validates it.
+    /// </param>
+    /// <param name="progress">
+    /// Called once for each run of the baseline suite as it completes, or <see langword="null"/> to
+    /// report nothing, which is exactly <see cref="TryGetBaselineAsync(string, CancellationToken)"/>.
+    /// Refused, before anything is dispatched, when the coordinator the factory returns would refuse
+    /// it; see the remarks.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the retrieval, and the baseline suite with it.</param>
+    /// <returns>
+    /// The baseline. Never null — running a suite always produces an artifact — but nullable, as the
+    /// <see cref="IBaselineProvider"/> member this accompanies is.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Everything <see cref="TryGetBaselineAsync(string, CancellationToken)"/> states holds here too:
+    /// the reference is validated before the factory is called, and the artifact is checked against
+    /// the endpoint asked for before it is returned. What this adds is that the baseline suite is not
+    /// silent while it runs. <paramref name="progress"/> is handed to
+    /// <see cref="RunCoordinator.RunAsync(Suite, IProgress{RunProgress}, CancellationToken)"/> as it
+    /// is — not buffered, relabelled, or offset — so which calls are made, from which threads, with
+    /// which counts, and which exceptions out of them are contained, are exactly what that method
+    /// documents. Each report describes a run of the suite this instance was constructed with, and
+    /// its <see cref="RunProgress.Total"/> is that suite's plan.
+    /// </para>
+    /// <para>
+    /// <b>Give the baseline a sink of its own.</b> A <see cref="RunProgress"/> says which run
+    /// completed, not which suite it belongs to, so a caller showing a candidate and its baseline
+    /// tells them apart by the sink it hands each. One sink shared by both cannot: a renderer showing
+    /// the greatest <see cref="RunProgress.Completed"/> it has received, as <see cref="RunProgress"/>
+    /// advises, holds the candidate's final count through the whole baseline run — a progress
+    /// display that is silent about the suite it is meant to be showing.
+    /// </para>
+    /// <para>
+    /// <b>A report is not a verdict on the baseline.</b> The runs are reported as they complete, and
+    /// the artifact is checked against the endpoint only once the suite has finished, so a baseline
+    /// can report every one of its runs and still be refused.
+    /// </para>
+    /// <para>
+    /// <b>A sink that would be refused is refused as <see cref="NotSupportedException"/>, never as
+    /// <see cref="InvalidOperationException"/>.</b> The coordinator refuses a sink, before
+    /// dispatching anything, unless its logger admits warnings, because a fault in a sink is logged
+    /// and recorded nowhere else — and it refuses with <see cref="InvalidOperationException"/>. From
+    /// this method that type means the artifact describes a different system from the one asked
+    /// for, and callers read it that way: the eval CLI reports it as a baseline that could not be
+    /// confirmed to have reached its address. Passed through, a progress misconfiguration would be
+    /// reported as a wrong-endpoint refusal — a claim about the system under test, made about a
+    /// display. So the coordinator is asked its own question first, through the same predicate its
+    /// refusal reads, and a sink it would refuse is refused here with a type no caller reads as a
+    /// wrong endpoint. The reference has been validated and the factory called by then; no request
+    /// has been sent. A caller that cannot vouch for the logger it gave the factory should ask that
+    /// question before supplying a sink, and supply <see langword="null"/> when the answer is no.
+    /// </para>
+    /// <para>
+    /// The coordinator still makes its own check as the suite starts. The two read the logger one
+    /// after the other, so only a logger reconfigured between those two reads reaches the
+    /// coordinator's refusal — still before anything is dispatched, but as its
+    /// <see cref="InvalidOperationException"/>, with the misreading that invites.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="reference"/> is empty, is not an absolute URI, names a scheme other than
+    /// <c>http</c> or <c>https</c>, carries userinfo, or carries a query or fragment — the parts
+    /// of an address that are redacted before recording and therefore cannot be verified.
+    /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="reference"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The factory returned null, returned a coordinator that recorded a different endpoint from
+    /// the one requested, or returned one whose runs recorded a request to somewhere else — in
+    /// any of which cases the artifact describes a system other than the one this baseline was
+    /// asked for. Or, only when its logger was reconfigured between the check here and its own, the
+    /// coordinator refused <paramref name="progress"/> itself; see the remarks.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="progress"/> was supplied and the coordinator the factory returned would refuse
+    /// it, because its logger is not enabled for warnings. Nothing was dispatched.
+    /// </exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public async Task<SuiteResult?> TryGetBaselineAsync(
+        string reference,
+        IProgress<RunProgress>? progress,
+        CancellationToken cancellationToken
+    )
     {
         var endpoint = Validate(reference);
 
@@ -99,7 +192,23 @@ public sealed class LiveEndpointBaseline : IBaselineProvider
                     + "Reporting no baseline here would have the caller conclude there was nothing to compare."
             );
 
-        var result = await coordinator.RunAsync(_suite, cancellationToken).ConfigureAwait(false);
+        // The coordinator refuses a sink its logger could not record a fault in, and refuses it with
+        // InvalidOperationException — which from this method means the artifact describes the wrong
+        // system, and is reported by callers as exactly that. So its own question is asked first, and
+        // a sink it would refuse is refused with a type that says what is actually wrong. Nothing has
+        // been dispatched. The coordinator's check still stands behind this one.
+        if (progress is not null && !coordinator.AdmitsProgress())
+        {
+            throw new NotSupportedException(
+                "A progress sink was supplied for the baseline suite, but the coordinator the factory returned "
+                    + "has a logger that is not enabled for warnings, so it would refuse the sink: a fault in a "
+                    + "sink is logged and recorded nowhere else. Nothing has been dispatched, and nothing is "
+                    + "known about the baseline endpoint. Give the factory's coordinator a logger enabled for "
+                    + "warnings, or request the baseline without a sink."
+            );
+        }
+
+        var result = await coordinator.RunAsync(_suite, progress, cancellationToken).ConfigureAwait(false);
 
         // The artifact is the only record of what was actually evaluated. A coordinator wired to
         // a different address produces a perfectly well-formed baseline for the wrong system,
