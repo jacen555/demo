@@ -8,7 +8,6 @@ using Forge.EvalCli.Tests.Support;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Assertions;
 using Forge.EvalEngine.Coordination;
-using Forge.EvalEngine.Results;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -255,7 +254,7 @@ public class RunProgressReportingTests
 
         protected override async Task RenderAsync(
             SuiteOutline outline,
-            Func<IProgress<RunProgress>, Task<SuiteResult>> conduct,
+            Func<IProgress<RunProgress>, Task> conduct,
             CancellationToken cancellationToken
         )
         {

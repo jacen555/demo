@@ -116,8 +116,22 @@ internal static class RunCommand
         // comparison conducts a whole second suite against the baseline address when one was
         // named, which is the longest cancellable stretch this command has, and every step of it
         // is after a publication the ledger already knows about.
+        //
+        // That second suite gets a display of its own, built the way the candidate's was. Each
+        // display draws a suite from a sink of its own and holds the greatest count that sink has
+        // seen, so the baseline counts from its own first run; a sink shared with the candidate
+        // would sit at the candidate's final count for the whole of the baseline run.
         var comparison = await BaselineComparison
-            .CompareAsync(provider, plan, conducted, summary.Selection.Skipped, result, baseline, cancellationToken)
+            .CompareAsync(
+                provider,
+                plan,
+                conducted,
+                summary.Selection.Skipped,
+                result,
+                baseline,
+                RunProgressDisplay.For(console, diagnostics),
+                cancellationToken
+            )
             .ConfigureAwait(false);
 
         await WriteMarkdownReportAsync(plan, comparison, artifactPath, written, cancellationToken)

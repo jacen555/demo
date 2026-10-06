@@ -72,6 +72,39 @@ public partial class StreamedRunProgressTests
     }
 
     [Fact]
+    public async Task ShowAsync_ForABaselineSuite_LabelsEveryLineAndNamesItsAddressOnlyOnTheStartLine()
+    {
+        using var stderr = new StringWriter();
+        using var diagnostics = new DiagnosticsWriter(stderr);
+        using var log = new StringWriter();
+
+        // The same reports as the test above, which pins the candidate's lines unlabelled.
+        await new StreamedRunProgress(diagnostics).ShowAsync(
+            SuiteOutline.OfBaseline(Suite, "https://staging.example.com/<redacted>"),
+            ProgressFixture.Logger(log),
+            ProgressFixture.Reporting(
+                "regression",
+                null,
+                ProgressFixture.Report(1, 3, "checkout", 1, RunStatus.Pass),
+                ProgressFixture.Report(2, 3, "checkout", 2, RunStatus.Fail),
+                ProgressFixture.Report(3, 3, "billing", 1, RunStatus.Error)
+            ),
+            CancellationToken.None
+        );
+
+        Lines(stderr)
+            .Should()
+            .Equal(
+                "eval-cli: starting baseline suite 'regression' against https://staging.example.com/<redacted> - 3 "
+                    + "run(s) planned across 2 scenario(s).",
+                "eval-cli: [1/3] baseline scenario 'checkout' repetition 1: pass",
+                "eval-cli: [2/3] baseline scenario 'checkout' repetition 2: fail",
+                "eval-cli: [3/3] baseline scenario 'billing' repetition 1: error"
+            );
+        log.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Report_WhenCountsArriveOutOfOrder_ShowsTheGreatestCountSeenRatherThanTheLatest()
     {
         using var stderr = new StringWriter();
