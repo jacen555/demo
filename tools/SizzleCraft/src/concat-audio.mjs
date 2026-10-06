@@ -4,7 +4,7 @@ import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveOutput, r
 import {
   isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silentMp3DurationMs, SILENCE_FRAME_MS,
   unvoicedNarrationProblem, voiceBlocker, remixBlocker, gatedRemedy, declareSilentRemedy, sameIdentity,
-  segmentEntryBlocker,
+  segmentEntryBlocker, segmentLabel,
 } from './silent-segment.mjs';
 
 function audioStart(buffer) {
@@ -127,9 +127,9 @@ await runCli(() => {
   const silentIds = [];
   for (let i = 0; i < segments.length; i++) {
     if (!isSilentSegment(segments[i])) continue;
-    const problems = silentSegmentProblems(segments[i], `segment "${segments[i]?.id ?? i}"`);
+    const problems = silentSegmentProblems(segments[i], segmentLabel(segments[i], i));
     if (problems.length) throw new CliError(problems[0], EXIT.FAILED);
-    silentIds.push(`segment "${segments[i]?.id}"`);
+    silentIds.push(segmentLabel(segments[i], i));
   }
   if (!anyNamed && silentIds.length && segments.some((s) => !isSilentSegment(s))) {
     // Positional mode matched clips to segments by skipping the silent ones, which is
@@ -217,7 +217,7 @@ await runCli(() => {
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    const label = `segment "${seg?.id ?? i}"`;
+    const label = segmentLabel(seg, i);
     const silent = isSilentSegment(seg);
 
     let name = declaredName[i];
@@ -248,6 +248,11 @@ await runCli(() => {
       parts.push({
         kind: 'generated',
         id: seg.id,
+        // THE LABEL, CARRIED. These parts are printed in the plan and after the apply, and
+        // those messages formatted `p.id` straight into `segment "..."` — so an id-less
+        // silent segment was announced as `segment "undefined"` in a SUCCESSFUL run. The
+        // label is decided once, where every other refusal in this stage decides it.
+        label,
         requestedMs,
         realMs: silentMp3DurationMs(requestedMs),
         bytes: silentMp3(requestedMs),
@@ -361,9 +366,9 @@ await runCli(() => {
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
       if (p.kind === 'clip') console.log(`  + ${p.name}`);
-      else if (p.claimed === null) console.log(`  + segment "${p.id}" — GENERATE ${p.realMs}ms of digital silence (declared silent, no clip on disk)`);
+      else if (p.claimed === null) console.log(`  + ${p.label} — GENERATE ${p.realMs}ms of digital silence (declared silent, no clip on disk)`);
       else {
-        console.log(`  + segment "${p.id}" — GENERATE ${p.realMs}ms of digital silence from its authored window ` +
+        console.log(`  + ${p.label} — GENERATE ${p.realMs}ms of digital silence from its authored window ` +
           `(declared silent; ${p.claimed}, which its record names, is not used and is left as it is)`);
       }
       if (seam(i)) console.log('  + silence.mp3');
@@ -388,7 +393,7 @@ await runCli(() => {
   fs.writeFileSync(outPath, Buffer.concat(buffers));
   for (const p of parts) {
     if (p.kind === 'generated') {
-      console.log(`generated ${p.realMs}ms of silence for segment "${p.id}" (authored window ${p.requestedMs}ms` +
+      console.log(`generated ${p.realMs}ms of silence for ${p.label} (authored window ${p.requestedMs}ms` +
         `${p.claimed === null ? '' : `; ${p.claimed}, which its record names, was not used`})`);
     }
   }

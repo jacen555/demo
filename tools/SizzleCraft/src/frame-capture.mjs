@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob } from './cli-support.mjs';
+import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob, describeJsonValue } from './cli-support.mjs';
 import { isSilentSegment, silentSegmentProblems, segmentEntryBlocker } from './silent-segment.mjs';
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
@@ -81,20 +81,13 @@ guard(() => {
   // a list is refused, because nothing here can read it.
   if (timing.segments !== undefined && timing.segments !== null && !Array.isArray(timing.segments)) {
     throw new CliError(
-      `timing.segments is not a list of segments — it is ${describeShape(timing.segments)}. ` +
+      `timing.segments is not a list of segments — it is ${describeJsonValue(timing.segments)}. ` +
         'Every stage reads it as a list; one that is not a list cannot be read at all.',
     );
   }
   const bad = segmentEntryBlocker(timing.segments);
   if (bad) throw new CliError(bad.fact);
 });
-
-/** What a malformed value IS, for a refusal that tells an author where to look. */
-function describeShape(value) {
-  if (Array.isArray(value)) return 'an array';
-  if (value === null) return 'null';
-  return `a ${typeof value}`;
-}
 
 // Capture parameters are validated up front, before anything is deleted. An unvalidated
 // fps is not a cosmetic bug: `Number('thirty')` is NaN and a negative fps is accepted by

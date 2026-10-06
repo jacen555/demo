@@ -640,18 +640,21 @@ export const gapAssetName = (i) => `gap_${pad2(i + 1)}.mp3`;
  * distinction this draws is between HAVING an id and not having one — never between how an id
  * happens to be spelled.
  *
- * CONSUMERS(segmentLabel): none
+ * CONSUMERS(segmentLabel): concat-audio.mjs, remix.mjs, write-storyboard.mjs
  * Used inside this module by defaultLabel. THAT USE IS CURRENTLY UNOBSERVABLE: all three gates
  * ask shapeBlocker first, and it refuses any segment without a usable id, so defaultLabel never
  * meets one. The symbol therefore fixes the STATEMENT, not a live symptom, and is pinned by
  * direct unit tests rather than through a gate.
  *
- * The reachable bad labels are `concat-audio.mjs:130` and `:220` and `remix.mjs:86`, which each
- * restate the old form; concat-audio gates with segmentEntryBlocker, which refuses non-objects
- * but has no opinion about ids, so an id-less segment reaches its label intact. Those files
- * belong to another stream and are reported rather than changed — a symbol they can adopt is
- * worth more than a fourth private copy. A test asserts the list above matches the modules that
- * actually import this symbol, in both directions.
+ * Of the three callers that restated the old form, TWO ARE LIVE and one is not — measured, not
+ * assumed. `concat-audio.mjs` reaches both of its labels, because it gates with
+ * segmentEntryBlocker, which refuses non-objects but has no opinion about ids; an id-less
+ * segment therefore arrives at its silent-declaration label and at its clip-matching label
+ * intact, and both are covered by integration tests. `remix.mjs` is NOT reachable with an
+ * id-less segment: its gate asks shapeBlocker first. It reads this symbol for the statement's
+ * sake and is pinned here, because a green assertion over an unreachable branch would document
+ * a gap as covered. A test asserts the list above matches the modules that actually import this
+ * symbol, in both directions.
  */
 export function segmentLabel(s, i) {
   return typeof s?.id === 'string' && s.id !== '' ? `segment "${s.id}"` : `timing.segments[${i}]`;
@@ -972,7 +975,17 @@ export function segmentEntryBlocker(segs) {
  */
 export function shapeBlocker(timing, inputName = 'timing.json') {
   const segs = timing?.segments;
-  if (!Array.isArray(segs) || segs.length === 0) return { fact: `${inputName} declares no segments` };
+  if (!Array.isArray(segs) || segs.length === 0) {
+    return {
+      fact: `${inputName} declares no segments`,
+      // THE ONE FACT HERE THAT DOES NOT STATE ITS OWN FIX. The other two name the field and
+      // the rule it breaks in the same sentence; this one names an absence and stops. The
+      // remedy is an AUTHORING step, never a referral to another stage — a remedy that
+      // sends an author to a stage which refuses the same timeline is a loop, and reading
+      // one cannot tell you it is a loop. Following this clears this refusal outright.
+      then: `write the timeline's segments into ${inputName} — each needs a non-empty string id`,
+    };
+  }
   for (const [i, s] of segs.entries()) {
     const entry = segmentEntryFact(s, i);
     if (entry) return { fact: entry };

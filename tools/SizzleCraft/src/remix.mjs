@@ -17,6 +17,7 @@ import {
   isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silentMp3DurationMs, silenceAssetBytes,
   silentRecordState, hasAudioFile, unvoicedNarrationProblem, segmentClipName, gapAssetName, remixWriteSet,
   remixCollisionBlocker, renderBlocker, voiceBlocker, gatedRemedy, stageRefusal, canonicalName, sameName, shapeBlocker,
+  segmentLabel,
 } from './silent-segment.mjs';
 
 const USAGE = `
@@ -83,7 +84,14 @@ const probeMs = async f => Math.round(((await parseFile(f, { duration: true })).
 // no audio record at all is still refused under --apply, below, as before.
 const segs = timing.segments;
 const segList = Array.isArray(segs) ? segs : [];
-const labelOf = (s, i) => `segment "${s?.id ?? i}"`;
+// UNREACHABLE WITH AN ID-LESS SEGMENT, AND CORRECTED ANYWAY. This restated
+// `segment "${s?.id ?? i}"`, which formats a 0-based index as a quoted id. Measured: every
+// path into it asks this stage's gate first, and the gate asks shapeBlocker, which refuses
+// a segment with no usable id — so the `?? i` branch cannot be reached from here. The
+// statement is still wrong, and one wrong statement of a rule is how the next caller learns
+// it wrong, so it reads the shared symbol. Pinned by segmentLabel's own unit tests rather
+// than by an integration test over a branch no input can reach.
+const labelOf = segmentLabel;
 // The plan's accounting of what this run does to a file a record named, compared by
 // canonical name: the resolver keeps an 8.3 short name as typed, and read as text, a short
 // name of a file this run writes was another file it "leaves as it is". Never by identity:
@@ -206,7 +214,9 @@ if (!cli.apply) {
     console.log('  note: a lead-in or pause solved to 0ms writes nothing and leaves any existing file of that');
     console.log('  name as it is. Each is still held to --replace, because the solve is known only after decoding.');
   }
-  planFooter();
+  // The two disclosures above each say --apply refuses this run. Inviting --apply in the
+  // next breath contradicts them, so the footer says what it actually knows.
+  planFooter('apply', { blocked: missing.length > 0 || unvoicedIds.length > 0 });
   process.exit(EXIT.OK);
 }
 // Now that we are writing, enforce the replace guard across the whole set before any work

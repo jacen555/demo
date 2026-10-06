@@ -1,7 +1,7 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from 'node:fs';
-import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
-import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker } from './silent-segment.mjs';
+import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, describeJsonValue } from './cli-support.mjs';
+import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker, segmentLabel } from './silent-segment.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -38,20 +38,13 @@ guard(() => {
   // plan line below already intended with `segments.length` over `t.segments?.length ?? 0`.
   if (t.segments !== undefined && t.segments !== null && !Array.isArray(t.segments)) {
     throw new CliError(
-      `timing.segments is not a list of segments — it is ${describeShape(t.segments)}. ` +
+      `timing.segments is not a list of segments — it is ${describeJsonValue(t.segments)}. ` +
         'Every stage reads it as a list; one that is not a list cannot be read at all.',
     );
   }
   const bad = segmentEntryBlocker(t.segments);
   if (bad) throw new CliError(bad.fact);
 });
-
-/** What a malformed value IS, for a refusal that tells an author where to look. */
-function describeShape(value) {
-  if (Array.isArray(value)) return 'an array';
-  if (value === null) return 'null';
-  return `a ${typeof value}`;
-}
 
 // READ ONCE, HERE, AND NOWHERE ELSE. Every site below used its own idiom for the same
 // question — `t.segments || []` in one place, `t.segments.length` in three, and
@@ -71,7 +64,11 @@ const intake = t.intake ?? {};
 // reviews it. A blank caption rendered as an empty cue under the SILENT label and exited 0.
 // Refuse the declarations validate-timing, voice and write-subtitles refuse, before planning.
 guard(() => {
-  const problems = segments.filter(isSilentSegment).flatMap((s) => silentSegmentProblems(s));
+  // THE INDEX IS KEPT. `.filter().flatMap()` discarded it before the label needed it, so
+  // silentSegmentProblems fell back to its default `segment "${seg?.id}"` and an id-less
+  // segment became `segment "undefined"`. The label comes from the shared symbol, as every
+  // other one in this change does.
+  const problems = segments.flatMap((s, i) => (isSilentSegment(s) ? silentSegmentProblems(s, segmentLabel(s, i)) : []));
   if (problems.length) throw new CliError(problems.join('\n'));
 });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
