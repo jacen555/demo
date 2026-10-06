@@ -267,9 +267,10 @@ ${MEASURED_RECOVERY.rows
                         music source (bug-ledger 16). Required on first use, whenever the
                         source or any pinned parameter changes, and once for every pin
                         written before those parameters were registered. It is the
-                        caller's assertion that a person measured or listened to the mix
-                        and accepts it; the tool cannot tell who passed it. An agent must
-                        not pass it on its own authority — ask the person.
+                        caller's assertion that a person has accepted these values —
+                        having measured or listened to a mix where one exists, and
+                        provisionally where none does yet; the tool can verify neither.
+                        An agent must not pass it on its own authority — ask the person.
   --video-seconds <n>   override the video length used to size the loop
   --ceiling <dB>        limiter headroom in dB BELOW full scale, 0.1..12 (default: 1.0).
                         This is dBFS. A delivery target is usually dBTP, and true peak

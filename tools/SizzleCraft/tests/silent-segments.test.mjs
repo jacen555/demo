@@ -213,6 +213,35 @@ describe('silence is declared, never inferred', () => {
     assert.match(r.all, /run voice\.mjs/i, 'the message must name the stage that was skipped');
   });
 
+  test('writeSubtitles_aRefusalWhoseRemedyAlreadySaysInstead_doesNotSayItTwice', (t) => {
+    // MEASURED, by running it: when the voice gate returns a malformed-declaration blocker,
+    // gatedRemedy's fact ends "...is reported here INSTEAD: ..." and the trailing
+    // parenthetical then added a second "instead" to the same line:
+    //
+    //   timing.segments[1] ("two") has no audio.words — a malformed silence declaration is
+    //   reported here INSTEAD: ... (If this segment is meant to be silent, declare it
+    //   silent (...) INSTEAD.)
+    //
+    // Two independently-correct sentences composing into one that reads as a mistake. The
+    // contract pinned here is the composition, not either wording: no line of a refusal
+    // repeats "instead", however the halves are reworded later.
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there', silence: { caption: '[x]' } },
+      { id: 'two', startMs: 960, endMs: 1920, voiceoverText: 'second line here' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('write-subtitles.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, `this timeline must be refused\n${r.all}`);
+    const doubled = r.all.split(/\r?\n/).filter((line) => (line.match(/\binstead\b/gi) ?? []).length > 1);
+    assert.deepEqual(doubled, [], `no line may say "instead" twice\n${doubled.join('\n')}`);
+    // The control: the line must still BE there and still carry its remedy, or "never say
+    // instead at all" would satisfy the assertion above.
+    assert.match(r.all, /has no audio\.words/, `the refusal itself must survive\n${r.all}`);
+    assert.match(r.all, /meant to be silent/, `and so must its silent-segment advice\n${r.all}`);
+  });
+
   test('validateTiming_silentSegmentCarryingNarrationText_isRejected', (t) => {
     // A segment that declares silence AND carries narration is a contradiction with no
     // safe resolution — whichever one a stage honours, the other was a lie. Refuse it.

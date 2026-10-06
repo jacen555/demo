@@ -363,12 +363,28 @@ should check them — stage N+1 consuming stage N's output depends on it.
 |---|---|
 | `0` | Success, or a plan produced successfully. The work was done. |
 | `1` | The work ran and the result is bad — a check failed, a hash mismatched, ffmpeg failed. |
-| `2` | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite. |
+| `2` | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite, or, in the stages that classify it that way, a malformed timeline. |
 | `3` | **Skipped.** Another process holds the lock, so nothing was done. Not a success. |
 
 `3` matters most. `frame-capture` and `encode-mp4` take a single-writer lock; when
 another run holds it they exit `3` rather than `0`, so a driver cannot mistake "someone
 else is encoding" for "the encode is finished". A plan never takes the lock.
+
+**A malformed timeline does not have one code, and you cannot infer the cause from the
+code.** Measured, the same file — a `null` where a segment belongs — through four stages:
+
+| stage | exit |
+|---|---|
+| `remix` | `2` |
+| `write-subtitles` | `1` |
+| `validate-timing` | `1` |
+| `write-chapters` | `1` |
+
+`remix` treats it as bad input and refuses to start; the others report it as a result they
+computed — and for `validate-timing`, inspecting the timeline *is* the work, so a verdict
+of "no" is a completed run. Both readings are defensible, which is why the code tells you
+how THAT stage classified the problem and nothing more. Read the message, not the number,
+when you need the cause; the number is for deciding whether to continue.
 
 Verification scripts (`validate-timing`, `validate-scene`, `check-levels`, `preview`) exit
 non-zero when they find a problem, using the four codes in the table above and no others.
@@ -472,10 +488,12 @@ so there is nothing to measure until the remux has run:
 2. `node src/check-levels.mjs --file <out>` to measure it;
 3. read the lead-in window, where the bed plays alone, **before delivering**.
 
-**`--confirm-gain` is the caller's assertion** that a person measured or listened to the mix
-and accepts these values for this source. The tool cannot tell who passed it, and records
-`evidence: "operator-confirmed"` either way — so an agent must not pass it on its own
-authority: ask the person, and pass it only on their answer.
+**`--confirm-gain` is the caller's assertion** that a person has accepted these values for
+this source — having measured or listened to a mix where one exists, and provisionally
+where none does yet, which is the case on the first run where the flag is mandatory. The
+tool can verify neither, and records `evidence: "operator-confirmed"` either way — so an
+agent must not pass it on its own authority: ask the person, and pass it only on their
+answer.
 
 `confirmedAt` and `evidence` are written only on a run where someone actually passed
 `--confirm-gain`; a settled pin is left untouched rather than restamped.
