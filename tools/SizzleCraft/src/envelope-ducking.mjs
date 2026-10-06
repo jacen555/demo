@@ -362,17 +362,6 @@ export async function fingerprintVoice(voicePath, displayName) {
   return { file: displayName, bytes, sha256: hash.digest('hex') };
 }
 
-/**
- * Fingerprints audio already in memory — the SAME bytes a stage is about to measure.
- *
- * A stage that hashes the file on one read and measures a second read can bind its output
- * to bytes it never measured, if the file is replaced in between. Hashing the buffer that
- * is measured makes the binding name exactly what was measured, by construction.
- */
-export function fingerprintBuffer(bytes, displayName) {
-  return { file: displayName, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
-}
-
 /** Builds the record written into the envelope. Kept beside the reader that checks it. */
 export function envelopeBindingRecord(fingerprint) {
   return { file: fingerprint.file, bytes: fingerprint.bytes, sha256: fingerprint.sha256 };

@@ -803,6 +803,30 @@ export function describeJsonValue(value) {
 }
 
 /**
+ * Fingerprints bytes already in memory — the SAME bytes a caller is about to use.
+ *
+ * A stage that hashes the file on one read and uses a second read can bind its output to
+ * bytes it never used, if the file is replaced in between. Hashing the buffer that is used
+ * makes the binding name exactly what was used, by construction. Where the bytes come from
+ * disk and are read once — a PNG the browser wrote, a manifest input — that hazard cannot
+ * arise, and this is simply the one statement of what a fingerprint record is.
+ *
+ * MOVED HERE FROM envelope-ducking.mjs. Its body was always domain-neutral, but its home
+ * and its doc both said "audio", so the two stages that needed it for PNGs and JSON had to
+ * either import against a comment that did not describe their use or restate it privately.
+ * It sits beside describeJsonValue because this is where shared rules live once more than
+ * one domain needs them.
+ *
+ * CONSUMERS(fingerprintBuffer): coach-pack.mjs, make-music.mjs, preview.mjs, vo-envelope.mjs
+ * A test asserts the list above matches the modules that actually import this symbol, in
+ * both directions, so a private copy has to be a deliberate act rather than an accident of
+ * not knowing it exists.
+ */
+export function fingerprintBuffer(bytes, displayName) {
+  return { file: displayName, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+}
+
+/**
  * Reads an OPTIONAL engine-chosen JSON file, keeping apart the states that
  * `try { ... } catch {}` collapses into one.
  *

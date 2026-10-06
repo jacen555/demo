@@ -3195,6 +3195,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['silent-segment.mjs', 'segmentEntryBlocker'],
     ['silent-segment.mjs', 'segmentLabel'],
     ['cli-support.mjs', 'describeJsonValue'],
+    ['cli-support.mjs', 'fingerprintBuffer'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);

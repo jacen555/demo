@@ -1,16 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveOutput, resolveEngineOutput, assertDistinctDestinations, pathExists, planFooter } from './cli-support.mjs';
-// ONE STATEMENT OF WHAT A FINGERPRINT IS. Its doc says "audio" and it lives in an audio
-// module, but its body is domain-neutral and this is the engine's existing answer; a
-// private copy here would be the sixth. Its documented hazard — hashing one read while
-// measuring a second — cannot arise here: the browser wrote these bytes, and this is the
-// only read of them.
-//
-// DEBT: it belongs in cli-support.mjs beside describeJsonValue, with a CONSUMERS line so
-// the enumeration stays audited. That is a cross-file move and envelope-ducking.mjs is
-// not in this task's scope; it goes when one owner holds both.
-import { fingerprintBuffer } from './envelope-ducking.mjs';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveOutput, resolveEngineOutput, assertDistinctDestinations, pathExists, planFooter, fingerprintBuffer } from './cli-support.mjs';
+// ONE STATEMENT OF WHAT A FINGERPRINT IS, and it now lives beside the other shared rules
+// rather than in an audio module whose doc said "audio". A CONSUMERS line there enumerates
+// every importer, and a test holds that list to the truth.
 
 // The coach pack reads this by name, so it is part of the contract, not a detail.
 const RECORD_NAME = 'preview-record.json';
