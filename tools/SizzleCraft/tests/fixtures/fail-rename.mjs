@@ -13,6 +13,11 @@
 // itself and the failure on stderr, so a test can prove the failure was staged.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
+//
+// SIBLING: fail-rename-dest.mjs fails a rename by its DESTINATION basename, armed by the
+// FAIL_RENAME_DEST environment variable. This one matches the SOURCE against a fragment and
+// is bounded to a suite-owned directory. Two streams independently created a fixture called
+// fail-rename.mjs and collided on merge; the names now say which end each one matches.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
