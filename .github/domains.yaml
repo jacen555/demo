@@ -166,7 +166,12 @@ domains:
     reviewer: tooling-reviewer
     checklist: .github/checklists/tooling-design-checklist.md
     status: active
-    notes: ''
+    notes: 'Also owns tools/SizzleCraft/coach/ — the graduated video-coach rubric and its
+      pack/rulings stages, approved in the 2026-09-30 graduation plan. It sits outside
+      source/ and tests/ because the rubric is a reviewed artifact the coach agent reads
+      at dispatch, not engine code. A builder working the coach graduation may edit it.
+      Any git-ignore pattern for the generated pack MUST be anchored to this folder: an
+      unanchored coach/ rule would silently drop future files here out of git status.'
   - id: eval-engine
     kind: lib
     path: libs/EvalEngine
