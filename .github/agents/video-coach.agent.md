@@ -64,7 +64,11 @@ can see and say how you judged. If you cannot see it, it goes in NOT EVALUATED.
     quote appears in its input and keys your finding on the sentence containing it, so an
     approximate quote makes the finding unkeyable and it is shown as new every time. A
     finding you cannot locate is not a finding.
-  - For a still-only finding, name the still; its hash is the key.
+  - For a still-only finding — one whose evidence is what an image shows, with no text to
+    cite — **OMIT the `QUOTE` line entirely**. The still's hash is the key. **Do not invent
+    a quote to satisfy the template.** A fabricated quote fails the verbatim check
+    downstream and the finding is flagged unkeyable, when it would otherwise have keyed
+    cleanly on the still. This is the one permitted departure from the output template.
 - **Findings, not commentary.** No praise, no summaries, no "consider" padding.
   - A finding names a defect and a concrete fix.
   - If there are no defects in a section, write `none`.
@@ -146,12 +150,14 @@ DEFECTS:
   - [<rule id>] <file> @ <segment / word+time / still>
     QUOTE: <verbatim text from that input, exactly as it appears>
     <the defect>. Fix: <concrete change>.
+  (for a still-only finding, OMIT the QUOTE line entirely — see below)
   (or "  - none")
 
 ADVISORY:
   - [<rule id> | UNLISTED] <file> @ <location>
     QUOTE: <verbatim text from that input, exactly as it appears>
     <the issue>. Fix: <concrete change>.
+  (for a still-only finding, OMIT the QUOTE line entirely — see below)
   (or "  - none")
 
 NOT EVALUATED:
