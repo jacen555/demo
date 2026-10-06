@@ -292,7 +292,16 @@ because they are all the same failure: **evidence graded in a context it did not
    `shapeBlocker` first, which refuses an id-less segment outright. Writing a test to kill
    that mutant would have produced a test for a path that cannot execute — green forever,
    proving nothing, which is the artefact this whole list exists to prevent. **Check
-   reachability before treating a survivor as a gap.**
+   reachability before treating a survivor as a gap** — and note that writing the test
+   first is how you end up with a green assertion over an unreachable branch, which is
+   *worse* than the mutant, because the gap is now documented as covered.
+
+   **The portable habit, in the finder's own correction:** it did not set out to disprove
+   the brief. It went looking for the reachable path in order to fix it, and found there
+   wasn't one. The transferable rule is **reproduce the symptom before changing anything** —
+   a knack for disproving briefs is not a method, and recording it as one would teach the
+   wrong thing. The same lesson points inward: a control is only worth having if a
+   surprising failure can change your mind about the *setup* rather than about the code.
 7. **A check that matches nothing looks exactly like a check that changes nothing.** Both
    are green. Four sightings in two days, across three toolchains:
    - a file collapsed to one line by `Set-Content -NoNewline`, where `node --check` returned
@@ -306,6 +315,14 @@ because they are all the same failure: **evidence graded in a context it did not
    **The defence is cheap: print the applied-site count, assert the row count, compare a
    hash, or count the lines.** A tool reporting success tells you it ran, not that it did
    what you meant.
+
+   **The sharper framing, from the stream that hit the fourth one:** every instance is *a
+   true answer to the wrong question*. `node --check` answers "is this parseable", not "is
+   this the file I wrote". A test run answers "did these binaries pass", not "were these
+   binaries built from this source". A `-replace` answers "here is a string", not "here is
+   a *changed* string". Because each answer is true, none of them fails loudly — so **the
+   defence must be a second measurement of the thing you actually care about, never a more
+   careful reading of the first.**
 8. **A remedy is a claim about what happens next, and the only way to know is to do it.**
    The all-silent refusal took three rounds, each plausible and each wrong in a way no
    reading would catch: the first was a **referral loop** — voice told the author to run
