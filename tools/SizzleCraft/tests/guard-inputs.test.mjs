@@ -1538,18 +1538,23 @@ describe('an unparseable timing.json is refused as bad input, by every stage', (
     // written to catch. Verified by mutation: `assert.ok(false)` in its place also passed,
     // which is what proved the body was not measuring what it claimed.
     const SENTINEL = 'LEAK7f3a';
-    // frame-capture.mjs:63 has the SAME disclosure and is NOT in this task's scope, so it is
-    // excluded here and reported rather than quietly fixed. It remains in every other case
-    // above as the exit-code control.
-    for (const stage of ['remix.mjs', 'write-storyboard.mjs', 'concat-audio.mjs']) {
-      const dir = makeProject(t, { 'timing.json': `${SENTINEL}: 1` });
+    // ONE SHAPE IS NOT A MEASUREMENT. V8 quotes the input only for its "Unexpected token"
+    // form; measured over six malformed shapes, two quote and four do not. A test using a
+    // non-quoting shape passes against the leak — which is how frame-capture's own
+    // disclosure survived until a reviewer looked. Both quoting shapes are used here, and
+    // the non-quoting ones are covered by the length-independent assertion below.
+    const QUOTING_SHAPES = [`${SENTINEL}: 1`, `{ "k": ${SENTINEL} }`];
+    for (const stage of ['remix.mjs', 'write-storyboard.mjs', 'concat-audio.mjs', 'frame-capture.mjs']) {
+      for (const body of QUOTING_SHAPES) {
+        const dir = makeProject(t, { 'timing.json': body });
 
-      const r = runScript(stage, [], dir);
+        const r = runScript(stage, [], dir);
 
-      assertCleanExit(r, EXIT.USAGE, `${stage}: `);
-      assert.ok(!r.all.includes(SENTINEL), `${stage}: the refusal quoted the file's contents\n${r.all}`);
-      assert.doesNotMatch(r.all, /Unexpected token/, `${stage}: the parser's message was forwarded\n${r.all}`);
-      assert.match(r.all, /timing\.json is not valid JSON/, `${stage}: it must still name the file\n${r.all}`);
+        assertCleanExit(r, EXIT.USAGE, `${stage} (${body}): `);
+        assert.ok(!r.all.includes(SENTINEL), `${stage} (${body}): the refusal quoted the file's contents\n${r.all}`);
+        assert.doesNotMatch(r.all, /Unexpected token/, `${stage} (${body}): the parser's message was forwarded\n${r.all}`);
+        assert.match(r.all, /timing\.json is not valid JSON/, `${stage} (${body}): it must still name the file\n${r.all}`);
+      }
     }
   });
 
