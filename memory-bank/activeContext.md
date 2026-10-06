@@ -257,6 +257,39 @@ which tolerates an id-less segment and labels it by index on the stated grounds 
 `segment "1"` would send an author to the wrong line. So "just call the existing rule" is
 a measurement, not a reflex: count the currently-passing tests that change verdict first.
 
+## My briefs keep being narrower than the rule — 2026-10-06
+
+Three times in one day a stream found more than I asked for, because my instruction named
+**examples** where it should have named the **rule**. This is an orchestrator defect, not a
+builder virtue, and it is worth recording as mine.
+
+| I wrote | The rule was | What the narrow form would have missed |
+|---|---|---|
+| "sweep for `Inputs used` naming **storyboard or stills** at pass 1" | *any* input unavailable at that pass | `CRAFT-09` and `OBJ-17`, which name **timing** |
+| "apply `:8` to these **six** rules" | apply `:8` to **every** rule | `OBJ-14` and `OBJ-15` |
+| "move the duplicated `describeShape` into `silent-segment.mjs`" | *one statement per rule, wherever it already lives* | `cli-support.mjs` already had `describeJsonValue`, identical body — following my brief would have created a **third** statement while nominally removing a duplicate |
+
+The third is the worst: my instruction would have **made the defect worse** while appearing
+to fix it. The stream caught it only because it checked whether the engine already held the
+answer — a habit it had from the previous task, not from my brief.
+
+**The same failure appears inside a stream's own work**, which is why it is a general rule
+rather than a complaint about me: a stream searching for `?? i` found the three sites my
+brief listed and none of the four live ones the reviewer later found, because two of those
+were in **ordinary success output at exit 0** rather than in a refusal. Its own diagnosis:
+
+> **My search was shaped by the brief's example instead of by the rule.**
+
+**What to do instead:** when dispatching, state the rule and give the examples as
+*illustrations*, explicitly labelled as non-exhaustive — and ask for the general form back.
+The strongest result of the day came from exactly that: a stream told to find one
+rule-vs-procedure mismatch was asked to walk the whole rubric, and returned nine.
+
+**And the cheapest correction: a mechanical query beats an enumeration.** `Pass` versus
+`Inputs used` is answerable for every rule at once; an audit list is answerable only for
+the rules someone remembered. The first prevents the tenth instance, the second documents
+the nine.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
