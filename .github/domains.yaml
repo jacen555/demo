@@ -265,14 +265,17 @@ domains:
     reviewer: none
     checklist: none
     question: 'Would a pre-render content coach, given only a round''s pre-render artifacts (script, timing, storyboard, stills), have caught at least half of the objective defects the user reported across the EvalLoopDemo review rounds, with the user agreeing with at least 4 in 5 of its blocking findings?'
-    status: answered
+    status: graduated
     notes: >
       Answer: No. Commit-backed BLOCKING recall was 1/3 against a 50% bar, with precision
       4/4, so the coach stays advisory-only and never gates a render. See
       docs/adr/0006-keep-the-video-coach-advisory-only.md and the spike's scoring.md.
-      Disposition: graduate (the user's decision, 2026-09-30) as an advisory step in the
-      demo pipeline, pass 1 before TTS and pass 2 before frame capture. It must be
-      rewritten under tier-2 gates with its own reviewed rubric, not moved (constitution
-      §XI). Retain until that task lands: this is the reference for the rubric and the
-      protocol. Excluded from Forge.sln; nothing outside spike/ depends on it.
+      Disposition: GRADUATED 2026-10-06 in a seven-step rebuild, advisory-only, as the
+      user decided on 2026-09-30. Rewritten under tier-2 gates, not moved (constitution
+      §XI): the reviewed rubric is tools/SizzleCraft/coach/rubric.md, with coach-pack.mjs,
+      coach-rulings.mjs, the video-coach agent contract and the demo-recording skill
+      wiring. Pass 1 runs before TTS, pass 2 before frame capture, and neither gates.
+      RETAINED, not retired: it is the provenance for every rubric rule and for the
+      backtest figures the OBJ-07 tolerance rests on, and rubric rules cite it by commit.
+      Excluded from Forge.sln; nothing outside spike/ depends on it.
 

@@ -47,7 +47,9 @@ place to fix a bug.
 | `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
 | `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). Ducks from the shared model in `envelope-ducking.mjs`, so the synthesised and in-graph ducks cannot drift apart. |
 | `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. Optional in-graph sidechain duck for a licensed bed (`--duck-db`). |
-| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
+| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. `preview.mjs` publishes a **binding record** last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256. |
+| `coach-pack.mjs` | — | Collects the exact input set the **video coach** may read and writes a hash manifest its report must cite. Pass 1 is the script; pass 2 adds timing, storyboard, stills and the audit transcript. Refuses a still whose binding record does not match — and refuses the **absence** of a record, because "no record" must never read as "nothing wrong". |
+| `coach-rulings.mjs` | — | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false-alarm and taste collapse. The key hashes the sentence a finding quotes, so **rewording that sentence re-opens the finding** rather than silencing it. |
 | `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
 | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
 

@@ -257,6 +257,43 @@ which tolerates an id-less segment and labels it by index on the stated grounds 
 `segment "1"` would send an author to the wrong line. So "just call the existing rule" is
 a measurement, not a reflex: count the currently-passing tests that change verdict first.
 
+## The video coach graduated, advisory-only — 2026-10-06
+
+Seven steps, G5 → G1 → G2+G3 → G4 → G6 → G7, all reviewed cross-family. The spike is
+`status: graduated` and **retained**, because it is the provenance for every rubric rule and
+for the backtest figures the OBJ-07 tolerance rests on.
+
+| Step | What |
+|---|---|
+| G5 `0606751`, `f8c912d` | Agent contract: `BLOCKING` → `DEFECTS`, a required verbatim `QUOTE`, a `MANIFEST` line |
+| G1 `ae42467` | `coach/rubric.md` + a parse contract that enforces the rubric's own `:8` criterion |
+| G2+G3 `7295c1e`, `dc423fe` | preview binding record; `coach-pack.mjs` and its hash manifest |
+| G4 `a22ad52` | `coach-rulings.mjs` — the anti-suppression matcher |
+| G6 `1dd2606` | Wired into the demo-recording skill at two passes, neither gating |
+
+**The design property worth remembering:** a ruling that *agrees the defect is real* does not
+suppress it. `valid` keeps a finding open as "ruled valid, still unfixed"; only waived,
+false-alarm and taste collapse. And because the key hashes the sentence a finding quotes,
+**rewording that sentence re-opens the finding** — you cannot silence a review by editing the
+text it cites.
+
+### G7's end-to-end run found a defect nobody knew about
+
+Run against a temp copy of EvalLoopDemo, pass 1, coach on GPT against a Claude author:
+
+- The **known** `script.md` defect surfaced as a DEFECT, as the plan required — narration says
+  *"three result strips … land on three different outputs"* while the on-screen note reads
+  *"output A / output A / output B"*. Two distinct outputs, not three.
+- **A second, previously unrecorded OBJ-08 defect**: narration says *"Three authored facts"*,
+  the screen note says *"Four authored facts are shown."* Same rule, different segment.
+- All quotes verified **verbatim** in the source, so both findings were keyable.
+
+Then the full matcher chain, measured rather than asserted: no rulings → all NEW · `valid` →
+stays OPEN · `waived` → COLLAPSED · **cited sentence reworded → UNKEYABLE, shown NEW and
+flagged, with the prior ruling ORPHANED** ("either it was fixed, or the text it cited
+changed"). The rules the rubric marks unable to fire appeared in NOT EVALUATED as
+"covered by: nobody" — the honest marking from G1 doing its job in a live report.
+
 ## Mutate the inputs, not just the implementation — 2026-10-06
 
 The strongest methodological finding of the graduation, and it is about the technique this
