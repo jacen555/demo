@@ -372,21 +372,26 @@ should check them — stage N+1 consuming stage N's output depends on it.
 another run holds it they exit `3` rather than `0`, so a driver cannot mistake "someone
 else is encoding" for "the encode is finished". A plan never takes the lock.
 
-**A malformed timeline does not have one code, and you cannot infer the cause from the
-code.** Measured, the same file — a `null` where a segment belongs — through four stages:
+**A bad timeline does not have one code, and you cannot infer the cause from the code.**
+Measured across seven stages, on two different bad files — one that will not parse, and one
+that parses but holds a `null` where a segment belongs:
 
-| stage | exit |
-|---|---|
-| `remix` | `2` |
-| `write-subtitles` | `1` |
-| `validate-timing` | `1` |
-| `write-chapters` | `1` |
+| stage | unparseable | `null` segment |
+|---|---|---|
+| `remix` | `2` | `2` |
+| `write-storyboard` | `2` | `2` |
+| `concat-audio` | `2` | `2` |
+| `frame-capture` | `2` | `2` |
+| `write-subtitles` | `1` | `1` |
+| `validate-timing` | `1` | `1` |
+| `write-chapters` | `1` | `1` |
 
-`remix` treats it as bad input and refuses to start; the others report it as a result they
-computed — and for `validate-timing`, inspecting the timeline *is* the work, so a verdict
-of "no" is a completed run. Both readings are defensible, which is why the code tells you
-how THAT stage classified the problem and nothing more. Read the message, not the number,
-when you need the cause; the number is for deciding whether to continue.
+**The split is not about the input — both columns are identical — so whatever decides it,
+it is not what is wrong with the file.** No rule is offered here for which stage lands
+where: the honest statement is the measurement. The code records how THAT stage classified
+the problem, and nothing about what the problem was.
+
+Read the message when you need the cause; the number is for deciding whether to continue.
 
 Verification scripts (`validate-timing`, `validate-scene`, `check-levels`, `preview`) exit
 non-zero when they find a problem, using the four codes in the table above and no others.
