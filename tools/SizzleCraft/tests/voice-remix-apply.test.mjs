@@ -826,11 +826,19 @@ describe('remix refuses a timeline its gate refuses before it writes anything', 
   }
 
   const MODES = [['plan', []], ['apply', ['--apply', '--replace']]];
+  // CHANGED DELIBERATELY by the no-segments remedy. This was end-anchored — `^error: <text>\.$`
+  // — so ANY appended remedy broke it, which is what blocked that work until both files were
+  // held by one owner. It is NOT relaxed into something permissive: a fact with a remedy pins
+  // BOTH halves, so the remedy is as tightly held as the fact was, and a fact without one is
+  // still anchored exactly as before. Weakening this to a bare `includes` would have made the
+  // four tests pass while pinning nothing.
   const shapeFact = (text) => new RegExp(`^error: ${esc(text)}\\.$`, 'm');
+  const shapeFactWithRemedy = (text, remedy) => new RegExp(`^error: ${esc(text)}\\. ${esc(remedy)}\\.$`, 'm');
+  const NO_SEGMENTS_REMEDY = "Write the timeline's segments into timing.json — each needs a non-empty string id";
 
   for (const [scenario, segments, pinned, raw] of [
-    ['NoSegmentList', () => undefined, shapeFact('timing.json declares no segments')],
-    ['AnEmptySegmentList', () => [], shapeFact('timing.json declares no segments')],
+    ['NoSegmentList', () => undefined, shapeFactWithRemedy('timing.json declares no segments', NO_SEGMENTS_REMEDY)],
+    ['AnEmptySegmentList', () => [], shapeFactWithRemedy('timing.json declares no segments', NO_SEGMENTS_REMEDY)],
     ['ANullSegment', () => { const s = voiced(); s[1] = null; return s; }, shapeFact('timing.segments[1] is not a segment object')],
     ['AnIdlessMalformedDeclaration', () => { const s = voiced(); s[2].silence = false; delete s[2].id; return s; }, idMissing(2)],
     ['AnIdlessNarratedSegment', () => { const s = voiced(); delete s[1].id; return s; }, idMissing(1)],

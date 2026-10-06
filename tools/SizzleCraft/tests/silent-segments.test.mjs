@@ -2950,9 +2950,14 @@ describe('shapeBlocker', () => {
   const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
   const idless = () => ({ startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
   const ID_RULE = 'every segment needs a non-empty string id';
+  // ONLY THE NO-SEGMENTS FACT CARRIES A REMEDY. The other two name the field and the rule
+  // it breaks in one sentence; this one names an absence and stops, so it is the only one
+  // where "what do I do now" is not already answered.
+  const NO_SEGMENTS_REMEDY = (name = 'timing.json') =>
+    `write the timeline's segments into ${name} — each needs a non-empty string id`;
   const CASES = [
-    ['NoSegmentList', {}, 'timing.json declares no segments'],
-    ['AnEmptySegmentList', { segments: [] }, 'timing.json declares no segments'],
+    ['NoSegmentList', {}, 'timing.json declares no segments', NO_SEGMENTS_REMEDY()],
+    ['AnEmptySegmentList', { segments: [] }, 'timing.json declares no segments', NO_SEGMENTS_REMEDY()],
     // One pass in index order: the first entry that is not a segment object, or has no id.
     ['AnIdlessSegmentBeforeANullOne', { segments: [ok('one'), idless(), null] }, `timing.segments[1]'s id is missing — ${ID_RULE}`],
     ['ANullSegmentBeforeAnIdlessOne', { segments: [null, idless()] }, 'timing.segments[0] is not a segment object'],
@@ -2963,12 +2968,21 @@ describe('shapeBlocker', () => {
     ['AnArrayEntry', { segments: [ok('one'), []] }, 'timing.segments[1] is not a segment object'],
   ];
 
-  for (const [scenario, timing, fact] of CASES) {
-    test(`shapeBlocker_${scenario}_isRefusedWithTheFactAlone`, async () => {
+  // CHANGED DELIBERATELY. This was `_isRefusedWithTheFactAlone`, asserting `{ fact }` and
+  // nothing else, with the note "the fact, naming the index, and no remedy". Two of the nine
+  // cases now carry a remedy, so the name and the assertion say so. The other seven still
+  // assert the fact ALONE — an extra key on any of them fails here, so the exemption cannot
+  // spread by accident.
+  for (const [scenario, timing, fact, then] of CASES) {
+    test(`shapeBlocker_${scenario}_isRefusedWithExactlyTheFactAndRemedyItDeclares`, async () => {
       const { shapeBlocker } = await load();
       assert.equal(typeof shapeBlocker, 'function', 'silent-segment.mjs must export shapeBlocker');
 
-      assert.deepEqual(shapeBlocker(timing), { fact }, 'the fact, naming the index, and no remedy');
+      assert.deepEqual(
+        shapeBlocker(timing),
+        then === undefined ? { fact } : { fact, then },
+        then === undefined ? 'the fact, naming the index, and no remedy' : 'the fact and the remedy it declares',
+      );
     });
   }
 
@@ -2993,14 +3007,20 @@ describe('shapeBlocker', () => {
     // A CONTROL, not evidence: this passes before the change as well. It is here because it
     // is the thing the change must not break, and two shipped stages depend on it.
     const { shapeBlocker } = await load();
-    assert.deepEqual(shapeBlocker({ segments: [] }), { fact: 'timing.json declares no segments' });
-    assert.deepEqual(shapeBlocker({}), { fact: 'timing.json declares no segments' });
+    assert.deepEqual(shapeBlocker({ segments: [] }), { fact: 'timing.json declares no segments', then: NO_SEGMENTS_REMEDY() });
+    assert.deepEqual(shapeBlocker({}), { fact: 'timing.json declares no segments', then: NO_SEGMENTS_REMEDY() });
   });
 
+  // THE REMEDY FOLLOWS THE NAME TOO. It tells an author which file to write into, so a
+  // remedy that always said "timing.json" would send the caller of a differently-named file
+  // to edit one it never opened — the very defect the name parameter exists to fix, moved
+  // one clause to the right.
   test('shapeBlocker_givenTheNameItRead_namesThatFileInsteadOfTimingJson', async () => {
     const { shapeBlocker } = await load();
-    assert.deepEqual(shapeBlocker({ segments: [] }, 'custom.json'), { fact: 'custom.json declares no segments' });
-    assert.deepEqual(shapeBlocker({}, 'scene-b.json'), { fact: 'scene-b.json declares no segments' });
+    assert.deepEqual(shapeBlocker({ segments: [] }, 'custom.json'),
+      { fact: 'custom.json declares no segments', then: NO_SEGMENTS_REMEDY('custom.json') });
+    assert.deepEqual(shapeBlocker({}, 'scene-b.json'),
+      { fact: 'scene-b.json declares no segments', then: NO_SEGMENTS_REMEDY('scene-b.json') });
   });
 
   test('shapeBlocker_givenAName_leavesTheEntryAndIdFactsAlone', async () => {
@@ -3019,13 +3039,19 @@ describe('shapeBlocker', () => {
   });
 
   // voice.mjs and remix.mjs each ask their gate's shape check first, so each gate refuses for it.
+  // The gate passes the shape refusal through UNCHANGED, remedy included — a gate that dropped
+  // the `then` would leave an author with the fact and no next step, which is the defect the
+  // remedy was added to close.
   for (const gate of ['voiceTimelineBlocker', 'voiceBlocker', 'remixBlocker']) {
-    for (const [scenario, timing, fact] of CASES) {
+    for (const [scenario, timing, fact, then] of CASES) {
       test(`${gate}_${scenario}_isRefusedByTheShapeCheckFirst`, async (t) => {
         const ask = (await load())[gate];
         const dir = makeProject(t);
 
-        assert.deepEqual(gate === 'voiceTimelineBlocker' ? ask(timing) : ask(dir, timing), { fact });
+        assert.deepEqual(
+          gate === 'voiceTimelineBlocker' ? ask(timing) : ask(dir, timing),
+          then === undefined ? { fact } : { fact, then },
+        );
       });
     }
   }
@@ -3159,21 +3185,31 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
   // cannot be trusted to stay honest on its own, so this asserts the declared list against the
   // modules that actually import the symbol. Update the comment when you add a caller; that is
   // the point.
-  for (const symbol of ['segmentEntryFact', 'segmentEntryBlocker']) {
+  //
+  // THE OWNING MODULE IS A PARAMETER. The audit was written for silent-segment.mjs, and the
+  // next shared rule to need it lived in cli-support.mjs — `describeJsonValue`, which two
+  // stages had each privately restated. An audit that only watches one file makes the second
+  // file the place a rule goes to drift unwatched.
+  for (const [owner, symbol] of [
+    ['silent-segment.mjs', 'segmentEntryFact'],
+    ['silent-segment.mjs', 'segmentEntryBlocker'],
+    ['silent-segment.mjs', 'segmentLabel'],
+    ['cli-support.mjs', 'describeJsonValue'],
+  ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);
-      const source = fs.readFileSync(new URL('silent-segment.mjs', srcDir), 'utf8');
+      const source = fs.readFileSync(new URL(owner, srcDir), 'utf8');
 
       const line = new RegExp(`^\\s*\\*\\s*CONSUMERS\\(${symbol}\\):\\s*(.+)$`, 'm').exec(source);
-      assert.ok(line, `silent-segment.mjs must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
+      assert.ok(line, `${owner} must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
       const declared = line[1].trim() === 'none' ? [] : line[1].split(',').map((s) => s.trim()).filter(Boolean);
 
+      const importFrom = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'\\./${owner.replace('.', '\\.')}'`, 's');
       const actual = fs
         .readdirSync(srcDir)
-        .filter((f) => f.endsWith('.mjs') && f !== 'silent-segment.mjs')
+        .filter((f) => f.endsWith('.mjs') && f !== owner)
         .filter((f) => {
-          const block = /import\s*\{([^}]*)\}\s*from\s*'\.\/silent-segment\.mjs'/s.exec(
-            fs.readFileSync(new URL(f, srcDir), 'utf8'));
+          const block = importFrom.exec(fs.readFileSync(new URL(f, srcDir), 'utf8'));
           return block !== null && block[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).includes(symbol);
         });
 

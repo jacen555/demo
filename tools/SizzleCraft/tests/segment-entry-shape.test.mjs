@@ -470,3 +470,306 @@ describe('absent rendering metadata is rendered blank, not crashed on', () => {
     );
   });
 });
+// --------------------------------------------------------------------------------------
+// ITEM 2 — the no-segments refusal names what to do next, and FOLLOWING IT WORKS.
+//
+// A remedy is a claim about what happens next, so it is verified by following it and
+// watching the run be accepted — not by reading it. A sibling stream burned three rounds
+// on a remedy that was a referral loop: voice sent the author to remix, and remix refuses
+// that very timeline. None of its three failures was visible by reading.
+//
+// Only this fact gains a remedy. "timing.segments[1] is not a segment object" and
+// "...'s id is missing — every segment needs a non-empty string id" each state their own
+// fix in the sentence; adding one to the id rule alone would have cost 39 test updates to
+// restate the clause above it. That was the user's call at the gate.
+// --------------------------------------------------------------------------------------
+
+describe('a timeline with no segments is told what to do next', () => {
+  const bare = (segments) => JSON.stringify({
+    project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+    durationMs: 1000,
+    contentMs: 1000,
+    ...(segments === undefined ? {} : { segments }),
+  });
+
+  const remixIn = (t, body) => {
+    const dir = makeProject(t, {
+      'timing.json': body,
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+    });
+    return { ...runScript('remix.mjs', [], dir), dir };
+  };
+
+  for (const [label, segments] of [['noSegmentsKey', undefined], ['anEmptyList', []]]) {
+    test(`remix_${label}_refusesWithTheFactAndARemedy`, (t) => {
+      const r = remixIn(t, bare(segments));
+
+      assert.equal(r.code, EXIT.USAGE, r.all);
+      assert.match(r.all, /timing\.json declares no segments/, 'the fact');
+      assert.match(r.all, /each needs a non-empty string id/, `and the remedy\n${r.all}`);
+    });
+  }
+
+  // THE REMEDY FOLLOWED. Not "the message reads well" — the thing it tells an author to do
+  // is done here, and the refusal that gave the advice must be gone afterwards. That is the
+  // only assertion that can catch a remedy which sends someone in a circle.
+  test('remix_followingTheNoSegmentsRemedy_clearsTheRefusalThatGaveIt', (t) => {
+    const before = remixIn(t, bare([]));
+    assert.match(before.all, /declares no segments/, 'the refusal must fire first, or this tests nothing');
+    // BIND THE ACTION TO THE ADVICE. Without this the test follows a hardcoded step that
+    // can silently drift from whatever the remedy grows into, and would then be following
+    // its own instruction rather than the engine's.
+    assert.match(
+      before.all,
+      /each needs a non-empty string id/,
+      'the step taken below must be the step the remedy actually asks for',
+    );
+
+    // Exactly what the remedy says: a segment, with a non-empty string id.
+    const after = remixIn(t, bare([{ id: 'one', startMs: 0, endMs: 1000, voiceoverText: 'hello' }]));
+
+    assert.doesNotMatch(
+      after.all,
+      /declares no segments/,
+      `following the remedy must clear the refusal that gave it\n${after.all}`,
+    );
+    assert.equal(after.code, EXIT.OK, `and the run proceeds\n${after.all}`);
+  });
+});
+// --------------------------------------------------------------------------------------
+// ITEM 3 — an id-less segment is named by its INDEX, never by an index dressed as an id.
+//
+// `segment "${s?.id ?? i}"` formats a 0-based index as a quoted id, so an author goes
+// looking for a segment genuinely called "1" — and a timeline may really contain one. The
+// correct form is settled and documented at frame-capture.mjs: `timing.segments[i]`.
+//
+// REACHABILITY WAS MEASURED BEFORE THESE WERE WRITTEN. concat-audio reaches both of its
+// labels because it gates with segmentEntryBlocker, which refuses non-objects but has no
+// opinion about ids. remix.mjs's labelOf is NOT reachable with an id-less segment — its
+// gate asks shapeBlocker first, which refuses one — so it is corrected for the statement
+// and pinned by a direct unit test rather than by a gate it can never reach. A green
+// assertion over an unreachable branch would document a gap as covered.
+// --------------------------------------------------------------------------------------
+
+describe('an id-less segment is named by its index, not by an index dressed as an id', () => {
+  const narratedFirst = {
+    id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there friend',
+    audio: {
+      file: 'segment_000.mp3', durationMs: 960, headMs: 120, tailMs: 120,
+      words: ttsWords('hello there friend').map((w, k) => ({
+        word: w,
+        startMs: (HEAD_FRAMES + k * FRAMES_PER_WORD) * FRAME_MS,
+        endMs: (HEAD_FRAMES + (k + 1) * FRAMES_PER_WORD) * FRAME_MS,
+      })),
+    },
+  };
+
+  const concatIn = (t, second) => {
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify({
+        project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+        durationMs: 1920, contentMs: 1920, segments: [narratedFirst, second],
+      }),
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+      'segment_000.mp3': ttsClip('hello there friend'),
+    });
+    return runScript('concat-audio.mjs', [], dir);
+  };
+
+  test('concatAudio_idlessSilentSegmentWithABadCaption_namesItByIndex', (t) => {
+    const r = concatIn(t, { startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '' } });
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /timing\.segments\[1\]/, `named by index\n${r.all}`);
+    assert.doesNotMatch(r.all, /segment "1"/, `never an index dressed as an id\n${r.all}`);
+  });
+
+  test('concatAudio_idlessNarratedSegmentWithAMissingClip_namesItByIndex', (t) => {
+    const r = concatIn(t, {
+      startMs: 960, endMs: 1920, voiceoverText: 'second here',
+      audio: { file: 'nope.mp3', durationMs: 960, headMs: 120, tailMs: 120, words: [{ word: 'second', startMs: 1080, endMs: 1200 }] },
+    });
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /timing\.segments\[1\]/, `named by index\n${r.all}`);
+    assert.doesNotMatch(r.all, /segment "1"/, `never an index dressed as an id\n${r.all}`);
+  });
+
+// REVIEWER FINDING, round 1. A third label in this stage restated `segment "${id}"` with no
+  // index fallback at all, so an id-less silent segment became `segment "undefined"`. Reached
+  // by a MIXED timeline: no segment names its clip, at least one is validly silent, at least
+  // one is narrated. The refusal then named the same segment two ways in one sentence —
+  // `segment "undefined"` at the start and `timing.segments[1]'s id is missing` at the end.
+  test('concatAudio_idlessSilentSegmentInAMixedTimeline_isNeverNamedUndefined', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify({
+        project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+        durationMs: 1920,
+        contentMs: 1920,
+        segments: [
+          { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there friend' },
+          { startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' } },
+        ],
+      }),
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+    });
+
+    const r = runScript('concat-audio.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.doesNotMatch(r.all, /segment "undefined"/, `no segment may be named "undefined"\n${r.all}`);
+    assert.match(r.all, /timing\.segments\[1\]/, `it is named by its index instead\n${r.all}`);
+  });
+
+// REVIEWER FINDING, round 2. Two more sites formatted `p.id` straight into a label with no
+  // fallback of any kind, and these are not refusals — they are the ordinary PLAN and APPLY
+  // output, at exit 0. An id-less silent segment was announced as `segment "undefined"` in a
+  // successful run, which is the same broken rule in the place an author reads most often.
+  for (const [mode, args] of [['plan', []], ['apply', ['--apply']]]) {
+    test(`concatAudio_${mode}WithAnIdlessSilentSegment_namesItByIndexNotUndefined`, (t) => {
+      const dir = makeProject(t, {
+        'timing.json': JSON.stringify({
+          project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+          durationMs: 1920,
+          contentMs: 1920,
+          segments: [
+            {
+              id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there friend',
+              audio: {
+                file: 'segment_000.mp3', durationMs: 960, headMs: 120, tailMs: 120,
+                words: ttsWords('hello there friend').map((w, k) => ({
+                  word: w,
+                  startMs: (HEAD_FRAMES + k * FRAMES_PER_WORD) * FRAME_MS,
+                  endMs: (HEAD_FRAMES + (k + 1) * FRAMES_PER_WORD) * FRAME_MS,
+                })),
+              },
+            },
+            { startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '[music]' } },
+          ],
+        }),
+        'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+        'segment_000.mp3': ttsClip('hello there friend'),
+      });
+
+      const r = runScript('concat-audio.mjs', args, dir);
+
+      assert.equal(r.code, EXIT.OK, `this timeline is accepted — the label is the only defect\n${r.all}`);
+      assert.doesNotMatch(r.all, /segment "undefined"/, `a successful run must not name a segment "undefined"\n${r.all}`);
+      assert.match(r.all, /timing\.segments\[1\]/, `it is named by its index instead\n${r.all}`);
+    });
+  }
+
+// REVIEWER FINDING, round 3. A FOURTH site, in a different stage and broken a fourth way:
+  // write-storyboard called silentSegmentProblems(s) with no label at all, so it fell back to
+  // the default `segment "${seg?.id}"` and an id-less segment became `segment "undefined"`.
+  // The `.filter().flatMap()` had discarded the index before the label needed it.
+  test('writeStoryboard_idlessSilentSegmentWithABadCaption_namesItByIndexNotUndefined', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify({
+        project: { name: 'demo', title: 'D', fps: 30, width: 1280, height: 720 },
+        aspectRatio: '16:9',
+        durationMs: 1920,
+        contentMs: 1920,
+        outroMs: 2500,
+        intake: { voice: 'en-US-AvaNeural', speed: 1 },
+        segments: [
+          { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello' },
+          { startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '' } },
+        ],
+      }),
+    });
+
+    const r = runScript('write-storyboard.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.doesNotMatch(r.all, /segment "undefined"/, `no segment may be named "undefined"\n${r.all}`);
+    assert.match(r.all, /timing\.segments\[1\]/, `it is named by its index instead\n${r.all}`);
+  });
+
+  // THE CONTROL. A segment that HAS an id is still named by it — including an id that
+  // merely looks like an index. The distinction is HAVING an id, never how it is spelled.
+  test('concatAudio_segmentWhoseIdLooksLikeAnIndex_isStillNamedByThatId', (t) => {
+    const r = concatIn(t, { id: '1', startMs: 960, endMs: 1920, voiceoverText: '', silence: { caption: '' } });
+
+    assert.notEqual(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /segment "1"/, `an id that looks like an index is still an id\n${r.all}`);
+    assert.doesNotMatch(r.all, /timing\.segments\[1\]/, r.all);
+  });
+});
+// --------------------------------------------------------------------------------------
+// ITEM 4 — a plan that has just said --apply will REFUSE must not then invite --apply.
+//
+// remix prints the shared footer, "Re-run with --apply to proceed", immediately after
+// disclosing "not voiced yet, so --apply refuses the run until voice.mjs (S3) has run".
+// Both sentences are true of different things and the pair is a contradiction: the footer
+// is advice about the next step, and the next step is a refusal.
+//
+// The footer is shared by fourteen callers, so the fix is ADDITIVE — the default wording is
+// unchanged to the byte, which the control below pins for the thirteen that do not opt in.
+// --------------------------------------------------------------------------------------
+
+describe('a plan does not invite --apply when it has said --apply will refuse', () => {
+  const clip = (text, startMs) => ({
+    file: 'segment_000.mp3', durationMs: 960, headMs: 120, tailMs: 120,
+    words: ttsWords(text).map((w, k) => ({
+      word: w,
+      startMs: startMs + (HEAD_FRAMES + k * FRAMES_PER_WORD) * FRAME_MS,
+      endMs: startMs + (HEAD_FRAMES + (k + 1) * FRAMES_PER_WORD) * FRAME_MS,
+    })),
+  });
+  const voicedSeg = { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there friend', audio: clip('hello there friend', 0) };
+  const unvoicedSeg = { id: 'two', startMs: 960, endMs: 1920, voiceoverText: 'second segment here' };
+
+  const remixPlan = (t, segments) => {
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify({
+        project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+        durationMs: 1920, contentMs: 1920, segments,
+      }),
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+      'segment_000.mp3': ttsClip('hello there friend'),
+    });
+    return { ...runScript('remix.mjs', [], dir), dir };
+  };
+
+  test('remix_planDisclosingThatApplyWillRefuse_doesNotAlsoInviteApply', (t) => {
+    const r = remixPlan(t, [voicedSeg, unvoicedSeg]);
+
+    assert.equal(r.code, EXIT.OK, `the plan itself succeeds\n${r.all}`);
+    assert.match(r.all, /--apply refuses the run/, 'the plan must disclose the refusal, or this tests nothing');
+    assert.doesNotMatch(
+      r.all,
+      /Re-run with --apply to proceed/,
+      `a plan that has just said --apply refuses must not then invite it\n${r.all}`,
+    );
+    assert.match(r.all, /nothing was written or deleted/, 'but it must still say nothing happened');
+  });
+
+  // FOLLOWING THE FOOTER'S OWN CLAIM. If the plan says --apply would refuse, then --apply
+  // must actually refuse — otherwise the new footer is as wrong as the old one, in the
+  // opposite direction.
+  test('remix_applyOnTheTimelineThePlanSaidWouldBeRefused_isRefused', (t) => {
+    const { dir } = remixPlan(t, [voicedSeg, unvoicedSeg]);
+
+    const applied = runScript('remix.mjs', ['--apply', '--replace'], dir);
+
+    assert.notEqual(applied.code, EXIT.OK, `the plan's claim about --apply must be true\n${applied.all}`);
+  });
+
+  // THE CONTROL FOR THE OTHER THIRTEEN CALLERS. A plan with nothing to disclose keeps the
+  // shipped footer exactly, so the additive change cannot have moved it for anyone else.
+  test('remix_planWithNoDisclosedRefusal_keepsTheShippedFooterByteForByte', (t) => {
+    const r = remixPlan(t, [voicedSeg]);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.doesNotMatch(r.all, /--apply refuses the run/, 'nothing to disclose, or this is the wrong control');
+    assert.match(r.all, /^nothing was written or deleted\. Re-run with --apply to proceed\.$/m, r.all);
+  });
+
+  test('writeStoryboard_plan_keepsTheShippedFooterByteForByte', (t) => {
+    const r = planWith(t, 'write-storyboard.mjs', timing([ONE, TWO]));
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /^nothing was written or deleted\. Re-run with --apply to proceed\.$/m, r.all);
+  });
+});
