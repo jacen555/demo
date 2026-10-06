@@ -48,7 +48,7 @@ conversations without either one distorting the model — and whether the statis
 | Assertion evaluation | `AssertionEvaluatorRegistry`, `AssertionEvaluationException`, and one internal evaluator per category |
 | Participants | `DeterministicCaller` — the simulated caller that adds no variance of its own; `LlmCaller` — the model-driven one, for realism testing |
 | Runners | `RestRunner`, `LlmConversationRunner`, `NotImplementedMcpRunner`, `NotImplementedUiRunner`, and the `IRestExchange` / `IConversationExchange` adapter seams |
-| Coordination | `RunCoordinator`, `RunCoordinatorOptions` — routing, repetition, throttling, grading, and the artifact |
+| Coordination | `RunCoordinator`, `RunCoordinatorOptions`, `RunProgress` — routing, repetition, throttling, grading, progress, and the artifact |
 | LLM access | `ILlmClient` / `LlmRequest`, and `RecordedLlmClient` — replay by request content, so a model-driven run is reproducible |
 | Results | `RunResult`, `ScenarioResult`, `SuiteResult`, `StatisticalSummary` |
 | Seams | `IScenarioRunner`, `IParticipant` / `IModeBoundParticipant`, `IParticipantFactory`, `IAssertionEvaluator`, `ISignificanceTest`, `IMultipleComparisonCorrection`, `IBaselineProvider`, `ILlmClient` |
@@ -660,6 +660,35 @@ was never registered for a kind yields a recorded error carrying an ungradeable 
 not depend on where in the suite it sat. The one failure that propagates is **cancellation**:
 scheduling stops promptly, in-flight runs see the token, and `RunAsync` throws rather than
 returning a partial artifact that would read as a complete one.
+
+**Progress is reported, never relied on.** `RunAsync(suite, progress, cancellationToken)` takes an
+optional `IProgress<RunProgress>` and calls its `Report` once for each run as it completes, passing
+the scenario id, the repetition, the verdict, and how many of the suite's runs have completed out of
+the total. The call is all the coordinator controls; whether a value reaches a renderer is up to the
+sink. The plan is settled before anything is dispatched, so the total is fixed before the first call
+and a renderer can draw a determinate bar. Under `MaxConcurrency` above one, the calls are made from
+the workers concurrently and can carry their counts out of order. The count is atomic, so **each
+count is assigned to exactly one call**, and a suite that runs to the end assigns every count from
+one to the total. Nothing promises that every call's value arrives, so a renderer should show the
+greatest count it has received. An exception that **propagates out of the `Report` call cannot fail
+the suite**: a warning is emitted for it, once per call it propagated out of, naming its type but not
+its message, and calls go on being made; only the caller's own cancellation goes further. **The
+rule is propagation: an exception is contained if and only if it comes out of the `Report` call** on
+the thread that made it. Where a sink does its work is the usual reason it does or does not, not the
+rule. Work done inside the call propagates its exceptions; work handed to another thread usually
+does not, unless whatever ran it brings the exception back, as a context that rethrows it from
+`Post` does. `System.Progress<T>` posts its handler to the `SynchronizationContext` captured at
+construction, so whether a handler's exception comes out of the call is that context's decision. The
+thread pool, which `Progress<T>` uses when there is no context, as in a console app, does not bring
+it back: the exception is unhandled on a pool thread and the process terminates. Implement
+`IProgress<RunProgress>` so that `Report` does the work, or give work you hand elsewhere a catch of
+its own. The artifact records runs, not what watched them, so the log is the only place a contained
+fault can appear. That is why **a sink is refused before anything is dispatched if the coordinator's
+logger does not admit warnings when the suite starts**, which the constructors that take no logger,
+logging to `NullLogger`, never do. The refusal is a guard against that misconfiguration at the
+boundary, not a guarantee for the whole run: a logger reconfigured mid-suite to drop warnings still
+has each one emitted to it, and drops it. A null sink, or the two-argument overload, is exactly the
+behaviour before progress existed and is never refused.
 
 Exception **messages** never reach the artifact — they are authored elsewhere and routinely name
 an endpoint or a connection string — so a failure is recorded by what failed and the type that

@@ -267,12 +267,25 @@ export function runScriptDeletingOnMarker(script, args, cwd, marker, victimPath)
  * `assert.notEqual(code, 0)` is too weak: a CliError escaping above the handler still
  * exits non-zero, so a test written that way passes while the script reports the wrong
  * code and prints a stack. That is how one of these defects survived a round.
+ *
+ * BOTH FRAME SHAPES, because Node emits two. A throw inside a function gives
+ * `at refuse (file:///x.mjs:94:9)`; a throw at MODULE TOP LEVEL gives
+ * `at file:///x.mjs:239:28` with no parentheses at all. This assertion required the
+ * parentheses until it was measured, so it was blind to top-level throws — which is where a
+ * CLI's argument handling and its first file reads live, the likeliest place in this engine
+ * for an uncaught crash. A test asserting a clean refusal passed against a source that
+ * printed a full crash dump, caret and frame included. A guard that cannot see the most
+ * common modern shape is worse than no guard, because the suite reports it as covered.
+ *
+ * The location must carry a path separator or a `node:` scheme. Matching anything ending in
+ * `:n:n` would read a printed clock — `at 10:30:00` — as a stack frame and fail honest
+ * tests; both shapes are pinned in helpers-contract.test.mjs.
  */
 export function assertCleanExit(r, expected, message = '') {
   assert.equal(r.code, expected, `${message}expected exit ${expected}, got ${r.code}\n${r.all}`);
   assert.doesNotMatch(
     r.all,
-    /^\s*at .*\(.*:\d+:\d+\)/m,
+    /^\s*at (?:.*\(.*:\d+:\d+\)|(?:\S*[\\/]|node:)\S*:\d+:\d+)\s*$/m,
     `${message}failure surfaced as an uncaught stack trace rather than a handled error\n${r.all}`,
   );
 }

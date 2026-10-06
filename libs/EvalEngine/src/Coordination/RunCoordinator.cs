@@ -97,7 +97,11 @@ namespace Forge.EvalEngine.Coordination;
 /// <see cref="NullLogger{T}.Instance"/> — abstractions only, so a consumer is neither forced to
 /// supply a logger nor saddled with a logging implementation this library chose. Only text this
 /// library composed is logged; anything authored by a runner, a factory, or an evaluator is
-/// redacted first, because a log line is as committed as the artifact (§V).
+/// redacted first, because a log line is as committed as the artifact (§V). An exception that
+/// propagates out of a progress sink's <see cref="IProgress{T}.Report(T)"/> call is the one failure
+/// that is logged and not recorded: it is a fault in whatever is watching the suite, not in a run, so
+/// the artifact has nothing to say about it. Because the log is its only trace, a coordinator whose
+/// logger does not admit warnings when a suite starts refuses a sink for that suite.
 /// </para>
 /// <para>
 /// One instance conducts <b>one suite at a time</b>. Concurrency within a run is bounded by
@@ -113,6 +117,12 @@ public sealed partial class RunCoordinator
         StringComparer.Ordinal
     );
 
+    /// <summary>
+    /// The level a fault in a progress sink is logged at, and so the level a coordinator's logger must
+    /// be enabled for before it accepts a sink. One constant, so the two cannot drift apart.
+    /// </summary>
+    private const LogLevel ProgressFaultLevel = LogLevel.Warning;
+
     private readonly Dictionary<ScenarioKind, IScenarioRunner> _runners = new();
     private readonly AssertionEvaluatorRegistry _assertions;
     private readonly IParticipantFactory _participants;
@@ -127,6 +137,13 @@ public sealed partial class RunCoordinator
     /// <param name="participants">The source of a fresh participant for each run.</param>
     /// <param name="clock">The clock the artifact's timestamp comes from.</param>
     /// <param name="seeds">The source of the seed each run is driven with.</param>
+    /// <remarks>
+    /// Logs to <see cref="NullLogger{T}.Instance"/>, which is to say nowhere. A failed run is still
+    /// recorded in the artifact, but a fault in a progress sink could be recorded nowhere at all, so a
+    /// coordinator constructed this way refuses a sink:
+    /// <see cref="RunAsync(Suite, IProgress{RunProgress}, CancellationToken)"/> throws before
+    /// dispatching anything. Use the constructor that takes a logger to report progress.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// A runner is null, or two runners conduct the same <see cref="ScenarioKind"/>.
@@ -147,6 +164,13 @@ public sealed partial class RunCoordinator
     /// <param name="clock">The clock the artifact's timestamp comes from.</param>
     /// <param name="seeds">The source of the seed each run is driven with.</param>
     /// <param name="options">The throttle, and what may be written into the artifact.</param>
+    /// <remarks>
+    /// Logs to <see cref="NullLogger{T}.Instance"/>, which is to say nowhere. A failed run is still
+    /// recorded in the artifact, but a fault in a progress sink could be recorded nowhere at all, so a
+    /// coordinator constructed this way refuses a sink:
+    /// <see cref="RunAsync(Suite, IProgress{RunProgress}, CancellationToken)"/> throws before
+    /// dispatching anything. Use the constructor that takes a logger to report progress.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// A runner is null, or two runners conduct the same <see cref="ScenarioKind"/>.
@@ -170,7 +194,9 @@ public sealed partial class RunCoordinator
     /// <param name="options">The throttle, and what may be written into the artifact.</param>
     /// <param name="logger">
     /// Where terminal failures are signalled, in addition to the artifact. Only ever handed text
-    /// this library composed — never a message, endpoint, or identifier authored elsewhere (§V).
+    /// this library composed — never a message, endpoint, or identifier authored elsewhere (§V). A
+    /// fault in a progress sink is signalled here and nowhere else, so a sink is refused if this logger
+    /// does not admit warnings when the suite starts.
     /// </param>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="ArgumentException">
@@ -251,10 +277,129 @@ public sealed partial class RunCoordinator
     /// its repetitions could not be told apart.
     /// </exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
-    public async Task<SuiteResult> RunAsync(Suite suite, CancellationToken cancellationToken)
+    public Task<SuiteResult> RunAsync(Suite suite, CancellationToken cancellationToken) =>
+        RunAsync(suite, progress: null, cancellationToken);
+
+    /// <summary>
+    /// Conducts every scenario in the suite, reporting each run as it completes, and returns the
+    /// durable artifact.
+    /// </summary>
+    /// <param name="suite">The validated suite to run.</param>
+    /// <param name="progress">
+    /// Called once for each run as it completes, or <see langword="null"/> to report nothing, which is
+    /// exactly <see cref="RunAsync(Suite, CancellationToken)"/>. Refused if this coordinator's logger is
+    /// not enabled for warnings when the suite starts. Only an exception that propagates out of its
+    /// <see cref="IProgress{T}.Report(T)"/> call is contained; see the remarks.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the suite.</param>
+    /// <returns>
+    /// The artifact: one <see cref="ScenarioResult"/> per scenario in suite order, each carrying
+    /// one <see cref="RunResult"/> per repetition in repetition order.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Everything <see cref="RunAsync(Suite, CancellationToken)"/> states holds here too: the plan is
+    /// settled, and refused if it must be, before anything is dispatched, and a cancelled suite
+    /// throws rather than returning partially. What this adds is one call to
+    /// <see cref="IProgress{T}.Report(T)"/> for each completed run. The call cannot change the
+    /// artifact, and an exception that propagates out of it cannot fail the suite. The call is all
+    /// this method controls; what a sink does with it, and whether the value ever reaches a renderer,
+    /// is the sink's.
+    /// </para>
+    /// <para>
+    /// <b>A sink is refused if the logger does not admit warnings when the suite starts.</b> The
+    /// artifact records runs, not what was watching them, so the log is the only place a contained
+    /// fault can appear. A sink is therefore refused, before anything is dispatched, unless this
+    /// coordinator's logger is enabled for warnings at that moment — which
+    /// <see cref="NullLogger{T}.Instance"/>, installed by the constructors without a logger, never is.
+    /// That turns the common misconfiguration, no logger or one set above warning, from a silent
+    /// failure into a loud one at the boundary. It is a guard at the start, not a guarantee for the
+    /// life of the suite. The logger is read once there, and if its configuration changes while the
+    /// suite runs so that it stops admitting warnings, a later fault is still contained and its warning
+    /// is still emitted, and the logger drops it. Emitting the warning where the fault is handled is
+    /// this method's part; whether a configured logger keeps it is the logger's.
+    /// </para>
+    /// <para>
+    /// <b>Calls are made from the workers, concurrently.</b> Each call is made on the worker that
+    /// conducted the run, after the run's result is in its slot. With
+    /// <see cref="RunCoordinatorOptions.MaxConcurrency"/> above one, several workers can be inside
+    /// <see cref="IProgress{T}.Report(T)"/> at once, and the counts they pass can be out of order —
+    /// see <see cref="RunProgress.Completed"/> — so a sink that does its work in the call must be
+    /// thread-safe. At the default throttle of one, the calls are made one at a time, in the order the
+    /// runs were counted.
+    /// </para>
+    /// <para>
+    /// <b>A sink that blocks holds up the suite.</b> The worker making the call starts no further run
+    /// until <see cref="IProgress{T}.Report(T)"/> returns.
+    /// </para>
+    /// <para>
+    /// <b>An exception that propagates out of the call cannot fail the suite.</b> A suite's evidence can
+    /// take an hour to gather, and a fault in whatever renders its progress is not a fact about the
+    /// system under test. The exception is logged as a warning, once for each call it propagated out
+    /// of, naming its type without quoting its message, which the sink authored (§V), and calls go on
+    /// being made for later runs. The one exception that goes further is the caller's own cancellation:
+    /// an <see cref="OperationCanceledException"/> that propagates out of the call while this suite's
+    /// token is cancelled ends the suite as any cancellation does.
+    /// </para>
+    /// <para>
+    /// <b>The rule: an exception is contained if and only if it propagates out of the call</b> — out
+    /// of <see cref="IProgress{T}.Report(T)"/> itself, on the thread that made the call — and is not
+    /// the caller's own cancellation. Nothing else reaches the catch, whenever it happens, and an
+    /// exception that does not propagate out of the call is the sink's own. Where a sink does its work
+    /// is the usual reason an exception does or does not propagate, not the rule. Work done inside the
+    /// call propagates its exceptions unless the sink catches them. Work handed to another thread
+    /// usually does not, unless whatever ran it brings the exception back, as a context that rethrows
+    /// it from <c>Post</c> does. <see cref="Progress{T}"/> posts its handler to the
+    /// <see cref="SynchronizationContext"/> it captured when it was constructed, so whether the
+    /// handler's exception propagates out of the call is that context's decision. The thread pool,
+    /// which <see cref="Progress{T}"/> posts to when no context was captured — the console case — does
+    /// not bring it back: the exception is unhandled on a pool thread, and the process terminates,
+    /// whether or not this method has returned, taking with it any evidence not yet written. Do the
+    /// work inside the call by implementing <see cref="IProgress{T}"/> directly, or give work you hand
+    /// elsewhere a catch of its own.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="suite"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Two scenarios declare the same id, or the suite plans more runs than
+    /// <see cref="RunCoordinatorOptions.MaxTotalRuns"/> allows.
+    /// </exception>
+    /// <exception cref="UnsafeIdentifierException">
+    /// The suite's name, or a scenario's id, contains a machine path.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The <see cref="ISeedSource"/> issued the same seed more than once within one scenario, so
+    /// its repetitions could not be told apart; or <paramref name="progress"/> was supplied and this
+    /// coordinator's logger did not admit warnings when the suite started, so a fault in it could leave
+    /// no trace.
+    /// </exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public async Task<SuiteResult> RunAsync(
+        Suite suite,
+        IProgress<RunProgress>? progress,
+        CancellationToken cancellationToken
+    )
     {
         ArgumentNullException.ThrowIfNull(suite);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // A fault in a progress sink can appear nowhere but the log: the artifact records runs, not
+        // what was watching them. So a sink is refused if the logger, as configured now, would drop
+        // one — read once, here, before anything is dispatched, like every other condition this method
+        // refuses rather than records. NullLogger, which the constructors without a logger install, is
+        // never enabled. This guards the configuration the suite starts with; it cannot hold a logger
+        // to it, and a logger reconfigured mid-suite is documented on this method rather than refused.
+        if (progress is not null && !_logger.IsEnabled(ProgressFaultLevel))
+        {
+            throw new InvalidOperationException(
+                "A progress sink was supplied, but this coordinator's logger is not enabled for warnings. An "
+                    + "exception that propagates out of the sink's Report call is contained and logged as a "
+                    + "warning, and the log is the only place it can appear, because the artifact records runs "
+                    + "rather than what was watching them; with this logger such a fault would leave no trace. "
+                    + "Nothing has been dispatched, so the suite is refused rather than run. Construct the "
+                    + "coordinator with a logger enabled for warnings, or run the suite without a sink."
+            );
+        }
 
         var startedAt = _clock.UtcNow;
 
@@ -396,6 +541,13 @@ public sealed partial class RunCoordinator
         // equality would not see it (§V).
         var claimed = new ConcurrentDictionary<object, byte>(ReferenceEqualityComparer.Instance);
 
+        // How many runs have completed, for the progress reports. Workers finish concurrently and in
+        // no particular order, so the count is taken atomically: each count is assigned to exactly one
+        // Report call, and the last run counted is assigned the total, whatever order the calls are
+        // then made in. Progress<T> is no help here — it marshals where a handler runs, not the
+        // arithmetic that produced the value it is handed.
+        var completed = 0;
+
         await Parallel
             .ForEachAsync(
                 plan,
@@ -412,17 +564,77 @@ public sealed partial class RunCoordinator
                     // Each run owns one slot, written exactly once and read only after every
                     // worker has finished. No shared accumulator, so nothing can land against
                     // another run's scenario however the workers interleave.
-                    results[planned.ScenarioIndex][planned.RepetitionIndex] = await ConductAsync(
-                            planned,
-                            claimed,
+                    var result = await ConductAsync(planned, claimed, token).ConfigureAwait(false);
+                    results[planned.ScenarioIndex][planned.RepetitionIndex] = result;
+
+                    // Report is called only once the result is in its slot, so no call announces a run
+                    // whose evidence is not yet recorded. With no sink nothing is counted or built, and
+                    // the run is exactly what it was before progress existed.
+                    if (progress is not null)
+                    {
+                        Report(
+                            progress,
+                            new RunProgress(
+                                Interlocked.Increment(ref completed),
+                                plan.Count,
+                                planned.Scenario.Identity.Id,
+                                planned.Repetition,
+                                result.Status
+                            ),
                             token
-                        )
-                        .ConfigureAwait(false);
+                        );
+                    }
                 }
             )
             .ConfigureAwait(false);
 
         return Assemble(suite, results, startedAt, attested);
+    }
+
+    /// <summary>
+    /// Calls the sink for a run that has completed, without letting the sink decide anything about the
+    /// suite.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// What is caught is an exception that propagates out of the <see cref="IProgress{T}.Report(T)"/>
+    /// call, except the caller's own cancellation, and nothing else reaches this catch: an exception
+    /// that does not propagate out of the call, wherever and whenever it is raised, is the sink's own,
+    /// as <c>RunAsync</c> sets out. Within that boundary, a renderer is not the system under test, and
+    /// a fault in one must not discard runs that may have taken an hour to conduct. The fault is still
+    /// a fault, so it is not swallowed silently: a warning is emitted for it, once for each call it
+    /// propagated out of, at warning because the artifact is untouched and only the display has
+    /// degraded. The log is its only trace, which is why <c>RunAsync</c> refuses a sink when the logger
+    /// does not admit warnings as the suite starts. A logger reconfigured mid-suite to drop them still
+    /// has the warning emitted to it, and drops it; keeping it is the logger's part. Calls go on being
+    /// made afterwards, because one bad redraw is not a reason to leave the rest of a long suite dark.
+    /// </para>
+    /// <para>
+    /// An <see cref="OperationCanceledException"/> is the caller's only while the suite's token is
+    /// cancelled. That one propagates, exactly as it would from a runner, so a Ctrl+C that surfaces
+    /// in the renderer still ends the suite. One thrown while nothing was cancelled is a consumer
+    /// fault like any other, which is the same line <see cref="ConductAsync"/> draws for a runner.
+    /// </para>
+    /// </remarks>
+    private void Report(IProgress<RunProgress> progress, RunProgress report, CancellationToken cancellationToken)
+    {
+        try
+        {
+            progress.Report(report);
+        }
+        catch (Exception exception)
+            when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The exception's type, never its message: the consumer authored that, and a log line
+            // is as committed as the artifact (§V).
+            LogProgressNotReported(
+                report.Repetition,
+                report.ScenarioId,
+                report.Completed,
+                report.Total,
+                exception.GetType().Name
+            );
+        }
     }
 
     /// <summary>One planned run: which scenario, which repetition, and the seed for it.</summary>
@@ -1048,10 +1260,9 @@ public sealed partial class RunCoordinator
 
     private static string Render(long value) => value.ToString(CultureInfo.InvariantCulture);
 
-    // The three terminal signals, as source-generated delegates rather than formatted calls
-    // (CA1848). Every argument is composed by this library: callers redact anything of unknown
-    // provenance before it reaches these, because a log line is as committed as the artifact
-    // (§V).
+    // The terminal signals, as source-generated delegates rather than formatted calls (CA1848).
+    // Every argument is composed by this library: callers redact anything of unknown provenance
+    // before it reaches these, because a log line is as committed as the artifact (§V).
 
     [LoggerMessage(
         EventId = 1000,
@@ -1073,4 +1284,19 @@ public sealed partial class RunCoordinator
         Message = "Run {Repetition} of scenario {ScenarioId} could not be graded: {Detail}"
     )]
     private partial void LogRunRefusedByEvaluator(int repetition, string scenarioId, string detail);
+
+    [LoggerMessage(
+        EventId = 1003,
+        Level = ProgressFaultLevel,
+        Message = "Run {Repetition} of scenario {ScenarioId} completed ({Completed} of {Total}), but the progress "
+            + "consumer threw {ExceptionType} when told so. The suite continues and its artifact is unaffected; "
+            + "the consumer's own message is not repeated"
+    )]
+    private partial void LogProgressNotReported(
+        int repetition,
+        string scenarioId,
+        int completed,
+        int total,
+        string exceptionType
+    );
 }
