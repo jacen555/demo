@@ -257,6 +257,53 @@ which tolerates an id-less segment and labels it by index on the stated grounds 
 `segment "1"` would send an author to the wrong line. So "just call the existing rule" is
 a measurement, not a reflex: count the currently-passing tests that change verdict first.
 
+## Mutate the inputs, not just the implementation — 2026-10-06
+
+The strongest methodological finding of the graduation, and it is about the technique this
+repo has leaned on hardest.
+
+`coach-rulings` exists so that **nothing disappears silently**. Five of its fourteen review
+findings were one family — a finding vanishing, or collapsing under a ruling that was not
+about it — and **every one was reached by varying the DATA or the FORMAT. Not one by
+mutating code.** Thirteen code mutants were killed, and the suite could still be walked past
+by a stored ruling whose status read `pending`:
+
+> key matched, so not NEW · not `valid`, so not OPEN · not a collapsing verdict, so not
+> COLLAPSED · keyed, so not ORPHANED. **The finding fell out of every section at exit 0.**
+
+That is the exact suppression the stage was built to prevent, reproduced *inside* the
+stage — and code mutation was **structurally blind** to it, because the defect lived in the
+rulings file rather than in any line of the program.
+
+**The rule: for any stage that reads a file somebody else writes, the file is the attack
+surface.** Mutate the inputs — a malformed entry after a good one, a status nobody
+enumerated, two records that collide on a key, a field present but empty.
+
+### Two more of the same week's shape, from the same task
+
+- **A test named for the stage's most important property passed against an empty section.**
+  It asserted a match on `/ruled valid, still unfixed/` — which is the **section heading**,
+  printed unconditionally. The single property the stage exists to guarantee was untested by
+  the test named after it. Assert on section *contents* and *counts*, never on a label the
+  renderer always prints.
+- **A fixture hid an integration defect for the second time in two tasks.** The manifest was
+  written where the test found it convenient, not where `coach-pack` actually writes it —
+  `tools/SizzleCraft/coach/pack/<id>/`. The stage could not read the manifest from the only
+  stage that produces one, and 32 passing tests said otherwise.
+
+### The pair defect, and why pairing the reviews found it
+
+`.github/agents/video-coach.agent.md` said a still-only finding keys on the still's hash,
+while its REQUIRED template showed `QUOTE:` unconditionally and said *"emit exactly this"*.
+A conforming agent had to either break the template or **invent a quote for an image** —
+and an invented quote fails the matcher's verbatim check, flagging a finding unkeyable that
+would otherwise have keyed cleanly.
+
+**The defect lived between two files and was invisible to a review of either one.** It was
+found only because the plan deliberately paired G5's review with G4's, on the grounds that
+an output contract and its parser are two halves of one interface. Worth repeating whenever
+a producer and a consumer are written separately.
+
 ## My briefs keep being narrower than the rule — 2026-10-06
 
 Three times in one day a stream found more than I asked for, because my instruction named
