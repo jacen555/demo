@@ -290,6 +290,34 @@ rule-vs-procedure mismatch was asked to walk the whole rubric, and returned nine
 the rules someone remembered. The first prevents the tenth instance, the second documents
 the nine.
 
+**A fourth variant, sharper than the three above: I cited a precedent without checking
+which way it points.** Briefing G2, I wrote "you have been here before with make-music's
+bed — the answer there was deliberate and documented. Read it before choosing", in support
+of publishing a record LAST. `make-music.mjs` carries the comment **"THE RECORD FIRST, THEN
+THE BED"**. It argues the opposite.
+
+The stream read the precedent instead of my gloss on it, and derived the rule neither file
+states: **make-music fingerprints an in-memory buffer, so its record can precede the write;
+preview's stills are PNG bytes the browser writes to disk and cannot be hashed until they
+exist, so its record cannot.** Both orderings are right, for opposite reasons.
+
+**A precedent cited without its distinguishing condition is worse than no precedent**, because
+it transfers a conclusion without the reason that bounds it — and a reader following the
+pointer finds the engine apparently contradicting itself.
+
+### A fixture that reproduces the symptom is not a fixture that represents the system
+
+The same stream's first scene for the layout-misattribution fix used slide ids equal to
+segment ids. It reproduced the symptom **perfectly**, and would have made `issue.id ===
+segmentId` look like the fix. Against a real `write-build-html` run, slides are `seg-0`,
+`seg-1` while segments are `ok`, `big` — so that filter matches **nothing** and ships as a
+silent no-op that empties the failure line.
+
+**A fix that makes a failure line empty looks exactly like a fix that makes failures stop.**
+It was caught only because the fixture "felt too convenient", which is not a method. The
+method: **a fixture whose identifiers you chose yourself must be checked against a real run
+before trusting any filter built on it.**
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
