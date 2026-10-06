@@ -333,6 +333,52 @@ because they are all the same failure: **evidence graded in a context it did not
    names a stage only where that stage would run" — is the written form of this, and this
    repo ships a remedy in nearly every refusal, so the surface is large.
 
+### The instrument that proved the instrument was broken — 2026-10-06
+
+The sharpest instance of rule 7, because it happened **inside the experiment built to test
+rule 7**, and it corrected two people in sequence.
+
+A stream's exit-code probe piped a live child through `Select-Object -First 1` and read
+`$LASTEXITCODE`. All cases reported the harness's value rather than the tool's. It caught
+that only because a refusal it had *already measured at 2* came back as 1.
+
+It then built a control — and **the control said the hazard did not exist**. Its child
+emitted 5000 lines synchronously and exited before the consumer stopped reading, so there
+was nothing left to kill. Its diagnosis of its own control is the transferable part:
+
+> **A control that cannot fail proves nothing, and a FAST control for a RACE is a control
+> that cannot fail. The shape of the control has to match the shape of the hazard.**
+
+With a slow producer the hazard appeared, and worse than stated: a child that exits **3**
+was reported as **0** — a failing tool reported as passing, the single most dangerous
+direction for a measurement error.
+
+**Then the corrected experiment was itself wrong**, and only a sentinel exposed it. Setting
+`$LASTEXITCODE` to `99` before each case:
+
+    | Select-Object -First 1                    exit=99   137ms   <- sentinel SURVIVED
+    | Select-Object -Last 1                     exit=3   1366ms
+    | Select-String | Select-Object -First 1    exit=99   123ms   <- sentinel SURVIVED
+    | Where-Object { $_ }                       exit=3   1344ms
+    captured, then filtered                     exit=3   1353ms
+
+**`$LASTEXITCODE` is not set to 0 on early termination — it is not set at all**, and keeps
+whatever it held before. So the "0" was a stale 0, and the combination classified as *safe
+because it returned 3* was a stale 3. The child dies with `EPIPE` in both unsafe cases.
+
+**THE RULE — and note it is not a list of safe filters, because the safe-looking one was
+the trap:**
+
+> **Never read `$LASTEXITCODE` after a pipeline whose final element can stop early.
+> Capture the child's output to a variable first, then filter the variable. When measuring
+> an exit code at all, set a sentinel first so "unset" is visible rather than silently
+> inherited.**
+
+`spawnSync` is immune by construction. And the orchestrator was not clean either: a
+`git merge-tree` conflict preflight used `Select-Object -First 15` directly, which did not
+corrupt an exit code but **capped the conflict output at 15 lines** — it reported "clean"
+from a truncated instrument, and was right only because the answer happened to be short.
+
 ### `assertCleanExit` was blind, and that is the cautionary one
 
 The helper exists to catch "exited plausibly AND printed a stack" — its own comment says
