@@ -79,6 +79,9 @@ const timing = (segments, durationMs = TWO.endMs) =>
     contentMs: durationMs,
     outroMs: 2500,
     endCard: { enabled: true },
+    // aspectRatio is carried so the metadata tests below isolate an absent `project` or
+    // `intake`. It has its own unguarded site, pinned separately at the end of this file.
+    aspectRatio: '16:9',
     intake: { leadInMs: 2000, perceivedGapMs: 2000, toleranceMs: 750, voice: 'en-US-AvaNeural', speed: 1, silenceMs: 2000 },
     segments,
   });
@@ -316,24 +319,154 @@ describe('an absent or non-array segment list keeps each stage exactly as it was
     assert.equal(r.code, EXIT.OK, r.all);
   });
 
-  // OUT OF SCOPE, AND STILL BROKEN. `(timing.segments || []).map` — the `||` idiom guards
-  // ABSENCE and not TYPE, because a non-empty string is truthy. Recorded, not fixed here.
-  test('frameCapture_nonArraySegmentList_stillCrashes_knownAndScopedOut', (t) => {
+  // CHANGED DELIBERATELY by shape-first-everywhere. This used to assert the crash, with the
+  // note "if this ever stops crashing, it was fixed — update this expectation". It was
+  // fixed, so the expectation is updated here rather than deleted: a list that is PRESENT
+  // but not an array cannot be read, and is refused.
+  test('frameCapture_nonArraySegmentList_isRefusedRatherThanCrashing', (t) => {
     const r = planWith(t, 'frame-capture.mjs', listShaped('two of them'));
 
-    assert.equal(crashed(r), true, 'if this ever stops crashing, it was fixed — update this expectation');
-    assert.match(r.all, /\.map is not a function/, r.all);
+    assert.equal(crashed(r), false, `a list that cannot be read must be refused, not crashed on\n${r.all}`);
+    assert.equal(r.code, EXIT.USAGE, r.all);
+    assert.match(r.all, /timing\.segments is not a list of segments/, r.all);
   });
 
-  for (const [label, replacement, pattern] of [
-    ['absent', undefined, /reading 'length'/],
-    ['nonArray', 'two of them', /\.filter is not a function/],
-  ]) {
-    test(`writeStoryboard_${label}SegmentList_stillCrashes_knownAndScopedOut`, (t) => {
-      const r = planWith(t, 'write-storyboard.mjs', listShaped(replacement));
+  // Also changed deliberately, same reason. For write-storyboard an ABSENT list is now
+  // treated as an empty one — which is what this file already intended at the plan line,
+  // `t.segments?.length ?? 0` — and only a non-array is refused.
+  test('writeStoryboard_absentSegmentList_isTreatedAsAnEmptyOne', (t) => {
+    const r = planWith(t, 'write-storyboard.mjs', listShaped(undefined));
 
-      assert.equal(crashed(r), true, 'if this ever stops crashing, it was fixed — update this expectation');
-      assert.match(r.all, pattern, r.all);
+    assert.equal(crashed(r), false, r.all);
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /0 segment\(s\)/, r.all);
+  });
+
+  test('writeStoryboard_nullSegmentList_isTreatedAsAnEmptyOne', (t) => {
+    const r = planWith(t, 'write-storyboard.mjs', listShaped(null));
+
+    assert.equal(crashed(r), false, r.all);
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(r.all, /0 segment\(s\)/, r.all);
+  });
+
+  test('writeStoryboard_nonArraySegmentList_isRefusedRatherThanCrashing', (t) => {
+    const r = planWith(t, 'write-storyboard.mjs', listShaped('two of them'));
+
+    assert.equal(crashed(r), false, r.all);
+    assert.equal(r.code, EXIT.USAGE, r.all);
+    assert.match(r.all, /timing\.segments is not a list of segments/, r.all);
+  });
+
+  // A null list is NOT a non-array for frame-capture either: `null || []` already made it
+  // behave as empty, and that is preserved rather than converted into a refusal.
+  test('frameCapture_nullSegmentList_isStillTolerated', (t) => {
+    const r = planWith(t, 'frame-capture.mjs', listShaped(null));
+
+    assert.equal(crashed(r), false, r.all);
+    assert.equal(r.code, EXIT.OK, r.all);
+  });
+});
+
+// --------------------------------------------------------------------------------------
+// THE OTHER HALF OF THE SAME MISTAKE. `t.project` and `t.intake` are rendering metadata,
+// not the timeline: a storyboard with no intake has nothing to put in one badge, whereas a
+// segments list that is not a list means the file cannot be read at all. So absence is
+// rendered blank here rather than refused — the decision the user made at the gate, and
+// the idiom this file already used for missing FIELDS (`t.project.lede || ... || ''`).
+//
+// NOT A TYPE CHECK. A `project` that is a string does not crash and never did — `'demo'.title`
+// is undefined, which renders empty. Refusing it would widen past the defect, which is the
+// trap the R4 measurement caught.
+// --------------------------------------------------------------------------------------
+
+describe('absent rendering metadata is rendered blank, not crashed on', () => {
+  const withoutKey = (key) => {
+    const doc = JSON.parse(timing([ONE, TWO]));
+    delete doc[key];
+    return JSON.stringify(doc);
+  };
+
+  for (const key of ['project', 'intake']) {
+    test(`writeStoryboard_absent_${key}_plansAndRendersWithoutCrashing`, (t) => {
+      const r = planWith(t, 'write-storyboard.mjs', withoutKey(key));
+
+      assert.equal(crashed(r), false, `an absent ${key} must not reach an uncaught exception\n${r.all}`);
+      assert.equal(r.code, EXIT.OK, r.all);
+    });
+
+    test(`writeStoryboard_absent_${key}_withApply_writesAStoryboardNamingNoUndefined`, (t) => {
+      const dir = makeProject(t, {
+        'timing.json': withoutKey(key),
+        'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+        'segment_000.mp3': ttsClip('hello there friend'),
+        'segment_001.mp3': ttsClip('second segment here'),
+      });
+
+      const r = runScript('write-storyboard.mjs', ['--apply'], dir);
+
+      assert.equal(r.code, EXIT.OK, r.all);
+      const html = fs.readFileSync(path.join(dir, 'storyboard.html'), 'utf8');
+      assert.doesNotMatch(
+        html,
+        /undefined/,
+        'a blank badge renders blank — the string "undefined" in a review artifact is the crash in a quieter coat',
+      );
     });
   }
+
+  // THE CONTROL. The badges must still carry their values when the metadata IS there, or
+  // "renders blank" would just be "renders nothing, always".
+  test('writeStoryboard_metadataPresent_stillRendersItIntoTheBadges', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timing([ONE, TWO]),
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+      'segment_000.mp3': ttsClip('hello there friend'),
+      'segment_001.mp3': ttsClip('second segment here'),
+    });
+
+    const r = runScript('write-storyboard.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    const html = fs.readFileSync(path.join(dir, 'storyboard.html'), 'utf8');
+    assert.match(html, /en-US-AvaNeural/, 'the voice badge must carry the voice');
+    assert.match(html, /1280/, 'and the dimensions badge its width');
+  });
+
+  // A wrong-TYPED project is not a crash and is not this task's business. Pinned so that
+  // widening into it later is a deliberate act rather than a side effect.
+  test('writeStoryboard_projectThatIsAString_isNotRefused_knownAndScopedOut', (t) => {
+    const doc = JSON.parse(timing([ONE, TWO]));
+    doc.project = 'demo';
+
+    const r = planWith(t, 'write-storyboard.mjs', JSON.stringify(doc));
+
+    assert.equal(crashed(r), false, r.all);
+    assert.equal(r.code, EXIT.OK, 'it renders empty badges today, and refusing it would widen past the defect');
+  });
+
+  // OUT OF SCOPE, AND STILL WRONG. `${t.aspectRatio}` is the one token in that badge not
+  // passed through `esc()`, so an absent aspectRatio renders the literal string "undefined"
+  // beside siblings that now render blank. It does not crash, which is why it was excluded
+  // at the gate: silent garbage is a different class from an uncaught exception, and this
+  // task fixed crashes. Pinned so the next one has to change this expectation on purpose.
+  test('writeStoryboard_absentAspectRatio_stillRendersTheStringUndefined_knownAndScopedOut', (t) => {
+    const doc = JSON.parse(timing([ONE, TWO]));
+    delete doc.aspectRatio;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(doc),
+      'brand/tokens.json': JSON.stringify({ audio: { ttsVoices: ['en-US-AvaNeural'] } }),
+      'segment_000.mp3': ttsClip('hello there friend'),
+      'segment_001.mp3': ttsClip('second segment here'),
+    });
+
+    const r = runScript('write-storyboard.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.OK, r.all);
+    assert.match(
+      fs.readFileSync(path.join(dir, 'storyboard.html'), 'utf8'),
+      /<span>undefined · /,
+      'if this ever stops saying undefined, it was fixed — update this expectation',
+    );
+  });
 });
