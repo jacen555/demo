@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, guard, requireExistingFile, resolveWipeTarget, resolveInternalArtifact, requirePositiveNumber, requireFiniteNumber, readLockOwner, planFooter, resolveKnob, resolveBooleanKnob } from './cli-support.mjs';
-import { isSilentSegment, silentSegmentProblems } from './silent-segment.mjs';
+import { isSilentSegment, silentSegmentProblems, segmentEntryBlocker } from './silent-segment.mjs';
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
 // directory wholesale. So the default invocation plans and writes nothing, and the
@@ -62,6 +62,20 @@ const timing = guard(() => {
   } catch (err) {
     throw new CliError(`${timingPath} is not valid JSON — ${err.message}`);
   }
+});
+
+// SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
+// the maps below and throw an uncaught TypeError — a crash with a stack, not a refusal,
+// and the path had no exit code of its own. The rule has ONE statement, in
+// silent-segment.mjs, which shapeBlocker itself calls, so this stage and the gates cannot
+// drift into separate accounts of what a segment entry is.
+//
+// THE ENTRY RULE ONLY. An id-less segment is still accepted and labelled by index below,
+// on purpose, and an absent or empty list is still tolerated: segmentEntryBlocker returns
+// null for a non-array and has no opinion about ids.
+guard(() => {
+  const bad = segmentEntryBlocker(timing.segments);
+  if (bad) throw new CliError(bad.fact);
 });
 
 // Capture parameters are validated up front, before anything is deleted. An unvalidated

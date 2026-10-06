@@ -4,6 +4,7 @@ import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveOutput, r
 import {
   isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silentMp3DurationMs, SILENCE_FRAME_MS,
   unvoicedNarrationProblem, voiceBlocker, remixBlocker, gatedRemedy, declareSilentRemedy, sameIdentity,
+  segmentEntryBlocker,
 } from './silent-segment.mjs';
 
 function audioStart(buffer) {
@@ -90,6 +91,18 @@ await runCli(() => {
   const segments = Array.isArray(timing.segments) ? timing.segments : [];
   if (!segments.length) {
     throw new CliError('timing.json declares no segments — there is nothing to concatenate', EXIT.FAILED);
+  }
+  // SHAPE FIRST, BUT AFTER THE LIST CHECK ABOVE. A null, an array or a string where a
+  // segment object belongs used to reach the map below and throw an uncaught TypeError on
+  // `s.audio` — a crash with a stack, not a refusal, and the path had no exit code of its
+  // own. It is asked SECOND so this stage's own wording for an empty list, and its own
+  // EXIT.FAILED for it, both of which are shipped, keep precedence.
+  //
+  // EXIT.USAGE here, not FAILED: a null where a segment object belongs is bad input,
+  // refused before any work runs. The two codes differ on purpose.
+  {
+    const bad = segmentEntryBlocker(segments);
+    if (bad) throw new CliError(bad.fact);
   }
 
   const discovered = fs

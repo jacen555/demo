@@ -10,7 +10,8 @@
 //   preset       (optional) = named bed, see BEDS below. Defaults to 'warm'.
 import fs from 'node:fs';
 import path from 'node:path';
-import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, resolveEngineOutput, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
+import crypto from 'node:crypto';
+import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, resolveEngineOutput, openExclusiveEngineFile, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
 import {
   SPEECH_RMS_THRESHOLD,
   REFERENCE_ATTACK_MS,
@@ -24,6 +25,9 @@ import {
   publishBedDuckRecord,
   classifyEnvelopeLineage,
   describeEnvelopeRefusal,
+  requireEnvelopeHopMs,
+  assertEnvelopeSpansAgree,
+  openedAtState,
 } from './envelope-ducking.mjs';
 
 const USAGE = `
@@ -77,8 +81,16 @@ const cli = (() => {
 })();
 
 let out, recordPath, DUR, envPath, presetName;
+const bedNameIsEngineChosen = cli.values.out === undefined;
 try {
-  out = resolveOutput(cli.projectDir, cli.values.out ?? 'music.wav', { apply: cli.apply, replace: cli.replace, label: 'output' });
+  // `music.wav` IS ENGINE-CHOSEN: nobody named it, make-music picked it, so a link at it
+  // is refused rather than followed. A path the caller passed is theirs to redirect, and
+  // an in-root link at it is honoured as it is for every other user-named output. Writing
+  // through a link nobody named replaces a file nobody asked about — measured at exactly
+  // that: a planted link put 384 kB of PCM over an unrelated in-root file.
+  out = bedNameIsEngineChosen
+    ? resolveEngineOutput(cli.projectDir, 'music.wav', { apply: cli.apply, replace: cli.replace, label: 'output' })
+    : resolveOutput(cli.projectDir, cli.values.out, { apply: cli.apply, replace: cli.replace, label: 'output' });
   // ENGINE-CHOSEN: nobody named it, so a link at it is refused, and an existing one needs
   // --replace as the bed does. Resolved here, so a refusal costs nothing — not after
   // minutes of synthesis, and never with a bed written and its record not. This is the
@@ -408,7 +420,12 @@ console.log(`raw peak ${peak.toFixed(3)} -> normalising x${norm.toFixed(4)} (tar
 // ---- sidechain ducking off the voiceover envelope ---------------------------------------------
 // Music sits well under narration and lifts back up in the inter-segment gaps.
 const DUCK = REFERENCE_DUCK_GAIN;   // ≈ -7.5 dB under speech
-const HOP_MS = 20;
+// THE ENVELOPE'S OWN HOP, NOT A CONSTANT. This was hard-coded at 20 ms while the envelope
+// carries the hop it was measured at, so the same narration described at a coarser hop
+// was read as a different one: measured at 40 ms, the duck landed 7.2 dB on the GAP and
+// only 4.2 dB on the first phrase — it ducked the silence and let the speech through, at
+// exit 0. Null until an envelope supplies it; there is no duck without one.
+let hopMs = null;
 let duckGain = null;
 if (envPath) {
   // No existsSync pre-check: an envelope that was ASKED for and cannot be read must fail,
@@ -441,14 +458,20 @@ if (envPath) {
         `${envPath} "rms"[${bad}] is ${JSON.stringify(parsed.rms[bad])} — every envelope sample must be a finite non-negative number`,
       );
     }
+    // The hop places every dip, and the two halves of the envelope's own span must agree
+    // before any of it is ducked against. Both are checked AFTER the rms array, which is
+    // the field they are expressed in terms of.
+    requireEnvelopeHopMs(parsed, envPath);
+    assertEnvelopeSpansAgree(parsed, envPath);
     return parsed;
   });
+  hopMs = env.hopMs;
   // ONE MODEL, BOTH DUCKING PATHS. This loop used to live here and remux-music now ducks
   // in the ffmpeg graph from the same envelope; two copies of "duck fast, recover gently"
   // is two behaviours waiting to drift apart, so both read the same function.
   const g = duckGainTrajectory({
     rms: env.rms,
-    hopMs: HOP_MS,
+    hopMs,
     duckGain: DUCK,
     attackMs: REFERENCE_ATTACK_MS,
     releaseMs: REFERENCE_RELEASE_MS,
@@ -456,7 +479,7 @@ if (envPath) {
   });
   duckGain = g;
   const ducked = g.reduce((a, b) => a + (b < 0.7 ? 1 : 0), 0);
-  console.log(`ducking from ${env.rms.length} envelope frames — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
+  console.log(`ducking from ${env.rms.length} envelope frames at ${hopMs} ms — under speech for ${(ducked / g.length * 100).toFixed(0)}% of the run`);
 } else {
   console.log('no envelope supplied — flat music level');
 }
@@ -475,7 +498,7 @@ for (let i = 0; i < N; i++) {
   const t = i / SR;
   let g = norm * fade(t);
   if (duckGain) {
-    const k = t * 1000 / HOP_MS;
+    const k = t * 1000 / hopMs;
     const k0 = Math.min(duckGain.length - 1, Math.floor(k));
     const k1 = Math.min(duckGain.length - 1, k0 + 1);
     const fr = k - k0;
@@ -523,7 +546,144 @@ try {
   process.exit(err.exitCode ?? EXIT.FAILED);
 }
 for (const warning of published.warnings) console.error(`warning: ${warning}`);
-fs.writeFileSync(out, buf);
+try {
+  publishBed(buf);
+} catch (err) {
+  // A bed that IS at its name, with bytes that could not be confirmed, is not a missing
+  // bed — and the record fingerprints what was meant to be there, so remux-music refuses
+  // it if they are not.
+  console.error(
+    err.bedPublished
+      ? `error: ${err.message}\nThe bed is at ${out} and the ducking record at ${recordPath} fingerprints the ` +
+          `bytes it should hold, so remux-music will refuse it if they are not those bytes.`
+      : `error: ${err.message}\nThe ducking record at ${recordPath} describes a bed that was not written, so ` +
+          `remux-music will refuse it as describing a different bed. Clear it and re-run.`,
+  );
+  process.exit(err.exitCode ?? EXIT.FAILED);
+}
 const db = v => (20 * Math.log10(v || 1e-9)).toFixed(1);
 console.log(`wrote ${out} — ${(bytes / 1e6).toFixed(1)} MB, peak ${db(outPeak)} dBFS`);
 console.log(`wrote ${recordPath} — ${record.ducked ? `ducked against ${voiceFingerprint.file}` : 'not ducked'}`);
+
+/**
+ * Writes the bed, with the link policy its name earned.
+ *
+ * THE UP-FRONT RESOLVE IS NOT THE WRITE. It refuses a link at the engine-chosen name, and
+ * then synthesis runs for minutes before the bytes exist — and `writeFileSync` opens with
+ * `'w'`, which FOLLOWS a link that took the name in that window and writes to a file
+ * nobody named. The ducking record learned this first (see publishBedDuckRecord); the bed
+ * is the larger write and had the same window.
+ *
+ * So for the name make-music chose, the write itself is the guard. Without --replace the
+ * create is exclusive, so any entry at all — file, directory, link, even one to nothing —
+ * refuses it and is left as it is. With --replace the bytes go to a temp file under an
+ * unguessable name and are RENAMED over it, which replaces a link rather than following
+ * it: --replace covers the bed's own name, never whatever something else pointed it at.
+ *
+ * A path the CALLER named is theirs to redirect, and an in-root link at it is followed, as
+ * it is for every other user-named output in this engine.
+ */
+function publishBed(bedBytes) {
+  if (!bedNameIsEngineChosen) {
+    fs.writeFileSync(out, bedBytes);
+    return;
+  }
+  if (!cli.replace) {
+    try {
+      fs.writeFileSync(out, bedBytes, { flag: 'wx' });
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        throw new CliError(
+          `${out} appeared after the up-front check found the name free — refusing to write through an entry ` +
+            `this run did not create. It has been left exactly as it is; if it is a link, nothing was written ` +
+            `to what it points at. Move it aside, or re-run with --replace.`,
+        );
+      }
+      throw new CliError(`could not write the bed ${out} (${err.code ?? err.message})`, EXIT.FAILED);
+    }
+    return;
+  }
+
+  const temp = openExclusiveEngineFile(
+    cli.projectDir,
+    `${out}.part-${process.pid}-${crypto.randomBytes(8).toString('hex')}`,
+    'bed temp file',
+  );
+  try {
+    fs.writeFileSync(temp.fd, bedBytes);
+    fs.renameSync(temp.path, out);
+  } catch (err) {
+    const left = retireBedTemp(temp);
+    throw new CliError(
+      `could not write the bed ${out} (${err.code ?? err.message})${left.map((note) => `\n${note}`).join('')}`,
+      EXIT.FAILED,
+    );
+  }
+  // The rename moved this run's file onto the name, so the name is checked against the
+  // descriptor that still holds it — and the temp name is never removed, because the
+  // rename already consumed it and anything there now belongs to someone else.
+  const verdict = openedAtState(temp.fd, out);
+  let closeFailure = null;
+  try { fs.closeSync(temp.fd); } catch (err) { closeFailure = err; }
+  if (verdict !== 'same') {
+    // WHAT WAS FOUND, NOT WHAT IT MIGHT MEAN. A substitution and a volume that gives no
+    // file identity both fail this check, and only one of them is a substitution.
+    const why = {
+      different: 'another entry took its place as it was renamed',
+      absent: 'nothing is at that name any more',
+      unavailable: 'this filesystem gives no file identity to check',
+      unchecked: 'it could not be examined',
+    }[verdict];
+    throw new CliError(
+      `${out} cannot be confirmed as the bed this run just published there: ${why}. It has been left as it is.`,
+      EXIT.FAILED,
+    );
+  }
+  if (closeFailure) {
+    // NOT A FAILED PUBLISH. The bed is at its name; what cannot be confirmed is what was
+    // written to it. Reporting it as unwritten sends someone looking for a file that is
+    // sitting right there.
+    const err = new CliError(
+      `the bed was published at ${out}, but the file it was written through could not be closed ` +
+        `(${closeFailure.code ?? closeFailure.message}), so what was written to it cannot be confirmed.`,
+      EXIT.FAILED,
+    );
+    err.bedPublished = true;
+    throw err;
+  }
+}
+
+/**
+ * Closes the bed's temp file and removes it — but ONLY while the name still holds the file
+ * this run created there.
+ *
+ * Removing by name removes whatever is at the name. An entry substituted in the window
+ * between the open and the cleanup was never this run's to delete, and deleting it would
+ * make the guard perform exactly the destruction it exists to prevent. What has to be left
+ * behind comes back as a note, so a stranded temp is reported rather than silently kept.
+ *
+ * @returns {string[]} what it had to leave, for the caller to print
+ */
+function retireBedTemp(temp) {
+  const notes = [];
+  const verdict = openedAtState(temp.fd, temp.path);
+  if (verdict === 'same') {
+    try {
+      fs.unlinkSync(temp.path);
+    } catch (err) {
+      notes.push(`the temp file ${temp.path} could not be removed (${err.code ?? err.message}) — delete it by hand`);
+    }
+  } else if (verdict !== 'absent') {
+    notes.push(
+      verdict === 'different'
+        ? `the temp name ${temp.path} no longer holds the file this run wrote, so it has been left as it is`
+        : `the temp name ${temp.path} cannot be confirmed as this run's, so it has been left as it is`,
+    );
+  }
+  try {
+    fs.closeSync(temp.fd);
+  } catch (err) {
+    notes.push(`the temp file's descriptor could not be closed (${err.code ?? err.message})`);
+  }
+  return notes;
+}

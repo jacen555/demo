@@ -45,6 +45,13 @@
  *      appeared and as many times as they appeared, so a second `asplit=2` / `amix` pair —
  *      which doubles a bus and carries no number of its own — read as structure. They are
  *      now accounted for like values, by use-count, and only at a filter boundary.
+ *   7. a declared value that is PRESENT BUT IN THE WRONG PLACE. Accounting by value and
+ *      count alone is a multiset over one string, so the bed's gain interpolated onto the
+ *      narration's chain and the narration's onto the bed's passed: same two literals,
+ *      same two counts, a mix with the music tens of dB over the voice — and the pin
+ *      recorded the declared values and reported valid. `use()` names the chain the value
+ *      is going into, and the audit counts it in THAT chain, so a value that moved is a
+ *      value missing from where it belongs.
  *
  * IT DOES NOT DETECT:
  *   a. anything that reaches ffmpeg OUTSIDE the filter graph — `-b:a`, `-ar`, `-ac`, an
@@ -71,6 +78,11 @@
  *      `use('musicGain')` for a value that is not the music gain. This guard defends
  *      against FORGETTING, which is how --ceiling escaped. It does not defend against
  *      being wrong, and it does not defend against being talked around.
+ *   g. two values MOVED WITHIN ONE CHAIN. The chain is the unit of position, so swapping
+ *      `threshold` and `ratio` inside the one sidechaincompress is invisible here, as is
+ *      a value moved between two filters of the same chain. A finer unit would have to
+ *      parse the filter graph's argument grammar, which is ffmpeg's job and not a thing
+ *      to guess at; the blind spot is stated, and tested, rather than argued away.
  *
  * The honest summary: a knob interpolated into the mix graph cannot reach ffmpeg AS A
  * NUMBER without either being declared or stopping the run — in any numeric form ffmpeg
@@ -289,6 +301,135 @@ const IDENTIFIER = /^[A-Za-z_][0-9A-Za-z_]*$/;
 /** Replaces redacted spans; matches no part of GRAPH_TOKEN's character class. */
 const REDACTED = '\u0000';
 
+/** The trailing `[label]` run of a filter chain: where that chain writes its output. */
+const OUTPUT_LABELS = /((?:\[[^\]]*\])+)$/;
+
+/**
+ * The values in one chain's text, by the same three-bucket classification `audit` uses.
+ *
+ * Deliberately the same predicates: a token this returns is a token the global pass also
+ * counts, so the two accountings can never disagree about what a value is.
+ */
+function valuesIn(chainResidue) {
+  const values = [];
+  for (const token of chainResidue.match(GRAPH_TOKEN) ?? []) {
+    if (!HAS_DIGIT.test(token)) continue;
+    if (IDENTIFIER.test(token)) continue;
+    if (!PLAIN_DECIMAL.test(token)) continue;
+    values.push(token);
+  }
+  return values;
+}
+
+/**
+ * Refuses a declared value that is present in the graph but NOT IN THE CHAIN IT WAS TAKEN
+ * FOR.
+ *
+ * The global budget below is a multiset over one string: value and count, no position. It
+ * therefore accepts the bed's gain interpolated onto the narration's chain and the
+ * narration's onto the bed's — same literals, same counts, and a mix with the music tens
+ * of dB over the voice, behind a pin recording the values that were declared rather than
+ * the ones that were applied.
+ *
+ * THE CHAIN IS THE UNIT. The graph is a list of `[in]filters[out]` statements separated by
+ * `;`, and `use()` names the output label of the one being built. The labels are read from
+ * the RAW graph, because the residue has had them redacted; the values are counted in the
+ * residue, so link labels and structural literals cannot be mistaken for them. Neither
+ * redaction removes a `;`, so the two split into the same chains in the same order — and
+ * that is checked rather than assumed.
+ *
+ * It is exact in both directions, and WHICH END FIRES IS AN ORDERING, NOT A LAW:
+ * expectations are reached in declaration order, so a balanced move reports the shortage
+ * when the chain the value left is declared first, and the surplus when it is not. An
+ * over-count with nothing short anywhere never reaches here at all — it exceeds the
+ * global budget and the pass above claims it as a value nothing explains. Measured, not
+ * assumed. Because only one end of a move is ever reported, the OTHER end is named inside
+ * that one refusal rather than left for a second one that may never come.
+ */
+function auditSites(graph, residue, declared) {
+  const rawChains = String(graph).split(';');
+  const residueChains = residue.split(';');
+  if (rawChains.length !== residueChains.length) {
+    throw new CliError(
+      `the mix filter graph could not be split into chains consistently (${rawChains.length} raw, ` +
+        `${residueChains.length} after redaction) — the audit will not guess at where its values are.`,
+      EXIT.FAILED,
+    );
+  }
+
+  const chainOf = new Map();
+  const labelsOf = rawChains.map(() => []);
+  rawChains.forEach((chain, index) => {
+    const trailing = chain.match(OUTPUT_LABELS)?.[1];
+    for (const label of trailing?.match(/\[([^\]]*)\]/g) ?? []) {
+      chainOf.set(label.slice(1, -1), index);
+      labelsOf[index].push(label.slice(1, -1));
+    }
+  });
+
+  // Expectations first, summed per chain: two parameters rendering the same literal into
+  // one chain are two occurrences there, not one.
+  const expected = new Map();
+  for (const [, entry] of declared) {
+    if (!entry.inForce) continue;
+    for (const [site, count] of entry.sites) {
+      if (!chainOf.has(site)) {
+        throw new CliError(
+          `${entry.parameter.flag} was taken from the registry for the chain "${site}", but no chain in the ` +
+            'mix filter graph writes that label.\n' +
+            'The site is what lets the audit check a value is where it belongs, so a site that does not\n' +
+            'exist leaves that value unchecked. Name the output label of the chain it is interpolated into.',
+          EXIT.FAILED,
+        );
+      }
+      const index = chainOf.get(site);
+      const key = `${index}\u0000${entry.rendered}`;
+      const seen = expected.get(key);
+      if (seen === undefined) {
+        expected.set(key, { index, site, literal: entry.rendered, want: count, flags: [entry.parameter.flag] });
+      } else {
+        seen.want += count;
+        if (!seen.flags.includes(entry.parameter.flag)) seen.flags.push(entry.parameter.flag);
+      }
+    }
+  }
+
+  const countsByChain = residueChains.map((chain) => {
+    const counts = new Map();
+    for (const value of valuesIn(chain)) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return counts;
+  });
+
+  for (const [, { index, site, literal, want, flags }] of expected) {
+    const got = countsByChain[index].get(literal) ?? 0;
+    if (got === want) continue;
+    // BOTH ENDS OF THE MOVE. Only one end of a move is ever reported — whichever
+    // expectation is reached first — and on its own it says only that a count is wrong,
+    // leaving a reader to search the rest of the graph. Where the literal actually is, is
+    // known right here, so it is said here. Only counted, never interpreted: the audit
+    // cannot know a value MEANT to go elsewhere, and does not say so. A chain that writes
+    // no label is named as exactly that, rather than given one it does not have.
+    const elsewhere = countsByChain
+      .map((counts, at) => ({ at, found: counts.get(literal) ?? 0 }))
+      .filter(({ at, found }) => at !== index && found > 0)
+      .map(({ at, found }) =>
+        labelsOf[at].length > 0
+          ? `${found} time(s) in the chain writing [${labelsOf[at].join('][')}]`
+          : `${found} time(s) in a chain that writes no label`,
+      );
+    throw new CliError(
+      `${flags.join('/')} was taken from the registry ${want} time(s) for the mix graph's "${site}" chain, but ` +
+        `"${literal}" appears there ${got} time(s).\n` +
+        (elsewhere.length > 0 ? `It appears ${elsewhere.join(', and ')}.\n` : '') +
+        'A value accounted for only by number and count is a value that can MOVE: the same literals in the\n' +
+        'same quantity, on the wrong chains, is a different mix entirely — and the pin would record the\n' +
+        'values that were declared rather than the ones that were applied.\n' +
+        'Interpolate each value into the chain it was taken for, and take it for the chain it goes into.',
+      EXIT.FAILED,
+    );
+  }
+}
+
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -339,7 +480,7 @@ export function createMixAudit() {
         EXIT.FAILED,
       );
     }
-    declared.set(name, { parameter, value, rendered: text, uses: 0, inForce: true });
+    declared.set(name, { parameter, value, rendered: text, uses: 0, sites: new Map(), inForce: true });
   }
 
   /**
@@ -371,16 +512,23 @@ export function createMixAudit() {
     if (declared.has(name)) {
       throw new CliError(`${parameter.flag} was declared twice — only one value of it reaches the graph`, EXIT.FAILED);
     }
-    declared.set(name, { parameter, value: NOT_IN_FORCE, rendered: null, uses: 0, inForce: false });
+    declared.set(name, { parameter, value: NOT_IN_FORCE, rendered: null, uses: 0, sites: new Map(), inForce: false });
   }
 
   /**
-   * Returns the literal to interpolate, and counts the use.
+   * Returns the literal to interpolate, and counts the use AT A SITE.
    *
    * The count is what lets `audit` tell a second legitimate occurrence from a smuggled
-   * one, so it is derived from actual use rather than stated by the author.
+   * one, so it is derived from actual use rather than stated by the author. `site` is the
+   * OUTPUT LABEL of the filter chain the value is going into — `vo`, `mu`, `mud`, `out`,
+   * `ml1` — and is what lets `audit` tell a value that is present from a value that is
+   * present WHERE IT BELONGS.
+   *
+   * The site is REQUIRED. An optional one would silently opt a value out of the check,
+   * which is the "closed by construction, and nothing fails when it grows" shape this
+   * module exists to stop.
    */
-  function use(name) {
+  function use(name, site) {
     const entry = declared.get(name);
     if (entry === undefined) {
       const known = BY_NAME.has(name) ? 'declared for this run' : 'declared in MIX_PARAMETERS';
@@ -394,7 +542,18 @@ export function createMixAudit() {
         EXIT.FAILED,
       );
     }
+    if (typeof site !== 'string' || site.trim() === '') {
+      throw new CliError(
+        `${entry.parameter.flag} was taken from the registry without naming the chain it goes into.\n` +
+          'Pass the output label of the filter chain being built — mix.use(<name>, <label>) — so the audit\n' +
+          'can check the value is where it belongs. A value accounted for only by number and count can be\n' +
+          "moved onto another chain without the audit noticing, which is how a bed's gain can end up on\n" +
+          'the narration behind a pin that still reports valid.',
+        EXIT.FAILED,
+      );
+    }
     entry.uses += 1;
+    entry.sites.set(site, (entry.sites.get(site) ?? 0) + 1);
     return entry.rendered;
   }
 
@@ -534,6 +693,13 @@ export function createMixAudit() {
         EXIT.FAILED,
       );
     }
+
+    // POSITION AFTER PRESENCE. A value nothing explains is reported as exactly that
+    // above; only once every number in the graph traces to something does asking WHERE
+    // each one is make sense. Reversed, a smuggled literal that displaced a declared one
+    // would be reported as the declared one having moved — the right refusal for the
+    // wrong reason, pointing at the wrong end of the graph.
+    auditSites(graph, residue, declared);
 
     // THE BUDGET MUST BE EXACTLY SPENT. A `use()` whose string was built and then
     // discarded would otherwise leave slack that absorbs a smuggled literal of the same

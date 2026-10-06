@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 import { EXIT, CliError, resolveEngineOutput } from '../src/cli-support.mjs';
 import { createMixAudit, MIX_PARAMETERS } from '../src/mix-parameters.mjs';
@@ -41,6 +42,7 @@ import {
   describeEnvelopeRefusal,
   publishBedDuckRecord,
   isOpenedAt,
+  openedAtState,
 } from '../src/envelope-ducking.mjs';
 import {
   makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, pcmWav, plantOnMarker, MISSING_FFMPEG,
@@ -546,7 +548,7 @@ describe('ducking reaches the filter graph under the registry', () => {
     const mix = createMixAudit();
     mix.declare('duckDb', { value: 11, rendered: 0.023286 });
 
-    assert.equal(mix.use('duckDb'), '0.023286', 'the graph carries the solved threshold');
+    assert.equal(mix.use('duckDb', 'mud'), '0.023286', 'the graph carries the solved threshold');
   });
 
   // A pinned knob has to be accounted for on EVERY run, including the runs where it is
@@ -588,13 +590,13 @@ describe('ducking reaches the filter graph under the registry', () => {
 
     // `knee=2.5` is the smuggled one: a real sidechaincompress option, never declared.
     const graph =
-      `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
+      `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];` +
       `[vosc]apad[vop];` +
-      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];` +
-      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
-      `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}:knee=2.5[mud];` +
+      `[2:a]asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];` +
+      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
+      `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}:knee=2.5[mud];` +
       `[vo][mud]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-      `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
+      `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
 
     assert.throws(
       () => mix.audit(graph),
@@ -2006,4 +2008,591 @@ describe('the fake page.goto() swap is confined to suite-owned files', () => {
     assertRefusedLoudly(r, 'FAKE_PLAYWRIGHT_GOTO_SWAP', dir);
     assert.equal(fs.readFileSync(victim, 'utf8'), 'ORIGINAL VICTIM', 'the link must not have been written through');
   });
+});
+// --------------------------------------------------------------------------------------
+// D2-3/D2-2/D2-5 — the duck is IN THE SAMPLES, at the times the envelope describes
+//
+// Round 2 found that the whole suite passed with make-music's ducking loop removed: every
+// test here read the record beside the bed, the exit code, or the log line, and none of
+// them read the bed. The duck is the product; it is now decoded and measured.
+//
+// MEASURED AGAINST A FLAT CONTROL BED FROM THE SAME GENERATOR, not against an absolute
+// level. The bed is peak-normalised and fades in and out, so an absolute RMS in a window
+// says almost nothing; the ratio to the same window of an un-ducked bed of the same
+// --seconds and preset cancels both and leaves exactly the duck.
+// --------------------------------------------------------------------------------------
+
+describe('the duck make-music bakes in is in the samples', () => {
+  const SR = 48000;
+  const HEADER = 44;
+  /** The bed is 32-bit float stereo. RMS of the left channel over [startMs, endMs). */
+  function rmsOver(bed, startMs, endMs) {
+    const i0 = Math.round((startMs / 1000) * SR);
+    const i1 = Math.round((endMs / 1000) * SR);
+    let sum = 0;
+    for (let i = i0; i < i1; i++) {
+      const v = bed.readFloatLE(HEADER + i * 8);
+      sum += v * v;
+    }
+    return Math.sqrt(sum / (i1 - i0));
+  }
+  const dbBelowFlat = (ducked, flat, startMs, endMs) =>
+    20 * Math.log10(rmsOver(ducked, startMs, endMs) / rmsOver(flat, startMs, endMs));
+
+  /** The reference depth make-music ducks to: REFERENCE_DUCK_GAIN as dB. */
+  const REFERENCE_DUCK_DB = 20 * Math.log10(REFERENCE_DUCK_GAIN);
+
+  /** speechGapSpeech, re-expressed at `hopMs` so the SAME audio is described at any hop. */
+  function speechGapSpeechAt(hopMs) {
+    const n = (ms) => Math.round(ms / hopMs);
+    return [
+      ...Array.from({ length: n(1000) }, () => 0.09),
+      ...Array.from({ length: n(2000) }, () => 0.0001),
+      ...Array.from({ length: n(1000) }, () => 0.09),
+    ];
+  }
+
+  const envelopeAt = (hopMs, { durationMs, rms = speechGapSpeechAt(hopMs) } = {}) =>
+    JSON.stringify({
+      durationMs: durationMs ?? rms.length * hopMs,
+      hopMs,
+      rms,
+      measuredFrom: { file: 'voiceover.mp3', bytes: VOICE_BYTES.length, sha256: VOICE_SHA },
+    });
+
+  /** Synthesises a 4 s bed, with `env.json` when one is given, and returns its bytes. */
+  function bed(t, envelope) {
+    const dir = makeProject(t, {
+      'voiceover.mp3': VOICE_BYTES,
+      ...(envelope === undefined ? {} : { 'env.json': envelope }),
+    });
+    const r = runScript(
+      'make-music.mjs',
+      ['--out', 'bed.wav', '--seconds', '4', '--apply', ...(envelope === undefined ? [] : ['--envelope', 'env.json'])],
+      dir,
+    );
+    assertCleanExit(r, EXIT.OK, 'the bed under measurement must have been written: ');
+    return fs.readFileSync(path.join(dir, 'bed.wav'));
+  }
+
+  // THE TEST MD3 SURVIVED. Deleting the per-sample `g *= duckGain[...]` multiply leaves
+  // this at 0.00 dB in both windows and fails on the first assertion.
+  //
+  // The windows avoid the attack and release ramps: the first phrase runs 0..1000 ms and
+  // is measured from 600 ms, the gap runs 1000..3000 ms and is measured from 2600 ms,
+  // which is 1.6 s into an 800 ms release.
+  test('makeMusic_envelopeWithAPhraseAGapAndAPhrase_attenuatesTheBedUnderSpeechAndLetsItBackUpInTheGap', (t) => {
+    const flat = bed(t, undefined);
+    const ducked = bed(t, envelopeAt(20));
+
+    const underFirstPhrase = dbBelowFlat(ducked, flat, 600, 950);
+    const inTheGap = dbBelowFlat(ducked, flat, 2600, 2950);
+    const underSecondPhrase = dbBelowFlat(ducked, flat, 3600, 3950);
+
+    assert.ok(
+      Math.abs(underFirstPhrase - REFERENCE_DUCK_DB) <= 1,
+      `the bed must sit at the reference depth under speech: ${underFirstPhrase.toFixed(2)} dB vs ${REFERENCE_DUCK_DB.toFixed(2)} dB`,
+    );
+    assert.ok(
+      Math.abs(underSecondPhrase - REFERENCE_DUCK_DB) <= 1,
+      `and under the second phrase too: ${underSecondPhrase.toFixed(2)} dB`,
+    );
+    assert.ok(
+      inTheGap > -1.5,
+      `and it must have come back up in the gap between them: ${inTheGap.toFixed(2)} dB below flat`,
+    );
+    assert.ok(
+      inTheGap - underFirstPhrase > 5,
+      `the gap must be audibly louder than the speech: ${(inTheGap - underFirstPhrase).toFixed(2)} dB apart`,
+    );
+  });
+
+  // THE POSITIVE CONTROL FOR THE MEASUREMENT. An envelope with no speech in it must leave
+  // the bed exactly where the flat control is, so a measurement that reports attenuation
+  // for everything is caught here rather than mistaken for a passing duck above.
+  test('makeMusic_envelopeWithNoSpeechInIt_leavesTheBedAtTheFlatLevel', (t) => {
+    const flat = bed(t, undefined);
+    const ducked = bed(t, envelopeAt(20, { rms: Array.from({ length: 200 }, () => 0.0001) }));
+
+    for (const [from, to] of [[600, 950], [2600, 2950], [3600, 3950]]) {
+      const delta = dbBelowFlat(ducked, flat, from, to);
+      assert.ok(Math.abs(delta) < 0.01, `${from}-${to}ms must be untouched, measured ${delta.toFixed(3)} dB`);
+    }
+  });
+
+  // D2-2 — THE ENVELOPE'S OWN HOP. make-music hard-coded 20 ms while the envelope carries
+  // its own, so the SAME narration described at a coarser hop was read as a different
+  // one: measured at hop 40 it ducked the gap by 7.23 dB and the first phrase by only
+  // 4.17 dB — it ducked the silence and let the speech through, at exit 0.
+  for (const hopMs of [10, 40]) {
+    test(`makeMusic_envelopeMeasuredAtA${hopMs}MsHop_ducksTheSameAudioAtTheSameTimesAsAt20Ms`, (t) => {
+      const flat = bed(t, undefined);
+      const ducked = bed(t, envelopeAt(hopMs));
+
+      const underFirstPhrase = dbBelowFlat(ducked, flat, 600, 950);
+      const inTheGap = dbBelowFlat(ducked, flat, 2600, 2950);
+      const underSecondPhrase = dbBelowFlat(ducked, flat, 3600, 3950);
+
+      assert.ok(
+        Math.abs(underFirstPhrase - REFERENCE_DUCK_DB) <= 1,
+        `a ${hopMs} ms hop describes the same speech: ${underFirstPhrase.toFixed(2)} dB vs ${REFERENCE_DUCK_DB.toFixed(2)} dB`,
+      );
+      assert.ok(
+        Math.abs(underSecondPhrase - REFERENCE_DUCK_DB) <= 1,
+        `and the same second phrase: ${underSecondPhrase.toFixed(2)} dB`,
+      );
+      assert.ok(inTheGap > -1.5, `and the same gap: ${inTheGap.toFixed(2)} dB below flat`);
+    });
+  }
+
+  // The hop is a number of milliseconds, in the range remux-music already enforces. An
+  // envelope that does not carry one cannot be read at all: 20 is what vo-envelope writes,
+  // not what an envelope means when it says nothing.
+  for (const [label, hopMs] of [
+    ['negative', -20],
+    ['huge', 1e9],
+    ['zero', 0],
+    ['aString', '20'],
+    ['absent', undefined],
+  ]) {
+    test(`makeMusic_envelopeHopMs_${label}_isRefusedWithoutWritingABed`, (t) => {
+      const envelope = JSON.parse(envelopeAt(20));
+      if (hopMs === undefined) delete envelope.hopMs;
+      else envelope.hopMs = hopMs;
+      const dir = makeProject(t, { 'voiceover.mp3': VOICE_BYTES, 'env.json': JSON.stringify(envelope) });
+
+      const r = runScript(
+        'make-music.mjs',
+        ['--out', 'bed.wav', '--seconds', '4', '--envelope', 'env.json', '--apply'],
+        dir,
+      );
+
+      assertCleanExit(r, EXIT.USAGE, 'an envelope with no usable hop must be refused: ');
+      assert.match(r.all, /"hopMs"/, 'the refusal must name the field');
+      assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false, 'and no bed may be written');
+    });
+  }
+
+  // D2-5 — THE TWO HALVES MUST AGREE. durationMs and rms.length x hopMs describe the same
+  // span, so when they disagree one of them is wrong and nothing here can tell which. A
+  // truncated envelope ducks the start of the narration and leaves the rest flat; a padded
+  // one holds the duck past the last word. Both used to run at exit 0.
+  for (const [label, durationMs] of [
+    ['truncated', 2000],
+    ['padded', 8000],
+  ]) {
+    test(`makeMusic_envelope${label[0].toUpperCase()}${label.slice(1)}AgainstItsOwnFrameCount_isRefusedWithoutWritingABed`, (t) => {
+      const dir = makeProject(t, {
+        'voiceover.mp3': VOICE_BYTES,
+        'env.json': envelopeAt(20, { durationMs }),
+      });
+
+      const r = runScript(
+        'make-music.mjs',
+        ['--out', 'bed.wav', '--seconds', '4', '--envelope', 'env.json', '--apply'],
+        dir,
+      );
+
+      assertCleanExit(r, EXIT.USAGE, 'an envelope that contradicts itself must be refused: ');
+      assert.match(r.all, /"durationMs"/, 'the refusal must name the field');
+      assert.match(r.all, /4000/, 'and the span its own frames describe');
+      assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false, 'and no bed may be written');
+    });
+  }
+
+  // THE POSITIVE CONTROL FOR THAT CHECK. vo-envelope measures in whole hops and rounds the
+  // duration, so the last hop is partial and the two halves differ by up to one hop. That
+  // is what the writer produces and it must keep working.
+  for (const [label, durationMs] of [
+    ['oneHopShortOfItsFrames', 3980],
+    ['aMillisecondOffFromRounding', 3999],
+  ]) {
+    test(`makeMusic_envelope${label[0].toUpperCase()}${label.slice(1)}_isAcceptedAsTheWriterProducesIt`, (t) => {
+      const dir = makeProject(t, {
+        'voiceover.mp3': VOICE_BYTES,
+        'env.json': envelopeAt(20, { durationMs }),
+      });
+
+      const r = runScript(
+        'make-music.mjs',
+        ['--out', 'bed.wav', '--seconds', '4', '--envelope', 'env.json', '--apply'],
+        dir,
+      );
+
+      assertCleanExit(r, EXIT.OK, 'a partial last hop is not a disagreement: ');
+      assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), true);
+    });
+  }
+});
+
+// --------------------------------------------------------------------------------------
+// D2-1 — the bed's DEFAULT name is engine-chosen, so a link at it is refused
+// --------------------------------------------------------------------------------------
+
+describe('the bed make-music names for itself refuses a link', () => {
+  // THE VICTIM IS INSIDE THE PROJECT. A link that leaves the root is already refused by
+  // the boundary, so an outside victim proves nothing about link policy. This one stays
+  // in-root, which the boundary deliberately permits for a path the CALLER named — and
+  // nobody named `music.wav`, make-music picked it.
+  //
+  // Measured before the fix, exactly this shape: a 23-byte in-root file was replaced with
+  // 384,044 bytes of PCM and the record landed beside the VICTIM, at `secret.txt.duck.json`.
+  test('makeMusic_defaultOutputIsALinkToAnotherInRootFile_refusesWithoutWritingThroughIt', (t) => {
+    const dir = makeProject(t, { 'notes.md': 'ORIGINAL VICTIM' });
+    if (!tryMakeFileLink(path.join(dir, 'music.wav'), path.join(dir, 'notes.md'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('make-music.mjs', ['--seconds', '2', '--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'the default bed name is engine-chosen, so a link at it is refused: ');
+    assert.match(r.all, /link/i, 'and the refusal must say why');
+    assert.equal(fs.readFileSync(path.join(dir, 'notes.md'), 'utf8'), 'ORIGINAL VICTIM');
+    assert.equal(
+      fs.existsSync(path.join(dir, 'notes.md.duck.json')),
+      false,
+      'and no record may be written beside the victim either',
+    );
+    assert.doesNotMatch(r.all, /raw peak/, 'and the refusal must come before minutes of synthesis');
+  });
+
+  // THE POSITIVE CONTROL OF THE SAME SHAPE. A path the CALLER named is theirs to redirect:
+  // an in-root link at it is followed, exactly as it is for every other user-named output.
+  // Without this, refusing every link would pass the test above and break real projects.
+  test('makeMusic_namedOutputIsAnInRootLink_followsItAsTheCallerAsked', (t) => {
+    const dir = makeProject(t, { 'beds/real.wav': '' });
+    if (!tryMakeFileLink(path.join(dir, 'bed.wav'), path.join(dir, 'beds', 'real.wav'))) {
+      return t.skip('platform refused to create a file link');
+    }
+
+    const r = runScript('make-music.mjs', ['--out', 'bed.wav', '--seconds', '2', '--apply', '--replace'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'a link the caller named is theirs to follow: ');
+    assert.ok(fs.statSync(path.join(dir, 'beds', 'real.wav')).size > 44, 'the bed must have landed at the link target');
+  });
+});
+
+// --------------------------------------------------------------------------------------
+// Round-2 review, finding 1: THE CHECK IS NOT THE WRITE
+//
+// The up-front resolve refuses a link at the engine-chosen bed name, and then synthesis
+// runs for minutes before the bytes are written. A link planted in that window was
+// followed by `writeFileSync`, which opens with 'w'. This is the same lesson the ducking
+// record already learned — "the publish is the no-clobber guard, not the up-front check"
+// — applied to the bed itself.
+// --------------------------------------------------------------------------------------
+
+describe('the bed make-music names for itself is published, not written through', () => {
+  const VICTIM = 'notes.md';
+  const PLANTED = 'ORIGINAL VICTIM';
+
+  /** The --import URL that plants a link at `music.wav` inside make-music's own log call. */
+  const plantingALinkAtTheBed = (dir) => {
+    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'plant-link-on-marker.mjs'));
+    url.search = new URLSearchParams({
+      marker: 'raw peak',
+      target: path.join(dir, 'music.wav'),
+      victim: path.join(dir, VICTIM),
+    }).toString();
+    return url.href;
+  };
+
+  const makeMusicPlantingALink = (dir, extra = []) =>
+    runScript('make-music.mjs', ['--seconds', '2', '--apply', ...extra], dir, {
+      nodeArgs: ['--import', plantingALinkAtTheBed(dir)],
+    });
+
+  // The plant lands after the up-front resolve found the name free and before the bytes
+  // are written. Without --replace nothing may be created through it, and the entry that
+  // took the name is left exactly as it is.
+  test('makeMusic_aLinkAppearsAtTheDefaultBedNameAfterTheUpFrontCheck_refusesAndLeavesTheVictimIntact', (t) => {
+    const dir = makeProject(t, { [VICTIM]: PLANTED });
+
+    const r = makeMusicPlantingALink(dir);
+
+    assert.match(r.all, /plant-link-on-marker: planted/, 'the link must have appeared mid-run, or this tests nothing');
+    assertCleanExit(r, EXIT.USAGE, 'an entry that took the bed\'s name is not written through: ');
+    assert.match(r.all, /appeared after/, 'and the refusal must say it was not there when the run was checked');
+    assert.equal(fs.readFileSync(path.join(dir, VICTIM), 'utf8'), PLANTED, 'the victim must keep its bytes');
+    assert.equal(fs.lstatSync(path.join(dir, 'music.wav')).isSymbolicLink(), true, 'and the link must be left as it is');
+  });
+
+  // --replace covers the bed's own name. It does NOT turn a link into permission to write
+  // to whatever it points at: the name is replaced, the link's target is not touched.
+  test('makeMusic_aLinkAppearsAtTheDefaultBedNameWithReplace_replacesTheNameNotTheLinksTarget', (t) => {
+    const dir = makeProject(t, { [VICTIM]: PLANTED });
+
+    const r = makeMusicPlantingALink(dir, ['--replace']);
+
+    assert.match(r.all, /plant-link-on-marker: planted/, 'the link must have appeared mid-run, or this tests nothing');
+    assertCleanExit(r, EXIT.OK, '--replace covers the bed\'s own name: ');
+    assert.equal(fs.readFileSync(path.join(dir, VICTIM), 'utf8'), PLANTED, 'the victim must keep its bytes');
+    const bed = path.join(dir, 'music.wav');
+    assert.equal(
+      fs.lstatSync(bed).isSymbolicLink(),
+      false,
+      'the bed must have replaced the link, not been written through it',
+    );
+    assert.ok(fs.statSync(bed).size > 44, 'and it must hold a bed');
+    assert.deepEqual(
+      fs.readdirSync(dir).sort(),
+      [VICTIM, 'music.wav', 'music.wav.duck.json'].sort(),
+      'and no temp file may be left behind',
+    );
+  });
+
+  // THE POSITIVE CONTROL OF THE SAME SHAPE. With nothing planted, the ordinary run must
+  // still write the bed and its record — so the guard above cannot pass by refusing
+  // everything.
+  test('makeMusic_nothingPlantedAtTheDefaultBedName_writesTheBedAndItsRecord', (t) => {
+    const dir = makeProject(t);
+
+    const r = runScript('make-music.mjs', ['--seconds', '2', '--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'an unobstructed run must still write: ');
+    assert.ok(fs.statSync(path.join(dir, 'music.wav')).size > 44);
+    assert.deepEqual(
+      fs.readdirSync(dir).sort(),
+      ['music.wav', 'music.wav.duck.json'],
+      'and no temp file may be left behind',
+    );
+  });
+});
+
+// --------------------------------------------------------------------------------------
+// Round-2 review, finding 2: an ABSENT durationMs is not a licence to skip the span check
+//
+// vo-envelope always writes durationMs (vo-envelope.mjs, the only writer). An envelope
+// without one did not come from it, and skipping the check for exactly those envelopes
+// let a truncated rms array through — the case the check exists for.
+// --------------------------------------------------------------------------------------
+
+describe('an envelope must say what span it describes', () => {
+  const DUCK_ARGS = ['--duck-db', '11', '--duck-envelope', 'vo-envelope.json'];
+  const envelopeWithout = (field) => {
+    const envelope = {
+      durationMs: 4000,
+      hopMs: 20,
+      rms: Array.from({ length: 200 }, () => 0.0001),
+      measuredFrom: { file: 'voiceover.mp3', bytes: VOICE_BYTES.length, sha256: VOICE_SHA },
+    };
+    delete envelope[field];
+    return JSON.stringify(envelope);
+  };
+
+  test('makeMusic_envelopeWithNoDurationMs_isRefusedRatherThanSkippingTheSpanCheck', (t) => {
+    const dir = makeProject(t, { 'voiceover.mp3': VOICE_BYTES, 'env.json': envelopeWithout('durationMs') });
+
+    const r = runScript(
+      'make-music.mjs',
+      ['--out', 'bed.wav', '--seconds', '4', '--envelope', 'env.json', '--apply'],
+      dir,
+    );
+
+    assertCleanExit(r, EXIT.USAGE, 'an envelope that says nothing about its span must be refused: ');
+    assert.match(r.all, /"durationMs"/, 'the refusal must name the field');
+    assert.equal(fs.existsSync(path.join(dir, 'bed.wav')), false, 'and no bed may be written');
+  });
+
+  test('remuxMusic_envelopeWithNoDurationMs_isRefusedAsAMalformedEnvelope', (t) => {
+    const dir = remuxProject(t, { 'vo-envelope.json': envelopeWithout('durationMs') });
+
+    const r = runScript('remux-music.mjs', [...PLAN_ARGS, ...DUCK_ARGS], dir);
+
+    assertCleanExit(r, EXIT.FAILED, 'a malformed envelope is a failed input, not a usage error: ');
+    assert.match(r.all, /"durationMs"/, 'the refusal must name the field');
+  });
+
+  // THE POSITIVE CONTROL. The envelope vo-envelope actually writes carries both halves and
+  // must keep working, or this check has simply banned the format.
+  test('makeMusic_envelopeCarryingBothHalves_isAccepted', (t) => {
+    const dir = makeProject(t, { 'voiceover.mp3': VOICE_BYTES, 'env.json': envelopeWithout('nothing') });
+
+    const r = runScript(
+      'make-music.mjs',
+      ['--out', 'bed.wav', '--seconds', '4', '--envelope', 'env.json', '--apply'],
+      dir,
+    );
+
+    assertCleanExit(r, EXIT.OK, 'a complete envelope must still be accepted: ');
+    assert.ok(fs.statSync(path.join(dir, 'bed.wav')).size > 44);
+  });
+});
+// --------------------------------------------------------------------------------------
+// Round-2 review (second pass): what a FAILED bed publish removes, and what it claims
+//
+// Cleanup that deletes by NAME deletes whatever is at the name. A temp name that no longer
+// identifies this run's file belongs to someone else, and removing it would make the guard
+// perform the destruction it exists to prevent. The ducking record's publish already works
+// this way (retireTemp); the bed's now does too.
+// --------------------------------------------------------------------------------------
+
+describe('a failed bed publish removes only its own temp, and says what it left', () => {
+  const RECORD = 'music.wav.duck.json';
+  const BED_TEMP_FRAGMENT = 'music.wav.part-';
+
+  const fixtureUrl = (name, params) => {
+    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', name));
+    url.search = new URLSearchParams(params).toString();
+    return url.href;
+  };
+
+  test('makeMusic_bedTempNameNoLongerHoldsThisRunsFileWhenTheRenameFails_leavesItAndSaysSo', (t) => {
+    const dir = makeProject(t);
+
+    const r = runScript('make-music.mjs', ['--seconds', '2', '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', fixtureUrl('substitute-on-rename.mjs', { dir, fragment: BED_TEMP_FRAGMENT })],
+    });
+
+    assert.match(
+      r.all,
+      /substitute-on-rename: failed the rename/,
+      'the rename must actually have failed and the name been substituted, or this tests nothing',
+    );
+    assertCleanExit(r, EXIT.FAILED, 'a bed that could not be published is a failed run: ');
+    const leftover = fs.readdirSync(dir).filter((name) => name.startsWith(BED_TEMP_FRAGMENT));
+    assert.equal(leftover.length, 1, `the temp must have been LEFT, not deleted: ${fs.readdirSync(dir).join(', ')}`);
+    assert.match(r.all, /no longer holds the file this run wrote/, 'and the run must say why it left it');
+    assert.ok(r.all.includes(leftover[0]), `and name it\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'music.wav')), false, 'and no bed may be at the name');
+  });
+
+  // THE POSITIVE CONTROL OF THE SAME SHAPE. When the temp name DOES still hold this run's
+  // file, a failed publish must clean up after itself — or "leave it" would just be a
+  // licence to strand temp files on every failure.
+  test('makeMusic_bedTempStillHoldsThisRunsFileWhenTheRenameFails_removesItLeavingNothingBehind', (t) => {
+    const dir = makeProject(t);
+
+    const r = runScript('make-music.mjs', ['--seconds', '2', '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', fixtureUrl('fail-rename.mjs', { dir, fragment: BED_TEMP_FRAGMENT })],
+    });
+
+    assert.match(r.all, /fail-rename: failed the rename/, 'the rename must actually have failed, or this tests nothing');
+    assertCleanExit(r, EXIT.FAILED, 'a bed that could not be published is a failed run: ');
+    assert.deepEqual(fs.readdirSync(dir), [RECORD], 'only the record may be left — no temp, no bed');
+  });
+
+  // A CLOSE THAT FAILS AFTER THE RENAME IS NOT A FAILED PUBLISH. The bed IS at its name;
+  // what cannot be confirmed is what was written to it. Reporting that as "the bed was not
+  // written" sends someone looking for a file that is sitting right there.
+  test('makeMusic_bedPublishedButItsDescriptorCannotBeClosed_saysItIsAtItsNameRatherThanUnwritten', (t) => {
+    const dir = makeProject(t);
+
+    const r = runScript('make-music.mjs', ['--seconds', '2', '--apply', '--replace'], dir, {
+      nodeArgs: ['--import', failClose({ dir, fragment: BED_TEMP_FRAGMENT })],
+    });
+
+    assert.match(r.all, /fail-close: failed/, 'the close must actually have failed, or this tests nothing');
+    assertCleanExit(r, EXIT.FAILED, 'bytes that cannot be confirmed fail the run: ');
+    assert.match(r.all, /cannot be confirmed/, 'and the run must say what it could not confirm');
+    assert.doesNotMatch(
+      r.all,
+      /describes a bed that was not written/,
+      'and it must not claim the bed is missing when it is at its name',
+    );
+    assert.ok(fs.statSync(path.join(dir, 'music.wav')).size > 44, 'the bed must be at its name');
+  });
+});
+// --------------------------------------------------------------------------------------
+// Round-2 review (third pass): the identity check's verdicts are DISTINCT
+//
+// `isOpenedAt` collapses four different findings into false, and a message that names one
+// of them states a cause that was never established: "another entry took its place" and
+// "this volume gives no file identity" are not the same fact. make-music's bed publish
+// reports the verdict it got, so the states have to survive the call.
+// --------------------------------------------------------------------------------------
+
+describe('the identity check keeps its verdicts apart', () => {
+  test('openedAtState_eachCondition_isReportedAsItsOwnVerdictRatherThanOneFalse', (t) => {
+    const dir = makeProject(t, { 'someone-else.json': 'SOMEONE ELSE' });
+    const fd = fs.openSync(path.join(dir, 'ours.json'), 'wx+');
+    try {
+      assert.equal(openedAtState(fd, path.join(dir, 'ours.json')), 'same');
+      assert.equal(openedAtState(fd, path.join(dir, 'someone-else.json')), 'different');
+      assert.equal(openedAtState(fd, path.join(dir, 'nothing-here.json')), 'absent');
+      assert.equal(openedAtState(-1, path.join(dir, 'ours.json')), 'unchecked', 'a stat that throws is not a mismatch');
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // The boolean must still agree with the verdict, or the two would be separate rules.
+  // Every state it can return, including the two that are not about a different file.
+  test('isOpenedAt_everyVerdict_isTrueOnlyForSame', (t) => {
+    const dir = makeProject(t, { 'someone-else.json': 'SOMEONE ELSE' });
+    const fd = fs.openSync(path.join(dir, 'ours.json'), 'wx+');
+    const realLstat = fs.lstatSync;
+    try {
+      for (const name of ['ours.json', 'someone-else.json', 'nothing-here.json']) {
+        const target = path.join(dir, name);
+        assert.equal(isOpenedAt(fd, target), openedAtState(fd, target) === 'same', name);
+      }
+      // 'unchecked': the stat itself fails.
+      const missingFd = -1;
+      assert.equal(openedAtState(missingFd, path.join(dir, 'ours.json')), 'unchecked');
+      assert.equal(isOpenedAt(missingFd, path.join(dir, 'ours.json')), false, 'unchecked is not a match');
+
+      // 'unavailable': a volume that gives no file ID reports inode 0 on both sides, and
+      // two files that both report none must not pass as one.
+      fs.lstatSync = (candidate, ...rest) => {
+        const st = realLstat(candidate, ...rest);
+        if (st !== null && typeof st === 'object' && 'ino' in st) st.ino = typeof st.ino === 'bigint' ? 0n : 0;
+        return st;
+      };
+      const ours = path.join(dir, 'ours.json');
+      assert.equal(openedAtState(fd, ours), 'unavailable');
+      assert.equal(isOpenedAt(fd, ours), false, 'an identity that cannot be asked is not a match');
+    } finally {
+      fs.lstatSync = realLstat;
+      fs.closeSync(fd);
+    }
+  });
+});
+// --------------------------------------------------------------------------------------
+// Round-2 review (fourth pass): the bed publish REPORTS the verdict it got
+//
+// The rename lands, and then the name cannot be shown to hold what was published there.
+// Four different findings produce that, and naming one of them for all four states a cause
+// that was never established. Each is driven through make-music here, not just through the
+// identity check, because the message and the exit code are the contract a caller sees.
+// --------------------------------------------------------------------------------------
+
+describe('a bed whose name cannot be confirmed says which thing it found', () => {
+  const confusingTheBed = (dir, verdict) => {
+    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'confuse-after-rename.mjs'));
+    url.search = new URLSearchParams({ dir, name: 'music.wav', verdict }).toString();
+    return url.href;
+  };
+
+  for (const [verdict, why] of [
+    ['different', /another entry took its place as it was renamed/],
+    ['absent', /nothing is at that name any more/],
+    ['unavailable', /this filesystem gives no file identity to check/],
+    ['unchecked', /it could not be examined/],
+  ]) {
+    test(`makeMusic_bedNameReports${verdict[0].toUpperCase()}${verdict.slice(1)}AfterTheRename_refusesSayingThatAndNotSomethingElse`, (t) => {
+      const dir = makeProject(t);
+
+      const r = runScript('make-music.mjs', ['--seconds', '2', '--apply', '--replace'], dir, {
+        nodeArgs: ['--import', confusingTheBed(dir, verdict)],
+      });
+
+      assert.match(
+        r.all,
+        /confuse-after-rename: renamed onto/,
+        'the rename must have landed and the name been confused, or this tests nothing',
+      );
+      assertCleanExit(r, EXIT.FAILED, 'a bed that cannot be confirmed fails the run: ');
+      assert.match(r.all, /cannot be confirmed as the bed this run just published there/);
+      assert.match(r.all, why, `the refusal must report ${verdict}\n${r.all}`);
+      for (const [other, otherWhy] of [
+        ['different', /another entry took its place/],
+        ['absent', /nothing is at that name any more/],
+        ['unavailable', /gives no file identity/],
+        ['unchecked', /it could not be examined/],
+      ]) {
+        if (other !== verdict) assert.doesNotMatch(r.all, otherWhy, `and must not also claim ${other}`);
+      }
+    });
+  }
 });
