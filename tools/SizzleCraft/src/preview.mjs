@@ -1,6 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveOutput, assertDistinctDestinations, pathExists, planFooter } from './cli-support.mjs';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveOutput, resolveEngineOutput, assertDistinctDestinations, pathExists, planFooter } from './cli-support.mjs';
+// ONE STATEMENT OF WHAT A FINGERPRINT IS. Its doc says "audio" and it lives in an audio
+// module, but its body is domain-neutral and this is the engine's existing answer; a
+// private copy here would be the sixth. Its documented hazard — hashing one read while
+// measuring a second — cannot arise here: the browser wrote these bytes, and this is the
+// only read of them.
+//
+// DEBT: it belongs in cli-support.mjs beside describeJsonValue, with a CONSUMERS line so
+// the enumeration stays audited. That is a cross-file move and envelope-ducking.mjs is
+// not in this task's scope; it goes when one owner holds both.
+import { fingerprintBuffer } from './envelope-ducking.mjs';
+
+// The coach pack reads this by name, so it is part of the contract, not a detail.
+const RECORD_NAME = 'preview-record.json';
 
 const USAGE = `
 preview — screenshot each segment late in its window, and audit the layout.
@@ -84,6 +97,16 @@ await runCli(async () => {
   assertDistinctDestinations(destinations, 'screenshot');
   const shotFor = new Map(destinations.map((d) => [d.key, d.path]));
 
+  // Nobody names the record, so a link planted at it is REFUSED rather than followed —
+  // the same rule every engine-chosen output in this codebase follows. Resolved HERE,
+  // before a single shot is taken: a guard that fires after partial output has landed
+  // leaves the retry blocked by the failed run's own files.
+  const recordPath = resolveEngineOutput(projectDir, path.join(outDir, RECORD_NAME), {
+    apply,
+    replace,
+    label: 'preview record',
+  });
+
   if (!apply) {
     console.log(`plan: preview ${picks.length} segment(s) plus the end card`);
     console.log(`  output ${outDir}`);
@@ -115,6 +138,7 @@ await runCli(async () => {
   slideOwner.set(`seg-${t.segments.length}`, 'endcard');
   const ownerOf = (issue) => slideOwner.get(issue.id) ?? issue.id;
   let documentIssues = [];
+  const seekFor = new Map();
   try {
     const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await p.goto(new URL(`file:///${path.join(projectDir, 'video-auto.html').replace(/\\/g, '/')}`).toString(), { waitUntil: 'load' });
@@ -130,6 +154,7 @@ await runCli(async () => {
       }, time);
       await p.waitForTimeout(180);
       await p.screenshot({ path: shotFor.get(id) });
+      seekFor.set(id, Number(time.toFixed(3)));
       console.log(`${id.padEnd(10)} t=${time.toFixed(1)}s`);
     }
 
@@ -148,10 +173,49 @@ await runCli(async () => {
     }, ec);
     await p.waitForTimeout(180);
     await p.screenshot({ path: shotFor.get('endcard') });
+    seekFor.set('endcard', Number(ec.toFixed(3)));
     console.log(`endcard    t=${ec.toFixed(1)}s`);
   } finally {
     await b.close();
   }
+
+  // ------------------------------------------------------------------------------------
+  // THE BINDING RECORD, PUBLISHED LAST — and the reason is NOT make-music's.
+  //
+  // make-music publishes its ducking record FIRST, deliberately and with its reasons
+  // written down ("THE RECORD FIRST, THEN THE BED"). That is correct THERE because it
+  // fingerprints an IN-MEMORY buffer: the bytes exist before the write, so the record can
+  // precede it, and a failed write leaves a record describing bytes that are not on disk —
+  // which remux-music refuses as another bed.
+  //
+  // Here the stills are PNG bytes the BROWSER writes to disk. They cannot be hashed until
+  // they exist, so the record CANNOT precede them. Same engine, opposite order, and the
+  // distinguishing condition — whether the bytes exist before the write — is stated in
+  // neither file. Cited without it, that precedent transfers a conclusion without the
+  // reason that bounds it.
+  //
+  // IT DESCRIBES WHAT EACH STILL IS, NEVER WHAT IT SHOWS. The shot is taken at 86% of the
+  // segment's window and can miss a late reveal, so a record claiming the still shows
+  // "everything" would assert coverage it cannot deliver.
+  //
+  // It is published even when the audit FAILS: the transcript is most worth binding
+  // exactly when it carries findings.
+  const record = {
+    timing: fingerprintBuffer(fs.readFileSync(path.join(projectDir, 'timing.json')), 'timing.json'),
+    scene: fingerprintBuffer(fs.readFileSync(path.join(projectDir, 'video-auto.html')), 'video-auto.html'),
+    stills: destinations.map(({ key, path: p }) => ({
+      ...fingerprintBuffer(fs.readFileSync(p), path.basename(p)),
+      // What the still IS: whose window it was taken in, and when.
+      segment: key,
+      seekSeconds: seekFor.get(key),
+    })),
+    // An empty transcript is a FINDING — "audited, nothing found" — not an absence. Omitting
+    // it would let "not audited" read as "nothing wrong", which is the distinction the whole
+    // pack exists to preserve.
+    audit: { issues: documentIssues.map((issue) => ({ ...issue, owner: ownerOf(issue) })) },
+  };
+  fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+  console.log(`record     ${recordPath}`);
 
   // frame-capture refuses to render a scene whose layout audit fails. Printing the same
   // finding here and exiting 0 meant the cheap check passed while the expensive one would

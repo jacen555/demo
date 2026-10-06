@@ -1,0 +1,15 @@
+# The generated coach pack is a build artifact. The rubric beside it, coach/rubric.md, is
+# a REVIEWED artifact and is committed.
+#
+# ANCHORED WITH A LEADING SLASH ON PURPOSE. A bare `coach/` rule would match a folder of
+# that name at ANY depth, and — worse — ignoring the whole folder would silently drop every
+# future file added beside the rubric out of `git status` and `git add -A`. That failure is
+# invisible at the moment it happens: the work is simply never committed, and it surfaces
+# much later as missing. The rule names the generated subfolder only, so anything else that
+# lands in coach/ stays visible.
+/coach/pack/
+
+# Isolated copies of the tool that boundary tests spawn, so they can plant directory links
+# without touching the real coach/ folder. Created and removed per test; ignored so a
+# crashed run cannot leave one in `git status`.
+/.tool-fixture-*/
