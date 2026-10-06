@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 import { EXIT } from '../src/cli-support.mjs';
@@ -657,10 +658,53 @@ describe('coach-rulings refuses rather than letting a finding fall out of every 
 // that reproduces the symptom is not a fixture that represents the system.
 // --------------------------------------------------------------------------------------
 describe('coach-rulings reads the manifest from the coach pack folder', () => {
+  // AN ISOLATED COPY OF THE TOOL, so this file never depends on the real `coach/pack`.
+  //
+  // The original version called `mkdtempSync` INSIDE the real `coach/pack`, which requires
+  // that parent to exist — and nothing in this file creates it. It only ever existed as a
+  // side effect of `coach-pack.test.mjs` running first, so with the folder deleted (which
+  // is also the state of a fresh clone, since it is git-ignored) this test failed every
+  // time, and in a parallel full-suite run it failed or passed on inter-file ordering.
+  // That is the "flake": not a race over contents, a dependency on someone else's leftovers.
+  //
+  // `coach-rulings.mjs` resolves its coach folder from its own file location, so a copied
+  // `src/` gets a copied `coach/` — the real resolution logic, none of the shared state.
+  // The copy lives inside the package so `node_modules` still resolves, and
+  // `/.tool-fixture-*/` is already git-ignored.
+  function toolFixture(t) {
+    const root = fs.mkdtempSync(path.join(SRC_DIR, '..', '.tool-fixture-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.cpSync(SRC_DIR, path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'coach', 'pack'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'coach', 'rubric.md'), '# stub rubric\n');
+    return root;
+  }
+
+  const runFixtureStage = (root, cwd, args = []) => {
+    const r = spawnSync(process.execPath, [path.join(root, 'src', 'coach-rulings.mjs'), '--report', 'coach-report.md', ...args], {
+      cwd,
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    return { code: r.status, all: (r.stdout ?? '') + (r.stderr ?? '') };
+  };
+
+  // Proves the isolated copy is a working engine before the real assertion leans on it.
+  // Without this, a fixture that simply could not run would make a refusal look like a pass.
+  test('coachRulingsFixture_isAWorkingCopyOfTheStage', (t) => {
+    const dir = projectWithReport(t);
+    const root = toolFixture(t);
+
+    const r = runFixtureStage(root, dir);
+
+    assert.equal(r.code, EXIT.OK, `the isolated copy must behave like the real stage\n${r.all}`);
+    assert.equal(countIn(r.all, 'NEW'), 1, r.all);
+  });
+
   test('coachRulings_manifestPublishedInThePackFolder_isFoundAndMatched', (t) => {
     const dir = makeProject(t, { 'script.md': SCRIPT });
-    const packDir = fs.mkdtempSync(path.join(SRC_DIR, '..', 'coach', 'pack', 'ruling-test-'));
-    t.after(() => fs.rmSync(packDir, { recursive: true, force: true }));
+    const root = toolFixture(t);
+    const packDir = fs.mkdtempSync(path.join(root, 'coach', 'pack', 'ruling-test-'));
     const manifestPath = path.join(packDir, 'manifest.json');
     fs.writeFileSync(
       manifestPath,
@@ -677,11 +721,24 @@ describe('coach-rulings reads the manifest from the coach pack folder', () => {
     // Cited the way a dispatcher would: the path coach-pack printed, not a project-local one.
     fs.writeFileSync(path.join(dir, 'coach-report.md'), report({ manifest: manifestPath.replace(/\\/g, '/') }));
 
-    const r = run(dir);
+    const r = runFixtureStage(root, dir);
 
     assert.equal(r.code, EXIT.OK, `the stage must read its own upstream stage's manifest\n${r.all}`);
     assert.equal(countIn(r.all, 'NEW'), 1, r.all);
     assert.equal(keysIn(r.all).length, 1, 'and key the finding');
+  });
+
+  // THE REGRESSION THIS CYCLE EXISTS FOR, pinned as a property rather than a comment: no
+  // test in this file may require the shared pack folder to already exist.
+  test('coachRulingsTests_doNotDependOnTheSharedPackFolderExisting', () => {
+    const source = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const sharedPack = /mkdtempSync\(\s*path\.join\(\s*SRC_DIR,\s*'\.\.',\s*'coach'/;
+
+    assert.doesNotMatch(
+      source,
+      sharedPack,
+      'a temp dir created inside the real coach/pack needs a parent this file never creates — use toolFixture instead',
+    );
   });
 });
 // Round-2 holes: a malformed bullet AFTER a good finding was absorbed as its body, and a

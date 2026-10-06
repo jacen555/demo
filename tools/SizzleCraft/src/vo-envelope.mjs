@@ -1,8 +1,7 @@
 import fs from 'node:fs';
-import { EXIT, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
+import { EXIT, runCli, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, fingerprintBuffer } from './cli-support.mjs';
 import {
   fingerprintVoice,
-  fingerprintBuffer,
   envelopeBindingRecord,
   classifyEnvelopeLineage,
   describeEnvelopeState,
