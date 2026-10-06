@@ -294,6 +294,47 @@ flagged, with the prior ruling ORPHANED** ("either it was fixed, or the text it 
 changed"). The rules the rubric marks unable to fire appeared in NOT EVALUATED as
 "covered by: nobody" — the honest marking from G1 doing its job in a live report.
 
+### A test that could never have passed on a fresh clone — 2026-10-06
+
+I observed one test failure after deleting a gitignored folder, could not reproduce it in
+three further runs, and **logged it rather than closing it on repetition.** That instinct was
+right, and the reason is sharper than the instinct: **the three green runs were green because
+the first failing run had created the directory.** Repetition could only ever confirm the
+bug's own side effect.
+
+The cause was not a race and not intermittent. `coach-rulings.test.mjs` called `mkdtempSync`
+*inside* the real `coach/pack`, and `mkdtemp` requires its parent to exist. Nothing in that
+file created it — the directory existed **only as a side effect of `coach-pack.test.mjs`
+running `--apply`**. From cold, the file failed every time with `ENOENT`.
+
+**And `coach/pack` is gitignored, so a fresh clone is exactly that cold state.** This test
+could never have passed on a clean checkout. It passed on our machines solely because a
+previous run had left the directory behind.
+
+**The verification that distinguishes a fix from a disguise:** from cold the file is 49/49
+**and the folder is still absent afterwards.** A fix that merely `mkdirSync`'d first would
+have satisfied "it passes from cold" while leaving the shared tree — independent, versus
+merely self-creating.
+
+**Rules earned:**
+- **Green runs after an observed failure are evidence of nothing if the failure could have
+  repaired the state it depended on.** Ask what the first run changed.
+- **A gitignored directory is not a precondition.** Any test that needs one must create it in
+  isolation, because CI and a fresh clone both start without it.
+
+### An audit that was an explicit list, not a discovery — the same week
+
+I briefed that adding a `CONSUMERS(fingerprintBuffer):` line would be enforced automatically,
+because the audit "now covers `cli-support.mjs`". **It does not discover anything** — it is an
+explicit list of `[owner, symbol]` pairs. The line alone would have been **decorative: a
+comment claiming to be audited by a test that never reads it**, which is the exact artefact
+the convention exists to prevent, reproduced inside the convention.
+
+The builder also caught itself **listing a module as a consumer before checking whether it
+imports the symbol** — it does not. Worth recording, because a `CONSUMERS` line is precisely
+the artefact that rots when someone writes down what they assume rather than what they
+measured.
+
 ## Mutate the inputs, not just the implementation — 2026-10-06
 
 The strongest methodological finding of the graduation, and it is about the technique this
