@@ -74,9 +74,27 @@ const timing = guard(() => {
 // on purpose, and an absent or empty list is still tolerated: segmentEntryBlocker returns
 // null for a non-array and has no opinion about ids.
 guard(() => {
+  // THE LIST ITSELF, FIRST. `(timing.segments || [])` below guards ABSENCE and not TYPE —
+  // a non-empty string is truthy, so `segments: "two of them"` sailed past every `||` and
+  // threw `.map is not a function` with a stack. Absent and null keep meaning "no segments"
+  // because that is what `|| []` already made them mean; a list that is PRESENT and is not
+  // a list is refused, because nothing here can read it.
+  if (timing.segments !== undefined && timing.segments !== null && !Array.isArray(timing.segments)) {
+    throw new CliError(
+      `timing.segments is not a list of segments — it is ${describeShape(timing.segments)}. ` +
+        'Every stage reads it as a list; one that is not a list cannot be read at all.',
+    );
+  }
   const bad = segmentEntryBlocker(timing.segments);
   if (bad) throw new CliError(bad.fact);
 });
+
+/** What a malformed value IS, for a refusal that tells an author where to look. */
+function describeShape(value) {
+  if (Array.isArray(value)) return 'an array';
+  if (value === null) return 'null';
+  return `a ${typeof value}`;
+}
 
 // Capture parameters are validated up front, before anything is deleted. An unvalidated
 // fps is not a cosmetic bug: `Number('thirty')` is NaN and a negative fps is accepted by
