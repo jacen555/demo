@@ -41,6 +41,26 @@ await runCli(async () => {
   }
   const picks = values.id.length ? values.id : t.segments.map((s) => s.id);
 
+  // CHECKED HERE, BEFORE ANY SHOT IS TAKEN. `contentMs` decides where the end card sits;
+  // absent or non-numeric it seeked to NaN and screenshotted whatever was on screen, at
+  // exit 0. Validating it after the segment shots left partial output behind, and the
+  // retry was then blocked by the files the failed run had just written — the refusal
+  // making itself harder to act on. make-music resolves its record path up front for the
+  // same reason: a refusal should cost nothing.
+  //
+  // NOT `Number(t.contentMs)`. `Number(null)` and `Number('')` are both ZERO, so a guard
+  // built on it accepts them and seeks to 1.2s — the opening frame, labelled as the end
+  // card. A numeric string is refused as `hopMs` refuses "20": the type is part of the
+  // contract, and coercion is how a wrong value becomes a plausible one.
+  const { contentMs } = t;
+  if (typeof contentMs !== 'number' || !Number.isFinite(contentMs) || contentMs < 0) {
+    throw new CliError(
+      `timing.contentMs is ${contentMs === undefined ? 'absent' : JSON.stringify(contentMs)} — it must be a ` +
+        'non-negative number of milliseconds. The end card sits 1.2s after the content ends, so without one ' +
+        'there is no time to seek to and the shot would show whatever was last on screen.',
+    );
+  }
+
   // A segment id comes from timing.json and is interpolated into an output filename.
   // timing.json is authored input, not trusted input — validate before it becomes a path.
   for (const id of picks) requireSafeFilename(id, 'segment id');
@@ -83,7 +103,18 @@ await runCli(async () => {
 
   const { chromium } = await import('playwright');
   const b = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage', '--force-color-profile=srgb'] });
-  const allIssues = [];
+  // THE AUDIT IS OF THE DOCUMENT, NOT OF THE SLIDE ON SCREEN. `auditLayout` walks every
+  // `.sl` in the page (write-build-html.mjs), so calling it per segment and filing the
+  // result under that segment reported one slide's overflow under EVERY segment previewed
+  // — "2 segment(s): ok, big" when only `big` overflowed. It is asked ONCE, and each issue
+  // is attributed to the slide that owns it.
+  //
+  // SLIDES ARE `seg-<index>`, NOT SEGMENT IDS. Matching an issue's id against a segment id
+  // matches nothing against a real build; the index is the join.
+  const slideOwner = new Map(t.segments.map((s, i) => [`seg-${i}`, s.id]));
+  slideOwner.set(`seg-${t.segments.length}`, 'endcard');
+  const ownerOf = (issue) => slideOwner.get(issue.id) ?? issue.id;
+  let documentIssues = [];
   try {
     const p = await b.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
     await p.goto(new URL(`file:///${path.join(projectDir, 'video-auto.html').replace(/\\/g, '/')}`).toString(), { waitUntil: 'load' });
@@ -98,13 +129,19 @@ await runCli(async () => {
         if (window.fireTriggersUpTo) window.fireTriggersUpTo(tm);
       }, time);
       await p.waitForTimeout(180);
-      const issues = await p.evaluate(() => (window.auditLayout ? window.auditLayout() : []));
       await p.screenshot({ path: shotFor.get(id) });
-      if (issues.length) allIssues.push({ id, issues });
-      console.log(`${id.padEnd(10)} t=${time.toFixed(1)}s  layout issues: ${issues.length ? JSON.stringify(issues) : 'none'}`);
+      console.log(`${id.padEnd(10)} t=${time.toFixed(1)}s`);
     }
 
-    const ec = (t.contentMs + 1200) / 1000;
+    // Asked once, after every seek, so it sees the document in its final state — the same
+    // state frame-capture would render.
+    documentIssues = await p.evaluate(() => (window.auditLayout ? window.auditLayout() : []));
+    for (const issue of documentIssues) {
+      console.log(`${String(ownerOf(issue)).padEnd(10)} layout issue: ${JSON.stringify(issue)}`);
+    }
+
+    // Validated up front, before any shot was taken.
+    const ec = (contentMs + 1200) / 1000;
     await p.evaluate((tm) => {
       if (window.masterTimeline) { window.masterTimeline.seek(tm); window.masterTimeline.pause(); }
       if (window.fireTriggersUpTo) window.fireTriggersUpTo(tm);
@@ -119,8 +156,9 @@ await runCli(async () => {
   // frame-capture refuses to render a scene whose layout audit fails. Printing the same
   // finding here and exiting 0 meant the cheap check passed while the expensive one would
   // not — two stages disagreeing about whether the same condition is a failure.
-  if (allIssues.length) {
-    console.error(`\nFAILED: layout issues in ${allIssues.length} segment(s): ${allIssues.map((a) => a.id).join(', ')}`);
+  if (documentIssues.length) {
+    const owners = [...new Set(documentIssues.map(ownerOf))];
+    console.error(`\nFAILED: layout issues in ${owners.length} segment(s): ${owners.join(', ')}`);
     return EXIT.FAILED;
   }
   return EXIT.OK;
