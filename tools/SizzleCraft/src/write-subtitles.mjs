@@ -599,7 +599,12 @@ function wordProblems(seg, where, gates) {
       `${where} has no audio.words — ${voice === null ? 'run voice.mjs (S3) first'
         : gatedRemedy(voice, { stem: 'voice.mjs (S3) measures them' }, { factOnly: true })}. ` +
         'Subtitles are generated from measured word boundaries, not from the script. ' +
-        `(If this segment is meant to be silent, ${declareSilentRemedy(seg)} instead.)`,
+        // No trailing "instead": when the voice gate returns a malformed-declaration blocker,
+        // gatedRemedy's fact already ends "...is reported here instead: ...", and the two
+        // composed into one line saying it twice. Each half was correct alone, which is why
+        // neither author would have caught it — it is only visible in the rendered line.
+        // "rather than narrating it" carries the same contrast without the collision.
+        `(If this segment is meant to be silent, ${declareSilentRemedy(seg)} rather than narrating it.)`,
     ];
   }
   const problems = [];
