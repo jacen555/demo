@@ -259,7 +259,7 @@ a measurement, not a reflex: count the currently-passing tests that change verdi
 
 ## How a green suite lies — the 2026-10-05 measurement rules
 
-Five rules, each earned by a defect that survived a green test today. They belong together
+Eight rules, each earned by a defect that survived a green test. They belong together
 because they are all the same failure: **evidence graded in a context it did not come from.**
 
 1. **A zero from ABSENT COVERAGE is not a zero from PRESERVED BEHAVIOUR.** Two streams hit
@@ -285,6 +285,36 @@ because they are all the same failure: **evidence graded in a context it did not
    not asserted: a stream removed its own `discardFrom(mark)` to check its new test
    discriminated, and the test **still passed** because an outer handler masks it. It
    documented the necessity as unobservable rather than implying coverage.
+
+6. **A surviving mutant means the test is weak OR THE CODE IS DEAD**, and those demand
+   opposite responses. I spent two days reading every survivor as a coverage gap. One was
+   not: `defaultLabel`'s index branch is unreachable because all three gates call
+   `shapeBlocker` first, which refuses an id-less segment outright. Writing a test to kill
+   that mutant would have produced a test for a path that cannot execute — green forever,
+   proving nothing, which is the artefact this whole list exists to prevent. **Check
+   reachability before treating a survivor as a gap.**
+7. **A check that matches nothing looks exactly like a check that changes nothing.** Both
+   are green. Four sightings in two days, across three toolchains:
+   - a file collapsed to one line by `Set-Content -NoNewline`, where `node --check` returned
+     **0** because a single line of `//` comments is valid JavaScript;
+   - a widened regex that passed all 1130 tests and was still wrong, because nothing in the
+     suite happens to print a bare clock;
+   - a .NET run reporting a clean **825/825 against stale binaries**, twice — once after a
+     mutation failed to compile, once after `Copy-Item` preserved a timestamp so MSBuild
+     skipped the rebuild (confirmed by finding the mutant's member still in the DLL);
+   - a PowerShell patch that silently matched **0 sites** through backtick escaping.
+   **The defence is cheap: print the applied-site count, assert the row count, compare a
+   hash, or count the lines.** A tool reporting success tells you it ran, not that it did
+   what you meant.
+8. **A remedy is a claim about what happens next, and the only way to know is to do it.**
+   The all-silent refusal took three rounds, each plausible and each wrong in a way no
+   reading would catch: the first was a **referral loop** — voice told the author to run
+   remix, and remix refuses that very timeline; the second rested on `hasAudioFile`, which
+   tests a *record* rather than a file; the third said "write narration", which does not
+   clear a refusal keyed on *has a `silence` key*. The final wording was verified by
+   following it and watching the run be accepted. `README.md:156`'s invariant — "a remedy
+   names a stage only where that stage would run" — is the written form of this, and this
+   repo ships a remedy in nearly every refusal, so the surface is large.
 
 ### `assertCleanExit` was blind, and that is the cautionary one
 
