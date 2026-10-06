@@ -443,6 +443,25 @@ It was caught only because the fixture "felt too convenient", which is not a met
 method: **a fixture whose identifiers you chose yourself must be checked against a real run
 before trusting any filter built on it.**
 
+**A fifth variant, and the costliest: I pointed at a model that had a defect.** Briefing the
+exit-code work I wrote *"`concat-audio` and `frame-capture` already supply the wording for a
+clean refusal; copy the one that reads better."* `frame-capture.mjs:63` forwards
+`err.message`, and V8 quotes **~17 bytes of the file** back into a JSON parse error:
+
+    Unexpected token 'S', "{ "k": SENTINEL-L"... is not valid JSON
+
+**So the instruction propagated a disclosure leak into three stages**, and only the
+reviewer caught it. The engine already held the correct form — `write-chapters.mjs:197`
+reports the file **by size**, settled after a link at `timing.json` made a parse error quote
+the bytes it led to, and pinned by `path-boundary.test.mjs:676`. I named the wrong two of
+three siblings.
+
+**The rule, from both instances together: check the model, not the model's reputation.** A
+precedent is a claim about code, and like any other claim it is worth exactly what its last
+measurement was worth. Citing one without reading it transfers its defects along with its
+authority — and the authority makes the defect harder to question, because the receiving
+stream now has two reasons to believe it.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
