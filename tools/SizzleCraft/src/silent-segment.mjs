@@ -625,7 +625,42 @@ export const segmentClipName = (i) => `segment_${pad2(i + 1)}.mp3`;
 /** The pause asset inserted AFTER segment i. */
 export const gapAssetName = (i) => `gap_${pad2(i + 1)}.mp3`;
 
-const defaultLabel = (s, i) => `segment "${s?.id ?? i}"`;
+/**
+ * How a refusal names one segment: by its id when it has a usable one, otherwise by its index.
+ *
+ * ONE STATEMENT OF A RULE THE ENGINE ALREADY MAKES TWICE. `frame-capture.mjs` picks
+ * `timing.segments[i]` for an id-less segment and says why; `segmentEntryFact` does the same and
+ * explains that `segment "1"` would send an author to the wrong line when another segment really
+ * carries the id "1". `segment "${s?.id ?? i}"` quietly disagrees with both: it formats a 0-based
+ * INDEX as a quoted id, so an author goes looking for a segment genuinely called "2" — and the
+ * fixture in this module's own tests has a segment whose id IS "2", which is why the collision is
+ * not hypothetical.
+ *
+ * An id that merely looks like an index is still an id, so `{ id: '2' }` is `segment "2"`. The
+ * distinction this draws is between HAVING an id and not having one — never between how an id
+ * happens to be spelled.
+ *
+ * CONSUMERS(segmentLabel): concat-audio.mjs, remix.mjs, write-storyboard.mjs
+ * Used inside this module by defaultLabel. THAT USE IS CURRENTLY UNOBSERVABLE: all three gates
+ * ask shapeBlocker first, and it refuses any segment without a usable id, so defaultLabel never
+ * meets one. The symbol therefore fixes the STATEMENT, not a live symptom, and is pinned by
+ * direct unit tests rather than through a gate.
+ *
+ * Of the three callers that restated the old form, TWO ARE LIVE and one is not — measured, not
+ * assumed. `concat-audio.mjs` reaches both of its labels, because it gates with
+ * segmentEntryBlocker, which refuses non-objects but has no opinion about ids; an id-less
+ * segment therefore arrives at its silent-declaration label and at its clip-matching label
+ * intact, and both are covered by integration tests. `remix.mjs` is NOT reachable with an
+ * id-less segment: its gate asks shapeBlocker first. It reads this symbol for the statement's
+ * sake and is pinned here, because a green assertion over an unreachable branch would document
+ * a gap as covered. A test asserts the list above matches the modules that actually import this
+ * symbol, in both directions.
+ */
+export function segmentLabel(s, i) {
+  return typeof s?.id === 'string' && s.id !== '' ? `segment "${s.id}"` : `timing.segments[${i}]`;
+}
+
+const defaultLabel = segmentLabel;
 
 // The pause assets a stage can write: a seam touching a declared silent segment never gets
 // a pause, and a silent first segment never gets a lead-in, whatever the solve.
@@ -897,10 +932,10 @@ export function segmentEntryFact(s, i) {
  * behaviours under the cover of a crash fix. This function refuses entries; it does not have an
  * opinion about lists.
  *
- * CONSUMERS(segmentEntryBlocker): none
- * The intended callers are frame-capture.mjs, write-storyboard.mjs and concat-audio.mjs, each of
- * which currently throws an uncaught TypeError on a null entry. Update the line above when they
- * land; a test compares it against the real importers.
+ * CONSUMERS(segmentEntryBlocker): concat-audio.mjs, frame-capture.mjs, write-storyboard.mjs
+ * Each of them threw an uncaught TypeError on a null entry before they called this. The line
+ * above is compared against the real importers by a test, and must change in the SAME COMMIT as
+ * an importer: it is only true relative to the modules in one working tree.
  */
 export function segmentEntryBlocker(segs) {
   if (!Array.isArray(segs)) return null;
@@ -925,14 +960,32 @@ export function segmentEntryBlocker(segs) {
  * that wants only the entry rule should call segmentEntryBlocker and keep its own handling of an
  * absent or empty list.
  *
- * The 'timing.json' in the no-segments fact is a hardcoded input name and is wrong for any caller
- * that reads a differently-named file — reachable today through validate-scene's --timing. Open
- * work, tracked separately; it is not corrected here because the string is also what two shipped
- * stages print.
+ * The input's NAME is a parameter, defaulting to the only thing two shipped stages can mean by
+ * it. `voice.mjs` and `remix.mjs` each hardcode `timing.json` as their input and call this with
+ * one argument, so their wording is unchanged to the byte.
+ *
+ * NO CALLER PASSES A DIFFERENT NAME YET. `validate-scene.mjs` reads `--timing`, so it is the one
+ * that should, and until it does its diagnostic still names `timing.json` for a file it did not
+ * open. That is a one-line change in a file this task did not own, reported rather than made —
+ * so this parameter is a capability, not a fix, and the contract is pinned by direct unit tests
+ * rather than by an integration path that does not exist.
+ *
+ * Only the no-segments fact takes it. `timing.segments[1]` is a JSON PATH into the parsed
+ * object, not a filename, and does not move with the input's name.
  */
-export function shapeBlocker(timing) {
+export function shapeBlocker(timing, inputName = 'timing.json') {
   const segs = timing?.segments;
-  if (!Array.isArray(segs) || segs.length === 0) return { fact: 'timing.json declares no segments' };
+  if (!Array.isArray(segs) || segs.length === 0) {
+    return {
+      fact: `${inputName} declares no segments`,
+      // THE ONE FACT HERE THAT DOES NOT STATE ITS OWN FIX. The other two name the field and
+      // the rule it breaks in the same sentence; this one names an absence and stops. The
+      // remedy is an AUTHORING step, never a referral to another stage — a remedy that
+      // sends an author to a stage which refuses the same timeline is a loop, and reading
+      // one cannot tell you it is a loop. Following this clears this refusal outright.
+      then: `write the timeline's segments into ${inputName} — each needs a non-empty string id`,
+    };
+  }
   for (const [i, s] of segs.entries()) {
     const entry = segmentEntryFact(s, i);
     if (entry) return { fact: entry };
@@ -1030,7 +1083,34 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
     };
   }
   if (segs.every(isSilentSegment)) {
-    return { fact: 'every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from' };
+    // Carries a remedy, like every other refusal in this gate — renderBlocker prints the fact
+    // ALONE when `then` is absent, so this reached the author as a problem with no way out.
+    //
+    // CONDITIONAL, because the obvious remedy is a LOOP, and NEITHER half of it was true as
+    // first written. Three things were measured by running the suggested edit back through
+    // the gate rather than reasoning about it:
+    //
+    //   - "write narration for at least one segment" does NOT clear this refusal.
+    //     isSilentSegment is "has a `silence` key", so narration alone lands on the next gate:
+    //     `segment "one" is declared silent but carries narration text`. The declaration has
+    //     to go too. A remedy that produces a different refusal is not a remedy.
+    //   - remix.mjs arranges a wholly silent timeline from its authored windows without
+    //     synthesising — but only for clips that EXIST. `hasAudioFile` tests the string in the
+    //     timeline, not the file on disk, and remix refuses `segment_01.mp3 is not in the
+    //     project` for a record naming an absent clip. So the offer carries its precondition
+    //     instead of promising a run that can bounce.
+    //   - with records on SOME segments, "no segment has one" is false, and a false reason
+    //     invites the reader to disbelieve the true part of the message.
+    //
+    // `hasAudioFile` reads the timing object, so the branches are told apart from data already
+    // in hand, with no filesystem access from a gate that must not have one.
+    const everyClipRecorded = segs.every(hasAudioFile);
+    return {
+      fact: 'every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from',
+      then: everyClipRecorded
+        ? 'add narration to at least one segment and remove its silence declaration, or, if every clip the timeline names is still in the project, run remix.mjs (S4), which arranges a wholly silent timeline from its authored windows without synthesising anything'
+        : 'add narration to at least one segment and remove its silence declaration — remix.mjs (S4) cannot stand in here, because it re-measures only clips that already exist and not every segment has one',
+    };
   }
   // Last, so a timeline already refused for its segments keeps reporting that reason.
   return endCardBlocker(timing);

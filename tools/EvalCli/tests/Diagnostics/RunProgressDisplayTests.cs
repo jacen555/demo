@@ -357,6 +357,84 @@ public class RunProgressDisplayTests
         sinks.Should().ContainSingle().Which.Should().BeNull();
     }
 
+    // -------------------------------------------------------------------------------------
+    // The result is the caller's. A display hands back what the suite returned, untouched.
+    // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ShowAsync_WhenTheSuiteReturnsNull_HandsTheNullBackForTheCallerToJudge()
+    {
+        // A live baseline's provider is typed to return null. What that would mean — a missing
+        // baseline, not a clean comparison — is decided by the one caller that asked for it, so the
+        // display neither replaces it nor takes it for a fault of its own.
+        using var stderr = new StringWriter();
+        using var diagnostics = new DiagnosticsWriter(stderr);
+        using var log = new StringWriter();
+
+        var returned = await new StreamedRunProgress(diagnostics).ShowAsync<SuiteResult?>(
+            SuiteOutline.OfBaseline(Suite, "http://localhost:1/<redacted>"),
+            ProgressFixture.Logger(log),
+            sink =>
+            {
+                sink?.Report(ProgressFixture.Report(1, 1));
+
+                return Task.FromResult<SuiteResult?>(null);
+            },
+            CancellationToken.None
+        );
+
+        returned.Should().BeNull();
+        log.ToString().Should().BeEmpty("a null result is not a fault in the display");
+
+        // The positive control: the display was up, and drew its start line and the run.
+        stderr.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ShowAsync_GivenASuite_DrawsExactlyWhatItsOutlineDraws()
+    {
+        // The overload the candidate has always been shown through is the outline overload given
+        // SuiteOutline.Of, and nothing more.
+        using var log = new StringWriter();
+        var suite = ProgressFixture.Suite("regression", ("checkout", 2), ("billing", 1));
+        var reports = new[]
+        {
+            ProgressFixture.Report(2, 3, "checkout", 2, RunStatus.Fail),
+            ProgressFixture.Report(1, 3, "checkout", 1),
+            ProgressFixture.Report(3, 3, "billing", 1, RunStatus.Error),
+        };
+
+        static async Task<string> DrawnAsync(Func<RunProgressDisplay, Task> show)
+        {
+            using var stderr = new StringWriter();
+            using var diagnostics = new DiagnosticsWriter(stderr);
+
+            await show(new StreamedRunProgress(diagnostics));
+
+            return stderr.ToString();
+        }
+
+        var viaSuite = await DrawnAsync(display =>
+            display.ShowAsync(
+                suite,
+                ProgressFixture.Logger(log),
+                ProgressFixture.Reporting("regression", null, reports),
+                CancellationToken.None
+            )
+        );
+        var viaOutline = await DrawnAsync(display =>
+            display.ShowAsync(
+                SuiteOutline.Of(suite),
+                ProgressFixture.Logger(log),
+                ProgressFixture.Reporting("regression", null, reports),
+                CancellationToken.None
+            )
+        );
+
+        viaSuite.Should().NotBeEmpty().And.Be(viaOutline);
+        log.ToString().Should().BeEmpty();
+    }
+
     /// <summary>A sink that ignores every report, for displays whose drawing is not under test.</summary>
     private sealed class NoSink : IProgress<RunProgress>
     {
@@ -366,8 +444,7 @@ public class RunProgressDisplayTests
     }
 
     /// <summary>A display whose rendering a test scripts, including how it fails.</summary>
-    private sealed class ScriptedDisplay(Func<Func<IProgress<RunProgress>, Task<SuiteResult>>, Task> render)
-        : RunProgressDisplay
+    private sealed class ScriptedDisplay(Func<Func<IProgress<RunProgress>, Task>, Task> render) : RunProgressDisplay
     {
         public int Renders { get; private set; }
 
@@ -375,7 +452,7 @@ public class RunProgressDisplayTests
 
         protected override Task RenderAsync(
             SuiteOutline outline,
-            Func<IProgress<RunProgress>, Task<SuiteResult>> conduct,
+            Func<IProgress<RunProgress>, Task> conduct,
             CancellationToken cancellationToken
         )
         {

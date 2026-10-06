@@ -1335,6 +1335,17 @@ describe('remux-music gain pin', () => {
       /nothing to measure yet/i,
       'and it must say why the measurement cannot come first, rather than asking for the impossible order',
     );
+    // THE CONTRADICTION ITSELF, PINNED. Both claims shipped together, in three places:
+    // "there is nothing to measure yet" and "--confirm-gain is the caller's assertion that a
+    // person MEASURED or listened to the mix". On first use — the run where the flag is
+    // mandatory — no mix exists, so nothing can have been measured. A consistent lie is worse
+    // than an obvious contradiction because it stops looking wrong, so the PAIRING is guarded
+    // here rather than either sentence alone.
+    assert.doesNotMatch(
+      r.all,
+      /assertion that a person measured or listened/i,
+      'it cannot say nothing is measurable yet and in the same breath that a measurement happened',
+    );
   });
 });
 
@@ -1876,7 +1887,7 @@ describe('remux-music mix parameter pin', () => {
     const r = remux(dir, ['--apply']);
 
     assertCleanExit(r, EXIT.USAGE);
-    assert.match(r.all, phrase("the caller's assertion that a person measured or listened to"));
+    assert.match(r.all, phrase("the caller's assertion that a person has accepted these values"));
     assert.match(r.all, phrase('An agent must not pass it on its own authority'));
     assert.match(r.all, /re-run with --confirm-gain/, 'and the steps themselves are unchanged');
   });
@@ -1887,7 +1898,7 @@ describe('remux-music mix parameter pin', () => {
     const r = runScript('remux-music.mjs', ['--help'], dir);
 
     assertCleanExit(r, EXIT.OK);
-    assert.match(r.all, phrase("the caller's assertion that a person measured or listened to"));
+    assert.match(r.all, phrase("the caller's assertion that a person has accepted these values"));
     assert.match(r.all, phrase('An agent must not pass it on its own authority'));
   });
 
@@ -1966,3 +1977,4 @@ describe('remux-music video-seconds override', () => {
     assert.match(r.all, /--video-seconds/, 'and must name the option it rejected');
   });
 });
+

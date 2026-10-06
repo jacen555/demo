@@ -104,7 +104,9 @@ per project under `~/SizzleCraft/<project>/`, which is the duplication this skil
 | S7 | `encode-mp4.mjs`, `append-outro.mjs` | |
 | S8 | `make-music.mjs` | Generated bed. Named presets (`warm`, `bright`) — pass as argv or set `audio.music.preset` |
 | S9 | `remux-music.mjs` | **The cheap path** — swaps audio, preserves the video stream byte-for-byte |
-| — | `preview.mjs`, `preview-seg.mjs` | **Segment preview — use before committing to a full render.** `preview.mjs` defaults to all segments; pass ids to narrow |
+| — | `preview.mjs`, `preview-seg.mjs` | **Segment preview — use before committing to a full render.** `preview.mjs` defaults to all segments; pass ids to narrow. Publishes a binding record last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256 |
+| — | `coach-pack.mjs` | Collects the coach's input set and writes its hash manifest. Pass 1: script only. Pass 2: script, timing, storyboard, stills, audit. **Refuses a still whose binding record does not match, and refuses absence of a record** — "no record" must never read as "nothing wrong" |
+| — | `coach-rulings.mjs` | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false alarm and taste collapse. The key includes a hash of the sentence containing the quote, so **rewording the cited sentence re-opens the finding** rather than silencing it |
 | — | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | Verification |
 
 All of the above are checked in at `tools/SizzleCraft/src/` **except `write-script.mjs`**.

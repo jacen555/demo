@@ -54,6 +54,8 @@ import {
   describeEnvelopeRefusal,
   classifyBedDuckRecord,
   describeBedDuckRefusal,
+  requireEnvelopeHopMs,
+  assertEnvelopeSpansAgree,
   measureSpeech,
   calibrateDuckThreshold,
   achievedDuckDb,
@@ -265,9 +267,10 @@ ${MEASURED_RECOVERY.rows
                         music source (bug-ledger 16). Required on first use, whenever the
                         source or any pinned parameter changes, and once for every pin
                         written before those parameters were registered. It is the
-                        caller's assertion that a person measured or listened to the mix
-                        and accepts it; the tool cannot tell who passed it. An agent must
-                        not pass it on its own authority — ask the person.
+                        caller's assertion that a person has accepted these values —
+                        having measured or listened to a mix where one exists, and
+                        provisionally where none does yet; the tool can verify neither.
+                        An agent must not pass it on its own authority — ask the person.
   --video-seconds <n>   override the video length used to size the loop
   --ceiling <dB>        limiter headroom in dB BELOW full scale, 0.1..12 (default: 1.0).
                         This is dBFS. A delivery target is usually dBTP, and true peak
@@ -637,27 +640,30 @@ await runCli(async () => {
   }
 
   if (undecidable === null) mix.declare('videoSeconds', { value: videoSeconds });
-  const trim = undecidable === null ? `${mix.structural('atrim=0:')}${mix.use('videoSeconds')},` : '';
+  // Every value names the chain it is interpolated into, so the audit can refuse one that
+  // is present but on the wrong chain. The trim and the music gain both land on the chain
+  // that writes [mu], looped or not; the crossfades land on their own [ml<n>] chains.
+  const trim = undecidable === null ? `${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},` : '';
 
   let musicFilter;
   if (copies === 1) {
-    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];`;
+    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];`;
   } else {
     let prev = '2:a';
     musicFilter = '';
     for (let i = 1; i < copies; i += 1) {
       const label = `ml${i}`;
-      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${mix.use('crossfade')}:c1=tri:c2=tri[${label}];`;
+      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${mix.use('crossfade', label)}:c1=tri:c2=tri[${label}];`;
       prev = label;
     }
-    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain')}[mu];`;
+    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];`;
   }
 
   // The voice bus forks only when the duck needs a sidechain tap, so a run without
   // --duck-db produces the graph this stage has always produced, character for character.
   const voiceFilter = ducking
-    ? `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];`
-    : `[1:a]volume=${mix.use('voiceGain')},pan=stereo|c0=c0|c1=c0[vo];`;
+    ? `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];`
+    : `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0[vo];`;
 
   // `apad` ON THE SIDECHAIN, and it is load-bearing. sidechaincompress ends its output
   // when EITHER input ends, so a narration track shorter than the trimmed bed would cut
@@ -667,8 +673,8 @@ await runCli(async () => {
   // so amix duration=longest is unaffected.
   const duckFilter = ducking
     ? `[vosc]apad[vop];` +
-      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb')}:ratio=${mix.use('duckRatio')}` +
-      `:attack=${mix.use('duckAttack')}:release=${mix.use('duckRelease')}[mud];`
+      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
+      `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}[mud];`
     : '';
 
   const filter =
@@ -676,7 +682,7 @@ await runCli(async () => {
     musicFilter +
     duckFilter +
     `[vo][${ducking ? 'mud' : 'mu'}]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-    `[mx]alimiter=limit=${mix.use('ceiling')}:level=disabled[out]`;
+    `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
 
   // FAIL CLOSED ON AN UNREGISTERED VALUE. Anything interpolated into the graph without
   // going through the registry leaves a number here that traces to nothing, and the run
@@ -819,17 +825,10 @@ function readDuckEnvelope(envelopePath) {
       'finite non-negative number', EXIT.FAILED,
     );
   }
-  // hopMs turns frame counts into the gap lengths the plan reports. It was read as
-  // `Number(hopMs) || 20`, so a hand-edited -20 reported NO GAP, 1e9 reported gaps of
-  // days, and 0, "20" and an absent field all quietly became 20. vo-envelope writes 20.
-  const { hopMs } = parsed;
-  if (typeof hopMs !== 'number' || !Number.isFinite(hopMs) || hopMs < 1 || hopMs > 1000) {
-    throw new CliError(
-      `${envelopePath} "hopMs" is ${hopMs === undefined ? 'absent' : JSON.stringify(hopMs).slice(0, 32)} — it must be ` +
-      'a number of milliseconds from 1 to 1000 (vo-envelope writes 20). It sets every gap length this plan reports.',
-      EXIT.FAILED,
-    );
-  }
+  // hopMs turns frame counts into the gap lengths the plan reports, and it places every
+  // dip make-music bakes into a bed. ONE RULE FOR BOTH PATHS, in envelope-ducking.mjs.
+  requireEnvelopeHopMs(parsed, envelopePath, EXIT.FAILED);
+  assertEnvelopeSpansAgree(parsed, envelopePath, EXIT.FAILED);
   return parsed;
 }
 

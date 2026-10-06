@@ -1185,10 +1185,19 @@ Progress never changes stdout, the artifact, or the exit code. A fault in the di
 logged as a warning and the suite carries on without it: the display is not the system under test,
 and a finished run is never discarded because something failed to draw it.
 
-**A live baseline's suite reports no progress.** With `--baseline-endpoint`, the second suite is
-conducted by the engine's live-baseline provider, which offers no way to attach progress to it, so
-that stretch is still silent — as long again as the candidate suite. That needs an engine change;
-it is not something this tool can draw around.
+**A live baseline's suite reports its progress too, labelled.** With `--baseline-endpoint` the suite
+is conducted a second time, against the baseline address, and that run is shown the same way —
+counted from its own first run, so it never sits at the candidate's final count:
+
+```
+eval-cli: starting baseline suite 'smoke-noisy' against https://staging.example.com/<redacted> - 8 run(s) planned across 4 scenario(s).
+eval-cli: [1/8] baseline scenario 'checkout' repetition 1: pass
+```
+
+The start line names the baseline by its redacted address — scheme, host, and port, never the path,
+where a credential can sit. On a terminal it is a second bar under the candidate's, reading
+`… - baseline suite 'smoke-noisy'`. The address stays off the bar: at 120 columns a description that
+long squeezes the 30-cell bar to a single cell.
 
 ## Exit codes
 

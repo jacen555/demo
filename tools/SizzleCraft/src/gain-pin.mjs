@@ -241,6 +241,14 @@ const WHY_PRESENCE_IS_NOT_LEVEL =
  * check-levels.mjs measures a RENDERED FILE. So the honest sequence is confirm, render,
  * measure, and only then deliver — and --confirm-gain has to be described as what it is,
  * an acceptance recorded in advance, not a measurement that has already happened.
+ *
+ * THOSE TWO SENTENCES USED TO CONTRADICT EACH OTHER. This block said there was nothing to
+ * measure yet and then called the flag an assertion that a person MEASURED the mix. On the
+ * run where the flag is mandatory — the first — no mix exists, so nothing can have been
+ * measured. The flag records an ACCEPTANCE whose evidential basis varies and which this
+ * tool cannot verify at all; saying so is the only version that is true on both runs.
+ * `remux-music.mjs`'s help and the README's gain-pin section state the same claim, and a
+ * test pins the pairing so the three cannot drift back apart.
  */
 const HOW_TO_PROCEED =
   'There is nothing to measure yet: the bed level can only be read off a finished mix,\n' +
@@ -253,11 +261,12 @@ const HOW_TO_PROCEED =
   '  3. read the lead-in window, where the bed plays alone. If the level is wrong, re-run\n' +
   '     step 1 with corrected values; the pin will ask again because they moved.\n' +
   '\n' +
-  "--confirm-gain is the caller's assertion that a person measured or listened to the mix\n" +
-  'and accepts these values for this source. The tool cannot tell who passed it, and it\n' +
-  `records "${OPERATOR_CONFIRMED}" either way. An agent must not pass it on its own\n` +
+  "--confirm-gain is the caller's assertion that a person has accepted these values for\n" +
+  'this source — having measured or listened to a mix where one exists, and provisionally\n' +
+  'where none does yet, as on this run. The tool can verify neither, and it records\n' +
+  `"${OPERATOR_CONFIRMED}" either way. An agent must not pass it on its own\n` +
   'authority: ask the person, and pass it only on their answer. What the pin records is\n' +
-  'that assertion, not a measurement of the result — this tool cannot measure that for\n' +
+  'that acceptance, not a measurement of the result — this tool cannot measure that for\n' +
   'you. See the gain-pin section of the README for why, and for what closing that gap\n' +
   'properly would take.';
 

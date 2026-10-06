@@ -74,6 +74,22 @@ Batch these — do **not** render for one tweak if more feedback is likely.
 
 - [ ] _(change — and whether it is audio-only or timeline-affecting)_
 
+## Coach findings
+
+Advisory only (ADR 0006) — the coach never gates a render. Record what was decided, so a
+later session does not re-litigate a finding the user already ruled on.
+
+| | |
+|---|---|
+| **Pass 1 manifest** | _(hash — if unchanged, do not re-run)_ |
+| **Pass 2 manifest** | _(hash — if unchanged, do not re-run)_ |
+| **Open findings at last render** | _(count, and what was shipped anyway and why)_ |
+| **Rulings file** | `coach-rulings.json` — committed; recorded only on the user's word |
+
+A finding ruled **valid stays open** until its evidence changes; it is not a waiver.
+Rewording the sentence a finding quotes **re-opens** it, because the key includes that
+sentence's hash — so do not treat an edit as a resolution without re-running the pass.
+
 ## Project-specific gotchas
 
 Anything true of *this* project only. General bugs belong in the skill's shared

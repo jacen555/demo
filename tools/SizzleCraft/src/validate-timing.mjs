@@ -606,11 +606,16 @@ await runCli(async () => {
         console.log('  whatever timing.json says at the time, so it tracks edits instead of recording what');
         console.log('  was synthesised — a copy of the script, not a receipt.) Anything claiming otherwise');
         console.log('  would be certifying on evidence that does not reach.');
-        console.log('\n  Re-running the voice stage is therefore the only route, and it is a REGENERATION,');
-        console.log('  not a verification: `voice --apply` re-synthesises every clip and overwrites');
-        console.log('  voiceover.mp3. The new audio is length-deterministic but NOT byte-deterministic —');
-        console.log('  same durations to the millisecond, same byte lengths, different samples — so every');
+        console.log('\n  To PROVE lineage, re-running the voice stage is the only route, and it is a');
+        console.log('  REGENERATION, not a verification: `voice --apply` re-synthesises every clip and');
+        // This phrase is pinned by lineage-and-levels.test.mjs and must stay on ONE line: a
+        // rewrap that split it across two console.log calls inserted a newline mid-phrase and
+        // the assertion stopped matching, while every word was still present and correct.
+        console.log('  overwrites voiceover.mp3. The new audio is length-deterministic but NOT byte-deterministic');
+        console.log('  — same durations to the millisecond, same byte lengths, different samples — so every');
         console.log('  cheap check agrees and only a content hash disagrees.');
+        console.log('  It is the only route to the PROOF, not the only way forward: see the last');
+        console.log('  paragraph, and note that the route is open only where that stage would run.');
         if (elsewhere !== null) console.log(`  ${startSentence(elsewhere)}.`);
         else if (voiceGate() !== null) console.log(`  ${stageRefusal('voice.mjs (S3)', voiceGate())}.`);
         console.log('\n  If you need the proof AND the shipped artefact, you can have both: the fingerprint');

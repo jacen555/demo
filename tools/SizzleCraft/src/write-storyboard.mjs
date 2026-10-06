@@ -1,7 +1,7 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from 'node:fs';
-import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter } from './cli-support.mjs';
-import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment } from './silent-segment.mjs';
+import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, describeJsonValue } from './cli-support.mjs';
+import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker, segmentLabel } from './silent-segment.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -22,11 +22,53 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
 
 const { values, projectDir, apply, replace } = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
 const t = JSON.parse(fs.readFileSync(guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file')), 'utf8'));
+// SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
+// `panel` and throw an uncaught TypeError on `s.visual` — a crash with a stack, not a
+// refusal, and the path had no exit code of its own. Asked before the declaration check
+// below, so a malformed entry is named as what it is rather than crashing the check that
+// would have described it.
+//
+// THE ENTRY RULE ONLY: segmentEntryBlocker returns null for a non-array and says nothing
+// about ids, so this stage's handling of an empty or id-less list is unchanged.
+guard(() => {
+  // THE LIST ITSELF, FIRST. `(t.segments || [])` guards ABSENCE and not TYPE — a non-empty
+  // string is truthy — so `segments: "two of them"` threw `.filter is not a function`, and
+  // an absent or null list threw on `.length`. A list that is PRESENT and is not a list
+  // cannot be read and is refused; absent and null are read as empty, which is what the
+  // plan line below already intended with `segments.length` over `t.segments?.length ?? 0`.
+  if (t.segments !== undefined && t.segments !== null && !Array.isArray(t.segments)) {
+    throw new CliError(
+      `timing.segments is not a list of segments — it is ${describeJsonValue(t.segments)}. ` +
+        'Every stage reads it as a list; one that is not a list cannot be read at all.',
+    );
+  }
+  const bad = segmentEntryBlocker(t.segments);
+  if (bad) throw new CliError(bad.fact);
+});
+
+// READ ONCE, HERE, AND NOWHERE ELSE. Every site below used its own idiom for the same
+// question — `t.segments || []` in one place, `t.segments.length` in three, and
+// `t.segments?.length ?? 0` in the plan line — so the file disagreed with itself about
+// what an absent list means and crashed at the sites that had no guard at all.
+const segments = Array.isArray(t.segments) ? t.segments : [];
+
+// RENDERING METADATA IS NOT THE TIMELINE. A storyboard with no `intake` has nothing to put
+// in one badge; a segments list that is not a list means the file cannot be read. So these
+// are rendered blank rather than refused, which is the idiom this file already used for a
+// missing FIELD (`t.project.lede || t.project.subtitle || ''`). Not a type check: a
+// `project` that is a string renders empty badges today and is left alone, because
+// refusing it would widen past the defect.
+const project = t.project ?? {};
+const intake = t.intake ?? {};
 // A silent segment's caption is its accessibility cue, and the storyboard is where an author
 // reviews it. A blank caption rendered as an empty cue under the SILENT label and exited 0.
 // Refuse the declarations validate-timing, voice and write-subtitles refuse, before planning.
 guard(() => {
-  const problems = (t.segments || []).filter(isSilentSegment).flatMap((s) => silentSegmentProblems(s));
+  // THE INDEX IS KEPT. `.filter().flatMap()` discarded it before the label needed it, so
+  // silentSegmentProblems fell back to its default `segment "${seg?.id}"` and an id-less
+  // segment became `segment "undefined"`. The label comes from the shared symbol, as every
+  // other one in this change does.
+  const problems = segments.flatMap((s, i) => (isSilentSegment(s) ? silentSegmentProblems(s, segmentLabel(s, i)) : []));
   if (problems.length) throw new CliError(problems.join('\n'));
 });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -98,7 +140,7 @@ const panel = (s, i) => {
   </section>`;
 };
 
-const html = `<!doctype html><html><head><meta charset="utf-8"><title>Storyboard — ${esc(t.project.title)}</title>
+const html = `<!doctype html><html><head><meta charset="utf-8"><title>Storyboard — ${esc(project.title)}</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#F5F8FC;color:#201F1E;font:15px/1.55 "Segoe UI",system-ui,sans-serif}
@@ -133,30 +175,30 @@ header h2{margin:2px 0 3px;font-size:20px}
 .nl{width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px 12px 8px 42px;font:600 26px/1.25 "Segoe UI",sans-serif;color:#201F1E}
 footer{margin-top:26px;color:#8a8886;font-size:12.5px;text-align:center}
 </style></head><body><div class="wrap">
-<h1>${esc(t.project.title)} — storyboard</h1>
-<p class="lede">${esc(t.project.lede || t.project.subtitle || '')}</p>
+<h1>${esc(project.title)} — storyboard</h1>
+<p class="lede">${esc(project.lede || project.subtitle || '')}</p>
 <div class="badges">
   <span><b>${clock(t.durationMs)}</b> total (${clock(t.contentMs)} narration + ${(t.outroMs / 1000).toFixed(1)}s end-card)</span>
-  <span>${t.segments.length} segments</span>
-  <span>${t.aspectRatio} · ${t.project.width}×${t.project.height} @ ${t.project.fps}fps (${t.project.mode})</span>
-  <span>${esc(t.intake.voice)} @ ${t.intake.speed}×</span>
-  <span>engagement: ${esc(t.project.engagementLevel)}</span>
-  <span>background: ${esc(t.project.background)}</span>
+  <span>${segments.length} segments</span>
+  <span>${t.aspectRatio} · ${esc(project.width)}×${esc(project.height)} @ ${esc(project.fps)}fps (${esc(project.mode)})</span>
+  <span>${esc(intake.voice)} @ ${esc(intake.speed)}×</span>
+  <span>engagement: ${esc(project.engagementLevel)}</span>
+  <span>background: ${esc(project.background)}</span>
 </div>
-${t.segments.map(panel).join('')}
+${segments.map(panel).join('')}
 <footer>Preview only — final frames are rendered by the Builder from this same timing.json. Step numbers show reveal order; motion (edge draw, flowing particles, active-path pulse) is applied at render.</footer>
 </div></body></html>`;
 
 const outPath = guard(() => resolveOutput(projectDir, values.out ?? 'storyboard.html', { apply, replace, label: 'output' }));
 if (!apply) {
-  console.log(`plan: render a storyboard for ${t.segments?.length ?? 0} segment(s)`);
+  console.log(`plan: render a storyboard for ${segments.length} segment(s)`);
   console.log(`  source ${projectDir}/timing.json`);
   console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
   planFooter();
   process.exit(EXIT.OK);
 }
 fs.writeFileSync(outPath, html);
-console.log(`wrote ${outPath} (${t.segments.length} segments, ${clock(t.durationMs)})`);
+console.log(`wrote ${outPath} (${segments.length} segments, ${clock(t.durationMs)})`);
 
 
 

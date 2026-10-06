@@ -4,6 +4,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Forge.EvalCli.Cli;
 using Forge.EvalCli.Composition;
+using Forge.EvalCli.Diagnostics;
 using Forge.EvalCli.Tests.Support;
 using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Loading;
@@ -266,6 +267,10 @@ public class EndpointRedactionTests
             new ElsewhereExchange(provider.GetRequiredService<IRestExchange>(), elsewhere.Address)
         );
 
+        // The baseline's progress goes where the log does, so the assertion on the log below covers
+        // what the display wrote as well.
+        using var progress = new DiagnosticsWriter(diagnostics);
+
         var act = async () =>
             await BaselineComparison.CompareAsync(
                 misdirected,
@@ -274,6 +279,7 @@ public class EndpointRedactionTests
                 [],
                 conducted,
                 null,
+                new StreamedRunProgress(progress),
                 CancellationToken.None
             );
 

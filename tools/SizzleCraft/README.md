@@ -42,11 +42,14 @@ place to fix a bug.
 | `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one. |
 | `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, the threshold solve, and the bed's ducking record (`<bed>.duck.json`). Side-effect free apart from `publishBedDuckRecord`, which writes that record; unit-tested directly. |
 | `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
+| `validate-scene.mjs` | S5/S6 | Refuses an unrenderable scene **before** capture: trigger targets that resolve to nothing, declared elements nothing ever reveals, edges drawn to endpoints that do not exist yet, diagram geometry that letterboxes or overlaps, and content a project has declared it will not ship. Pure data over `timing.json` — no browser, no ffmpeg, no frames — so it trades a capture that costs minutes for a read that does not (an 8-segment project measured 227 ms; a no-go pattern that backtracks is stopped at 5 s, so the ceiling is bounded rather than fast). Whether a trigger reveals its target depends on its **payload**, not its action name, so the rules are transcribed from `write-build-html`'s runtime branch by branch rather than inferred from the action list. |
 | `frame-capture.mjs` | S6 | Headless-browser frame capture with dedup. **The long pole.** |
 | `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
 | `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). Ducks from the shared model in `envelope-ducking.mjs`, so the synthesised and in-graph ducks cannot drift apart. |
 | `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. Optional in-graph sidechain duck for a licensed bed (`--duck-db`). |
-| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. |
+| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. `preview.mjs` publishes a **binding record** last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256. |
+| `coach-pack.mjs` | — | Collects the exact input set the **video coach** may read and writes a hash manifest its report must cite. Pass 1 is the script; pass 2 adds timing, storyboard, stills and the audit transcript. Refuses a still whose binding record does not match — and refuses the **absence** of a record, because "no record" must never read as "nothing wrong". |
+| `coach-rulings.mjs` | — | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false-alarm and taste collapse. The key hashes the sentence a finding quotes, so **rewording that sentence re-opens the finding** rather than silencing it. |
 | `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
 | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
 
@@ -362,18 +365,51 @@ should check them — stage N+1 consuming stage N's output depends on it.
 |---|---|
 | `0` | Success, or a plan produced successfully. The work was done. |
 | `1` | The work ran and the result is bad — a check failed, a hash mismatched, ffmpeg failed. |
-| `2` | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite. |
+| `2` | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite, or, in the stages that classify it that way, a malformed timeline. |
 | `3` | **Skipped.** Another process holds the lock, so nothing was done. Not a success. |
 
 `3` matters most. `frame-capture` and `encode-mp4` take a single-writer lock; when
 another run holds it they exit `3` rather than `0`, so a driver cannot mistake "someone
 else is encoding" for "the encode is finished". A plan never takes the lock.
 
-Verification scripts (`validate-timing`, `check-levels`, `preview`) exit non-zero when
-they find a problem. `validate-timing` needs `ajv` for schema validation and **fails
+**A malformed timeline does not have one code, and you cannot infer the cause from the
+code.** Measured, the same file — a `null` where a segment belongs — through four stages:
+
+| stage | exit |
+|---|---|
+| `remix` | `2` |
+| `write-subtitles` | `1` |
+| `validate-timing` | `1` |
+| `write-chapters` | `1` |
+
+`remix` treats it as bad input and refuses to start; the others report it as a result they
+computed — and for `validate-timing`, inspecting the timeline *is* the work, so a verdict
+of "no" is a completed run. Both readings are defensible, which is why the code tells you
+how THAT stage classified the problem and nothing more. Read the message, not the number,
+when you need the cause; the number is for deciding whether to continue.
+
+Verification scripts (`validate-timing`, `validate-scene`, `check-levels`, `preview`) exit
+non-zero when they find a problem, using the four codes in the table above and no others.
+`validate-timing` needs `ajv` for schema validation and **fails
 rather than silently skipping** if it is missing; pass `--no-schema` to skip that check
 deliberately. `preview` treats a non-empty layout audit as a failure, matching
 `frame-capture` — the two stages must agree about whether the same condition is fatal.
+
+`validate-scene` reads `knobs.json` from the project root when it is there; `--knobs`
+names one under a different name or subdirectory, still inside the project root. **No other
+stage defines or reads that file** — it is a convention of the projects, not an engine
+format — so those four checks are optional. A missing one is therefore *reported as NOT
+evaluated, rather than silently skipped*: the run prints
+`knobs.json: ABSENT — 4 checks NOT evaluated` (naming whichever file you asked for) and keeps those four out of its evaluated count, because an absent
+manifest must never read as a clean bill of health. `calibration-observed.json` is treated
+the same way for the one check that needs measured audio. The stage also leaves the
+end-card canonical form to `validate-timing`, which owns it — run both.
+
+It checks the timeline's shape before anything else, by the same rule and with the same
+exit `2` as `voice` and `remix` — a missing or empty segment list, an entry that is not a
+segment object, or one with no non-empty string `id`, named by its index. A malformed
+entry is not one failed check; it makes the segment unreadable, so every check would
+report nonsense about it.
 
 **A silent window is a measurement, not a failure.** `check-levels` reports three states,
 not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
@@ -454,10 +490,12 @@ so there is nothing to measure until the remux has run:
 2. `node src/check-levels.mjs --file <out>` to measure it;
 3. read the lead-in window, where the bed plays alone, **before delivering**.
 
-**`--confirm-gain` is the caller's assertion** that a person measured or listened to the mix
-and accepts these values for this source. The tool cannot tell who passed it, and records
-`evidence: "operator-confirmed"` either way — so an agent must not pass it on its own
-authority: ask the person, and pass it only on their answer.
+**`--confirm-gain` is the caller's assertion** that a person has accepted these values for
+this source — having measured or listened to a mix where one exists, and provisionally
+where none does yet, which is the case on the first run where the flag is mandatory. The
+tool can verify neither, and records `evidence: "operator-confirmed"` either way — so an
+agent must not pass it on its own authority: ask the person, and pass it only on their
+answer.
 
 `confirmedAt` and `evidence` are written only on a run where someone actually passed
 `--confirm-gain`; a settled pin is left untouched rather than restamped.
@@ -796,6 +834,8 @@ node --test                 # run the tests
 # verification
 node src/validate-timing.mjs                      # schema + contiguity + word rate
 node src/validate-timing.mjs --strict             # also fail on over-budget segments
+node src/validate-scene.mjs                       # refuse an unrenderable scene before capture
+node src/validate-scene.mjs --knobs manifest.json # cross-check a manifest under another name
 node src/check-levels.mjs --file "Part 1=a.mp4" --file "Part 2=b.mp4"
 node src/preview.mjs --apply                      # screenshot every segment + audit layout
 

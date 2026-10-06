@@ -781,8 +781,22 @@ export function openExclusiveEngineFile(root, candidate, label = 'temp file') {
   };
 }
 
-/** Names a JSON value for a diagnostic, keeping `null` distinct from "an object". */
-function describeJsonValue(value) {
+/**
+ * Names a JSON value for a diagnostic, keeping `null` distinct from "an object".
+ *
+ * ONE STATEMENT OF A RULE THE ENGINE STATED THREE TIMES. `frame-capture.mjs` and
+ * `write-storyboard.mjs` each carried a private `describeShape` with this exact body,
+ * written when they learned to refuse a segment list that is not a list — neither author
+ * knowing this existed, because nothing enumerated it. Proven identical across null, an
+ * array, a string, a number, a boolean, undefined, an object, a function, a bigint and a
+ * symbol before they were deleted.
+ *
+ * CONSUMERS(describeJsonValue): frame-capture.mjs, write-storyboard.mjs
+ * Used inside this module by readOptionalEngineJson. A test asserts the list above matches
+ * the modules that actually import this symbol, in both directions, so a fourth private
+ * copy has to be a deliberate act rather than an accident of not knowing.
+ */
+export function describeJsonValue(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'an array';
   return `a ${typeof value}`;
@@ -933,9 +947,26 @@ export function guard(fn) {
   }
 }
 
-/** The standard "nothing happened" footer, so every script says it the same way. */
-export function planFooter(verb = 'apply') {
-  console.log(`\nnothing was written or deleted. Re-run with --${verb} to proceed.`);
+/**
+ * The standard "nothing happened" footer, so every script says it the same way.
+ *
+ * `blocked` is for a plan that has ALREADY DISCLOSED that the apply it is about to invite
+ * would be refused. remix printed "not voiced yet, so --apply refuses the run until
+ * voice.mjs (S3) has run" and then, three lines later, "Re-run with --apply to proceed" —
+ * two sentences each true of something, and a contradiction as a pair, because the footer
+ * is advice about a next step that is a refusal.
+ *
+ * ADDITIVE, AND DELIBERATELY SO. Fourteen callers share this line and thirteen of them have
+ * nothing to disclose; the default wording is unchanged to the byte, and a test pins it
+ * that way. A caller opts in only when it knows the apply would be refused — which it must
+ * know for the same reason it printed the disclosure.
+ */
+export function planFooter(verb = 'apply', { blocked = false } = {}) {
+  console.log(
+    blocked
+      ? `\nnothing was written or deleted. --${verb} would refuse this run as it stands, for the reason above.`
+      : `\nnothing was written or deleted. Re-run with --${verb} to proceed.`,
+  );
 }
 
 /**

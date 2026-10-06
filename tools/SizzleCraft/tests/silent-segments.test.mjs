@@ -213,6 +213,35 @@ describe('silence is declared, never inferred', () => {
     assert.match(r.all, /run voice\.mjs/i, 'the message must name the stage that was skipped');
   });
 
+  test('writeSubtitles_aRefusalWhoseRemedyAlreadySaysInstead_doesNotSayItTwice', (t) => {
+    // MEASURED, by running it: when the voice gate returns a malformed-declaration blocker,
+    // gatedRemedy's fact ends "...is reported here INSTEAD: ..." and the trailing
+    // parenthetical then added a second "instead" to the same line:
+    //
+    //   timing.segments[1] ("two") has no audio.words — a malformed silence declaration is
+    //   reported here INSTEAD: ... (If this segment is meant to be silent, declare it
+    //   silent (...) INSTEAD.)
+    //
+    // Two independently-correct sentences composing into one that reads as a mistake. The
+    // contract pinned here is the composition, not either wording: no line of a refusal
+    // repeats "instead", however the halves are reworded later.
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 960, voiceoverText: 'hello there', silence: { caption: '[x]' } },
+      { id: 'two', startMs: 960, endMs: 1920, voiceoverText: 'second line here' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingWith(segments) });
+
+    const r = runScript('write-subtitles.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK, `this timeline must be refused\n${r.all}`);
+    const doubled = r.all.split(/\r?\n/).filter((line) => (line.match(/\binstead\b/gi) ?? []).length > 1);
+    assert.deepEqual(doubled, [], `no line may say "instead" twice\n${doubled.join('\n')}`);
+    // The control: the line must still BE there and still carry its remedy, or "never say
+    // instead at all" would satisfy the assertion above.
+    assert.match(r.all, /has no audio\.words/, `the refusal itself must survive\n${r.all}`);
+    assert.match(r.all, /meant to be silent/, `and so must its silent-segment advice\n${r.all}`);
+  });
+
   test('validateTiming_silentSegmentCarryingNarrationText_isRejected', (t) => {
     // A segment that declares silence AND carries narration is a contradiction with no
     // safe resolution — whichever one a stage honours, the other was a lie. Refuse it.
@@ -2767,13 +2796,168 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const FORGED_CUE = '[music]\n\n00:00.000 --> 00:05.000\nX';
 const HOUR_MS = 3_600_000;
 
+describe('segmentLabel', () => {
+  const load2 = () => import('../src/silent-segment.mjs');
+
+  test('voiceTimelineBlocker_anAllSilentTimeline_carriesARemedyNotJustAFact', async () => {
+    // renderBlocker prints the fact ALONE when `then` is absent (silent-segment.mjs:1176), so
+    // this refusal reached the author as a statement of the problem with no way out. Every
+    // other refusal in this gate carries one, and write-chapters already words this exact
+    // situation with a remedy — "run remix.mjs (S4)" — so the engine has the answer; the gate
+    // simply did not say it.
+    const { voiceTimelineBlocker, renderBlocker } = await load2();
+    const silent = (id) => ({ id, startMs: 0, endMs: 960, silence: { caption: '[intermission]' } });
+    // endCard is explicit because F7 moved the end-card check INTO this gate, and it runs
+    // last — a fixture omitting it is refused for that instead, which is what caught me here.
+    const b = voiceTimelineBlocker({ endCard: { enabled: false }, segments: [silent('one'), silent('two')] });
+
+    assert.ok(b, 'an all-silent timeline must still be refused');
+    assert.match(b.fact, /every segment is declared silent/);
+    assert.ok(b.then, `the refusal must carry a remedy\n${JSON.stringify(b)}`);
+    assert.notEqual(renderBlocker(b), b.fact.replace(/\.$/, ''), 'the rendered refusal must include the remedy');
+  });
+
+  test('voiceTimelineBlocker_anAllSilentTimelineWithNoClips_doesNotSendTheAuthorToRemix', async () => {
+    // MEASURED LOOP. The first version of this remedy said "run remix.mjs (S4)"
+    // unconditionally. For an all-silent timeline that has never been voiced, remix refuses
+    // with `segment "one" has no audio.file ...` and its own remedy names voice.mjs — the
+    // stage that just refused. The author is handed a circle.
+    //
+    // `hasAudioFile` reads the timing object, so the gate can tell the two cases apart
+    // without touching the filesystem.
+    const { voiceTimelineBlocker } = await load2();
+    const silent = (id) => ({ id, startMs: 0, endMs: 960, silence: { caption: '[intermission]' } });
+    const b = voiceTimelineBlocker({ endCard: { enabled: false }, segments: [silent('one'), silent('two')] });
+
+    assert.ok(b?.then, 'the refusal must still carry a remedy');
+    // "Do not SEND them to remix", not "do not mention it". Naming remix to rule it out is
+    // better than silence: it stops the author trying the obvious thing and bouncing off a
+    // second refusal. My first version of this assertion banned the word outright and failed
+    // against the correct message.
+    assert.doesNotMatch(b.then, /run remix/i, `remix refuses this timeline, so it must not be offered\n${b.then}`);
+    assert.match(b.then, /remix\.mjs \(S4\) cannot/i, `say why remix is not the way out\n${b.then}`);
+    assert.match(b.then, /narration/i, `the only way forward is narration\n${b.then}`);
+  });
+
+  test('voiceTimelineBlocker_anAllSilentTimeline_remedyAlsoSaysToRemoveTheSilenceDeclaration', async () => {
+    // MEASURED: "write narration for at least one segment" does NOT clear this refusal.
+    // isSilentSegment is "has a `silence` key", so adding narration while leaving the
+    // declaration in place lands on the next gate instead:
+    //   `segment "one" is declared silent but carries narration text`
+    // A remedy that produces a different refusal is not a remedy. Removing the declaration
+    // as well is what actually works — verified by running both edits through the gate.
+    const { voiceTimelineBlocker } = await load2();
+    const silent = (id) => ({ id, startMs: 0, endMs: 960, silence: { caption: '[intermission]' } });
+    const b = voiceTimelineBlocker({ endCard: { enabled: false }, segments: [silent('one'), silent('two')] });
+
+    assert.match(b.then, /remove .*silence declaration/i, `the edit must be complete, not half of one\n${b.then}`);
+  });
+
+  test('voiceTimelineBlocker_anAllSilentTimelineWithSomeClips_doesNotClaimNoSegmentHasOne', async () => {
+    // The partial case: one segment carries a clip record and the other does not. "no segment
+    // has one" is simply false there, and a false reason invites the author to disbelieve the
+    // true part of the message.
+    const { voiceTimelineBlocker } = await load2();
+    const silent = (id) => ({ id, startMs: 0, endMs: 960, silence: { caption: '[intermission]' } });
+    const withClip = (id, f) => ({ ...silent(id), audio: { file: f, durationMs: 960 } });
+    const b = voiceTimelineBlocker({
+      endCard: { enabled: false },
+      segments: [withClip('one', 'segment_01.mp3'), silent('two')],
+    });
+
+    assert.ok(b?.then, 'the refusal must carry a remedy');
+    assert.doesNotMatch(b.then, /no segment has one/i, `one segment DOES have one\n${b.then}`);
+    assert.match(b.then, /not every segment has one/i, `say what is actually true\n${b.then}`);
+  });
+
+  test('voiceTimelineBlocker_anAllSilentTimelineWhoseClipsExist_offersRemix', async () => {
+    // The other branch: every segment already carries a measured clip, so remix CAN arrange
+    // the timeline from its authored windows without synthesising anything. Without this
+    // pair, "never mention remix" would satisfy the test above.
+    const { voiceTimelineBlocker } = await load2();
+    const voiced = (id, file) => ({
+      id, startMs: 0, endMs: 960,
+      silence: { caption: '[intermission]' },
+      audio: { file, durationMs: 960 },
+    });
+    const b = voiceTimelineBlocker({
+      endCard: { enabled: false },
+      segments: [voiced('one', 'segment_01.mp3'), voiced('two', 'segment_02.mp3')],
+    });
+
+    assert.ok(b?.then, 'the refusal must still carry a remedy');
+    assert.match(b.then, /run remix\.mjs \(S4\)/, `with clips in place remix is the stage that can do this\n${b.then}`);
+    // A RECORD IS NOT A FILE. `hasAudioFile` tests the string in the timeline, not whether the
+    // clip is on disk — measured: remix refuses `segment_01.mp3 is not in the project` for a
+    // record naming a file that is absent. So the offer must carry its precondition rather
+    // than promise a run that can still bounce.
+    assert.match(b.then, /still in the project|if .*clip/i, `the remix offer must state its precondition\n${b.then}`);
+  });
+
+  test('voiceTimelineBlocker_aTimelineWithNarration_isNotRefusedAsAllSilent', async () => {
+    // The discriminating control: a gate that always returned this refusal would satisfy the
+    // test above.
+    const { voiceTimelineBlocker } = await load2();
+    const b = voiceTimelineBlocker({
+      endCard: { enabled: false },
+      segments: [
+        { id: 'one', startMs: 0, endMs: 960, silence: { caption: '[intermission]' } },
+        { id: 'two', startMs: 960, endMs: 1920, voiceoverText: 'hello there friend' },
+      ],
+    });
+    assert.equal(b, null, `a timeline with narration must pass the gate\n${JSON.stringify(b)}`);
+  });
+
+  test('segmentLabel_aSegmentWithAnId_namesItByThatId', async () => {
+    const { segmentLabel } = await load2();
+    assert.equal(typeof segmentLabel, 'function', 'silent-segment.mjs must export segmentLabel');
+    assert.equal(segmentLabel({ id: 'intro' }, 0), 'segment "intro"');
+    assert.equal(segmentLabel({ id: '2' }, 5), 'segment "2"', 'an id that looks like an index is still an id');
+  });
+
+  for (const [scenario, seg] of [
+    ['AMissingId', {}],
+    ['AnEmptyId', { id: '' }],
+    ['ANullId', { id: null }],
+    ['ANumericId', { id: 7 }],
+    ['ANullSegment', null],
+  ]) {
+    test(`segmentLabel_${scenario}_namesItByIndexNotAsAQuotedId`, async () => {
+      // `segment "2"` for the segment AT INDEX 2 sends an author looking for a segment
+      // genuinely called "2" — and one may exist, which is the whole problem. The engine
+      // already says so in two places: frame-capture.mjs:123 picks `timing.segments[i]` for
+      // exactly this case, and segmentEntryFact's own doc explains that `segment "1"` would
+      // send an author to the wrong line when another segment really carries the id "1".
+      // This is that rule as ONE statement rather than a sixth restatement of it.
+      const { segmentLabel } = await load2();
+      assert.equal(segmentLabel(seg, 2), 'timing.segments[2]');
+    });
+  }
+
+  test('segmentLabel_isTheFormTheShapeCheckAlreadyUses', async () => {
+    // Pins the two statements together: if either moves, this fails. Without it the extracted
+    // symbol could drift from the shape refusal it was extracted to agree with.
+    const { segmentLabel, shapeBlocker } = await load2();
+    const fact = shapeBlocker({ segments: [{ id: 'one', startMs: 0, endMs: 1, voiceoverText: 'x' }, null] }).fact;
+    assert.ok(
+      fact.startsWith(`${segmentLabel(null, 1)} `),
+      `the shape refusal and the label must name an id-less segment identically\n  fact:  ${fact}\n  label: ${segmentLabel(null, 1)}`,
+    );
+  });
+});
+
 describe('shapeBlocker', () => {
   const ok = (id) => ({ id, startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
   const idless = () => ({ startMs: 0, endMs: 960, voiceoverText: 'hello there friend' });
   const ID_RULE = 'every segment needs a non-empty string id';
+  // ONLY THE NO-SEGMENTS FACT CARRIES A REMEDY. The other two name the field and the rule
+  // it breaks in one sentence; this one names an absence and stops, so it is the only one
+  // where "what do I do now" is not already answered.
+  const NO_SEGMENTS_REMEDY = (name = 'timing.json') =>
+    `write the timeline's segments into ${name} — each needs a non-empty string id`;
   const CASES = [
-    ['NoSegmentList', {}, 'timing.json declares no segments'],
-    ['AnEmptySegmentList', { segments: [] }, 'timing.json declares no segments'],
+    ['NoSegmentList', {}, 'timing.json declares no segments', NO_SEGMENTS_REMEDY()],
+    ['AnEmptySegmentList', { segments: [] }, 'timing.json declares no segments', NO_SEGMENTS_REMEDY()],
     // One pass in index order: the first entry that is not a segment object, or has no id.
     ['AnIdlessSegmentBeforeANullOne', { segments: [ok('one'), idless(), null] }, `timing.segments[1]'s id is missing — ${ID_RULE}`],
     ['ANullSegmentBeforeAnIdlessOne', { segments: [null, idless()] }, 'timing.segments[0] is not a segment object'],
@@ -2784,12 +2968,21 @@ describe('shapeBlocker', () => {
     ['AnArrayEntry', { segments: [ok('one'), []] }, 'timing.segments[1] is not a segment object'],
   ];
 
-  for (const [scenario, timing, fact] of CASES) {
-    test(`shapeBlocker_${scenario}_isRefusedWithTheFactAlone`, async () => {
+  // CHANGED DELIBERATELY. This was `_isRefusedWithTheFactAlone`, asserting `{ fact }` and
+  // nothing else, with the note "the fact, naming the index, and no remedy". Two of the nine
+  // cases now carry a remedy, so the name and the assertion say so. The other seven still
+  // assert the fact ALONE — an extra key on any of them fails here, so the exemption cannot
+  // spread by accident.
+  for (const [scenario, timing, fact, then] of CASES) {
+    test(`shapeBlocker_${scenario}_isRefusedWithExactlyTheFactAndRemedyItDeclares`, async () => {
       const { shapeBlocker } = await load();
       assert.equal(typeof shapeBlocker, 'function', 'silent-segment.mjs must export shapeBlocker');
 
-      assert.deepEqual(shapeBlocker(timing), { fact }, 'the fact, naming the index, and no remedy');
+      assert.deepEqual(
+        shapeBlocker(timing),
+        then === undefined ? { fact } : { fact, then },
+        then === undefined ? 'the fact, naming the index, and no remedy' : 'the fact and the remedy it declares',
+      );
     });
   }
 
@@ -2800,14 +2993,65 @@ describe('shapeBlocker', () => {
     assert.equal(shapeBlocker({ segments: [ok('one'), ok('2'), ok(' ')] }), null);
   });
 
+  // ---- the input name -------------------------------------------------------------------
+  // The no-segments fact hardcoded the literal 'timing.json', so a caller reading a
+  // differently-named file was told about a file it never mentioned — the same
+  // wrong-diagnosis shape as naming knobs.json when the caller passed manifest.json.
+  //
+  // The CONSTRAINT is what makes this delicate: voice.mjs and remix.mjs both hardcode
+  // timing.json as their input and call shapeBlocker with one argument, so their message is
+  // correct today and must not move by a byte. The name is therefore additive and defaults
+  // to the only value those two can mean.
+
+  test('shapeBlocker_withNoNameGiven_keepsTheShippedWordingByteForByte', async () => {
+    // A CONTROL, not evidence: this passes before the change as well. It is here because it
+    // is the thing the change must not break, and two shipped stages depend on it.
+    const { shapeBlocker } = await load();
+    assert.deepEqual(shapeBlocker({ segments: [] }), { fact: 'timing.json declares no segments', then: NO_SEGMENTS_REMEDY() });
+    assert.deepEqual(shapeBlocker({}), { fact: 'timing.json declares no segments', then: NO_SEGMENTS_REMEDY() });
+  });
+
+  // THE REMEDY FOLLOWS THE NAME TOO. It tells an author which file to write into, so a
+  // remedy that always said "timing.json" would send the caller of a differently-named file
+  // to edit one it never opened — the very defect the name parameter exists to fix, moved
+  // one clause to the right.
+  test('shapeBlocker_givenTheNameItRead_namesThatFileInsteadOfTimingJson', async () => {
+    const { shapeBlocker } = await load();
+    assert.deepEqual(shapeBlocker({ segments: [] }, 'custom.json'),
+      { fact: 'custom.json declares no segments', then: NO_SEGMENTS_REMEDY('custom.json') });
+    assert.deepEqual(shapeBlocker({}, 'scene-b.json'),
+      { fact: 'scene-b.json declares no segments', then: NO_SEGMENTS_REMEDY('scene-b.json') });
+  });
+
+  test('shapeBlocker_givenAName_leavesTheEntryAndIdFactsAlone', async () => {
+    // `timing.segments[1]` is a JSON PATH into the parsed object, not a filename, so it does
+    // not move with the input's name. Without this control, "replace every occurrence of
+    // timing" would pass the test above and corrupt every other fact in this gate.
+    const { shapeBlocker } = await load();
+    assert.deepEqual(
+      shapeBlocker({ segments: [ok('one'), null] }, 'custom.json'),
+      { fact: 'timing.segments[1] is not a segment object' },
+    );
+    assert.deepEqual(
+      shapeBlocker({ segments: [ok('one'), idless()] }, 'custom.json'),
+      { fact: `timing.segments[1]'s id is missing — ${ID_RULE}` },
+    );
+  });
+
   // voice.mjs and remix.mjs each ask their gate's shape check first, so each gate refuses for it.
+  // The gate passes the shape refusal through UNCHANGED, remedy included — a gate that dropped
+  // the `then` would leave an author with the fact and no next step, which is the defect the
+  // remedy was added to close.
   for (const gate of ['voiceTimelineBlocker', 'voiceBlocker', 'remixBlocker']) {
-    for (const [scenario, timing, fact] of CASES) {
+    for (const [scenario, timing, fact, then] of CASES) {
       test(`${gate}_${scenario}_isRefusedByTheShapeCheckFirst`, async (t) => {
         const ask = (await load())[gate];
         const dir = makeProject(t);
 
-        assert.deepEqual(gate === 'voiceTimelineBlocker' ? ask(timing) : ask(dir, timing), { fact });
+        assert.deepEqual(
+          gate === 'voiceTimelineBlocker' ? ask(timing) : ask(dir, timing),
+          then === undefined ? { fact } : { fact, then },
+        );
       });
     }
   }
@@ -2941,21 +3185,31 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
   // cannot be trusted to stay honest on its own, so this asserts the declared list against the
   // modules that actually import the symbol. Update the comment when you add a caller; that is
   // the point.
-  for (const symbol of ['segmentEntryFact', 'segmentEntryBlocker']) {
+  //
+  // THE OWNING MODULE IS A PARAMETER. The audit was written for silent-segment.mjs, and the
+  // next shared rule to need it lived in cli-support.mjs — `describeJsonValue`, which two
+  // stages had each privately restated. An audit that only watches one file makes the second
+  // file the place a rule goes to drift unwatched.
+  for (const [owner, symbol] of [
+    ['silent-segment.mjs', 'segmentEntryFact'],
+    ['silent-segment.mjs', 'segmentEntryBlocker'],
+    ['silent-segment.mjs', 'segmentLabel'],
+    ['cli-support.mjs', 'describeJsonValue'],
+  ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);
-      const source = fs.readFileSync(new URL('silent-segment.mjs', srcDir), 'utf8');
+      const source = fs.readFileSync(new URL(owner, srcDir), 'utf8');
 
       const line = new RegExp(`^\\s*\\*\\s*CONSUMERS\\(${symbol}\\):\\s*(.+)$`, 'm').exec(source);
-      assert.ok(line, `silent-segment.mjs must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
+      assert.ok(line, `${owner} must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
       const declared = line[1].trim() === 'none' ? [] : line[1].split(',').map((s) => s.trim()).filter(Boolean);
 
+      const importFrom = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'\\./${owner.replace('.', '\\.')}'`, 's');
       const actual = fs
         .readdirSync(srcDir)
-        .filter((f) => f.endsWith('.mjs') && f !== 'silent-segment.mjs')
+        .filter((f) => f.endsWith('.mjs') && f !== owner)
         .filter((f) => {
-          const block = /import\s*\{([^}]*)\}\s*from\s*'\.\/silent-segment\.mjs'/s.exec(
-            fs.readFileSync(new URL(f, srcDir), 'utf8'));
+          const block = importFrom.exec(fs.readFileSync(new URL(f, srcDir), 'utf8'));
           return block !== null && block[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).includes(symbol);
         });
 
@@ -3611,3 +3865,4 @@ describe("frame-capture checks a silent segment's window and never derives its e
     assert.match(r.stdout, /^ {2}frames {10}88 at 30 fps/m, r.all);
   });
 });
+

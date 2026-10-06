@@ -1,4 +1,5 @@
 using Forge.EvalCli.Composition;
+using Forge.EvalCli.Diagnostics;
 using Forge.EvalEngine.Abstractions;
 using Forge.EvalEngine.Baselines;
 using Forge.EvalEngine.Comparison;
@@ -166,6 +167,10 @@ internal static class BaselineComparison
     /// The baseline already read for selection, when <c>--baseline</c> named one. Reused rather
     /// than read again: a second read is a second file, and the two could differ.
     /// </param>
+    /// <param name="display">
+    /// Shows the baseline suite's progress, when <c>--baseline-endpoint</c> named an address to
+    /// conduct it against. A display of its own, never the candidate's.
+    /// </param>
     /// <param name="cancellationToken">Cancels the comparison, including a live baseline run.</param>
     /// <returns>The comparison, or null when no baseline was named.</returns>
     /// <exception cref="ArgumentNullException">Any required argument is null.</exception>
@@ -178,6 +183,7 @@ internal static class BaselineComparison
         IReadOnlyList<string> skipped,
         SuiteResult candidate,
         SuiteResult? artifactBaseline,
+        RunProgressDisplay display,
         CancellationToken cancellationToken
     )
     {
@@ -186,11 +192,12 @@ internal static class BaselineComparison
         ArgumentNullException.ThrowIfNull(conducted);
         ArgumentNullException.ThrowIfNull(skipped);
         ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(display);
 
         cancellationToken.ThrowIfCancellationRequested();
 
         var (mechanism, reference, identity, baseline, withheld) = plan.BaselineEndpoint is not null
-            ? await LiveAsync(provider, plan, conducted, cancellationToken).ConfigureAwait(false)
+            ? await LiveAsync(provider, plan, conducted, display, cancellationToken).ConfigureAwait(false)
             : Artifact(plan, artifactBaseline, skipped);
 
         if (mechanism is BaselineMechanism.None || baseline is null)
@@ -473,6 +480,19 @@ internal static class BaselineComparison
     /// whose contract permits null, and a null flowing on from here would read downstream as
     /// nothing to compare. It is treated as a missing baseline rather than as no comparison.
     /// </para>
+    /// <para>
+    /// <b>The baseline suite is shown while it runs</b>, as the candidate's was, through
+    /// <see cref="SuiteDiscovery.ShowProgressAsync{TResult}"/> — so the one question about whether a
+    /// sink would be accepted is asked in one place for both. The display hands back whatever the
+    /// provider returned, null included, and throws whatever it threw unchanged, so the catches
+    /// below wrap it and mean exactly what they meant without it.
+    /// </para>
+    /// <para>
+    /// <b><see cref="NotSupportedException"/> is deliberately not caught.</b> It is the provider
+    /// refusing a sink its coordinator would refuse. It cannot arise while that one check is right,
+    /// and if the check is ever wrong it must arrive as the defect it is: conducting the baseline
+    /// again without a sink would put back the silence this display removes, and say nothing.
+    /// </para>
     /// </remarks>
     private static async Task<(
         BaselineMechanism Mechanism,
@@ -480,18 +500,35 @@ internal static class BaselineComparison
         ReportIdentity Identity,
         SuiteResult? Baseline,
         IReadOnlyList<string> Withheld
-    )> LiveAsync(IServiceProvider provider, RunPlan plan, Suite conducted, CancellationToken cancellationToken)
+    )> LiveAsync(
+        IServiceProvider provider,
+        RunPlan plan,
+        Suite conducted,
+        RunProgressDisplay display,
+        CancellationToken cancellationToken
+    )
     {
         var endpoint = plan.BaselineEndpoint!;
         var reference = plan.BaselineEndpointDisplay!;
         var coordinators = provider.GetRequiredService<BaselineEndpointCoordinators>();
         var live = new LiveEndpointBaseline(conducted, coordinators.ForEndpoint);
 
+        // Named by the printable form only. The dialled address goes to the engine, never to a display.
+        var outline = SuiteOutline.OfBaseline(conducted, reference);
+
         SuiteResult? baseline;
 
         try
         {
-            baseline = await live.TryGetBaselineAsync(endpoint.ToString(), cancellationToken).ConfigureAwait(false);
+            baseline = await SuiteDiscovery
+                .ShowProgressAsync(
+                    provider,
+                    display,
+                    outline,
+                    sink => live.TryGetBaselineAsync(endpoint.ToString(), sink, cancellationToken),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
         }
         catch (ArgumentException refusal)
         {

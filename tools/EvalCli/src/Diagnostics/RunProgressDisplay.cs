@@ -3,7 +3,6 @@ using System.CommandLine.IO;
 using System.Diagnostics.CodeAnalysis;
 using Forge.EvalCli.Cli;
 using Forge.EvalEngine.Coordination;
-using Forge.EvalEngine.Results;
 using Forge.EvalEngine.Scenarios;
 using Microsoft.Extensions.Logging;
 using Spectre.Console;
@@ -26,10 +25,11 @@ namespace Forge.EvalCli.Diagnostics;
 /// thread nothing is watching: <see cref="Progress{T}"/> posts to the thread pool in a console,
 /// where a throwing handler terminates the process — measured, before or after the suite returned
 /// — and Spectre's own auto-refresh thread has no catch either. What is left is the display's start
-/// and its teardown, which run on the suite's own path. <see cref="ShowAsync"/> contains both: a
-/// display that fails before the suite starts is abandoned and the suite is conducted without it,
-/// and one that fails afterwards is logged and the result returned. Either way the outcome is
-/// exactly what the suite would have produced with no display at all.
+/// and its teardown, which run on the suite's own path.
+/// <see cref="ShowAsync{TResult}(SuiteOutline, ILogger, Func{IProgress{RunProgress}, Task{TResult}}, CancellationToken)"/>
+/// contains both: a display that fails before the suite starts is abandoned and the suite is
+/// conducted without it, and one that fails afterwards is logged and the result returned. Either
+/// way the outcome is exactly what the suite would have produced with no display at all.
 /// </para>
 /// </remarks>
 internal abstract partial class RunProgressDisplay
@@ -101,8 +101,44 @@ internal abstract partial class RunProgressDisplay
         return profile.Out.IsTerminal && profile.Capabilities.Interactive && profile.Capabilities.Ansi;
     }
 
-    /// <summary>Conducts one suite while showing its progress.</summary>
+    /// <summary>Conducts one suite while showing its progress, outlined as a candidate.</summary>
+    /// <typeparam name="TResult">What <paramref name="conduct"/> returns.</typeparam>
     /// <param name="suite">The suite about to be conducted.</param>
+    /// <param name="logger">Where a fault in the display itself is reported.</param>
+    /// <param name="conduct">
+    /// Conducts the suite, reporting to the sink it is given, or to nothing when it is given null.
+    /// </param>
+    /// <param name="cancellationToken">The invocation's token.</param>
+    /// <returns>Exactly what <paramref name="conduct"/> returned.</returns>
+    /// <remarks>
+    /// The overload given the suite's <see cref="SuiteOutline.Of"/>, and nothing more: the same
+    /// arguments refused in the same order, on the task as before, and the same display.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the suite started, in which case
+    /// nothing was started; or the suite itself was cancelled.
+    /// </exception>
+    public async Task<TResult> ShowAsync<TResult>(
+        Suite suite,
+        ILogger logger,
+        Func<IProgress<RunProgress>?, Task<TResult>> conduct,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(suite);
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(conduct);
+
+        return await ShowAsync(SuiteOutline.Of(suite), logger, conduct, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Conducts one suite while showing its progress.</summary>
+    /// <typeparam name="TResult">
+    /// What <paramref name="conduct"/> returns, handed back untouched. A live baseline's is nullable,
+    /// and what a null means is for its caller to decide, not a display.
+    /// </typeparam>
+    /// <param name="outline">What the display says about the suite before its first run completes.</param>
     /// <param name="logger">Where a fault in the display itself is reported.</param>
     /// <param name="conduct">
     /// Conducts the suite, reporting to the sink it is given, or to nothing when it is given null.
@@ -135,18 +171,16 @@ internal abstract partial class RunProgressDisplay
         Justification = "Deliberately total, and not silent: any fault in a display is logged as a warning here, "
             + "and none may cost the suite. A narrower catch would let an unlisted fault discard a finished run."
     )]
-    public async Task<SuiteResult> ShowAsync(
-        Suite suite,
+    public async Task<TResult> ShowAsync<TResult>(
+        SuiteOutline outline,
         ILogger logger,
-        Func<IProgress<RunProgress>?, Task<SuiteResult>> conduct,
+        Func<IProgress<RunProgress>?, Task<TResult>> conduct,
         CancellationToken cancellationToken
     )
     {
-        ArgumentNullException.ThrowIfNull(suite);
+        ArgumentNullException.ThrowIfNull(outline);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(conduct);
-
-        var outline = SuiteOutline.Of(suite);
 
         // Selection can narrow a suite to nothing. No run will complete, so there is nothing to
         // show, and a bar drawn against a total of zero would have nothing honest to say.
@@ -155,7 +189,7 @@ internal abstract partial class RunProgressDisplay
             return await conduct(null).ConfigureAwait(false);
         }
 
-        Task<SuiteResult>? conducted = null;
+        Task<TResult>? conducted = null;
 
         try
         {
@@ -213,12 +247,21 @@ internal abstract partial class RunProgressDisplay
     /// </param>
     /// <returns>A task that completes when the display has finished.</returns>
     /// <remarks>
+    /// <para>
     /// <b>Settle the suite; do not rethrow it.</b> Its outcome is returned or thrown by
-    /// <see cref="ShowAsync"/>, so anything thrown from here is treated as this display failing.
+    /// <see cref="ShowAsync{TResult}(SuiteOutline, ILogger, Func{IProgress{RunProgress}, Task{TResult}}, CancellationToken)"/>,
+    /// so anything thrown from here is treated as this display failing.
+    /// </para>
+    /// <para>
+    /// <b>The suite is handed over as a <see cref="Task"/>, not as its result.</b> A display draws
+    /// from the reports and from nothing else — the result is the record, and it is the caller's to
+    /// read once it is returned. A live baseline's result may be null, and what that means is decided
+    /// by the one caller that asked for it.
+    /// </para>
     /// </remarks>
     protected abstract Task RenderAsync(
         SuiteOutline outline,
-        Func<IProgress<RunProgress>, Task<SuiteResult>> conduct,
+        Func<IProgress<RunProgress>, Task> conduct,
         CancellationToken cancellationToken
     );
 
@@ -234,8 +277,8 @@ internal abstract partial class RunProgressDisplay
 
     // Async so that a conduct delegate that throws synchronously still yields a task carrying the
     // exception: the suite's outcome always arrives the one way ShowAsync rethrows it.
-    private static async Task<SuiteResult> ConductAsync(
-        Func<IProgress<RunProgress>?, Task<SuiteResult>> conduct,
+    private static async Task<TResult> ConductAsync<TResult>(
+        Func<IProgress<RunProgress>?, Task<TResult>> conduct,
         IProgress<RunProgress> sink
     ) => await conduct(sink).ConfigureAwait(false);
 
@@ -261,6 +304,17 @@ internal abstract partial class RunProgressDisplay
 /// </remarks>
 internal sealed record SuiteOutline(string Name, int Scenarios, long PlannedRuns)
 {
+    /// <summary>
+    /// Gets the printable address of the baseline this suite is being conducted against, or null
+    /// when it is the candidate.
+    /// </summary>
+    /// <remarks>
+    /// A live-baseline comparison conducts the same suite twice, so both runs plan the same number of
+    /// runs of the same scenarios, and without this the second reads exactly like the first. Set only
+    /// by <see cref="OfBaseline"/>.
+    /// </remarks>
+    public string? Baseline { get; init; }
+
     /// <summary>Outlines a suite.</summary>
     /// <param name="suite">The suite.</param>
     /// <returns>The outline.</returns>
@@ -274,5 +328,31 @@ internal sealed record SuiteOutline(string Name, int Scenarios, long PlannedRuns
             suite.Scenarios.Count,
             suite.Scenarios.Sum(scenario => (long)scenario.Execution.RepetitionPolicy.Repetitions)
         );
+    }
+
+    /// <summary>Outlines the suite a live-baseline comparison conducts against the baseline address.</summary>
+    /// <param name="suite">The suite, as the candidate conducted it.</param>
+    /// <param name="address">
+    /// The baseline address as this tool prints it — <see cref="RunPlan.BaselineEndpointDisplay"/>,
+    /// already reduced to scheme, host, and port. Never the address that is dialled: its path is
+    /// where a credential sits (§V).
+    /// </param>
+    /// <returns>The outline, labelled as the baseline.</returns>
+    /// <remarks>
+    /// The address goes through the same net as the name, as every value on stderr does. The redacted
+    /// form has nothing in it for the net to catch; it is netted so that this is not the one value
+    /// that skips it.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="suite"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="address"/> is null, empty, or white space.</exception>
+    public static SuiteOutline OfBaseline(Suite suite, string address)
+    {
+        ArgumentNullException.ThrowIfNull(suite);
+        ArgumentException.ThrowIfNullOrWhiteSpace(address);
+
+        return Of(suite) with
+        {
+            Baseline = MarkdownReport.Sanitize(address, MarkdownReport.MaxPathCharacters),
+        };
     }
 }

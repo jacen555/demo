@@ -348,16 +348,8 @@ internal static class SuiteDiscovery
     /// acts on.
     /// </para>
     /// <para>
-    /// <b>Progress is shown only where the engine will accept it, and that is decided by asking
-    /// the engine's question first.</b> The coordinator refuses a progress sink unless its logger
-    /// admits warnings — a fault in a sink is logged and nowhere else — and refuses it with
-    /// <see cref="InvalidOperationException"/>, which nothing here translates: it would reach the
-    /// defect handler and print a stack trace, for a run that was only ever asked to be quiet. So
-    /// the coordinator's own logger is asked the same question first, and when it would not admit
-    /// a warning the suite is conducted without a sink, which is exactly the run with no display.
-    /// This composition root never configures such a logger — the threshold is warning, or debug
-    /// with <c>--verbose</c> — so today this only keeps a future quieter setting from turning
-    /// every run into a defect report.
+    /// <b>Progress is shown only where the engine will accept it</b> — decided by
+    /// <see cref="ShowProgressAsync{TResult}"/>, which a live baseline's suite is shown through too.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
@@ -375,20 +367,17 @@ internal static class SuiteDiscovery
         ArgumentNullException.ThrowIfNull(display);
 
         var coordinator = provider.GetRequiredService<RunCoordinator>();
-        var progressAdmitted = provider.GetRequiredService<ILogger<RunCoordinator>>().IsEnabled(LogLevel.Warning);
 
         try
         {
-            return progressAdmitted
-                ? await display
-                    .ShowAsync(
-                        suite,
-                        provider.GetRequiredService<ILogger<RunProgressDisplay>>(),
-                        sink => coordinator.RunAsync(suite, sink, cancellationToken),
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false)
-                : await coordinator.RunAsync(suite, cancellationToken).ConfigureAwait(false);
+            return await ShowProgressAsync(
+                    provider,
+                    display,
+                    SuiteOutline.Of(suite),
+                    sink => coordinator.RunAsync(suite, sink, cancellationToken),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
         }
         catch (ArgumentException)
         {
@@ -401,6 +390,77 @@ internal static class SuiteDiscovery
                     + "large, or lower the repetition counts it declares."
             );
         }
+    }
+
+    /// <summary>
+    /// Conducts a suite through its display where the coordinator would accept a progress sink, and
+    /// without one where it would not: the one place either suite is asked about.
+    /// </summary>
+    /// <typeparam name="TResult">What <paramref name="conduct"/> returns.</typeparam>
+    /// <param name="provider">The invocation's composition root, for the coordinator's logger and the display's.</param>
+    /// <param name="display">Shows the suite's progress. A display of its own, never one another suite has used.</param>
+    /// <param name="outline">What the display says about the suite before its first run completes.</param>
+    /// <param name="conduct">
+    /// Conducts the suite, reporting to the sink it is given, or to nothing when it is given null.
+    /// </param>
+    /// <param name="cancellationToken">The invocation's token.</param>
+    /// <returns>Exactly what <paramref name="conduct"/> returned.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Progress is shown only where the engine will accept it, and that is decided by asking
+    /// the engine's question first.</b> The coordinator refuses a progress sink unless its logger
+    /// admits warnings — a fault in a sink is logged and nowhere else — and refuses it with
+    /// <see cref="InvalidOperationException"/>, which nothing here translates: it would reach the
+    /// defect handler and print a stack trace, for a run that was only ever asked to be quiet. So
+    /// the coordinator's own logger is asked the same question first, and when it would not admit
+    /// a warning the suite is conducted without a sink, which is exactly the run with no display.
+    /// This composition root never configures such a logger — the threshold is warning, or debug
+    /// with <c>--verbose</c> — so today this only keeps a future quieter setting from turning
+    /// every run into a defect report.
+    /// </para>
+    /// <para>
+    /// <b>One answer serves both suites, so it is given once.</b> The candidate's coordinator and a
+    /// live baseline's are handed the same <see cref="ILogger{TCategoryName}"/> — the composition
+    /// root registers one, and <see cref="Composition.BaselineEndpointCoordinators"/> resolves it from
+    /// the same provider. A second copy of this check could only come to disagree with the first.
+    /// </para>
+    /// <para>
+    /// <b>The answer is acted on, never second-guessed afterwards.</b> The live baseline refuses a
+    /// sink its coordinator would refuse as <see cref="NotSupportedException"/>, and nothing in this
+    /// tool catches that. While this check is right it cannot happen; if it is ever wrong, a defect
+    /// report is the honest outcome. Catching it and conducting the baseline again without a sink
+    /// would be a silent degrade — the very silence the display exists to remove.
+    /// </para>
+    /// <para>
+    /// <b>Nothing is caught here.</b> What <paramref name="conduct"/> throws means different things to
+    /// different callers — an <see cref="ArgumentException"/> is a run-budget overrun to
+    /// <see cref="ConductAsync"/> and a refused address to a live baseline — so each keeps its own
+    /// translation around this call.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
+    internal static Task<TResult> ShowProgressAsync<TResult>(
+        IServiceProvider provider,
+        RunProgressDisplay display,
+        SuiteOutline outline,
+        Func<IProgress<RunProgress>?, Task<TResult>> conduct,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(display);
+        ArgumentNullException.ThrowIfNull(outline);
+        ArgumentNullException.ThrowIfNull(conduct);
+
+        return provider.GetRequiredService<ILogger<RunCoordinator>>().IsEnabled(LogLevel.Warning)
+            ? display.ShowAsync(
+                outline,
+                provider.GetRequiredService<ILogger<RunProgressDisplay>>(),
+                conduct,
+                cancellationToken
+            )
+            : conduct(null);
     }
 
     /// <summary>

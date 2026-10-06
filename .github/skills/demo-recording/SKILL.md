@@ -114,8 +114,20 @@ reordering segments), never to read or set a value.
      labels; never "this" or "here".
    - **Do not put the narration on screen as bullets.** Visuals complement; they don't
      duplicate.
-3. **STOP. Present both for approval.** See the gate below.
-4. Only then: synthesise → solve timing → build → capture → encode → mix.
+3. **Coach pass 1 — the script, before a second of TTS is spent.** Dispatch the
+   `video-coach` agent with `PASS: 1`, the rubric at `tools/SizzleCraft/coach/rubric.md`,
+   the script as the input set, and `AUTHOR-MODEL` set to whatever wrote it. It must run on
+   a different model family (§VIII). Findings are **advice** — see the gate below.
+4. **STOP. Present both for approval.** See the gate below.
+5. Only then: synthesise → solve timing → build → preview → **coach pass 2** → capture →
+   encode → mix.
+   - **Coach pass 2** runs after the build and preview, while frames are still cheap to
+     change. Build the input set with `coach-pack.mjs --pass 2 --apply`, which refuses a
+     still whose binding record does not match its timing and scene, and writes the hash
+     manifest the report must cite.
+   - **Do not re-run a pass whose manifest hash is unchanged.** Same inputs mean the same
+     report, and the cost is a model call plus your attention on findings you have already
+     read.
 
 ### 4. The approval gate (required)
 
@@ -127,6 +139,16 @@ reordering segments), never to read or set a value.
 4. Target vs estimated duration
 5. The knob values that will be used
 6. The estimated render cost in wall-clock minutes
+7. **The coach's findings, as advice you have already read and decided on.** Run the
+   report through `coach-rulings.mjs` first, so prior rulings collapse and you present what
+   is actually new. For each open finding, say what you did: fixed it, or why you are
+   shipping anyway. **A waiver is the user's to give, not yours** — present it, do not
+   pre-dismiss it.
+
+**The coach never gates (ADR 0006).** Its strongest section is `DEFECTS`, and a DEFECTS
+finding is a strong advisory, not a block. Zero findings means "no objective defect found in
+what I evaluated" — it does not mean ready, and it is not approval. Only the user approves a
+render.
 
 Ask: **"Approve for render? This takes ~N minutes. Reply yes, or give changes."**
 

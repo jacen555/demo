@@ -133,6 +133,29 @@ public partial class LiveRunProgressTests
     }
 
     [Fact]
+    public async Task ShowAsync_ForABaselineSuite_LabelsTheBarAndLeavesTheAddressOffIt()
+    {
+        using var terminal = new FakeTerminal(isTerminal: true);
+        using var stderr = new StringWriter();
+        using var diagnostics = new DiagnosticsWriter(stderr);
+        using var log = new StringWriter();
+
+        await new LiveRunProgress(terminal.Console(), diagnostics, Never).ShowAsync(
+            SuiteOutline.OfBaseline(Suite, "https://staging.example.com/<redacted>"),
+            ProgressFixture.Logger(log),
+            ProgressFixture.Reporting("regression", null, ProgressFixture.Report(1, 3)),
+            CancellationToken.None
+        );
+
+        terminal.Output.Should().Contain("1/3 runs, 0 fail, 0 error - baseline suite 'regression'");
+
+        // Measured in Spectre 0.49.1 at 120 columns: a description carrying the address squeezed the
+        // 30-cell bar to a single cell. The streamed start line, written once, is where it is named.
+        terminal.Output.Should().NotContain("staging.example.com");
+        log.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ShowAsync_WhenCountsArriveOutOfOrder_EndsOnTheGreatestCountSeen()
     {
         using var terminal = new FakeTerminal(isTerminal: true);

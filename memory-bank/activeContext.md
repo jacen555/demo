@@ -257,9 +257,154 @@ which tolerates an id-less segment and labels it by index on the stated grounds 
 `segment "1"` would send an author to the wrong line. So "just call the existing rule" is
 a measurement, not a reflex: count the currently-passing tests that change verdict first.
 
+## The video coach graduated, advisory-only — 2026-10-06
+
+Seven steps, G5 → G1 → G2+G3 → G4 → G6 → G7, all reviewed cross-family. The spike is
+`status: graduated` and **retained**, because it is the provenance for every rubric rule and
+for the backtest figures the OBJ-07 tolerance rests on.
+
+| Step | What |
+|---|---|
+| G5 `0606751`, `f8c912d` | Agent contract: `BLOCKING` → `DEFECTS`, a required verbatim `QUOTE`, a `MANIFEST` line |
+| G1 `ae42467` | `coach/rubric.md` + a parse contract that enforces the rubric's own `:8` criterion |
+| G2+G3 `7295c1e`, `dc423fe` | preview binding record; `coach-pack.mjs` and its hash manifest |
+| G4 `a22ad52` | `coach-rulings.mjs` — the anti-suppression matcher |
+| G6 `1dd2606` | Wired into the demo-recording skill at two passes, neither gating |
+
+**The design property worth remembering:** a ruling that *agrees the defect is real* does not
+suppress it. `valid` keeps a finding open as "ruled valid, still unfixed"; only waived,
+false-alarm and taste collapse. And because the key hashes the sentence a finding quotes,
+**rewording that sentence re-opens the finding** — you cannot silence a review by editing the
+text it cites.
+
+### G7's end-to-end run found a defect nobody knew about
+
+Run against a temp copy of EvalLoopDemo, pass 1, coach on GPT against a Claude author:
+
+- The **known** `script.md` defect surfaced as a DEFECT, as the plan required — narration says
+  *"three result strips … land on three different outputs"* while the on-screen note reads
+  *"output A / output A / output B"*. Two distinct outputs, not three.
+- **A second, previously unrecorded OBJ-08 defect**: narration says *"Three authored facts"*,
+  the screen note says *"Four authored facts are shown."* Same rule, different segment.
+- All quotes verified **verbatim** in the source, so both findings were keyable.
+
+Then the full matcher chain, measured rather than asserted: no rulings → all NEW · `valid` →
+stays OPEN · `waived` → COLLAPSED · **cited sentence reworded → UNKEYABLE, shown NEW and
+flagged, with the prior ruling ORPHANED** ("either it was fixed, or the text it cited
+changed"). The rules the rubric marks unable to fire appeared in NOT EVALUATED as
+"covered by: nobody" — the honest marking from G1 doing its job in a live report.
+
+## Mutate the inputs, not just the implementation — 2026-10-06
+
+The strongest methodological finding of the graduation, and it is about the technique this
+repo has leaned on hardest.
+
+`coach-rulings` exists so that **nothing disappears silently**. Five of its fourteen review
+findings were one family — a finding vanishing, or collapsing under a ruling that was not
+about it — and **every one was reached by varying the DATA or the FORMAT. Not one by
+mutating code.** Thirteen code mutants were killed, and the suite could still be walked past
+by a stored ruling whose status read `pending`:
+
+> key matched, so not NEW · not `valid`, so not OPEN · not a collapsing verdict, so not
+> COLLAPSED · keyed, so not ORPHANED. **The finding fell out of every section at exit 0.**
+
+That is the exact suppression the stage was built to prevent, reproduced *inside* the
+stage — and code mutation was **structurally blind** to it, because the defect lived in the
+rulings file rather than in any line of the program.
+
+**The rule: for any stage that reads a file somebody else writes, the file is the attack
+surface.** Mutate the inputs — a malformed entry after a good one, a status nobody
+enumerated, two records that collide on a key, a field present but empty.
+
+### Two more of the same week's shape, from the same task
+
+- **A test named for the stage's most important property passed against an empty section.**
+  It asserted a match on `/ruled valid, still unfixed/` — which is the **section heading**,
+  printed unconditionally. The single property the stage exists to guarantee was untested by
+  the test named after it. Assert on section *contents* and *counts*, never on a label the
+  renderer always prints.
+- **A fixture hid an integration defect for the second time in two tasks.** The manifest was
+  written where the test found it convenient, not where `coach-pack` actually writes it —
+  `tools/SizzleCraft/coach/pack/<id>/`. The stage could not read the manifest from the only
+  stage that produces one, and 32 passing tests said otherwise.
+
+### The pair defect, and why pairing the reviews found it
+
+`.github/agents/video-coach.agent.md` said a still-only finding keys on the still's hash,
+while its REQUIRED template showed `QUOTE:` unconditionally and said *"emit exactly this"*.
+A conforming agent had to either break the template or **invent a quote for an image** —
+and an invented quote fails the matcher's verbatim check, flagging a finding unkeyable that
+would otherwise have keyed cleanly.
+
+**The defect lived between two files and was invisible to a review of either one.** It was
+found only because the plan deliberately paired G5's review with G4's, on the grounds that
+an output contract and its parser are two halves of one interface. Worth repeating whenever
+a producer and a consumer are written separately.
+
+## My briefs keep being narrower than the rule — 2026-10-06
+
+Three times in one day a stream found more than I asked for, because my instruction named
+**examples** where it should have named the **rule**. This is an orchestrator defect, not a
+builder virtue, and it is worth recording as mine.
+
+| I wrote | The rule was | What the narrow form would have missed |
+|---|---|---|
+| "sweep for `Inputs used` naming **storyboard or stills** at pass 1" | *any* input unavailable at that pass | `CRAFT-09` and `OBJ-17`, which name **timing** |
+| "apply `:8` to these **six** rules" | apply `:8` to **every** rule | `OBJ-14` and `OBJ-15` |
+| "move the duplicated `describeShape` into `silent-segment.mjs`" | *one statement per rule, wherever it already lives* | `cli-support.mjs` already had `describeJsonValue`, identical body — following my brief would have created a **third** statement while nominally removing a duplicate |
+
+The third is the worst: my instruction would have **made the defect worse** while appearing
+to fix it. The stream caught it only because it checked whether the engine already held the
+answer — a habit it had from the previous task, not from my brief.
+
+**The same failure appears inside a stream's own work**, which is why it is a general rule
+rather than a complaint about me: a stream searching for `?? i` found the three sites my
+brief listed and none of the four live ones the reviewer later found, because two of those
+were in **ordinary success output at exit 0** rather than in a refusal. Its own diagnosis:
+
+> **My search was shaped by the brief's example instead of by the rule.**
+
+**What to do instead:** when dispatching, state the rule and give the examples as
+*illustrations*, explicitly labelled as non-exhaustive — and ask for the general form back.
+The strongest result of the day came from exactly that: a stream told to find one
+rule-vs-procedure mismatch was asked to walk the whole rubric, and returned nine.
+
+**And the cheapest correction: a mechanical query beats an enumeration.** `Pass` versus
+`Inputs used` is answerable for every rule at once; an audit list is answerable only for
+the rules someone remembered. The first prevents the tenth instance, the second documents
+the nine.
+
+**A fourth variant, sharper than the three above: I cited a precedent without checking
+which way it points.** Briefing G2, I wrote "you have been here before with make-music's
+bed — the answer there was deliberate and documented. Read it before choosing", in support
+of publishing a record LAST. `make-music.mjs` carries the comment **"THE RECORD FIRST, THEN
+THE BED"**. It argues the opposite.
+
+The stream read the precedent instead of my gloss on it, and derived the rule neither file
+states: **make-music fingerprints an in-memory buffer, so its record can precede the write;
+preview's stills are PNG bytes the browser writes to disk and cannot be hashed until they
+exist, so its record cannot.** Both orderings are right, for opposite reasons.
+
+**A precedent cited without its distinguishing condition is worse than no precedent**, because
+it transfers a conclusion without the reason that bounds it — and a reader following the
+pointer finds the engine apparently contradicting itself.
+
+### A fixture that reproduces the symptom is not a fixture that represents the system
+
+The same stream's first scene for the layout-misattribution fix used slide ids equal to
+segment ids. It reproduced the symptom **perfectly**, and would have made `issue.id ===
+segmentId` look like the fix. Against a real `write-build-html` run, slides are `seg-0`,
+`seg-1` while segments are `ok`, `big` — so that filter matches **nothing** and ships as a
+silent no-op that empties the failure line.
+
+**A fix that makes a failure line empty looks exactly like a fix that makes failures stop.**
+It was caught only because the fixture "felt too convenient", which is not a method. The
+method: **a fixture whose identifiers you chose yourself must be checked against a real run
+before trusting any filter built on it.**
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
-Five rules, each earned by a defect that survived a green test today. They belong together
+Eight rules, each earned by a defect that survived a green test. They belong together
 because they are all the same failure: **evidence graded in a context it did not come from.**
 
 1. **A zero from ABSENT COVERAGE is not a zero from PRESERVED BEHAVIOUR.** Two streams hit
@@ -285,6 +430,99 @@ because they are all the same failure: **evidence graded in a context it did not
    not asserted: a stream removed its own `discardFrom(mark)` to check its new test
    discriminated, and the test **still passed** because an outer handler masks it. It
    documented the necessity as unobservable rather than implying coverage.
+
+6. **A surviving mutant means the test is weak OR THE CODE IS DEAD**, and those demand
+   opposite responses. I spent two days reading every survivor as a coverage gap. One was
+   not: `defaultLabel`'s index branch is unreachable because all three gates call
+   `shapeBlocker` first, which refuses an id-less segment outright. Writing a test to kill
+   that mutant would have produced a test for a path that cannot execute — green forever,
+   proving nothing, which is the artefact this whole list exists to prevent. **Check
+   reachability before treating a survivor as a gap** — and note that writing the test
+   first is how you end up with a green assertion over an unreachable branch, which is
+   *worse* than the mutant, because the gap is now documented as covered.
+
+   **The portable habit, in the finder's own correction:** it did not set out to disprove
+   the brief. It went looking for the reachable path in order to fix it, and found there
+   wasn't one. The transferable rule is **reproduce the symptom before changing anything** —
+   a knack for disproving briefs is not a method, and recording it as one would teach the
+   wrong thing. The same lesson points inward: a control is only worth having if a
+   surprising failure can change your mind about the *setup* rather than about the code.
+7. **A check that matches nothing looks exactly like a check that changes nothing.** Both
+   are green. Four sightings in two days, across three toolchains:
+   - a file collapsed to one line by `Set-Content -NoNewline`, where `node --check` returned
+     **0** because a single line of `//` comments is valid JavaScript;
+   - a widened regex that passed all 1130 tests and was still wrong, because nothing in the
+     suite happens to print a bare clock;
+   - a .NET run reporting a clean **825/825 against stale binaries**, twice — once after a
+     mutation failed to compile, once after `Copy-Item` preserved a timestamp so MSBuild
+     skipped the rebuild (confirmed by finding the mutant's member still in the DLL);
+   - a PowerShell patch that silently matched **0 sites** through backtick escaping.
+   **The defence is cheap: print the applied-site count, assert the row count, compare a
+   hash, or count the lines.** A tool reporting success tells you it ran, not that it did
+   what you meant.
+
+   **The sharper framing, from the stream that hit the fourth one:** every instance is *a
+   true answer to the wrong question*. `node --check` answers "is this parseable", not "is
+   this the file I wrote". A test run answers "did these binaries pass", not "were these
+   binaries built from this source". A `-replace` answers "here is a string", not "here is
+   a *changed* string". Because each answer is true, none of them fails loudly — so **the
+   defence must be a second measurement of the thing you actually care about, never a more
+   careful reading of the first.**
+8. **A remedy is a claim about what happens next, and the only way to know is to do it.**
+   The all-silent refusal took three rounds, each plausible and each wrong in a way no
+   reading would catch: the first was a **referral loop** — voice told the author to run
+   remix, and remix refuses that very timeline; the second rested on `hasAudioFile`, which
+   tests a *record* rather than a file; the third said "write narration", which does not
+   clear a refusal keyed on *has a `silence` key*. The final wording was verified by
+   following it and watching the run be accepted. `README.md:156`'s invariant — "a remedy
+   names a stage only where that stage would run" — is the written form of this, and this
+   repo ships a remedy in nearly every refusal, so the surface is large.
+
+### The instrument that proved the instrument was broken — 2026-10-06
+
+The sharpest instance of rule 7, because it happened **inside the experiment built to test
+rule 7**, and it corrected two people in sequence.
+
+A stream's exit-code probe piped a live child through `Select-Object -First 1` and read
+`$LASTEXITCODE`. All cases reported the harness's value rather than the tool's. It caught
+that only because a refusal it had *already measured at 2* came back as 1.
+
+It then built a control — and **the control said the hazard did not exist**. Its child
+emitted 5000 lines synchronously and exited before the consumer stopped reading, so there
+was nothing left to kill. Its diagnosis of its own control is the transferable part:
+
+> **A control that cannot fail proves nothing, and a FAST control for a RACE is a control
+> that cannot fail. The shape of the control has to match the shape of the hazard.**
+
+With a slow producer the hazard appeared, and worse than stated: a child that exits **3**
+was reported as **0** — a failing tool reported as passing, the single most dangerous
+direction for a measurement error.
+
+**Then the corrected experiment was itself wrong**, and only a sentinel exposed it. Setting
+`$LASTEXITCODE` to `99` before each case:
+
+    | Select-Object -First 1                    exit=99   137ms   <- sentinel SURVIVED
+    | Select-Object -Last 1                     exit=3   1366ms
+    | Select-String | Select-Object -First 1    exit=99   123ms   <- sentinel SURVIVED
+    | Where-Object { $_ }                       exit=3   1344ms
+    captured, then filtered                     exit=3   1353ms
+
+**`$LASTEXITCODE` is not set to 0 on early termination — it is not set at all**, and keeps
+whatever it held before. So the "0" was a stale 0, and the combination classified as *safe
+because it returned 3* was a stale 3. The child dies with `EPIPE` in both unsafe cases.
+
+**THE RULE — and note it is not a list of safe filters, because the safe-looking one was
+the trap:**
+
+> **Never read `$LASTEXITCODE` after a pipeline whose final element can stop early.
+> Capture the child's output to a variable first, then filter the variable. When measuring
+> an exit code at all, set a sentinel first so "unset" is visible rather than silently
+> inherited.**
+
+`spawnSync` is immune by construction. And the orchestrator was not clean either: a
+`git merge-tree` conflict preflight used `Select-Object -First 15` directly, which did not
+corrupt an exit code but **capped the conflict output at 15 lines** — it reported "clean"
+from a truncated instrument, and was right only because the answer happened to be short.
 
 ### `assertCleanExit` was blind, and that is the cautionary one
 

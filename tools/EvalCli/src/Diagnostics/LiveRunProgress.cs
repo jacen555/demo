@@ -71,7 +71,7 @@ internal sealed class LiveRunProgress : RunProgressDisplay
     /// </remarks>
     protected override async Task RenderAsync(
         SuiteOutline outline,
-        Func<IProgress<RunProgress>, Task<SuiteResult>> conduct,
+        Func<IProgress<RunProgress>, Task> conduct,
         CancellationToken cancellationToken
     )
     {
@@ -158,6 +158,7 @@ internal sealed class LiveRunProgress : RunProgressDisplay
         private readonly ProgressContext _context;
         private readonly ProgressTask _task;
         private readonly string _suite;
+        private readonly string _role;
         private readonly object _gate = new();
         private int _greatest;
         private long _total;
@@ -175,6 +176,13 @@ internal sealed class LiveRunProgress : RunProgressDisplay
             // A task description is parsed as markup. The name has been through the net, and the
             // net's own alias — [path-redacted:…] — is exactly the shape markup reads as a style.
             _suite = Markup.Escape(outline.Name);
+
+            // A live baseline's bar says so: it is drawn under the candidate's finished one, and the
+            // two are otherwise the same suite with the same plan. Its address is deliberately not
+            // drawn. The bar is redrawn in a fixed width, and measured in Spectre 0.49.1 at 120
+            // columns, a description carrying one squeezed the 30-cell bar to a single cell. The
+            // streamed start line, written once, is where the address is named.
+            _role = outline.Baseline is null ? string.Empty : "baseline ";
             _task = context.AddTask(Describe(0, _total, 0, 0), maxValue: _total);
         }
 
@@ -315,7 +323,7 @@ internal sealed class LiveRunProgress : RunProgressDisplay
         private string Describe(int completed, long total, int failed, int errored) =>
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{completed}/{total} runs, {failed} fail, {errored} error - suite '{_suite}'"
+                $"{completed}/{total} runs, {failed} fail, {errored} error - {_role}suite '{_suite}'"
             );
     }
 }
