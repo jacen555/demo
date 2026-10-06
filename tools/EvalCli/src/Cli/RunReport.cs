@@ -380,7 +380,7 @@ internal static class RunReport
         return counts;
     }
 
-    private static string Name(RunStatus status) =>
+    internal static string Name(RunStatus status) =>
         status switch
         {
             RunStatus.Pass => "pass",

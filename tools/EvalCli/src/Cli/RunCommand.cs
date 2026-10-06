@@ -2,8 +2,8 @@ using System.CommandLine;
 using System.CommandLine.IO;
 using Forge.EvalCli.Changes;
 using Forge.EvalCli.Composition;
+using Forge.EvalCli.Diagnostics;
 using Forge.EvalEngine.Baselines;
-using Forge.EvalEngine.Coordination;
 using Forge.EvalEngine.Impact;
 using Forge.EvalEngine.Loading;
 using Forge.EvalEngine.Results;
@@ -67,7 +67,12 @@ internal static class RunCommand
         // Built before the dry-run branch so that a composition root which cannot be satisfied is
         // a failure of the preview too. A dry run that skipped this would report a plan the real
         // run could not carry out.
-        using var provider = EvalCliServices.Build(plan, console.Error.CreateTextWriter());
+        //
+        // Log records go through the same writer as streamed progress, so the two never split
+        // each other's lines; see DiagnosticsWriter. The display itself is chosen only once a
+        // suite is about to run, so a dry run never probes the terminal.
+        using var diagnostics = new DiagnosticsWriter(console.Error.CreateTextWriter());
+        using var provider = EvalCliServices.Build(plan, diagnostics);
 
         var harness = HarnessDescription.Describe(provider);
 
@@ -97,7 +102,7 @@ internal static class RunCommand
         var conducted = Narrow(suite, summary);
 
         var result = await SuiteDiscovery
-            .ConductAsync(provider.GetRequiredService<RunCoordinator>(), conducted, cancellationToken)
+            .ConductAsync(provider, conducted, RunProgressDisplay.For(console, diagnostics), cancellationToken)
             .ConfigureAwait(false);
 
         var artifactPath = await WriteArtifactAsync(plan, result, written, cancellationToken).ConfigureAwait(false);
