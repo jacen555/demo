@@ -15,14 +15,14 @@
 // with them in the query string of its URL. But that URL can come from a NODE_OPTIONS a
 // parent shell passes down as well as from the command line, so how it is armed bounds
 // nothing. What bounds it is that the target must lie inside a suite-owned temp directory
-// (see test-owned-path.mjs; os.tmpdir() itself comes from the environment, TEMP on
+// (see suite-owned-path.mjs; os.tmpdir() itself comes from the environment, TEMP on
 // Windows), and that it is created with `wx`, so the plant can never overwrite anything.
 // The plant is announced on stdout, so a test can prove the collision was staged rather
 // than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
-import { requireTestOwnedPath } from './test-owned-path.mjs';
+import { requireTestOwnedPath } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const marker = params.get('marker');

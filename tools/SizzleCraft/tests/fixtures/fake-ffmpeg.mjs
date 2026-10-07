@@ -34,7 +34,7 @@
 //
 // It never runs ffmpeg, never touches the network, and writes only the output path the
 // engine asked for, which must be inside the suite-owned temp directory (see
-// test-owned-path.mjs). Anything else throws, loudly, and writes nothing.
+// suite-owned-path.mjs). Anything else throws, loudly, and writes nothing.
 //
 // LIMITS: it proves what happens AROUND ffmpeg, never what ffmpeg does. No audio is
 // mixed, no filter graph is executed, and a graph that ffmpeg would reject is accepted
