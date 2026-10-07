@@ -489,16 +489,66 @@ twice each, cold and warm:
 | `4a47413` — the commit reported as 1555 | **1556** | **1555** |
 
 The stream's **delta of +11 was exactly right** — isolated it: `voice-remix-apply` 158→164,
-`silent-segments` 351→356. The work was real. Only the totals were derived: **my predicted
-baseline plus its own delta, presented as a reading.** And the baseline had been one low for
-several commits, re-confirmed by every stream that passed through it.
+`silent-segments` 351→356. The work was real. I concluded the totals had been **derived** —
+my predicted baseline plus its own delta, presented as a reading — and that the baseline had
+been one low for several commits, re-confirmed by every stream that passed through it.
+
+**That conclusion was wrong. See the correction immediately below.** The totals were read off
+real output; the streams and I were running *different commands*. I am leaving the wrong
+reasoning in place rather than quietly rewriting it, because the way it was wrong is worth
+more than the finding it replaced.
 
 **I did not conclude "mis-transcribed", because both of its numbers were internally
 consistent — which is the signature of a genuine environment difference, not a slip.** So I
 tested that explanation instead of preferring the convenient one: I ran the suite in *that
-stream's own worktree, at its own commit*. 1556 / 1555. I also swept the suite for
-conditionally-registered tests; exactly one Windows-conditional construct exists and it is
-not the cause. The hypothesis died by measurement.
+stream's own worktree, at its own commit*. 1556 / 1555. I concluded nothing environmental
+differed, and that the totals had been derived rather than read.
+
+### That conclusion was WRONG, and how it was wrong is the real lesson — 2026-10-06
+
+**Both streams, independently, found the actual cause. The repo prescribes two test commands
+that disagree by one test:**
+
+```
+node --test "tools/SizzleCraft/tests/**/*.test.mjs"   ← .github/domains.yaml test_cmd
+# tests 1555 · # pass 1554
+
+node --test                                            ← package.json "test", bare discovery
+# tests 1556 · # pass 1555
+```
+
+The extra one is `tests/fixtures/test-owned-path.mjs` — **a fixture that registers no tests
+at all.** Node's default discovery matches `test-*.mjs`, so bare `node --test` runs it and
+reports `ok 8 - tests\fixtures\test-owned-path.mjs`: **a passing test that cannot fail,
+living inside the instrument we measure the repo with.** The registry glob requires
+`*.test.mjs` and never matches it.
+
+So the streams read real output. They ran the registry command; I ran `npm test`.
+
+**MY EXPERIMENT CONTROLLED THE TREE AND NOT THE COMMAND.** I ran *my* command in *their*
+tree, got my own number back, and declared the environment identical. It answered **"does
+their tree give 1556 under my command"** when the question was **"does their command give
+1555."** A true answer to the wrong question — rule 7 — committed by me, in the investigation
+whose entire subject was instruments that return the expected answer. I had even written the
+positive-control rule into the brief that same hour.
+
+**The giveaway I walked past: both of their numbers were internally consistent.** I correctly
+identified that as the signature of a real difference rather than a slip — and then tested
+only the one explanation I had thought of. Ruling out *an* alternative is not ruling out
+*the* alternative. When the evidence says "something real differs," the honest next step is
+to vary **every** axis of the measurement, starting with the one you did not choose
+deliberately.
+
+**What survives, and it survives strengthened:** the anchoring rule is still right, and the
+stream confirmed it against itself without being asked —
+
+> I *did* read my numbers off real output, yet I wrote "confirmed as predicted". Had the tool
+> printed something else I might still have typed "confirmed", because **the word was in the
+> brief before the number was on screen.**
+
+So the brief was a real defect and the process change stands. It just was not the cause of
+*this* discrepancy. **Two true findings, and I welded them into one wrong story** because the
+first one explained the second well enough to stop looking.
 
 Two of my own instruments failed inside this same investigation, and both failed silently:
 
@@ -515,8 +565,9 @@ I discarded all three and measured the thing I actually cared about: whether the
 
 **The rule: a verification step that states its expected result in advance has stopped being
 a verification step.** State the expectation *after* the reading, or not at all. Ask for the
-**verbatim** instrument output and the **delta**, and treat the delta as the trustworthy
-quantity — it is computed from two readings the stream actually took, while a total can be
+**verbatim** instrument output **and the exact command that produced it** — the command was
+the variable I never asked for, and it was the answer. Treat the **delta** as the trustworthy
+quantity: it is computed from two readings the stream actually took, while a total can be
 inherited from whoever spoke first.
 
 This is the same family as the mp3-count-versus-request-log control, and as the phrase-grep
