@@ -1,9 +1,13 @@
 /*
  * Reads RMS/peak levels out of one ffmpeg `astats` run, and says which of THREE things
  * happened: the window was MEASURED, the window was SILENT, or it could not be measured.
+ * It also owns the ONE condition those levels are JUDGED against — see
+ * judgeDeliveredLevels, which records the bound that was withdrawn after measuring it.
  *
  * The rule lives here rather than inside check-levels.mjs so it can be tested without an
- * ffmpeg binary — the same reason end-card.mjs lives apart from voice.mjs.
+ * ffmpeg binary — the same reason end-card.mjs lives apart from voice.mjs. The gate was
+ * put here for that same reason and for one more: its correctness IS the silence
+ * distinction below, so the two belong where they can be read against each other.
  *
  * ## Why silence is a state and not a failure
  *
@@ -88,6 +92,124 @@ export function readAstatsLevels(output) {
   // a real level — so it is reported as measured rather than promoted to a failure.
   const state = rms.kind === 'silent' && peak.kind === 'silent' ? 'silent' : 'measured';
   return { state, rms: rms.db, peak: peak.db };
+}
+
+/**
+ * Judges ONE measured window of a delivered render, and returns a refusal naming what it
+ * measured — or `null` when the window is acceptable.
+ *
+ * ## Why a gate on the OUTPUT exists at all
+ *
+ * mix-parameters.mjs audits every number in the final `-filter_complex` string, and its
+ * header lists seven things that audit cannot see: anything reaching ffmpeg OUTSIDE the
+ * graph (`-b:a`, `-ar`, a changed codec or `-map`), any non-numeric change, a value inside
+ * a link label, a value shaped like a filter identifier, a mis-set `pinned` flag,
+ * deliberate circumvention, and two values moved within one chain. A reading of the
+ * delivered file is taken DOWNSTREAM of all seven — it never looks at the graph — so it is
+ * not blinded by any of them. That is a statement about where the reading is taken, NOT a
+ * claim that it detects those defects: it detects the two outcomes below and nothing else,
+ * and most of those seven can move a mix without producing either.
+ *
+ * ## THE ONE BOUND, AND THE ONE THAT WAS WITHDRAWN AFTER MEASURING IT
+ *
+ * **Refused: a WHOLE FILE that is digital silence, where audio was expected.** Not a
+ * threshold — there is no number in it. A delivered render that measures `-inf` across its
+ * whole length carries no audio at all, which is the wrong-`-map` / wrong-stream /
+ * dropped-audio class.
+ *
+ * The qualifier is load-bearing, and it is there because a reviewer caught its absence.
+ * README "concat-audio (S4)" documents a supported timeline in which EVERY segment is
+ * deliberately silent — "no clip is matched to anything and each window is generated" — and
+ * a render of that project is correctly silent from end to end. An unqualified rule would
+ * refuse it, which is the lead-in regression repeated one level up. Whether audio was
+ * expected cannot be read off the audio, so the CALLER declares it (`--allow-silent`); it
+ * defaults to expected, because that is what every narrated project is.
+ *
+ * **Withdrawn: a peak above full scale.** This was built, and the reasoning for it looked
+ * sound: remux-music.mjs:685 emits `alimiter=limit=<ceiling>:level=disabled` and
+ * `--ceiling` is bounded 0.1..12 dB BELOW full scale, so every mix is clamped under the
+ * rail before the encode; the README's own `--ceiling` table measured -0.3 dBTP at the
+ * default; and an independent render of that graph shape measured -0.227 dBFS post-AAC
+ * against +2.012 dBFS for the same material unlimited. Two measurements, both agreeing.
+ *
+ * Both were of the same benign signal. Sweeping the material instead, with the limiter
+ * CORRECTLY IN FORCE (ffmpeg 9.0.2, `alimiter=limit=<ceiling>:level=disabled`, AAC 192k
+ * 44.1 kHz, astats on the decoded result):
+ *
+ *   | material, limiter in force      | --ceiling 0.1 | --ceiling 1.0 | --ceiling 2.0 |
+ *   |---------------------------------|---------------|---------------|---------------|
+ *   | sine + pink noise               |  -0.26 dBFS   |  -0.68 dBFS   |  -1.91 dBFS   |
+ *   | white noise                     |  +2.85 dBFS   |  +3.30 dBFS   |  +1.23 dBFS   |
+ *   | square wave                     |  +4.49 dBFS   |               |               |
+ *   | dense square + HF tone          |  +1.44 dBFS   |               |               |
+ *
+ * A CORRECT render at the DEFAULT ceiling measured +3.30 dBFS. AAC reconstruction
+ * overshoots the sample peaks the limiter clamped, by an amount set by the material rather
+ * than by the ceiling, and the overshoot is far larger than the headroom any supported
+ * ceiling leaves. So "peak above full scale" is not a property of a BAD render; it is a
+ * property of dense material through a lossy encoder, and gating on it would have refused
+ * good work. The bound was removed rather than tuned: a threshold picked to sit above the
+ * largest overshoot anyone happened to measure is exactly the number that gets loosened
+ * until it stops complaining.
+ *
+ * Detecting clipping honestly needs a measurement this stage does not take — true peak on
+ * the decoded output, or a comparison against the pre-encode bus — and that is named here
+ * rather than approximated.
+ *
+ * ## There is deliberately NO RMS BAND either
+ *
+ * bug-ledger 16 is both the case for one and the argument against it: a gain of 1.50 is in
+ * range for a generated bed at -43.1 dB RMS and for a licensed master at -11.4 dB, 31.7 dB
+ * apart, and is right for one and 10 dB hot for the other. "Range validation and
+ * calibration validation are different checks", and the ledger's own prescribed detection
+ * is COMPARISON against a reference render, not a band. No defensible absolute band was
+ * derivable, so none was invented.
+ *
+ * ## WHAT THIS DOES NOT DETECT
+ *
+ *   a. ANY defect that leaves some audio in the file. That is nearly all of them. A bed
+ *      10 dB hot, a duck on the wrong words, a swapped track at the same loudness, a
+ *      crossfade at the wrong wrap, a wrong sample rate or bitrate: every one of those
+ *      delivers a file that is not silent, and every one passes here.
+ *   b. the bug-ledger 16 incident itself — whole-file RMS -9.8 dB, a bed ~10 dB hot. It is
+ *      not silent, so it passes. The ledger prescribes comparison against a reference
+ *      render for exactly that reason, and that comparison does not exist yet.
+ *   c. CLIPPING, for the measured reason above.
+ *   d. silence confined to a window it was not asked to measure, or to part of one. The
+ *      whole-file window is an average over the whole file: a render whose audio drops out
+ *      for thirty seconds is not `-inf` over its length, so it is not refused.
+ *   e. whether the levels it accepts are the RIGHT levels. Nothing here reads knobs.json.
+ *      Acceptance means "there is sound in it", never "calibrated".
+ *   f. a render that SHOULD have been silent and is not, and a `--allow-silent` passed
+ *      where it was not true. The flag is a declaration by the caller and is trusted as
+ *      one; nothing here can check it against the timeline.
+ *
+ * An UNMEASURABLE window is not judged here at all. That is already a refusal one layer
+ * up, with a message that names the cause; re-deciding it from levels that were never read
+ * is how "the file may have no audio track" came to be asserted about files that had one.
+ *
+ * @param {{state: string, rms?: number, peak?: number}} levels a readAstatsLevels result
+ * @param {{label: string, wholeFile?: boolean}} window the window that was measured
+ * @returns {string|null} the refusal detail, or null when the window is acceptable
+ */
+export function judgeDeliveredLevels(levels, { label, wholeFile = false, audioExpected = true } = {}) {
+  // Silence is the measurement this whole module exists to keep as a measurement. A window
+  // of it is CORRECT — the lead-in is silent by design — so only the whole file is judged,
+  // and only for being silent all the way through.
+  if (levels?.state !== 'silent' || !wholeFile) return null;
+  // ...and only when audio was expected at all. README "concat-audio (S4)" documents a
+  // timeline where EVERY segment is deliberately silent: no clip is matched to anything
+  // and each window is generated. A render of that project is correctly silent end to end,
+  // and refusing it would be this gate making the same mistake the lead-in fix made, one
+  // level up. The caller declares that case; it is not guessed from the audio.
+  if (!audioExpected) return null;
+
+  return (
+    `${label}: digital silence — the whole file measures -inf, so it carries NO AUDIO at ` +
+    `all. A silent lead-in is correct; a silent render is not. Check that the mix reached ` +
+    `the output stream (-map, the codec, the filter graph's final link) before delivering. ` +
+    `If this project's timeline really is silent in every segment, say so with --allow-silent.`
+  );
 }
 
 /**
