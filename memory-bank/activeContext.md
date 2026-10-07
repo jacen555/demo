@@ -294,6 +294,91 @@ flagged, with the prior ruling ORPHANED** ("either it was fixed, or the text it 
 changed"). The rules the rubric marks unable to fire appeared in NOT EVALUATED as
 "covered by: nobody" — the honest marking from G1 doing its job in a live report.
 
+### A test that could never have passed on a fresh clone — 2026-10-06
+
+I observed one test failure after deleting a gitignored folder, could not reproduce it in
+three further runs, and **logged it rather than closing it on repetition.** That instinct was
+right, and the reason is sharper than the instinct: **the three green runs were green because
+the first failing run had created the directory.** Repetition could only ever confirm the
+bug's own side effect.
+
+The cause was not a race and not intermittent. `coach-rulings.test.mjs` called `mkdtempSync`
+*inside* the real `coach/pack`, and `mkdtemp` requires its parent to exist. Nothing in that
+file created it — the directory existed **only as a side effect of `coach-pack.test.mjs`
+running `--apply`**. From cold, the file failed every time with `ENOENT`.
+
+**And `coach/pack` is gitignored, so a fresh clone is exactly that cold state.** This test
+could never have passed on a clean checkout. It passed on our machines solely because a
+previous run had left the directory behind.
+
+**The verification that distinguishes a fix from a disguise:** from cold the file is 49/49
+**and the folder is still absent afterwards.** A fix that merely `mkdirSync`'d first would
+have satisfied "it passes from cold" while leaving the shared tree — independent, versus
+merely self-creating.
+
+**Rules earned:**
+- **Green runs after an observed failure are evidence of nothing if the failure could have
+  repaired the state it depended on.** Ask what the first run changed.
+- **A gitignored directory is not a precondition.** Any test that needs one must create it in
+  isolation, because CI and a fresh clone both start without it.
+
+### An audit that was an explicit list, not a discovery — the same week
+
+I briefed that adding a `CONSUMERS(fingerprintBuffer):` line would be enforced automatically,
+because the audit "now covers `cli-support.mjs`". **It does not discover anything** — it is an
+explicit list of `[owner, symbol]` pairs. The line alone would have been **decorative: a
+comment claiming to be audited by a test that never reads it**, which is the exact artefact
+the convention exists to prevent, reproduced inside the convention.
+
+The builder also caught itself **listing a module as a consumer before checking whether it
+imports the symbol** — it does not. Worth recording, because a `CONSUMERS` line is precisely
+the artefact that rots when someone writes down what they assume rather than what they
+measured.
+
+### A correct rule with an explanation nobody re-measured — 2026-10-06
+
+In the U+0085 gate, **three of four review findings were wrong EXPLANATIONS, not wrong code.**
+The sharpest: the refusal cited a three-line harm **for a character the builder had personally
+measured as not adding a line**, in the same task. A refusal explaining itself with a
+consequence the engine has measured it does not have.
+
+Its own diagnosis is the transferable part:
+
+> **I write a correct general rule, then attach a specific explanation to it without
+> re-checking the explanation against the measurement that produced it.**
+
+This matters more here than in most codebases, because this engine's refusals are *meant* to
+be actionable — an author acts on the explanation, not on the rule. A true rule with a false
+reason sends them to the wrong place, which is the same family as `knobs.json` named for
+`manifest.json` and a remedy pointing at a stage that refuses the very timeline.
+
+**The fix that holds by construction:** the harm text is now selected **by character**, and
+the test table selects its expected string the same way, so the two cannot diverge by someone
+remembering wrongly.
+
+### A boundary row has to sit on the same path as the rule it bounds
+
+A mutant widening the refused set to all whitespace **survived**. The TAB and NBSP boundary
+rows sat on the **narration** path, which is checked against one character and never against
+the set — so they bounded a rule they did not name. Obvious written down; invisible until a
+mutant walked through it.
+
+### And the measurement that reversed its own premise
+
+The task was dispatched with: *do not gate the other six breaks on the grounds they cannot
+occur — a gate for a case that cannot happen is a rule that can never fire — but if you
+believe one can arrive by another path, measure it.*
+
+It measured. `restorePunctuation` emits the **raw measured word** when alignment fails, and
+down that path **all seven** breaks reach cue text at exit 0 with both sidecars written. A raw
+`U+000A` produced a genuine **three-line cue** while the run printed `0 cue(s) over` — the
+`MAX_LINES` violation that had just been proven *impossible* for U+0085, arriving as a
+different character down a different path.
+
+**"It cannot happen" is a claim about the paths you enumerated.** The gate is asymmetric
+because the measurements are, and that asymmetry is now documented at the gate rather than
+tidied away.
+
 ## Mutate the inputs, not just the implementation — 2026-10-06
 
 The strongest methodological finding of the graduation, and it is about the technique this
@@ -401,6 +486,25 @@ silent no-op that empties the failure line.
 It was caught only because the fixture "felt too convenient", which is not a method. The
 method: **a fixture whose identifiers you chose yourself must be checked against a real run
 before trusting any filter built on it.**
+
+**A fifth variant, and the costliest: I pointed at a model that had a defect.** Briefing the
+exit-code work I wrote *"`concat-audio` and `frame-capture` already supply the wording for a
+clean refusal; copy the one that reads better."* `frame-capture.mjs:63` forwards
+`err.message`, and V8 quotes **~17 bytes of the file** back into a JSON parse error:
+
+    Unexpected token 'S', "{ "k": SENTINEL-L"... is not valid JSON
+
+**So the instruction propagated a disclosure leak into three stages**, and only the
+reviewer caught it. The engine already held the correct form — `write-chapters.mjs:197`
+reports the file **by size**, settled after a link at `timing.json` made a parse error quote
+the bytes it led to, and pinned by `path-boundary.test.mjs:676`. I named the wrong two of
+three siblings.
+
+**The rule, from both instances together: check the model, not the model's reputation.** A
+precedent is a claim about code, and like any other claim it is worth exactly what its last
+measurement was worth. Citing one without reading it transfers its defects along with its
+authority — and the authority makes the defect harder to question, because the receiving
+stream now has two reasons to believe it.
 
 ## How a green suite lies — the 2026-10-05 measurement rules
 

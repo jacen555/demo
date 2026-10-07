@@ -61,7 +61,24 @@ const cli = (() => {
 
 const dir = cli.projectDir;
 const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
-const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+// Refused, not crashed. This was a bare JSON.parse: an unparseable timing.json escaped as
+// an uncaught SyntaxError with a stack and exit 1 — a crash dressed as a result, naming a
+// character offset rather than the file. Unreadable input is the caller's fault, which is
+// EXIT.USAGE by cli-support's own definition (a missing prerequisite), and it is what
+// frame-capture and concat-audio already say. CliError defaults to USAGE.
+const timing = guard(() => {
+  const text = fs.readFileSync(timingPath, 'utf8');
+  try {
+    return JSON.parse(text);
+  } catch {
+    // The parser's message is NOT forwarded. V8 quotes about 17 bytes of the input back —
+    // `Unexpected token 'S', "{ "k": SECRET-VAL"... is not valid JSON` — so passing
+    // err.message through copies the file into stdout and from there into CI logs. The
+    // file is reported by its SIZE instead, which is what write-chapters.mjs:197 settled on
+    // after a link at timing.json made a parse error quote the bytes it led to.
+    throw new CliError(`${timingPath} is not valid JSON (${text.length} characters)`);
+  }
+});
 const stable = timing.intake ?? {};
 
 // Validated, not coerced — see voice.mjs for why. `Number(stable.toleranceMs)` reaching

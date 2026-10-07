@@ -57,10 +57,21 @@ const apply = cliArgs.apply === true;
 
 const timing = guard(() => {
   const timingPath = requireExistingFile(projectDir, 'timing.json', 'timing file');
+  const text = fs.readFileSync(timingPath, 'utf8');
   try {
-    return JSON.parse(fs.readFileSync(timingPath, 'utf8'));
-  } catch (err) {
-    throw new CliError(`${timingPath} is not valid JSON — ${err.message}`);
+    return JSON.parse(text);
+  } catch {
+    // The parser's message is NOT forwarded. V8 quotes about 17 bytes of the input back —
+    // `Unexpected token 'L', "LEAK7f3a: 1" is not valid JSON` — so passing err.message
+    // through copies the file into stdout and from there into CI logs. MEASURED over six
+    // malformed shapes: two trigger that form, four do not, which is why this survived
+    // being read several times and was caught only by a sentinel.
+    //
+    // Reported by SIZE instead, the form write-chapters.mjs settled on after a link at
+    // timing.json made a parse error quote the bytes it led to, and the one
+    // path-boundary.test.mjs already pins for the sibling stages. This stage was the model
+    // the other three copied, so its wording was propagated before it was corrected.
+    throw new CliError(`${timingPath} is not valid JSON (${text.length} characters)`);
   }
 });
 

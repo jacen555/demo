@@ -1467,3 +1467,129 @@ describe('write-build-html refuses a segment it cannot place', () => {
     assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
   });
 });
+
+// ===========================================================================
+// UNREADABLE INPUT IS THE CALLER'S FAULT — EXIT 2, EVERYWHERE.
+//
+// cli-support defines 2 as "the caller's fault: bad arguments, a path outside the project
+// root, a missing prerequisite", and a timing.json that will not parse is a missing
+// prerequisite: no stage can begin without it. MEASURED on one unparseable file, before
+// this change:
+//
+//   remix.mjs             exit 1, UNCAUGHT SyntaxError with a stack
+//   write-storyboard.mjs  exit 1, UNCAUGHT SyntaxError with a stack
+//   concat-audio.mjs      exit 1, clean refusal naming the file
+//   frame-capture.mjs     exit 2, clean refusal naming the file
+//
+// Four stages, three answers, one input. The first two are the crash-instead-of-refusal
+// class; the third is a deliberate EXIT.FAILED that simply predates the ruling. The exit
+// code is the only part a pipeline driver can act on without parsing prose, so the stages
+// disagreeing about it is the defect — not the wording, which two of them already get right.
+// ===========================================================================
+
+describe('an unparseable timing.json is refused as bad input, by every stage', () => {
+  // frame-capture is the model: it already does this, so it is the control. If it ever
+  // stops, the thing being copied has moved and these tests are measuring a new target.
+  for (const stage of ['remix.mjs', 'write-storyboard.mjs', 'concat-audio.mjs', 'frame-capture.mjs']) {
+    test(`${stage.replace(/\W/g, '_')}_unparseableTimingJson_isRefusedAsBadInput`, (t) => {
+      const dir = makeProject(t, { 'timing.json': '{ not json' });
+
+      const r = runScript(stage, [], dir);
+
+      // assertCleanExit also rejects a stack trace, which is half the defect here: an
+      // uncaught SyntaxError exits non-zero too, so `notEqual(code, 0)` would pass against
+      // the crash this exists to remove.
+      assertCleanExit(r, EXIT.USAGE, `${stage}: unreadable input is the caller's fault: `);
+      assert.doesNotMatch(r.all, /SyntaxError/, `${stage}: the raw parser error escaped\n${r.all}`);
+      assert.match(r.all, /timing\.json is not valid JSON/, `${stage}: the refusal must name the file\n${r.all}`);
+    });
+  }
+
+  test('unparseableTimingJson_isRefusedBeforeAnythingIsWritten', (t) => {
+    // STATE, NOT JUST THE CODE. A clean exit code with half-written output is not a clean
+    // refusal. Nothing can legitimately be produced from a file that never parsed, so the
+    // directory must hold exactly what it held before.
+    const dir = makeProject(t, { 'timing.json': '{ not json' });
+    const before = fs.readdirSync(dir).sort();
+
+    for (const stage of ['remix.mjs', 'write-storyboard.mjs', 'concat-audio.mjs', 'frame-capture.mjs']) {
+      const r = runScript(stage, ['--apply'], dir);
+      assert.notEqual(r.code, EXIT.OK, `${stage} must refuse\n${r.all}`);
+      assert.deepEqual(fs.readdirSync(dir).sort(), before, `${stage} wrote something from a file it could not read\n${r.all}`);
+    }
+  });
+
+  test('unparseableTimingJson_isRefusedWithoutQuotingItsContents', (t) => {
+    // MEASURED: V8's "Unexpected token" message quotes ~17 bytes of the file verbatim —
+    //   Unexpected token 'S', "{ "k": SENTINEL-L"... is not valid JSON
+    // so forwarding err.message copies the input into stdout and from there into CI logs.
+    // Not every malformed file triggers that form, which is exactly why this needs a
+    // sentinel rather than an eyeball: my first probe used a shape that does NOT quote and
+    // came back clean, and I nearly concluded the message was safe.
+    //
+    // write-chapters.mjs:197 already solved this — it reports the file and its SIZE and
+    // says why — after a link at timing.json made a parse error quote the opening bytes of
+    // whatever the link led to.
+    // The sentinel is SHORT and sits EARLY, because V8 truncates its quotation at about 17
+    // characters: `Unexpected token 'S', "{ "k": SENTINEL-L"... is not valid JSON`. My first
+    // version of this test used an 18-character sentinel placed after a key, so the leaked
+    // text was `SENTINEL-L` and `includes(SENTINEL)` was false — the assertion tested for a
+    // string the disclosure is incapable of containing, and passed against the leak it was
+    // written to catch. Verified by mutation: `assert.ok(false)` in its place also passed,
+    // which is what proved the body was not measuring what it claimed.
+    const SENTINEL = 'LEAK7f3a';
+    // ONE SHAPE IS NOT A MEASUREMENT. V8 quotes the input only for its "Unexpected token"
+    // form; measured over six malformed shapes, two quote and four do not. A test using a
+    // non-quoting shape passes against the leak — which is how frame-capture's own
+    // disclosure survived until a reviewer looked. Both quoting shapes are used here, and
+    // the non-quoting ones are covered by the length-independent assertion below.
+    const QUOTING_SHAPES = [`${SENTINEL}: 1`, `{ "k": ${SENTINEL} }`];
+    for (const stage of ['remix.mjs', 'write-storyboard.mjs', 'concat-audio.mjs', 'frame-capture.mjs']) {
+      for (const body of QUOTING_SHAPES) {
+        const dir = makeProject(t, { 'timing.json': body });
+
+        const r = runScript(stage, [], dir);
+
+        assertCleanExit(r, EXIT.USAGE, `${stage} (${body}): `);
+        assert.ok(!r.all.includes(SENTINEL), `${stage} (${body}): the refusal quoted the file's contents\n${r.all}`);
+        assert.doesNotMatch(r.all, /Unexpected token/, `${stage} (${body}): the parser's message was forwarded\n${r.all}`);
+        assert.match(r.all, /timing\.json is not valid JSON/, `${stage} (${body}): it must still name the file\n${r.all}`);
+      }
+    }
+  });
+
+  test('aParseableTimingJson_isNotRefusedAsBadInput', (t) => {
+    // THE DISCRIMINATING CONTROL. Every assertion above expects a refusal, and "refuse
+    // everything" satisfies all of them. A well-formed timeline must still reach each
+    // stage's own work.
+    //
+    // It asserts EXIT.OK where a plan can legitimately succeed from a timeline alone, which
+    // is remix and write-storyboard. MEASURED: concat-audio needs the clips on disk
+    // ("segment_000.mp3 is missing") and frame-capture needs a built scene
+    // ("video-auto.html not found"). Those are their own preconditions, nothing to do with
+    // parsing, so demanding EXIT.OK from them would pin an unrelated contract — and a
+    // fixture built to satisfy it would be testing the fixture.
+    //
+    // For those two the assertion is narrower, and pins what was MEASURED rather than a
+    // claim about reaching their work: the exact exit code, the specific missing-artifact
+    // diagnostic that proves the parse was passed and the stage got as far as its own
+    // prerequisite, and no stack of any kind. An earlier version rejected only two strings,
+    // which an unrelated early refusal or an uncaught TypeError would have satisfied.
+    const dir = makeProject(t, { 'timing.json': timingFixture(wordedSegments) });
+
+    for (const stage of ['remix.mjs', 'write-storyboard.mjs']) {
+      const r = runScript(stage, [], dir);
+      assertCleanExit(r, EXIT.OK, `${stage} must plan a well-formed timeline: `);
+    }
+    for (const [stage, code, reached] of [
+      ['concat-audio.mjs', EXIT.FAILED, /segment_000\.mp3 is missing/],
+      ['frame-capture.mjs', EXIT.USAGE, /video-auto\.html not found/],
+    ]) {
+      const r = runScript(stage, [], dir);
+      assertCleanExit(r, code, `${stage}: `);
+      assert.match(r.all, reached, `${stage} must get past the parse to its own prerequisite\n${r.all}`);
+      assert.doesNotMatch(r.all, /is not valid JSON/, `${stage} refused a well-formed file\n${r.all}`);
+    }
+  });
+});
+

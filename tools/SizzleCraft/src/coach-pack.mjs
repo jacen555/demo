@@ -2,11 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveEngineOutput, planFooter } from './cli-support.mjs';
-// ONE STATEMENT OF WHAT A FINGERPRINT IS — the same one preview.mjs binds its record with,
-// so a mismatch here is a real difference in bytes and never a difference in method. See
-// the note at preview.mjs's import for why this lives in an audio module, and the debt.
-import { fingerprintBuffer } from './envelope-ducking.mjs';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveEngineOutput, planFooter, fingerprintBuffer } from './cli-support.mjs';
 
 const USAGE = `
 coach-pack — collect the exact input set the video coach may read, and bind it with a hash

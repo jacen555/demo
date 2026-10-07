@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, resolveEngineOutput, openExclusiveEngineFile, describeWrite, planFooter, requirePositiveNumber, resolveKnob } from './cli-support.mjs';
+import { EXIT, CliError, guard, runCli, parseCli, requireExistingFile, resolveOutput, resolveEngineOutput, openExclusiveEngineFile, describeWrite, planFooter, requirePositiveNumber, resolveKnob, fingerprintBuffer } from './cli-support.mjs';
 import {
   SPEECH_RMS_THRESHOLD,
   REFERENCE_ATTACK_MS,
@@ -20,7 +20,6 @@ import {
   BED_DUCK_RECORD_SUFFIX,
   duckGainTrajectory,
   fingerprintVoice,
-  fingerprintBuffer,
   bedDuckRecord,
   publishBedDuckRecord,
   classifyEnvelopeLineage,

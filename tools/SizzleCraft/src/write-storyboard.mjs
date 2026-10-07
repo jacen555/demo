@@ -17,11 +17,25 @@ Options
   --replace         permit overwriting an existing --out
   --help            show this message
 
-Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
+Exit codes: 0 success/plan · 1 write failed · 2 bad usage, a refused overwrite, or a timeline it cannot read
 `.trimStart();
 
 const { values, projectDir, apply, replace } = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
-const t = JSON.parse(fs.readFileSync(guard(() => requireExistingFile(projectDir, 'timing.json', 'timing file')), 'utf8'));
+// Refused, not crashed. This was a bare JSON.parse wrapped only around the path resolve:
+// an unparseable timing.json escaped as an uncaught SyntaxError with a stack and exit 1.
+// Unreadable input is the caller's fault — EXIT.USAGE by cli-support's definition, a
+// missing prerequisite — and CliError defaults to it. Same wording as frame-capture.
+const t = guard(() => {
+  const timingPath = requireExistingFile(projectDir, 'timing.json', 'timing file');
+  const text = fs.readFileSync(timingPath, 'utf8');
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Reported by size, never by contents — see remix.mjs and write-chapters.mjs:197. V8's
+    // parse message quotes the opening bytes of the file back at the caller.
+    throw new CliError(`${timingPath} is not valid JSON (${text.length} characters)`);
+  }
+});
 // SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
 // `panel` and throw an uncaught TypeError on `s.visual` — a crash with a stack, not a
 // refusal, and the path had no exit code of its own. Asked before the declaration check

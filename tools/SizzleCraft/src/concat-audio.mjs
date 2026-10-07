@@ -82,11 +82,22 @@ await runCli(() => {
   // Reading timing.json makes the hole DETECTABLE, and the `silence` declaration makes it
   // ATTRIBUTABLE: a hole that was declared is filled, and one that was not is refused.
   const timingPath = requireExistingFile(projectDir, 'timing.json', 'timing file');
+  const timingText = fs.readFileSync(timingPath, 'utf8');
   let timing;
   try {
-    timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
-  } catch (err) {
-    throw new CliError(`${timingPath} is not valid JSON — ${err.message}`, EXIT.FAILED);
+    timing = JSON.parse(timingText);
+  } catch {
+    // EXIT.USAGE, not FAILED. This stage already refused cleanly and named the file; only
+    // the code was out of step, and it predates the ruling that unreadable input is the
+    // caller's fault. A contract change rather than a crash fix — but nothing pinned it:
+    // no test fed this stage unparseable JSON, and the four EXIT.FAILED assertions in
+    // segment-entry-shape.test.mjs are on the "declares no segments" refusal below, which
+    // another stream deliberately left alone and which is untouched here.
+    //
+    // Reported by SIZE, not by the parser's message: V8 quotes about 17 bytes of the input
+    // back, so forwarding err.message copies the file into stdout. This is the form
+    // path-boundary.test.mjs:676 already pins for the same reason.
+    throw new CliError(`${timingPath} is not valid JSON (${timingText.length} characters)`);
   }
   const segments = Array.isArray(timing.segments) ? timing.segments : [];
   if (!segments.length) {
