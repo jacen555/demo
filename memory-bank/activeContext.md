@@ -474,6 +474,55 @@ exist, so its record cannot.** Both orderings are right, for opposite reasons.
 it transfers a conclusion without the reason that bounds it — and a reader following the
 pointer finds the engine apparently contradicting itself.
 
+### A fifth variant, and the worst: my brief contained the answer — 2026-10-06
+
+My merge-before-edit instruction read **"ff-only to `X`, confirm `N` as predicted."** It
+hands the stream the expected number before it measures. That is not a verification step.
+It is an **anchor**, and it returns itself.
+
+A stream reported `1555 / 1554`, having "confirmed 1544 / 1543 as predicted". Measured,
+twice each, cold and warm:
+
+| tree | `# tests` | `# pass` |
+|---|---|---|
+| `abaf4f9` — the baseline everyone "confirmed" at 1544 | **1545** | **1544** |
+| `4a47413` — the commit reported as 1555 | **1556** | **1555** |
+
+The stream's **delta of +11 was exactly right** — isolated it: `voice-remix-apply` 158→164,
+`silent-segments` 351→356. The work was real. Only the totals were derived: **my predicted
+baseline plus its own delta, presented as a reading.** And the baseline had been one low for
+several commits, re-confirmed by every stream that passed through it.
+
+**I did not conclude "mis-transcribed", because both of its numbers were internally
+consistent — which is the signature of a genuine environment difference, not a slip.** So I
+tested that explanation instead of preferring the convenient one: I ran the suite in *that
+stream's own worktree, at its own commit*. 1556 / 1555. I also swept the suite for
+conditionally-registered tests; exactly one Windows-conditional construct exists and it is
+not the cause. The hypothesis died by measurement.
+
+Two of my own instruments failed inside this same investigation, and both failed silently:
+
+- A summary regex `^# (tests|pass|fail)` matched **nothing**. The test-name check beside it
+  printed `FOUND` eleven times, so the run *looked* successful — a zero from a regex that
+  never matched, sitting next to a genuine positive result.
+- A `Get-Content | Select-Object -Last 3` issued in the same batch as the `git merge` read
+  the **pre-merge** file. I raced my own measurement against my own mutation.
+- A brace-depth counter I wrote to check scope counted braces inside strings and comments,
+  and returned `-1`. It discriminated nothing.
+
+I discarded all three and measured the thing I actually cared about: whether the new tests
+**execute by name**. They do, all eleven.
+
+**The rule: a verification step that states its expected result in advance has stopped being
+a verification step.** State the expectation *after* the reading, or not at all. Ask for the
+**verbatim** instrument output and the **delta**, and treat the delta as the trustworthy
+quantity — it is computed from two readings the stream actually took, while a total can be
+inherited from whoever spoke first.
+
+This is the same family as the mp3-count-versus-request-log control, and as the phrase-grep
+that answered *"does this phrase appear"* when the question was *"is the false claim still
+asserted."* **An instrument pointed at the expected answer returns the expected answer.**
+
 ### A fixture that reproduces the symptom is not a fixture that represents the system
 
 The same stream's first scene for the layout-misattribution fix used slide ids equal to
