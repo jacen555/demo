@@ -3196,6 +3196,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['silent-segment.mjs', 'segmentLabel'],
     ['cli-support.mjs', 'describeJsonValue'],
     ['cli-support.mjs', 'fingerprintBuffer'],
+    ['silent-segment.mjs', 'narrationCueProblems'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);
@@ -4014,3 +4015,66 @@ describe("frame-capture checks a silent segment's window and never derives its e
   });
 });
 
+
+  // ----------------------------------------------------------------------------------
+  // THE EARLY AND LATE GATES ASK ONE PREDICATE, so they cannot drift about what narration
+  // may not carry — the isGenerablePause pattern, where the refusal stays the predicate's
+  // and each site words its own message.
+  //
+  // Asserted on the PREDICATE and on both stages, because agreement between two gates is
+  // not something either gate's own rows can show.
+  describe('one statement of what narrated text may not carry', () => {
+    const load = () => import('../src/silent-segment.mjs');
+
+    test('narrationCueProblems_namesEachReasonInReportingOrder', async () => {
+      const { narrationCueProblems } = await load();
+
+      assert.deepEqual(narrationCueProblems('an ordinary line'), []);
+      assert.deepEqual(narrationCueProblems('the arrow --> points'), ['arrow']);
+      assert.deepEqual(narrationCueProblems('a\u0085b'), ['nel']);
+      assert.deepEqual(narrationCueProblems('both --> and a\u0085b'), ['arrow', 'nel']);
+      // Not a string is not a problem to report here; the shape gate owns that.
+      assert.deepEqual(narrationCueProblems(null), []);
+      assert.deepEqual(narrationCueProblems(7), []);
+    });
+
+    // THE SIX THAT CANNOT REACH A CUE FROM NARRATION ARE NOT HERE, and that is deliberate:
+    // /\s+/ splits them out before cue text, so refusing them in narration would be a rule
+    // that could never fire. They ARE refused in a measured word, by write-subtitles.
+    test('narrationCueProblems_ignoresTheSixBreaksNarrationCannotDeliverToACue', async () => {
+      const { narrationCueProblems } = await load();
+
+      for (const ch of ['\u000a', '\u000b', '\u000c', '\u000d', '\u2028', '\u2029']) {
+        assert.deepEqual(narrationCueProblems(`a${ch}b`), [],
+          `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} is split away by /\\s+/ before a cue`);
+      }
+    });
+
+    // BOTH GATES, ONE RULE. voice.mjs (S3) refuses before synthesising; write-subtitles
+    // (S10) refuses again, because narration can be edited after voice has run and S10 does
+    // not re-run that gate. Neither is redundant and neither is dead — the S10 half is
+    // reached here without voice.mjs ever running, which is the proof it is still live.
+    for (const [name, text, tokens] of [
+      ['AnArrow', 'the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']],
+      ['ANextLine', 'a\u0085b tail', ['ab', 'tail']],
+    ]) {
+      test(`bothGates_refuseNarrationHolding${name}`, async (t) => {
+        const { voiceTimelineBlocker } = await load();
+        const plain = [{ id: 'one', startMs: 0, endMs: 1800, voiceoverText: text }];
+
+        assert.notEqual(voiceTimelineBlocker({ segments: plain, endCard: { enabled: false } }), null,
+          'the pre-TTS gate must refuse it');
+
+        const words = tokens.map((w, i) => ({ word: w, startMs: i * 400, endMs: (i + 1) * 400 }));
+        const measured = [{
+          id: 'one', startMs: 0, endMs: words.at(-1).endMs + 400, voiceoverText: text,
+          audio: { file: 'segment_000.mp3', durationMs: words.at(-1).endMs + 400, headMs: 0, tailMs: 0, words },
+        }];
+        const dir = makeProject(t, { 'timing.json': timingWith(measured) });
+
+        const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+        assert.equal(r.code, EXIT.FAILED, `S10 must still refuse it on its own\n${r.all}`);
+      });
+    }
+  });
