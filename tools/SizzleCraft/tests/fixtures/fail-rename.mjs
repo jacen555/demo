@@ -9,7 +9,7 @@
 //   nodeArgs: ['--import', failRename({ dir, fragment: 'music.wav.part-' })]
 //
 // It never writes, moves or removes anything. Bounded as the other fixtures are: the
-// directory must be a suite-owned temp directory (see test-owned-path.mjs). It announces
+// directory must be a suite-owned temp directory (see suite-owned-path.mjs). It announces
 // itself and the failure on stderr, so a test can prove the failure was staged.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './test-owned-path.mjs';
+import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const fragment = params.get('fragment');

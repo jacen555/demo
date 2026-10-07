@@ -14,7 +14,7 @@
 //   });
 //
 // Bounded exactly as plant-on-marker is: BOTH the link's name and what it points at must
-// lie inside a suite-owned temp directory (see test-owned-path.mjs), so an inherited
+// lie inside a suite-owned temp directory (see suite-owned-path.mjs), so an inherited
 // NODE_OPTIONS cannot aim it at anything the suite does not own. The link is created with
 // symlinkSync, which fails if anything is already at the name, so the plant can never
 // replace anything. It is announced on stdout, so a test can prove the collision was
@@ -22,7 +22,7 @@
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
-import { requireTestOwnedPath } from './test-owned-path.mjs';
+import { requireTestOwnedPath } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const marker = params.get('marker');
