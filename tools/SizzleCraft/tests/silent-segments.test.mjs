@@ -3707,22 +3707,169 @@ describe('a narrated segment never puts --> into cue text', () => {
   // than the alignment fallback, because bare() strips it and the SOURCE token is emitted.
   // So it is the easiest of the seven to hit, not the hardest.
   //
-  // It is accepted because it is MEASURED as non-destructive in Chromium: one intact cue
-  // that keeps the NEL as an invisible character. This row RECORDS that boundary, it does
-  // not endorse it — narrated line breaks belong to the deferred line-break item, not to
-  // this rule. Pinning the accepted side means tightening the "-->" gate later cannot
-  // silently start refusing a project that renders correctly today.
+  // Written as an escape throughout: the character has no glyph, and a raw one in this file
+  // would be invisible to every reviewer.
+  // ----------------------------------------------------------------------------------
+  // MANDATORY LINE BREAKS IN NARRATED TEXT — the sibling of the silent-caption rule in
+  // silentSegmentProblems, and of the "-->" rule above.
   //
-  // Written as an escape: the character has no glyph, and a raw one in this file would be
-  // invisible to every reviewer.
-  test('writeSubtitles_NarrationHoldingANextLine_isAcceptedAndKeepsItInTheCueText', (t) => {
+  // THIS REPLACES A ROW THAT PINNED THE OPPOSITE CONTRACT. It read
+  // `writeSubtitles_NarrationHoldingANextLine_isAcceptedAndKeepsItInTheCueText` and
+  // asserted U+0085 reached cue text and was accepted. That was true, and it was recorded
+  // deliberately while the character was believed harmless. The expectation is changed here
+  // on purpose, in the same commit as the gate, rather than deleted quietly.
+  //
+  // Both halves MEASURED, not assumed:
+  //
+  //   NARRATION: /\s+/ splits six of the seven out before they can reach a cue. U+0085 is
+  //   the only survivor, because JS \s does not match it. Gating the other six here would
+  //   be a rule that can never fire.
+  //
+  //   A MEASURED WORD: when restorePunctuation cannot align a measured word it emits the
+  //   RAW word, and ALL SEVEN then reach cue text at exit 0 with both sidecars written.
+  //   A raw U+000A that way produced a THREE-line cue while the run reported "0 cue(s)
+  //   over" — the MAX_LINES violation, arriving by the path nobody was watching.
+  const BREAK_HARM = 'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
+    'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
+  // U+0085 is refused for a DIFFERENT reason, and says so. MEASURED in Chromium it adds no
+  // line at all — so citing the three-line harm for it would be a refusal explaining itself
+  // with a consequence the engine has measured it does not have. These two strings existing
+  // separately is the point of the rows below.
+  const NEL_HARM = 'it has no glyph, so neither it nor its effect can be seen in the text it came from, and ' +
+    'at the cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became ' +
+    'two, the second holding a single word)';
+  const NARRATION_REMEDY = "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.";
+  // The narration CAN contain one of the other six — /\s+/ splits them out before a cue, it
+  // does not forbid them — so the remedy has to be conditional on the character actually
+  // found, not on the U+0085 check that guards the branch.
+  const BOTH_REMEDY = 'The narration holds it too, so write the narration without it and re-run voice.mjs (S3) ' +
+    "to re-measure this segment's words.";
+
+  test('writeSubtitles_ANextLineInTheNarration_refusesWithTheWholeExplanationAndRemedy', (t) => {
     const dir = makeProject(t, { 'timing.json': timingWith(narrated('a\u0085b tail', ['ab', 'tail'])) });
 
     const r = runScript('write-subtitles.mjs', ['--apply'], dir);
 
-    assertCleanExit(r, EXIT.OK, 'U+0085 is not refused by the "-->" rule: ');
-    assert.ok(fs.readFileSync(path.join(dir, 'demo.vtt'), 'utf8').includes('\u0085'),
-      'U+0085 survives /\\s+/ and reaches cue text — the boundary this row records');
+    assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.equal(
+      r.stderr.split(/\r?\n/).find((l) => l.startsWith('error: ')),
+      'error: timing.segments[0] ("one"): voiceoverText contains a line break (U+0085) — it survives /\\s+/ and is ' +
+        `written into both subtitle sidecars as cue text, where ${NEL_HARM}. Write the narration without it ` +
+        '(and re-run voice.mjs (S3) if its words are already measured).',
+      r.all,
+    );
+    assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'no sidecar may be written');
+  });
+
+  // Every one of the seven, by the measured-word path. Named individually so a future
+  // narrowing of the set has to delete a row rather than quietly stop firing.
+  for (const [name, ch] of [
+    ['LineFeed', '\u000a'], ['LineTabulation', '\u000b'], ['FormFeed', '\u000c'], ['CarriageReturn', '\u000d'],
+    ['NextLine', '\u0085'], ['LineSeparator', '\u2028'], ['ParagraphSeparator', '\u2029'],
+  ]) {
+    const point = `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+    test(`writeSubtitles_A${name}InAMeasuredWord_isRefusedBecauseItCanReachCueTextRaw`, (t) => {
+      // bare('zzq<BREAK>zzq') is 'zzqzzq', which matches no narration token, so alignment
+      // fails and restorePunctuation emits the RAW measured word.
+      const dir = makeProject(t, {
+        'timing.json': timingWith(narrated('alpha beta', ['alpha', `zzq${ch}zzq`, 'beta'])),
+      });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assert.equal(r.code, EXIT.FAILED, r.all);
+      assert.equal(
+        r.stderr.split(/\r?\n/).find((l) => l.startsWith('error: ')),
+        `error: timing.segments[0] ("one"): audio.words[1].word contains a line break (${point}) — it can reach ` +
+          `cue text verbatim, and in a sidecar ${ch === '\u0085' ? NEL_HARM : BREAK_HARM}. ${NARRATION_REMEDY}`,
+        r.all,
+      );
+      assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'no sidecar may be written');
+    });
+  }
+
+  // THE REMEDY MUST MATCH WHAT IS ACTUALLY THERE. Narration can hold one of the other six —
+  // /\s+/ splits them out before a cue, it does not forbid them — so a refusal that says
+  // "the narration does not hold it" off the back of a U+0085 check would state something
+  // the code never tested. Here the narration holds the same LF the measured word does.
+  test('writeSubtitles_ALineFeedInBothTheNarrationAndAMeasuredWord_saysTheNarrationHoldsItToo', (t) => {
+    const dir = makeProject(t, {
+      'timing.json': timingWith(narrated('alpha\u000abeta', ['alpha', 'zzq\u000azzq', 'beta'])),
+    });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.equal(
+      r.stderr.split(/\r?\n/).find((l) => l.startsWith('error: ')),
+      'error: timing.segments[0] ("one"): audio.words[1].word contains a line break (U+000A) — it can reach ' +
+        `cue text verbatim, and in a sidecar ${BREAK_HARM}. ${BOTH_REMEDY}`,
+      r.all,
+    );
+  });
+
+  // The author edits ONE thing, exactly as the arrow rule does.
+  test('writeSubtitles_ANextLineInBothTheNarrationAndItsMeasuredWords_reportsOnlyTheNarration', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(narrated('a\u0085b tail', ['a\u0085b', 'tail'])) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, r.all);
+    assert.doesNotMatch(r.stderr, /audio\.words\[\d+\]\.word contains a line break/, r.all);
+  });
+
+  // THE BOUNDARY. Only the seven are refused; the silent half accepts TAB and NBSP and so
+  // does this one. Without these rows the gate could widen to all whitespace unnoticed.
+  //
+  // BOTH PATHS, because they use different checks. The narration rows alone left the
+  // measured-word set unguarded: a mutant widening it to /\s/ passed them, since narration
+  // is tested against U+0085 and never against the set. A boundary row has to sit on the
+  // same path as the rule it bounds.
+  for (const [name, ch] of [['ATab', '\t'], ['ANoBreakSpace', '\u00a0'], ['AnInformationSeparator', '\u001e']]) {
+    test(`writeSubtitles_NarrationWith${name}_isStillAccepted`, (t) => {
+      const dir = makeProject(t, { 'timing.json': timingWith(narrated(`alpha${ch}beta tail`, ['alphabeta', 'tail'])) });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assertCleanExit(r, EXIT.OK, `${name} is not a mandatory line break and must not be gated: `);
+    });
+
+    test(`writeSubtitles_AMeasuredWordWith${name}_isStillAccepted`, (t) => {
+      const dir = makeProject(t, {
+        'timing.json': timingWith(narrated('alpha beta', ['alpha', `zzq${ch}zzq`, 'beta'])),
+      });
+
+      const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+      assertCleanExit(r, EXIT.OK, `${name} in a measured word is not a mandatory line break: `);
+    });
+  }
+
+  // THE REMEDY, FOLLOWED RATHER THAN READ. A remedy is a claim about what happens next.
+  test('writeSubtitles_followingTheRemedyForANextLine_isAccepted', (t) => {
+    const dir = makeProject(t, { 'timing.json': timingWith(narrated('a\u0085b tail', ['ab', 'tail'])) });
+    assert.equal(runScript('write-subtitles.mjs', ['--apply'], dir).code, EXIT.FAILED);
+
+    // Exactly what the refusal says: write the narration without it.
+    fs.writeFileSync(path.join(dir, 'timing.json'), timingWith(narrated('ab tail', ['ab', 'tail'])));
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.OK, 'the remedy must actually be accepted: ');
+    assert.ok(fs.existsSync(path.join(dir, 'demo.vtt')), 'and the sidecar is written');
+  });
+
+  // THE DEFECT THIS GATE EXISTS FOR, pinned end to end: the exact fixture that produced a
+  // three-line cue at exit 0 is now refused before any sidecar is written.
+  test('writeSubtitles_theMeasuredWordThatProducedAThreeLineCue_isNowRefusedBeforeAnySidecar', (t) => {
+    const tokens = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota'];
+    const measured = ['alpha', 'zzq\u000azzq', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota'];
+    const dir = makeProject(t, { 'timing.json': timingWith(narrated(tokens.join(' '), measured)) });
+
+    const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.FAILED, `this fixture wrote a 3-line cue at exit 0 before the gate\n${r.all}`);
+    assert.match(r.stderr, /contains a line break \(U\+000A\)/, r.all);
+    assert.deepEqual(fs.readdirSync(dir), ['timing.json'], 'and nothing is written');
   });
 
   /**
