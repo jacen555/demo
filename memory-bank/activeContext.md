@@ -727,6 +727,48 @@ known quirk instead of a defect." The disagreement then stood long enough for an
 to build a wrong theory on top of it. **A measuring tool that disagrees with itself is the
 one thing that must never be triaged as cosmetic.**
 
+## Breaking changes are cheap here — standing position, 2026-10-07
+
+The user, asked to rule on a contract change:
+
+> "breaking changes are totally fine. We're making something that is re-usable for things
+> going forward. We're not trying to maintain existing demo videos or update them or
+> anything. We will pretty much always rebuild things from scratch and just take our
+> learnings forward"
+
+**This repo optimises for the NEXT build, not for existing artefacts.** "That would refuse
+projects which build today" is a fact to state, not a reason to stop.
+
+**It does not relax anything else.** A breaking change still needs the gate, the tests, the
+reviewer and a commit message that says plainly what breaks. The cost that just went to zero
+is *backward compatibility*, not rigour.
+
+And **surfacing a contract change for a decision is still correct process** — two streams did
+exactly that today and both were right to. The change is in the answer they get back, not in
+whether they should ask.
+
+**What this should have changed earlier:** several dispositions today were framed with
+"runs that exit 0 today may exit non-zero after" as a weight on the scale. It is not one.
+The `seg.id` ruling is the clean case: the partial screen was rejected not because the full
+pipeline rule was too expensive, but because a partial guard **misrepresents its own
+coverage** — which is a reason that survives regardless of what breakage costs.
+
+### A hazard that nearly cost two sessions their dependencies
+
+A stream junctioned `node_modules` into a throwaway worktree with `mklink /J`, then ran
+`git worktree remove --force`. **The remove followed the junction and emptied the TARGET's
+`node_modules`.** Its next suite run reported `224 fail / 31 cancelled / 1407 tests` — which
+it correctly diagnosed as the tree, not a flake, *because it captured the output instead of
+re-running*.
+
+The orchestrator used the same technique an hour earlier and escaped only by happening to
+`rmdir` the junction link first and then verifying `ajv` survived. **That was luck, not
+method.**
+
+**Safe ordering: remove the junction with `cmd /c rmdir <link>` — which deletes the link and
+never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
+a tree containing a junction you care about.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
