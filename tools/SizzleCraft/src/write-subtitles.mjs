@@ -617,11 +617,22 @@ function wordProblems(seg, where, gates) {
   const ARROW_HARM = CUE_HARM.arrow;
   const NEL_HARM = CUE_HARM.nel;
   // The six that only a MEASURED WORD can carry, and the only harm that is theirs alone.
+  //
+  // "A LINE BREAK ADDS A LINE" WAS TRUE OF ONE CHARACTER, NOT OF SEVEN. Measured against
+  // `.srt` afterwards: U+000A breaks the line in both SRT parsers as well as in `.vtt`, but
+  // U+000D breaks only in ffmpeg and is dropped by srt-parser-2, and U+000B, U+000C, U+2028
+  // and U+2029 broke no line in either SRT parser — and were never measured in Chromium at
+  // all. The gate still refuses all seven, on the ground that was always true of all seven:
+  // they reach cue text unexamined at exit 0. The string now says that rather than claiming
+  // a line count for characters nobody has seen produce one.
   const BREAKS = /[\n\v\f\r\u0085\u2028\u2029]/;
   const codePoint = (c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
   const BREAK_HARM =
-    'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
-    'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
+    'a cue is wrapped to at most 2 lines and a line break in its text can add another: MEASURED, a raw U+000A ' +
+    'produced a three-line cue at exit 0 with the run reporting none over the limit, and U+000A breaks the line ' +
+    'in both SRT parsers too. The others differ — U+000D breaks in ffmpeg and is dropped by srt-parser-2, while ' +
+    'U+000B, U+000C, U+2028 and U+2029 broke no line in either SRT parser and were not measured in Chromium — ' +
+    'so those are refused for reaching cue text unexamined, not for a line count anyone has seen';
   // The consequence only. Each source supplies its own lead, because only the narration is
   // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
   // message says what is being prevented rather than asserting an outcome. It now lives in
