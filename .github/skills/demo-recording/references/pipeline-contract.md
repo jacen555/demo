@@ -113,8 +113,13 @@ per project under `~/SizzleCraft/<project>/`, which is the duplication this skil
 | — | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | Verification |
 
 All of the above are checked in at `tools/SizzleCraft/src/` **except `write-script.mjs`**.
-A test (`engineScripts_coverEveryPipelineStage`) pins the rest so a partial extraction fails
-loudly rather than silently.
+A test (`engineScripts_coverEveryPipelineStage`, `tests/SizzleCraft.test.mjs:89`) checks that
+**ten specific files** are present — one named per stage, S2 through S8/S9 — so deleting any
+of those ten fails loudly. It pins those ten files and nothing else: a stage with several
+scripts is only partly covered (S4 pins `remix.mjs`, `silence-gen.mjs` and `silence-scan.mjs`
+but not `silence-asset.mjs` or `concat-audio.mjs`), and the verification helpers, the caption
+and chapter writers and the coach stages are not in its list at all. Deleting one of those
+would not fail this test.
 
 ### Known SizzleCraft characteristics
 

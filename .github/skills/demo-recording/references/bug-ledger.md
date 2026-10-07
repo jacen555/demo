@@ -353,14 +353,22 @@ gap corresponds to a ~1.08 s inserted file.
 consistent, so nothing looks wrong at any point in the run.
 
 **Cause.** Entry 5 says never derive head/tail from synthesis metadata. The
-reference implementation (`tools/SizzleCraft/src/voice.mjs`) **still does**:
+reference implementation (`tools/SizzleCraft/src/voice.mjs`) **still does**, at
+`voice.mjs:296` (verified 2026-10-06):
 
 ```js
-const tailMs = Math.max(0, durationMs - Math.round(words.at(-1).localEndMs * scale));
+const tailMs = Math.max(0, durationMs - Math.round(words[words.length - 1].localEndMs * scale));
 ```
 
-Because `scale = durationMs / lastWordEnd` pins the last word to the end of the
-clip by construction, `tailMs` is **structurally always 0**. Measured on 8 clips
+Because `scale = durationMs / lastWordEnd` (`voice.mjs:292-293`) pins the last word to the
+end of the clip by construction, `tailMs` is **0 whenever the final word end is positive**,
+which is every real clip — computed, not reasoned: for `durationMs/lastWordEnd` of
+27864/27000, 5000/4321, 12345/11111 and 1000/999, `tailMs` is 0 in every case.
+The one exception is the guard's own fallback: when `computedMs` is 0 the code takes
+`scale = 1`, and `tailMs` becomes the whole clip duration (computed: 5000 → 5000). That
+branch needs a clip whose last word ends at 0, so it does not arise in practice — but
+"structurally always 0" was broader than the code, and four positive examples could never
+have shown it. Measured on 8 clips
 of `en-US-AndrewNeural` at `rate=+20%`: tail reported `0 ms` every time. The
 solver therefore under-subtracts and **over-inserts** by the size of the real
 tail.
@@ -390,8 +398,12 @@ inserting **1,416 ms**:
 | `interviewer-qna-delta` | `1416` × 8 | **never** |
 | `eval-loop-demo` | `1416` × 7 | yes — 1.83 s measured |
 
-All three therefore play at **~1.83 s perceived gaps**, and are **internally
-consistent with each other**. The defect is uniform, not erratic.
+**One was measured at ~1.83 s perceived gaps; the other two are inferred to be similar** —
+the inference runs from identical voice, rate, target and inserted 1,416 ms through an
+identical solve, so it is strong, and it is still an inference. Only `eval-loop-demo` was
+decoded; the Decoded column says `never` for the rest. Decode them before treating 1.83 s as
+a measured fact for those two. On that basis the three are **internally consistent with each
+other**, and the defect is uniform rather than erratic.
 
 So fixing `voice.mjs` is **a series-wide pacing decision, not a silent
 correctness fix**: the first video rendered after the fix will pace differently
