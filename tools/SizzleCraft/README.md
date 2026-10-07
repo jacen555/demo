@@ -418,11 +418,72 @@ report nonsense about it.
 
 **A silent window is a measurement, not a failure.** `check-levels` reports three states,
 not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
-pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1`. Treating
+pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1` for being
+unreadable. Treating
 `-inf` as a failed probe made the last gate before delivery exit `1` on every correct
 narration-only render, and it named a cause — "the file may have no audio track" — that
 was false. That diagnosis is now only made after the input dump has actually been checked
 for an audio stream.
+
+**`check-levels` is now a GATE as well as a report, and that is a behaviour change.** It
+used to exit `0` on every file it could measure — so a render that delivered **no audio at
+all** was reported and passed. Each window is now judged after it is printed, and the run
+exits `1` when the **whole file is digital silence and audio was expected**. That is not a
+threshold: there is no number in it. A render with no sound anywhere in it has not
+delivered its narration, which is the wrong-`-map`/wrong-stream/dropped-audio class the mix
+registry's graph audit is blind to. A *window* of silence is still correct, and the lead-in
+is checked for exactly that.
+
+The qualifier is load-bearing. `concat-audio` supports a timeline that is silent in **every**
+segment — "no clip is matched to anything and each window is generated" — and a render of
+that project is correctly silent end to end. An unqualified rule would refuse it, repeating
+the lead-in regression one level up. Whether audio was expected cannot be read off the
+audio, so the caller declares it with **`--allow-silent`**. That flag is not a general
+off-switch: it asserts one specific fact about the timeline, it is trusted as an assertion
+(nothing here can check it), and it does not quieten the unmeasurable-window refusal that
+predates this gate. The default is "audio expected", because a delivery check nobody
+remembers to arm is a check that does not run.
+
+**A peak bound was built, measured, and withdrawn — read this before adding one back.**
+The reasoning for it was sound-looking: `remux-music` limits every mix to `--ceiling` dB
+*below* full scale (`alimiter=limit=…:level=disabled`, `--ceiling` bounded 0.1..12), and a
+correct `--ceiling 1.0` render measured **−0.23 dBFS** post-AAC, against **+2.01 dBFS** for
+the same material unlimited. Both of those readings were of one benign signal. Sweeping the
+*material* instead, with the limiter correctly in force (ffmpeg 9.0.2, AAC 192k):
+
+| material, limiter in force | `--ceiling 0.1` | `--ceiling 1.0` | `--ceiling 2.0` |
+|---|---|---|---|
+| sine + pink noise | −0.26 dBFS | −0.68 dBFS | −1.91 dBFS |
+| white noise | **+2.85 dBFS** | **+3.30 dBFS** | +1.23 dBFS |
+| square wave | **+4.49 dBFS** | | |
+
+A **correct** render at the **default** ceiling measured +3.30 dBFS. AAC reconstruction
+overshoots the sample peaks the limiter clamped, by an amount the material sets and the
+ceiling does not bound, so a reading above full scale is not evidence of a bad render and
+a gate on it would have refused good work. The bound was removed rather than loosened: a
+number chosen to clear the worst overshoot anyone happened to measure is the number that
+gets loosened again the next time it fires. Detecting clipping honestly needs a
+measurement this stage does not take — true peak, or a comparison against the pre-encode
+bus.
+
+There is **no absolute RMS band** either, on bug-ledger 16's own argument: a gain of `1.50`
+is in range for a generated bed at −43.1 dB RMS and for a licensed master at −11.4 dB, and
+is right for one and 10 dB hot for the other — "range validation and calibration validation
+are different checks", and the ledger prescribes *comparison against a reference render*,
+not a band. And there is **no general opt-out**: the single escape, `--allow-silent`,
+declares a supported timeline rather than disabling the check.
+
+**What it does not catch**, stated rather than implied, because this closes a narrow hole
+and not the one the graph audit leaves: **any** defect that leaves some audio in the file,
+which is nearly all of them — a bed 10 dB hot, a duck on the wrong words, a swapped track
+at the same loudness, a wrong bitrate or sample rate. The bug-ledger 16 incident itself
+(whole-file RMS −9.8 dB) is not silent and would pass. Nor does it catch clipping, for the
+measured reason above; nor audio that drops out for part of the file, since the whole-file
+window is an average over its length; nor whether the levels it accepts are the *right*
+levels, since nothing here reads `knobs.json`; nor a `--allow-silent` passed where it was
+not true, which is trusted as the caller's declaration. The real answer to most of those is
+the reference-render comparison the ledger prescribes, and it does not exist yet.
+`judgeDeliveredLevels` in `astats-levels.mjs` carries the full list.
 
 **Proving lineage after the fact is not possible, and the report says so.** `validate-timing`
 treats a calibration with no `textHash` as lineage UNPROVEN. Only `voice` writes one — and
