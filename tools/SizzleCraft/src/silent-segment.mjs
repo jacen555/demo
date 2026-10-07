@@ -1085,18 +1085,37 @@ function endCardBlocker(timing) {
 export const CUE_ARROW = '-->';
 export const CUE_NEL = '\u0085';
 
-/** The consequence of each, shared so the early and late refusals cannot describe it differently. */
+/**
+ * The consequence of each, shared so the early and late refusals cannot describe it
+ * differently.
+ *
+ * A HARM STRING STATES WHAT WAS MEASURED, FOR EVERY FORMAT THIS ENGINE WRITES. The arrow's
+ * first version described Chromium's WebVTT behaviour only, inside a sentence that says the
+ * text goes into BOTH sidecars. Measured against `.srt` afterwards, both of its clauses were
+ * false there — prose holding "-->" is harmless in both SRT parsers, and the timing-line
+ * shape deletes a cue or steals its timing rather than forging a second one.
+ *
+ * AND THE TWO SRT PARSERS DISAGREE WITH EACH OTHER, so neither reading may be promoted to a
+ * property of the format. Saying "in .srt, X happens" would be the same over-claim pointing
+ * the other way. What is named is what was observed, and in what.
+ */
 export const CUE_HARM = {
   arrow:
-    'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, and cue ' +
-    'text that is itself a whole timing line forges a second cue',
-  // U+0085's own reason. MEASURED in Chromium it produces no <br> and breaks no line under
-  // any white-space mode, so citing the extra-line harm for it would explain this rule with
-  // a consequence the engine has measured it does not have.
+    'the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any cue text line holding ' +
+    '"-->" as EMPTY, so the caption silently disappears whatever else is on that line, and cue text that is ' +
+    'itself a whole timing line forges a second cue; in .srt, prose holding it was harmless in both parsers ' +
+    'tried, but cue text shaped as a whole timing line made ffmpeg either delete the cue or adopt the injected ' +
+    'timing and lose the real text, both at exit 0 with no diagnostic, while srt-parser-2 left it intact — two ' +
+    'SRT parsers disagreeing, so this is what was observed and not a property of the format',
+  // U+0085's own reason. It adds no line in Chromium, in ffmpeg or in srt-parser-2 — three
+  // implementations — so citing the extra-line harm for it would explain this rule with a
+  // consequence the engine has measured it does not have. The cue-grouping split is this
+  // engine's OWN grouping, so unlike a parser behaviour it applies to both sidecars alike.
   nel:
     'it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the ' +
     'cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, ' +
-    'the second holding a single word)',
+    'the second holding a single word). It adds no line — MEASURED in Chromium, in ffmpeg and in srt-parser-2 ' +
+    'alike',
 };
 
 /** Every reason this narration cannot become a cue, in reporting order. Empty when it can. */

@@ -3620,8 +3620,20 @@ describe('a narrated segment never puts --> into cue text', () => {
   // what tells an author why a caption they can read in timing.json vanished from the video.
   // Gutting the explanation left the suite green, so one row per source pins it in full,
   // remedy included. The silent half of this rule asserts its whole message too.
-  const HARM = 'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, ' +
-    'and cue text that is itself a whole timing line forges a second cue';
+  // WHAT IT SAYS MUST BE WHAT WAS MEASURED, FOR BOTH FILES THIS STAGE WRITES. The earlier
+  // version described Chromium's WebVTT behaviour only, while the sentence around it says
+  // "written into BOTH subtitle sidecars". Measured against .srt afterwards, both of its
+  // clauses were false there: prose holding "-->" is harmless in both SRT parsers, and the
+  // timing-line shape deletes a cue or steals its timing rather than forging a second one.
+  //
+  // And the two SRT parsers DISAGREE with each other, so the string names what was observed
+  // and where, rather than promoting either reading to a property of the format.
+  const HARM = 'the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any cue text ' +
+    'line holding "-->" as EMPTY, so the caption silently disappears whatever else is on that line, and cue ' +
+    'text that is itself a whole timing line forges a second cue; in .srt, prose holding it was harmless in ' +
+    'both parsers tried, but cue text shaped as a whole timing line made ffmpeg either delete the cue or adopt ' +
+    'the injected timing and lose the real text, both at exit 0 with no diagnostic, while srt-parser-2 left it ' +
+    'intact — two SRT parsers disagreeing, so this is what was observed and not a property of the format';
   for (const [scenario, segments, expected] of [
     ['TheNarration', narrated('the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']),
       'timing.segments[0] ("one"): voiceoverText contains "-->" — it is written into both subtitle sidecars ' +
@@ -3731,15 +3743,26 @@ describe('a narrated segment never puts --> into cue text', () => {
   //   RAW word, and ALL SEVEN then reach cue text at exit 0 with both sidecars written.
   //   A raw U+000A that way produced a THREE-line cue while the run reported "0 cue(s)
   //   over" — the MAX_LINES violation, arriving by the path nobody was watching.
-  const BREAK_HARM = 'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
-    'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
-  // U+0085 is refused for a DIFFERENT reason, and says so. MEASURED in Chromium it adds no
-  // line at all — so citing the three-line harm for it would be a refusal explaining itself
-  // with a consequence the engine has measured it does not have. These two strings existing
-  // separately is the point of the rows below.
+  // "A LINE BREAK ADDS A LINE" WAS TRUE OF ONE CHARACTER, NOT OF SEVEN. Measured against
+  // .srt afterwards: U+000A breaks the line in both SRT parsers as well as in .vtt, but
+  // U+000D breaks only in ffmpeg and is dropped by srt-parser-2, and U+000B, U+000C,
+  // U+2028 and U+2029 broke no line in either SRT parser — and were never measured in
+  // Chromium at all. The gate still refuses all seven, on the ground that was always true
+  // of all seven: they reach cue text unexamined at exit 0.
+  const BREAK_HARM = 'a cue is wrapped to at most 2 lines and a line break in its text can add another: ' +
+    'MEASURED, a raw U+000A produced a three-line cue at exit 0 with the run reporting none over the limit, ' +
+    'and U+000A breaks the line in both SRT parsers too. The others differ — U+000D breaks in ffmpeg and is ' +
+    'dropped by srt-parser-2, while U+000B, U+000C, U+2028 and U+2029 broke no line in either SRT parser and ' +
+    'were not measured in Chromium — so those are refused for reaching cue text unexamined, not for a line ' +
+    'count anyone has seen';
+  // U+0085 is refused for a DIFFERENT reason, and says so. It adds no line in Chromium, in
+  // ffmpeg or in srt-parser-2 — three implementations — so citing the line-count harm for
+  // it would explain this rule with a consequence the engine has measured it does not have.
+  // The cue-grouping split is the engine's OWN grouping, so it applies to both sidecars.
   const NEL_HARM = 'it has no glyph, so neither it nor its effect can be seen in the text it came from, and ' +
     'at the cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became ' +
-    'two, the second holding a single word)';
+    'two, the second holding a single word). It adds no line — MEASURED in Chromium, in ffmpeg and in ' +
+    'srt-parser-2 alike';
   const NARRATION_REMEDY = "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.";
   // The narration CAN contain one of the other six — /\s+/ splits them out before a cue, it
   // does not forbid them — so the remedy has to be conditional on the character actually
