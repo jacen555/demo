@@ -95,6 +95,55 @@ function heldDirectory(t, { holdMs, holdAt = 'root' }) {
   return { dir, child, ready };
 }
 
+/** This file, which the audit must skip; see suiteSources. */
+const AUDIT_SELF = fileURLToPath(import.meta.url);
+
+/**
+ * Finds teardown hooks that remove a path without a retry budget.
+ *
+ * REGEX OVER A HOOK NAME IS NOT ENOUGH, and the reviewer was right to say so. An earlier
+ * draft matched only `t.after(() => fs.rmSync(`, so a block body, a bare `after`, or an
+ * `afterEach` could reintroduce the exact defect this file exists to prevent and the audit
+ * would have reported clean. This scans the balanced body of every hook instead, which is
+ * why the negative controls below plant each of those forms.
+ */
+export function bareTeardownRemovals(source) {
+  const hook = /(?:^|[^.\w])(?:t\.)?(after|afterEach)\s*\(/g;
+  const found = [];
+  for (let m = hook.exec(source); m; m = hook.exec(source)) {
+    let depth = 1;
+    let i = hook.lastIndex;
+    for (; i < source.length && depth > 0; i++) {
+      if (source[i] === '(') depth++;
+      else if (source[i] === ')') depth--;
+    }
+    const body = source.slice(hook.lastIndex, i);
+    if (/\bfs\.rm(?:dir)?Sync\s*\(/.test(body)) found.push(`${m[1]}: ${body.trim().slice(0, 60)}`);
+  }
+  return found;
+}
+
+/** The suite's own sources. Generated fixture trees are deliberately excluded — see below. */
+function suiteSources(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    // GENERATED TREES ARE NOT SUITE SOURCE. `makeEngineCopy` creates `.engine-*` copies of
+    // src/ under tests/, and another test may remove one between this walk and the read —
+    // an audit that recursed into them would invent its own intermittent ENOENT, which is
+    // precisely the class of defect this file was opened to remove.
+    if (entry.name.startsWith('.')) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...suiteSources(full));
+    // THIS FILE IS EXCLUDED, AND THAT IS A REAL LIMITATION, not a convenience. The
+    // controls above are literal source text of the very forms being detected, so the
+    // audit flags itself. The cost is that a bare teardown added to THIS file would not be
+    // caught; the alternative — obfuscating the controls so they no longer look like the
+    // thing they control for — would make them stop proving anything.
+    else if (entry.name.endsWith('.mjs') && full !== AUDIT_SELF) out.push(full);
+  }
+  return out;
+}
+
 describe('fixture teardown survives a busy machine', () => {
   for (const holdAt of ['root', 'inner']) {
     test(`removeFixture_directoryHeldByALiveChildProcessAtThe${holdAt === 'root' ? 'Root' : 'Inner'}Path_succeedsOnceTheHandleIsReleased`, async (t) => {
@@ -129,12 +178,23 @@ describe('fixture teardown survives a busy machine', () => {
     const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt: 'root' });
     await ready;
 
-    const startedAt = Date.now();
-    const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true, ...FIXTURE_REMOVAL }));
-    const waited = Date.now() - startedAt;
+    // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which the
+    // reviewer correctly rejected: on the loaded machine this change is verified against,
+    // scheduling delay alone can exceed 1500ms without the runtime having retried
+    // anything, so the test could fail for a reason that is not the property under test.
+    // This asserts the OUTCOME instead. The budget below would wait ~55s if the runtime
+    // honoured it on the root, which is twenty times the 2500ms hold — so a removal that
+    // still raises EBUSY can only mean the retry never happened. Nothing is timed.
+    const generous = { maxRetries: 10, retryDelay: 1000 };
+    const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true, ...generous }));
 
-    assert.equal(err?.code, 'EBUSY');
-    assert.ok(waited < FIXTURE_REMOVAL.retryDelay, `the runtime never waited: gave up after ${waited}ms`);
+    assert.equal(err?.code, 'EBUSY', 'the runtime must not have ridden out a hold its budget easily covered');
+    assert.equal(fs.existsSync(dir), true, 'and the fixture must still be there');
+
+    // The same hold, the same wait available, through this package's loop instead: gone.
+    // That difference is the whole justification for hand-rolling the retry.
+    removeFixture(dir);
+    assert.equal(fs.existsSync(dir), false);
   }, { skip: windowsOnly, timeout: 60_000 });
 
   test('removeFixture_aHandleThatIsNeverReleased_throwsRatherThanSilentlyGivingUp', async (t) => {
@@ -159,12 +219,13 @@ describe('fixture teardown survives a busy machine', () => {
     // parent is a file, assuming ENOTDIR; measured, that path raises ENOENT, which
     // `force: true` suppresses entirely — the call did not throw at all. A bad argument is
     // the honest version: a failure that is categorically not a handle anyone will release.
-    const startedAt = Date.now();
-    const err = captureError(() => removeFixture(123));
+    // NO WALL CLOCK HERE EITHER, for the reason given above. The budget is set so that a
+    // single retry would take ten minutes: if this returns at all, the loop did not retry.
+    // The test timeout is the bound, not a measured duration.
+    const err = captureError(() => removeFixture(123, { maxRetries: 3, retryDelay: 600_000 }));
 
     assert.equal(err?.code, 'ERR_INVALID_ARG_TYPE');
-    assert.ok(Date.now() - startedAt < FIXTURE_REMOVAL.retryDelay, 'a non-releasable failure must not be retried');
-  });
+  }, { timeout: 10_000 });
 
   test('fixtureRemoval_theRetryBudget_mirrorsTheRepoSelfHealConvention', () => {
     // NOT A NUMBER PICKED TO MAKE THIS FILE PASS. voice.mjs:300-315 is the repo's stated
@@ -178,17 +239,36 @@ describe('fixture teardown survives a busy machine', () => {
     );
   });
 
+  test('theTeardownAudit_detectsEveryHookFormItClaimsToCover', () => {
+    // THE AUDIT'S OWN POSITIVE CONTROL. An audit that reports clean because it cannot see
+    // the defect is worse than no audit: it certifies the thing it failed to look at. Each
+    // of these is a form the first draft of the detector missed.
+    const offenders = {
+      'arrow, immediate': `t.after(() => fs.rmSync(dir, { recursive: true, force: true }));`,
+      'arrow, block body': `t.after(() => {\n  fs.rmSync(dir, { recursive: true });\n});`,
+      'bare after': `after(() => fs.rmSync(dir, { force: true }));`,
+      afterEach: `afterEach(() => { fs.rmSync(dir, { recursive: true }); });`,
+      rmdirSync: `t.after(() => fs.rmdirSync(dir, { recursive: true }));`,
+    };
+    for (const [form, src] of Object.entries(offenders)) {
+      assert.equal(bareTeardownRemovals(src).length, 1, `the audit must catch: ${form}`);
+    }
+
+    // And must not accuse the correct idiom, or a removal that is not a teardown at all.
+    assert.deepEqual(bareTeardownRemovals(`t.after(() => removeFixture(dir));`), []);
+    assert.deepEqual(bareTeardownRemovals(`t.after(() => {\n  child.kill();\n  removeFixture(dir);\n});`), []);
+    assert.deepEqual(bareTeardownRemovals(`const err = captureError(() => fs.rmSync(dir, { force: true }));`), []);
+  });
+
   test('everyTeardownInTheSuite_goesThroughTheRetryingRemoval', () => {
     // THE CLASS, NOT THE INSTANCE. coach-pack was the one that failed under load, but
-    // every `t.after` that removes a directory a child may hold has the same defect. A new
+    // every teardown that removes a directory a child may hold has the same defect. A new
     // one must not be able to reintroduce it quietly.
     const offenders = [];
-    for (const entry of fs.readdirSync(TESTS_DIR, { recursive: true })) {
-      const rel = String(entry).split(path.sep).join('/');
-      if (!rel.endsWith('.mjs')) continue;
-      const src = fs.readFileSync(path.join(TESTS_DIR, rel), 'utf8');
-      // The teardown idiom this package uses, in any spacing.
-      if (/t\.after\(\s*\(\s*\)\s*=>\s*fs\.rm(?:dir)?Sync\(/.test(src)) offenders.push(rel);
+    for (const file of suiteSources(TESTS_DIR)) {
+      for (const hit of bareTeardownRemovals(fs.readFileSync(file, 'utf8'))) {
+        offenders.push(`${path.relative(TESTS_DIR, file).split(path.sep).join('/')} — ${hit}`);
+      }
     }
 
     assert.deepEqual(
