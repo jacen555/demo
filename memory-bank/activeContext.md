@@ -667,6 +667,66 @@ real ffmpeg renders concurrently. **That is a hypothesis, not a finding, and it 
 as unresolved rather than closed on four greens** — the coach/pack cold-clone case is exactly
 why repetition is not proof. Future suite runs capture their output on a non-zero exit.
 
+## The `.srt` sidecar was never measured, and two parsers disagree — 2026-10-07
+
+Every gate decision about `-->` and the seven mandatory line breaks was specced from
+**WebVTT in Chromium**. `write-subtitles` ships **two** sidecars. The `.srt` one had never
+been measured at all.
+
+**The destructive behaviour is ffmpeg-specific, and a single-source measurement would have
+reported it as a property of SRT.** The brief's warning — one parser is not a format — is
+the only reason it was caught:
+
+| shape | ffmpeg 9.0.2 (libavformat subrip) | srt-parser-2 (JS, independent) |
+|---|---|---|
+| cue text IS a whole timing line | **cue DELETED**, 2 cues → 1 | 1 cue, text kept literally |
+| timing line + following text | **timing HIJACKED**, real text lost | 2 cues, timing intact |
+| CR U+000D | consumed, **becomes a line break** | **deleted** |
+| `-->` in ordinary prose | harmless | harmless |
+
+**Both ffmpeg destructions are silent: exit 0, zero diagnostics.** Controls were run in every
+batch (one-cue/one-line, one-cue/two-line, two-cue, empty text) and reported alongside, so
+the zeros are readings rather than silence.
+
+**U+0085 survives, produces no line break, and changes no cue count — in BOTH SRT parsers,
+matching Chromium.** Three independent implementations agree. The gate's U+0085 rationale
+holds for both sidecars. No contradiction.
+
+### But the harm string was wrong for half of what we ship
+
+`CUE_HARM.arrow` is attached to a fact that says *"written into **both** subtitle sidecars as
+cue text, where …"* — and both its clauses are WebVTT-only:
+
+- *"parsed as empty and silently disappears"* — Chromium behaviour; in both SRT parsers
+  prose containing `-->` is harmless and the text survives.
+- *"forges a second cue"* — ffmpeg **deletes** the cue or **hijacks** its timing. Nothing is
+  forged, and the real harm is **worse**: silent data loss at exit 0, where the written
+  string implies a visible artefact.
+
+**The gate is correct and the measurement strengthens it** — a timing line contains `-->`, so
+the refusal is exactly what prevents ffmpeg's silent destruction. Only the explanation was
+wrong. That is the fifth-plus instance of *a correct rule with an explanation nobody
+re-measured*, this time in a string the orchestrator helped specify.
+
+### Three rules that came out of this round
+
+**A glyph is not a measurement.** `srt-parser-2` rendered U+2028/U+2029 as `alpha beta`,
+which reads exactly like conversion to a space. Reading **code points** showed both survive
+unchanged. A transformation that never happened was one character-class away from being
+reported.
+
+**Test every shape the rule names, not the first one.** The arrow was first tested only in
+its **embedded** form (`alpha-->beta`) — the harmless shape — and was nearly reported benign
+in SRT. The destructive shape is "cue text that is itself a whole timing line", which the
+WebVTT finding had already named.
+
+**A self-inconsistent instrument is a defect, not a quirk.** The stream that first met the
+two-command disagreement diagnosed it correctly as a fixture name and then filed it as
+*pre-existing and acceptable*. Its own words: it "treated a self-inconsistent instrument as a
+known quirk instead of a defect." The disagreement then stood long enough for an orchestrator
+to build a wrong theory on top of it. **A measuring tool that disagrees with itself is the
+one thing that must never be triaged as cosmetic.**
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
