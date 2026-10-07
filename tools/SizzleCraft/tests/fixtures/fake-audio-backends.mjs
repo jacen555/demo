@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
-import { requireTestOwnedPath } from './test-owned-path.mjs';
+import { requireTestOwnedPath } from './suite-owned-path.mjs';
 
 // ---- the marker-frame codec ------------------------------------------------------------------
 

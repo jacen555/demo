@@ -34,6 +34,7 @@ import {
 import {
   isSilentSegment, silentSegmentProblems, silentCaption, durationShortfallRemedy, durationMeasureRemedy,
   silentWindowFieldProblem, narratedWindowFieldRemedy, voiceBlocker, remixBlocker, gatedRemedy, declareSilentRemedy,
+  narrationCueProblems, CUE_ARROW, CUE_NEL, CUE_HARM,
 } from './silent-segment.mjs';
 
 const USAGE = `
@@ -601,44 +602,30 @@ function timelineProblems(t, root) {
 function wordProblems(seg, where, gates) {
   // Declared here, not at module scope: this module calls readTimeline at the top level,
   // above these lines, so a module-scope const would be in its temporal dead zone.
-  const ARROW = '-->';
-  // THE SEVEN UNICODE MANDATORY LINE BREAKS — UAX #14 classes BK, CR, LF and NL. The same
-  // set silentSegmentProblems refuses in an authored caption, and the two are meant to read
-  // as one rule applied to the two sources of cue text.
+  // THE RULE IS narrationCueProblems', CALLED RATHER THAN RESTATED, so this gate and the
+  // pre-TTS one in voiceTimelineBlocker cannot drift about what narration may not carry.
+  // The harm strings come with it for the same reason — two gates describing one defect
+  // differently is how an author ends up acting on the wrong explanation.
   //
-  // NARRATION carries only U+0085. MEASURED: /\s+/ matches the other six, so they are split
-  // out before they can reach a cue; JS \s does not match U+0085, so it survives inside a
-  // token. Refusing the six here would be a rule that can never fire.
-  //
-  // A MEASURED WORD carries any of them. MEASURED: restorePunctuation emits the RAW word
-  // when alignment fails, and all seven then reach cue text at exit 0 with both sidecars
-  // written — a raw U+000A produced a THREE-line cue while the run reported "0 cue(s) over".
-  const NEL = '\u0085';
+  // THIS GATE REACHES FURTHER THAN THE EARLY ONE, DELIBERATELY. voice.mjs refuses the same
+  // narration before synthesising, but only narration; the measured-word rules below cannot
+  // move there, because measured words do not exist until voice.mjs has run. And this one
+  // is still reachable on its own: narration can be edited AFTER voice ran, and this stage
+  // does not re-run that gate.
+  const ARROW = CUE_ARROW;
+  const NEL = CUE_NEL;
+  const ARROW_HARM = CUE_HARM.arrow;
+  const NEL_HARM = CUE_HARM.nel;
+  // The six that only a MEASURED WORD can carry, and the only harm that is theirs alone.
   const BREAKS = /[\n\v\f\r\u0085\u2028\u2029]/;
   const codePoint = (c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
-  // Named by code point because none of the seven has a glyph: "a line break" alone leaves
-  // the author hunting a character they cannot see. Same reason, same form, as the silent
-  // half of this rule.
   const BREAK_HARM =
     'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
     'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
-  // U+0085 GETS ITS OWN REASON, because the three-line harm is NOT its harm. MEASURED in
-  // Chromium: a cue holding one is a single intact cue, it produces no <br>, and it breaks
-  // no line under any white-space mode. Citing the line-count harm for it would be a
-  // refusal explaining itself with a consequence this engine has measured it does not have.
-  // What it does do is arrive invisibly and, at the cue-grouping ceiling, add the one
-  // character that splits a caption in two (MEASURED: one cue became two, the second
-  // holding a single word).
-  const NEL_HARM =
-    'it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the ' +
-    'cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, ' +
-    'the second holding a single word)';
   // The consequence only. Each source supplies its own lead, because only the narration is
   // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
-  // message says what is being prevented rather than asserting an outcome.
-  const ARROW_HARM =
-    'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, and cue ' +
-    'text that is itself a whole timing line forges a second cue';
+  // message says what is being prevented rather than asserting an outcome. It now lives in
+  // silent-segment.mjs beside the rule, so the pre-TTS gate words it identically.
   const w = seg.audio?.words;
   if (!Array.isArray(w) || !w.length) {
     const voice = gates.voice();
@@ -665,7 +652,8 @@ function wordProblems(seg, where, gates) {
   // repeat it, so reporting both turns a single edit into a list to work through: the
   // narration is reported alone, and a measured word only where the narration is clean —
   // which is the alignment-fallback case, and the only way this reaches a cue unseen.
-  const arrowInNarration = typeof seg.voiceoverText === 'string' && seg.voiceoverText.includes(ARROW);
+  const narration = narrationCueProblems(seg.voiceoverText);
+  const arrowInNarration = narration.includes('arrow');
   if (arrowInNarration) {
     problems.push(
       `${where}: voiceoverText contains "${ARROW}" — it is written into both subtitle sidecars as cue text, ` +
@@ -674,7 +662,7 @@ function wordProblems(seg, where, gates) {
     );
   }
   // Same shape, same reason: the author edits ONE thing. Only U+0085 can be here.
-  const breakInNarration = typeof seg.voiceoverText === 'string' && seg.voiceoverText.includes(NEL);
+  const breakInNarration = narration.includes('nel');
   if (breakInNarration) {
     problems.push(
       `${where}: voiceoverText contains a line break (${codePoint(NEL)}) — it survives /\\s+/ and is written ` +

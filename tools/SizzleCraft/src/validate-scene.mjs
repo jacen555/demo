@@ -31,7 +31,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { EXIT, CliError, runCli, requireExistingFile, resolveWithinRoot } from './cli-support.mjs';
+import { EXIT, CliError, runCli, requireExistingFile, resolveWithinRoot, noGoPatternsProblem } from './cli-support.mjs';
 import { isSilentSegment, shapeBlocker } from './silent-segment.mjs';
 
 const USAGE = `usage: node src/validate-scene.mjs [--project DIR] [--timing FILE] [--knobs FILE]
@@ -151,9 +151,10 @@ function revealsTarget(trigger, seg, ids) {
  *
  * The scanned INPUT is deliberately NOT truncated. Capping it would convert a hypothetical
  * hang into a guaranteed blind spot at the end of every long value.
+ *
+ * The length and count bounds themselves MOVED to cli-support's `noGoPatternsProblem`, so
+ * write-build-html — which read the same field with no bounds at all — is held to them too.
  */
-const MAX_PATTERN_LENGTH = 512;
-const MAX_PATTERNS = 256;
 const D1_SCAN_TIMEOUT_MS = 5000;
 
 /**
@@ -673,19 +674,11 @@ function checkD1(timing, report) {
     );
     return;
   }
-  if (!Array.isArray(raw) || raw.some((x) => typeof x !== 'string')) {
-    throw new CliError('project.noGoPatterns must be an array of regular-expression strings');
-  }
-  if (raw.length > MAX_PATTERNS) {
-    throw new CliError(`project.noGoPatterns declares ${raw.length} patterns, above the bound of ${MAX_PATTERNS}`);
-  }
-  raw.forEach((source, index) => {
-    if (source.length > MAX_PATTERN_LENGTH) {
-      throw new CliError(
-        `project.noGoPatterns[${index}] is ${source.length} characters, above the bound of ${MAX_PATTERN_LENGTH}.`,
-      );
-    }
-  });
+  // The shape is cli-support's `noGoPatternsProblem`, not restated here: write-build-html
+  // reads the same field and had no bounds at all, so a number silently became a pattern
+  // there while this stage refused it. One statement, imported by both.
+  const problem = noGoPatternsProblem(raw, 'project.noGoPatterns');
+  if (problem) throw new CliError(problem);
   if (!raw.length) return; // the explicit opt-out
 
   for (const finding of scanInChildProcess(renderedStrings(timing), raw)) {

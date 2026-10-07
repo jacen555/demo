@@ -1059,6 +1059,56 @@ function endCardBlocker(timing) {
 }
 
 /**
+ * What NARRATED text may not carry, stated once for the two gates that refuse it.
+ *
+ * THE SAME RULE REACHES AN AUTHOR TWICE, AND THE TWO REACH DIFFERENT DISTANCES. voice.mjs
+ * (S3) asks this through voiceTimelineBlocker, before it synthesises anything, so an author
+ * stops paying for TTS on narration that could never caption. write-subtitles.mjs (S10)
+ * asks it again, because narration can be edited AFTER voice has run and S10 does not
+ * re-run this gate — MEASURED, not assumed.
+ *
+ * The LATE gate reaches further: it also refuses all seven mandatory line breaks in a
+ * MEASURED WORD, which the early gate cannot see because measured words do not exist before
+ * TTS. That asymmetry is deliberate and is stated at both sites, so neither reads as an
+ * oversight to be tidied into the other.
+ *
+ * Only the two characters narration can actually deliver to a cue are here. MEASURED: of
+ * Unicode's seven mandatory line breaks, /\s+/ splits six out of narration before they
+ * reach a cue; U+0085 alone survives, because JS \s does not match it. Adding the six would
+ * be a rule that could never fire.
+ *
+ * CONSUMERS(narrationCueProblems): write-subtitles.mjs
+ * Used inside this module by voiceTimelineBlocker. A test asserts the list above matches the
+ * modules that actually import this symbol, in both directions, so a second private copy of
+ * this rule has to be a deliberate act rather than an accident of not knowing.
+ */
+export const CUE_ARROW = '-->';
+export const CUE_NEL = '\u0085';
+
+/** The consequence of each, shared so the early and late refusals cannot describe it differently. */
+export const CUE_HARM = {
+  arrow:
+    'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, and cue ' +
+    'text that is itself a whole timing line forges a second cue',
+  // U+0085's own reason. MEASURED in Chromium it produces no <br> and breaks no line under
+  // any white-space mode, so citing the extra-line harm for it would explain this rule with
+  // a consequence the engine has measured it does not have.
+  nel:
+    'it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the ' +
+    'cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, ' +
+    'the second holding a single word)',
+};
+
+/** Every reason this narration cannot become a cue, in reporting order. Empty when it can. */
+export function narrationCueProblems(text) {
+  if (typeof text !== 'string') return [];
+  const out = [];
+  if (text.includes(CUE_ARROW)) out.push('arrow');
+  if (text.includes(CUE_NEL)) out.push('nel');
+  return out;
+}
+
+/**
  * Would voice.mjs (S3) accept this timeline's segments? null when it would; otherwise the
  * first refusal, as `{fact, then?, declaration?}`, from these checks in this order: the
  * segments' shape, every silence declaration, the narration text, whether any segment is
@@ -1080,6 +1130,27 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
     return {
       fact: `${labelOf(segs[mute], mute)} is narrated but has no narration text, which the TTS service cannot synthesise`,
       then: `write its narration, or, if it is meant to be silent, ${declareSilentRemedy(segs[mute])}`,
+    };
+  }
+  // BEFORE A SINGLE TTS CALL. Narration that cannot become a cue is refused by
+  // write-subtitles (S10) at the end of the pipeline, which meant an author paid to
+  // synthesise every segment first — MEASURED at 3 of 3 segments synthesised, exit 0, for
+  // narration S10 would later refuse. The rule itself is narrationCueProblems', called
+  // rather than restated, so this gate and S10 cannot drift about what is refused.
+  //
+  // NARRATION ONLY. S10 additionally refuses all seven mandatory line breaks in a MEASURED
+  // WORD; that half cannot move here, because measured words do not exist until voice.mjs
+  // has run. The two reaches are different on purpose.
+  for (const [i, s] of segs.entries()) {
+    if (isSilentSegment(s)) continue;
+    const [kind] = narrationCueProblems(s.voiceoverText);
+    if (!kind) continue;
+    const named = kind === 'arrow' ? `"${CUE_ARROW}"` : `a line break (U+0085)`;
+    return {
+      fact:
+        `${labelOf(s, i)} is narrated but its narration contains ${named}, which is written into both subtitle ` +
+        `sidecars as cue text, where ${CUE_HARM[kind]}`,
+      then: `write the narration without it`,
     };
   }
   if (segs.every(isSilentSegment)) {
