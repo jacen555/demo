@@ -1593,3 +1593,97 @@ describe('an unparseable timing.json is refused as bad input, by every stage', (
   });
 });
 
+
+// ===========================================================================
+// ONE STATEMENT OF WHAT `project.noGoPatterns` MAY BE.
+//
+// Two stages read the field and disagreed about it. MEASURED end to end, before this
+// change, on the same timing.json:
+//
+//   noGoPatterns          write-build-html   validate-scene
+//   [123]  (a number)     exit 0 ACCEPTED    exit 2 refused
+//   300 patterns          exit 0 ACCEPTED    exit 2 refused
+//   a 600-char pattern    exit 0 ACCEPTED    exit 2 refused
+//   ['x']                 exit 0             exit 0
+//
+// `write-build-html` checked only `Array.isArray` and then called `new RegExp(src, 'i')`,
+// so a number was coerced to its decimal form and silently became a pattern. The bounds
+// existed in `validate-scene` alone. Neither stage validates against timing-schema.json —
+// nothing invokes a validator — so declaring the field there would have recorded the
+// divergence rather than closing it.
+//
+// The rule now has ONE statement, in cli-support.mjs, imported by both. These cases are
+// the specification, and both stages must answer them identically.
+// ===========================================================================
+
+describe('project.noGoPatterns has one shape, and both stages enforce it', () => {
+  // write-build-html reaches the field ONLY on the code-mode path — the mode that renders
+  // source data into the frame — so the fixture is code mode. Widening that reach is a
+  // different decision and is deliberately not made here.
+  const codeProject = (t, noGoPatterns) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { k: 'v' } },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      // gsap resolves from the PROJECT, not the engine; without the stub every case below
+      // exits non-zero on the missing dependency and the refusal tests pass for the wrong
+      // reason.
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  for (const [scenario, patterns, needle] of [
+    ['ANonStringElement', [123], /string/i],
+    ['AMixOfStringsAndANumber', ['ok', 7], /string/i],
+    ['MorePatternsThanTheBound', Array(300).fill('x'), /256/],
+    ['APatternLongerThanTheBound', ['y'.repeat(600)], /512/],
+  ]) {
+    for (const stage of ['validate-scene.mjs', 'write-build-html.mjs']) {
+      test(`${stage.replace(/\W/g, '_')}_noGoPatternsWith${scenario}_isRefused`, (t) => {
+        const dir = codeProject(t, patterns);
+
+        const r = runScript(stage, [], dir);
+
+        assertCleanExit(r, EXIT.USAGE, `${stage}: `);
+        assert.match(r.all, /noGoPatterns/, `${stage}: the refusal must name the field\n${r.all}`);
+        assert.match(r.all, needle, `${stage}: the refusal must say what is wrong\n${r.all}`);
+      });
+    }
+  }
+
+  // THE DISCRIMINATING CONTROLS. Every case above expects a refusal, and "refuse every
+  // pattern list" satisfies all of them. A usable list must still build, and `[]` must
+  // remain the explicit opt-out both stages already honour.
+  for (const [scenario, patterns] of [
+    ['AUsableStringList', ['https?://', '\\bPR \\d+\\b']],
+    ['TheEmptyOptOut', []],
+    ['ExactlyTheBounds', [...Array(255).fill('x'), 'z'.repeat(512)]],
+  ]) {
+    // Each stage asserts a POSITIVE signal that the no-go path actually ran and passed,
+    // not merely the absence of a refusal phrase. An earlier version of these controls
+    // asserted only `doesNotMatch`, which any unrelated failure — a crash, a missing
+    // dependency, a non-zero exit — satisfies just as well as success does. Measured
+    // success here is exit 0 plus: D1's own row reporting `ok` for the report stage, and
+    // the planned segment for the render stage, which is only printed after the code
+    // block (and so the pattern scan) has been walked.
+    for (const [stage, succeeded] of [
+      ['validate-scene.mjs', /D1\b[^\n]*\bok\b/],
+      ['write-build-html.mjs', /plan: build the scene for 1 segment/],
+    ]) {
+      test(`${stage.replace(/\W/g, '_')}_noGoPatternsWith${scenario}_isAccepted`, (t) => {
+        const dir = codeProject(t, patterns);
+
+        const r = runScript(stage, [], dir);
+
+        assertCleanExit(r, EXIT.OK, `${stage}: `);
+        assert.match(r.all, succeeded, `${stage} did not get through the no-go scan\n${r.all}`);
+        assert.doesNotMatch(r.all, /noGoPatterns must be|above the bound/, `${stage} refused a usable list\n${r.all}`);
+      });
+    }
+  }
+});

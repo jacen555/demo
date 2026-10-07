@@ -3196,6 +3196,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['silent-segment.mjs', 'segmentLabel'],
     ['cli-support.mjs', 'describeJsonValue'],
     ['cli-support.mjs', 'fingerprintBuffer'],
+    ['cli-support.mjs', 'noGoPatternsProblem'],
     ['silent-segment.mjs', 'narrationCueProblems'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {

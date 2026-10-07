@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError } from './cli-support.mjs';
+import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError, noGoPatternsProblem } from './cli-support.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -491,6 +491,14 @@ function codeBlock(seg) {
       'Set it to [] to state explicitly that this object needs no redaction.');
   }
   if (patterns.length) {
+    // The shape is cli-support's `noGoPatternsProblem`, shared with validate-scene. This
+    // stage previously checked only `Array.isArray`, so `[123]` was coerced to "123" by
+    // `new RegExp` and became a live pattern, and neither the count nor each pattern's
+    // length was bounded. The absence refusal above stays local: it is this stage's own
+    // code-mode rule, and a render stage refusing is not the same act as a report stage
+    // recording a finding.
+    const shape = noGoPatternsProblem(patterns, 'timing.project.noGoPatterns');
+    if (shape) throw new CliError(shape);
     const hits = [];
     for (const src of patterns) {
       let re;
