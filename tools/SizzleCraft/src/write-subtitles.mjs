@@ -561,15 +561,31 @@ function timelineProblems(t, root) {
  * reads, while a refusal is the one outcome the author can actually see.
  *
  * This is the NARRATED half of the rule silentSegmentProblems applies to an authored
- * caption, and the two are meant to read as one. Only "-->" is refused here. Of Unicode's
- * seven mandatory line breaks six — LF, VT, FF, CR, U+2028 and U+2029 — are split away by
- * /\s+/ before they can reach a cue; U+0085 (NEL) is NOT, because JS \s does not match it
- * (MEASURED), so it survives the split and does reach cue text. One can also reach a cue
- * as a raw measured word, through the alignment fallback described below. Neither is
- * refused here, because neither is destructive: MEASURED in Chromium, a cue holding a NEL
- * is one intact cue that keeps it as an invisible character, and a cue holding a line
- * break keeps its text too. They belong to the deferred line-break item, not to this rule.
- * Nothing is claimed about any other player.
+ * caption, and the two are meant to read as one. Both "-->" and Unicode's seven mandatory
+ * line breaks are refused, each from the source that can actually carry it.
+ *
+ * NARRATION carries "-->" and U+0085 only. MEASURED: of the seven breaks, six — LF, VT, FF,
+ * CR, U+2028 and U+2029 — are split away by /\s+/ before they can reach a cue; U+0085 (NEL)
+ * is NOT, because JS \s does not match it, so it survives the split and does reach cue text.
+ * Gating the other six against narration would be a rule that could never fire.
+ *
+ * A MEASURED WORD carries any of the seven, through the alignment fallback described below.
+ * MEASURED: with the raw word emitted, every one of the seven reaches cue text at exit 0
+ * with both sidecars written and nothing reported — and a raw U+000A that way produced a
+ * THREE-line cue while the run printed "0 cue(s) over", which is the MAX_LINES violation
+ * arriving by the path nobody was watching.
+ *
+ * U+0085 is refused even though it is not destructive in Chromium — MEASURED, a cue holding
+ * one is a single intact cue that keeps it as an invisible character, and it breaks no line
+ * under any white-space mode. It is refused because an author cannot see it, cannot debug
+ * it, and at the cue-grouping ceiling its one extra character splits a caption into two
+ * cues. Nothing is claimed about any other player.
+ *
+ * WHERE THIS GATES, AND WHAT IT DOES NOT DECIDE. Like the arrow, this runs in write-subtitles,
+ * which is after the author has already paid for TTS. That timing is the open `voice-arrow-gate`
+ * question for the arrow, and this rule deliberately takes no position on it: it gates where its
+ * sibling gates today, so moving them earlier stays one decision about both rather than a
+ * precedent set here by accident.
  *
  * Both sources of cue text are checked: restorePunctuation normally emits the voiceoverText
  * token, but where alignment fails it falls back to the RAW measured word. Alignment fails
@@ -586,6 +602,37 @@ function wordProblems(seg, where, gates) {
   // Declared here, not at module scope: this module calls readTimeline at the top level,
   // above these lines, so a module-scope const would be in its temporal dead zone.
   const ARROW = '-->';
+  // THE SEVEN UNICODE MANDATORY LINE BREAKS — UAX #14 classes BK, CR, LF and NL. The same
+  // set silentSegmentProblems refuses in an authored caption, and the two are meant to read
+  // as one rule applied to the two sources of cue text.
+  //
+  // NARRATION carries only U+0085. MEASURED: /\s+/ matches the other six, so they are split
+  // out before they can reach a cue; JS \s does not match U+0085, so it survives inside a
+  // token. Refusing the six here would be a rule that can never fire.
+  //
+  // A MEASURED WORD carries any of them. MEASURED: restorePunctuation emits the RAW word
+  // when alignment fails, and all seven then reach cue text at exit 0 with both sidecars
+  // written — a raw U+000A produced a THREE-line cue while the run reported "0 cue(s) over".
+  const NEL = '\u0085';
+  const BREAKS = /[\n\v\f\r\u0085\u2028\u2029]/;
+  const codePoint = (c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+  // Named by code point because none of the seven has a glyph: "a line break" alone leaves
+  // the author hunting a character they cannot see. Same reason, same form, as the silent
+  // half of this rule.
+  const BREAK_HARM =
+    'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
+    'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
+  // U+0085 GETS ITS OWN REASON, because the three-line harm is NOT its harm. MEASURED in
+  // Chromium: a cue holding one is a single intact cue, it produces no <br>, and it breaks
+  // no line under any white-space mode. Citing the line-count harm for it would be a
+  // refusal explaining itself with a consequence this engine has measured it does not have.
+  // What it does do is arrive invisibly and, at the cue-grouping ceiling, add the one
+  // character that splits a caption in two (MEASURED: one cue became two, the second
+  // holding a single word).
+  const NEL_HARM =
+    'it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the ' +
+    'cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, ' +
+    'the second holding a single word)';
   // The consequence only. Each source supplies its own lead, because only the narration is
   // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
   // message says what is being prevented rather than asserting an outcome.
@@ -626,6 +673,15 @@ function wordProblems(seg, where, gates) {
         `Write the narration without "${ARROW}" (and re-run voice.mjs (S3) if its words are already measured).`,
     );
   }
+  // Same shape, same reason: the author edits ONE thing. Only U+0085 can be here.
+  const breakInNarration = typeof seg.voiceoverText === 'string' && seg.voiceoverText.includes(NEL);
+  if (breakInNarration) {
+    problems.push(
+      `${where}: voiceoverText contains a line break (${codePoint(NEL)}) — it survives /\\s+/ and is written ` +
+        `into both subtitle sidecars as cue text, where ${NEL_HARM}. Write the narration without it ` +
+        '(and re-run voice.mjs (S3) if its words are already measured).',
+    );
+  }
   w.forEach((x, j) => {
     const at = `${where}: audio.words[${j}]`;
     if (x === null || typeof x !== 'object' || Array.isArray(x)) {
@@ -637,6 +693,30 @@ function wordProblems(seg, where, gates) {
       problems.push(
         `${at}.word contains "${ARROW}" — it can reach cue text verbatim, and in a sidecar ${ARROW_HARM}. ` +
           "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.",
+      );
+    }
+    // Reported only where the narration lacks U+0085 — NOT "where the narration is clean",
+    // which is what the arrow's version of this says and is wrong here: narration can hold
+    // one of the other six and this branch still runs, because only U+0085 guards it. It is
+    // also the ONLY way the other six reach a cue at all, through the raw-word fallback.
+    else if (!breakInNarration && BREAKS.test(x.word)) {
+      const found = x.word.match(BREAKS)[0];
+      // THE REMEDY IS CONDITIONAL ON THE CHARACTER THAT WAS ACTUALLY FOUND. The guard above
+      // only tracks U+0085, because that is the only one narration can deliver to a cue —
+      // but narration can still CONTAIN one of the other six (/\s+/ splits it out before a
+      // cue, it does not forbid it). Saying "the narration does not hold it" on the strength
+      // of a U+0085 check would state something this code never tested.
+      const narrationHolds = typeof seg.voiceoverText === 'string' && seg.voiceoverText.includes(found);
+      // The harm follows the CHARACTER, not the category. U+0085 does not add a line, so
+      // the same message for all seven would over-claim for exactly the one this gate was
+      // opened for.
+      problems.push(
+        `${at}.word contains a line break (${codePoint(found)}) — it can reach cue text ` +
+          `verbatim, and in a sidecar ${found === NEL ? NEL_HARM : BREAK_HARM}. ` +
+          (narrationHolds
+            ? 'The narration holds it too, so write the narration without it and re-run voice.mjs (S3) to ' +
+              "re-measure this segment's words."
+            : "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words."),
       );
     }
     const unmeasured = ['startMs', 'endMs'].filter(k => !isMs(x[k]));
