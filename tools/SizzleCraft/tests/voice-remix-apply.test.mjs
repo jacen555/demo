@@ -1639,13 +1639,19 @@ describe('remix regenerates declared silence from the authored window', () => {
   for (const [name, text, expected] of [
     ['AnArrow', 'the arrow --> points right',
       'segment "one" is narrated but its narration contains "-->", which is written into both subtitle sidecars ' +
-      'as cue text, where a line holding "-->" ends the cue: the caption is then parsed as empty and silently ' +
-      'disappears, and cue text that is itself a whole timing line forges a second cue'],
+      'as cue text, where the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any ' +
+      'cue text line holding "-->" as EMPTY, so the caption silently disappears whatever else is on that line, ' +
+      'and cue text that is itself a whole timing line forges a second cue; in .srt, prose holding it was ' +
+      'harmless in both parsers tried, but cue text shaped as a whole timing line made ffmpeg either delete the ' +
+      'cue or adopt the injected timing and lose the real text, both at exit 0 with no diagnostic, while ' +
+      'srt-parser-2 left it intact — two SRT parsers disagreeing, so this is what was observed and not a ' +
+      'property of the format'],
     ['ANextLine', 'a\u0085b and some more',
       'segment "one" is narrated but its narration contains a line break (U+0085), which is written into both ' +
       'subtitle sidecars as cue text, where it has no glyph, so neither it nor its effect can be seen in the text ' +
       'it came from, and at the cue-grouping ceiling its one extra character splits a caption into two cues ' +
-      '(MEASURED: one cue became two, the second holding a single word)'],
+      '(MEASURED: one cue became two, the second holding a single word). It adds no line — MEASURED in Chromium, ' +
+      'in ffmpeg and in srt-parser-2 alike'],
   ]) {
     test(`voice_narrationHolding${name}_isRefusedBeforeAnythingIsSynthesised`, (t) => {
       const segments = [
