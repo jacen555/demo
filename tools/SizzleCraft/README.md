@@ -208,21 +208,39 @@ one in its own words first.
   those are the characters that end a line by definition rather than by one reader's
   convention. None of the seven has a glyph, and U+0085, U+2028 and U+2029 can sit
   unescaped in `timing.json`, so the refusal names each distinct one it found by code
-  point, in order of first appearance — `a line break (U+2028)`. NARRATED cue text is
-  refused for `-->` on the same grounds, so the two halves read as one rule: a cue-text
+  point, in order of first appearance — `a line break (U+2028)`. A cue-text
   line holding `-->` is parsed with EMPTY text by Chromium's WebVTT parser (measured, via
   a `<track>` element read back against a well-formed control), so the caption silently
   disappears rather than rendering wrongly, and cue text that is itself a whole timing
   line forges a second cue spanning those times. Nothing is claimed here about any other
-  player. Both sources of cue text are checked — `voiceoverText`, and the raw measured
-  `audio.words[].word` a cue falls back to where alignment fails — and the refusal names
-  whichever carries it, the narration alone where both do. It lands before either file is
-  written, so `.srt` is covered by the same gate. A line break in `voiceoverText` is not
-  refused, but for a narrower reason than "it cannot get there": six of the seven —
-  U+000A, U+000B, U+000C, U+000D, U+2028 and U+2029 — are split away as whitespace before
-  they reach a cue, while `U+0085` is not matched by JS `\s` at all and does reach cue
-  text. It is left unrefused because it is not destructive there: measured in Chromium,
-  the cue is intact and the NEL survives as an invisible character. The spoken cue just
+  player: that reading is Chromium's, and the `.srt` readings behind the refusal text
+  come from two parsers that disagree with each other.
+
+  **What is refused depends on which source the cue text comes from**, because the three
+  sources do not carry the same risk. Measured by running the stage:
+
+  | Cue-text source | `-->` | U+0085 | the other six breaks |
+  |---|---|---|---|
+  | a silent segment's authored `caption` | refused | refused | refused |
+  | the raw measured `audio.words[].word` a cue falls back to where alignment fails | refused | refused | refused |
+  | `voiceoverText` (narration) | refused | refused | **not** refused |
+
+  The narration row is narrower for a measured reason rather than an assumed one: six of
+  the seven — U+000A, U+000B, U+000C, U+000D, U+2028 and U+2029 — are split away as
+  whitespace before they reach a cue, while `U+0085` is not matched by JS `\s` at all and
+  does reach cue text, so it is refused. A measured word gets no such split, which is why
+  all seven are refused there. The refusal names whichever source carries it, the
+  narration alone where both do.
+
+  **The narration half runs twice, and the early one is the one that saves money.**
+  `voice.mjs` (S3) refuses narration holding `-->` or U+0085 **before it calls TTS at
+  all** — exit `2`, in the plan as well as under `--apply`, with no clip written — because
+  narration this engine will refuse to caption is narration nobody should pay to
+  synthesise. The S10 check stays and is still reachable, since `write-subtitles` also
+  runs against a committed timeline `voice` never saw; the same rule therefore exists at
+  two stages with two reaches, deliberately. The measured-word half cannot move earlier:
+  measured words do not exist until TTS has run. S10's refusal lands before either file is
+  written, so `.srt` is covered by the same gate. The spoken cue just
   before it keeps its last word on screen until that word ends rather than stopping 40 ms
   short, and never overlaps it; a measured word that runs into a silent window is refused,
   naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter
@@ -326,7 +344,23 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
 
 - `--apply` performs the work. Without it nothing is written, deleted or appended.
 - `--replace` is additionally required to overwrite something that already exists.
-- `--help` is handled before any file is touched, on every script.
+- `--help` **creates no file in the project directory** on any of the 34 files in `src/` —
+  measured by running each with `--help` in an empty directory and listing it afterwards.
+  That is the claim the measurement supports; nothing here checks what a script might
+  write elsewhere, and `silence-scan.mjs` launches a headless Chromium at module scope
+  (`silence-scan.mjs:4`) *before* it reads anything, so `--help` costs a browser launch
+  there whatever it leaves behind. What is not universal is the *handling*. Comparing each
+  file's `--help` output against its own bare run: **21 print usage**; **8 are
+  side-effect-free modules with no CLI at all** — `astats-levels`, `cli-support`,
+  `end-card`, `envelope-ducking`, `gain-pin`, `mix-parameters`, `remux-verify`,
+  `silent-segment` — which exit `0` and print nothing, for `--help` as for anything else,
+  because they are imported rather than invoked; `probe-render-capability.mjs` runs its
+  probe and ignores the flag; and **four die with an unhandled exception** —
+  `audio-probe.mjs` and `silence-scan.mjs` crash inside `node:fs` opening a file,
+  `canonical-json.mjs` crashes parsing empty stdin, and `silence-asset.mjs` throws at
+  **module scope** (`silence-asset.mjs:8`), which no argv handling could precede. Those
+  four are read-only or asset-dependent helpers rather than writing stages, so no artifact
+  is destroyed; they report a Node stack trace where the 21 report usage.
 - Output paths are confined to the project root, and the confinement **follows links** —
   a junction inside the project pointing outside it is refused, not followed. The
   confinement is applied to the path actually **written**, not just to its directory.
@@ -956,9 +990,13 @@ directly by hand. See the skill for the stage ordering.
 - **The destructive and verification paths are now honest.** Two rules hold across the
   engine: *nothing irreversible happens without being asked*, and *no script claims to
   have done work it did not*. Every writing stage plans by default; every verifier can
-  fail; path confinement follows links; `--help` touches nothing. Covered by
+  fail; path confinement follows links; and `--help` created no file in the project
+  directory in the check described above. Covered by
   `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs` and
-  `tests/safe-defaults.test.mjs`.
+  `tests/safe-defaults.test.mjs` — though the `--help` tests there cover the **writing
+  stages only**, never every script, which is why the four that crash on `--help`
+  (above) went unnoticed. What `--help` does not do is get *handled* everywhere, and on
+  two scripts it reads a file or launches a browser first.
 - **A verifier must also be able to *pass*.** `validate-timing`'s contiguity check
   asserted strict adjacency, but `voice.mjs` deliberately inserts a lead-in and
   inter-segment silence — so every timeline the real pipeline produces failed on every

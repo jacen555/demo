@@ -727,6 +727,65 @@ known quirk instead of a defect." The disagreement then stood long enough for an
 to build a wrong theory on top of it. **A measuring tool that disagrees with itself is the
 one thing that must never be triaged as cosmetic.**
 
+## Breaking changes are cheap here — standing position, 2026-10-07
+
+**The rule now lives in the constitution, §I, "Breaking changes are cheap here — be agile".
+That is the authority; this note is the context behind it and must not restate it.** If the
+two ever disagree, the constitution wins (and this note is the one to delete).
+
+The user, ruling on a contract change and then generalising it unprompted:
+
+> "breaking changes are totally fine… I'm not running a large production workload or have
+> external users/callers… if there's a breaking change that is demonstratively better, we
+> should be willing to pivot and align to the new findings. We should be agile within this
+> repo"
+
+**Why it was promoted to policy rather than kept here.** The memory bank is context; the
+constitution is auto-loaded into every agent session. A principle that must change how
+builders and reviewers *weigh a decision* is inert sitting in context — and the existing
+reviewer criteria already penalise "a breaking public change reported as additive", which
+is the complement of this rule and needed to be read alongside it rather than against it.
+
+**What it should have changed earlier today.** Several dispositions were framed with "runs
+that exit 0 today may exit non-zero after" as a weight on the scale. It is not one, and the
+orchestrator put it there repeatedly before being corrected.
+
+**The `seg.id` ruling is the case worth keeping**, because its reasoning survives the change
+in policy: the partial screen was rejected **not** because the full pipeline rule was too
+expensive, but because a partial guard **misrepresents its own coverage** — and that is true
+whatever breakage costs. Cheap breakage changes which option you can afford; it does not
+make a misleading guard acceptable.
+
+### A hazard that nearly cost two sessions their dependencies
+
+A stream junctioned `node_modules` into a throwaway worktree with `mklink /J`, then ran
+`git worktree remove --force`. **The remove followed the junction and emptied the TARGET's
+`node_modules`.** Its next suite run reported `224 fail / 31 cancelled / 1407 tests` — which
+it correctly diagnosed as the tree, not a flake, *because it captured the output instead of
+re-running*.
+
+The orchestrator used the same technique an hour earlier and escaped only by happening to
+`rmdir` the junction link first and then verifying `ajv` survived. **That was luck, not
+method.**
+
+**Safe ordering: remove the junction with `cmd /c rmdir <link>` — which deletes the link and
+never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
+a tree containing a junction you care about.
+
+A stream junctioned `node_modules` into a throwaway worktree with `mklink /J`, then ran
+`git worktree remove --force`. **The remove followed the junction and emptied the TARGET's
+`node_modules`.** Its next suite run reported `224 fail / 31 cancelled / 1407 tests` — which
+it correctly diagnosed as the tree, not a flake, *because it captured the output instead of
+re-running*.
+
+The orchestrator used the same technique an hour earlier and escaped only by happening to
+`rmdir` the junction link first and then verifying `ajv` survived. **That was luck, not
+method.**
+
+**Safe ordering: remove the junction with `cmd /c rmdir <link>` — which deletes the link and
+never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
+a tree containing a junction you care about.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
