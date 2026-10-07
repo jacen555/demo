@@ -95,32 +95,111 @@ function heldDirectory(t, { holdMs, holdAt = 'root' }) {
   return { dir, child, ready };
 }
 
-/** This file, which the audit must skip; see suiteSources. */
-const AUDIT_SELF = fileURLToPath(import.meta.url);
+/**
+ * Blanks comments, string and template literals, and regex literals.
+ *
+ * WHY THIS EXISTS. The audit below finds a hook's body by counting parentheses forward
+ * from its opening bracket. The reviewer pointed out that a paren inside a string, a
+ * comment or a regex closes the scan early, so
+ *
+ *   t.after(() => { const label = ')'; fs.rmSync(dir, { recursive: true }); });
+ *
+ * would have ended the body at the apostrophe and reported clean — a false negative in an
+ * audit whose entire job is to not have false negatives. A real JavaScript parser would be
+ * the rigorous answer; §IV says dependencies are a liability and this package has no
+ * parser, so the pragmatic answer is to blank everything that is not code before scanning.
+ * Each of those three evasions is a control in fixture-teardown.controls.txt.
+ *
+ * KNOWN GAP, stated rather than discovered later: a `${...}` interpolation is blanked with
+ * the template around it, so an `fs.rmSync` written inside one would not be seen.
+ */
+function stripNonCode(src) {
+  let out = '';
+  let i = 0;
+  // A '/' here starts a regex rather than a division, judged by the last code character.
+  let prev = '';
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === '/' && n === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      i++;
+      while (i < src.length && src[i] !== c) {
+        if (src[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      out += '""';
+      prev = '"';
+      continue;
+    }
+    if (c === '/' && (prev === '' || '(,=:[!&|?{};+-*%~^<>'.includes(prev))) {
+      i++;
+      while (i < src.length && src[i] !== '/') {
+        if (src[i] === '\\') i++;
+        if (src[i] === '[') while (i < src.length && src[i] !== ']') i++;
+        i++;
+      }
+      i++;
+      out += '//';
+      prev = '/';
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out;
+}
 
 /**
  * Finds teardown hooks that remove a path without a retry budget.
  *
  * REGEX OVER A HOOK NAME IS NOT ENOUGH, and the reviewer was right to say so. An earlier
- * draft matched only `t.after(() => fs.rmSync(`, so a block body, a bare `after`, or an
- * `afterEach` could reintroduce the exact defect this file exists to prevent and the audit
- * would have reported clean. This scans the balanced body of every hook instead, which is
- * why the negative controls below plant each of those forms.
+ * draft matched only `t.after` followed immediately by a removal, so a block body, a bare
+ * `after`, an `afterEach` or an async hook could reintroduce the exact defect this file
+ * exists to prevent and the audit would have reported clean. This scans the balanced body
+ * of every hook, over sanitised source, which is why the controls plant each of those
+ * forms.
  */
 export function bareTeardownRemovals(source) {
+  const code = stripNonCode(source);
   const hook = /(?:^|[^.\w])(?:t\.)?(after|afterEach)\s*\(/g;
   const found = [];
-  for (let m = hook.exec(source); m; m = hook.exec(source)) {
+  for (let m = hook.exec(code); m; m = hook.exec(code)) {
     let depth = 1;
     let i = hook.lastIndex;
-    for (; i < source.length && depth > 0; i++) {
-      if (source[i] === '(') depth++;
-      else if (source[i] === ')') depth--;
+    for (; i < code.length && depth > 0; i++) {
+      if (code[i] === '(') depth++;
+      else if (code[i] === ')') depth--;
     }
-    const body = source.slice(hook.lastIndex, i);
-    if (/\bfs\.rm(?:dir)?Sync\s*\(/.test(body)) found.push(`${m[1]}: ${body.trim().slice(0, 60)}`);
+    const body = code.slice(hook.lastIndex, i);
+    if (/\bfs\.rm(?:dir)?Sync\s*\(/.test(body)) {
+      found.push(`${m[1]}: ${body.replace(/\s+/g, ' ').trim().slice(0, 70)}`);
+    }
   }
   return found;
+}
+
+/** The controls, kept outside any .mjs file so the audit can scan its own source. */
+function loadControls() {
+  const text = fs.readFileSync(path.join(TESTS_DIR, 'fixture-teardown.controls.txt'), 'utf8');
+  const blocks = [];
+  for (const chunk of text.split(/^### /m).slice(1)) {
+    const [header, ...rest] = chunk.split('\n');
+    const [expect, name] = header.trim().split(/\s+/);
+    blocks.push({ expect, name, source: rest.join('\n').trim() });
+  }
+  return blocks;
 }
 
 /** The suite's own sources. Generated fixture trees are deliberately excluded — see below. */
@@ -134,12 +213,7 @@ function suiteSources(dir) {
     if (entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...suiteSources(full));
-    // THIS FILE IS EXCLUDED, AND THAT IS A REAL LIMITATION, not a convenience. The
-    // controls above are literal source text of the very forms being detected, so the
-    // audit flags itself. The cost is that a bare teardown added to THIS file would not be
-    // caught; the alternative — obfuscating the controls so they no longer look like the
-    // thing they control for — would make them stop proving anything.
-    else if (entry.name.endsWith('.mjs') && full !== AUDIT_SELF) out.push(full);
+    else if (entry.name.endsWith('.mjs')) out.push(full);
   }
   return out;
 }
@@ -211,7 +285,7 @@ describe('fixture teardown survives a busy machine', () => {
     assert.equal(err?.code, 'EBUSY', `exhaustion must surface the real error, got ${err?.code}`);
   }, { skip: windowsOnly, timeout: 60_000 });
 
-  test('removeFixture_aFailureNothingCanRelease_isRaisedImmediatelyRatherThanWaitedOut', () => {
+  test('removeFixture_aFailureNothingCanRelease_isRaisedImmediatelyRatherThanWaitedOut', (t) => {
     // Not every error is a busy handle. Waiting out a failure no amount of time can clear
     // would turn a clear fault into a slow one, so only the releasable codes are retried.
     //
@@ -219,13 +293,17 @@ describe('fixture teardown survives a busy machine', () => {
     // parent is a file, assuming ENOTDIR; measured, that path raises ENOENT, which
     // `force: true` suppresses entirely — the call did not throw at all. A bad argument is
     // the honest version: a failure that is categorically not a handle anyone will release.
-    // NO WALL CLOCK HERE EITHER, for the reason given above. The budget is set so that a
-    // single retry would take ten minutes: if this returns at all, the loop did not retry.
-    // The test timeout is the bound, not a measured duration.
-    const err = captureError(() => removeFixture(123, { maxRetries: 3, retryDelay: 600_000 }));
+    // THE SECOND DRAFT LEANED ON A TEST TIMEOUT, and the reviewer was right that it could
+    // not save us: `Atomics.wait` blocks the worker thread, so a regression that retried
+    // this would have hung past the timeout rather than failing at it. Counting the calls
+    // asks the question directly — one attempt means no retry — and cannot hang.
+    t.mock.method(fs, 'rmSync');
+
+    const err = captureError(() => removeFixture(123, { maxRetries: 3, retryDelay: 1 }));
 
     assert.equal(err?.code, 'ERR_INVALID_ARG_TYPE');
-  }, { timeout: 10_000 });
+    assert.equal(fs.rmSync.mock.callCount(), 1, 'a non-releasable failure must be raised on the first attempt');
+  });
 
   test('fixtureRemoval_theRetryBudget_mirrorsTheRepoSelfHealConvention', () => {
     // NOT A NUMBER PICKED TO MAKE THIS FILE PASS. voice.mjs:300-315 is the repo's stated
@@ -241,23 +319,17 @@ describe('fixture teardown survives a busy machine', () => {
 
   test('theTeardownAudit_detectsEveryHookFormItClaimsToCover', () => {
     // THE AUDIT'S OWN POSITIVE CONTROL. An audit that reports clean because it cannot see
-    // the defect is worse than no audit: it certifies the thing it failed to look at. Each
-    // of these is a form the first draft of the detector missed.
-    const offenders = {
-      'arrow, immediate': `t.after(() => fs.rmSync(dir, { recursive: true, force: true }));`,
-      'arrow, block body': `t.after(() => {\n  fs.rmSync(dir, { recursive: true });\n});`,
-      'bare after': `after(() => fs.rmSync(dir, { force: true }));`,
-      afterEach: `afterEach(() => { fs.rmSync(dir, { recursive: true }); });`,
-      rmdirSync: `t.after(() => fs.rmdirSync(dir, { recursive: true }));`,
-    };
-    for (const [form, src] of Object.entries(offenders)) {
-      assert.equal(bareTeardownRemovals(src).length, 1, `the audit must catch: ${form}`);
-    }
+    // the defect is worse than no audit: it certifies the thing it failed to look at.
+    // Three of these — a paren inside a string, a comment, and a regex — are evasions the
+    // reviewer identified in a scan that counted brackets over raw source.
+    const controls = loadControls();
+    assert.ok(controls.length >= 13, `the controls file must have loaded, got ${controls.length}`);
 
-    // And must not accuse the correct idiom, or a removal that is not a teardown at all.
-    assert.deepEqual(bareTeardownRemovals(`t.after(() => removeFixture(dir));`), []);
-    assert.deepEqual(bareTeardownRemovals(`t.after(() => {\n  child.kill();\n  removeFixture(dir);\n});`), []);
-    assert.deepEqual(bareTeardownRemovals(`const err = captureError(() => fs.rmSync(dir, { force: true }));`), []);
+    for (const { expect, name, source } of controls) {
+      const hits = bareTeardownRemovals(source);
+      if (expect === 'offender') assert.equal(hits.length, 1, `the audit must catch: ${name}`);
+      else assert.deepEqual(hits, [], `the audit must not accuse: ${name}`);
+    }
   });
 
   test('everyTeardownInTheSuite_goesThroughTheRetryingRemoval', () => {

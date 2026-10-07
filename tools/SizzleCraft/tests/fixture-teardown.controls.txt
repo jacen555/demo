@@ -1,0 +1,57 @@
+Positive and negative controls for the teardown audit in fixture-teardown.test.mjs.
+
+THIS IS DELIBERATELY NOT A .mjs FILE. These snippets are literal source text of the
+very thing the audit detects. While they lived inside the test file, the audit flagged
+itself and had to be told to skip its own source — which left that file's real teardown
+hook unguarded. Keeping them here means the audit can scan every .mjs file in tests/,
+including the one that defines it, with nothing excluded.
+
+Each block is `### <expect> <name>` followed by the snippet. `offender` must be detected
+exactly once; `clean` must not be detected at all.
+
+### offender arrow-immediate
+t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+### offender arrow-block-body
+t.after(() => {
+  fs.rmSync(dir, { recursive: true });
+});
+
+### offender bare-after
+after(() => fs.rmSync(dir, { force: true }));
+
+### offender after-each
+afterEach(() => { fs.rmSync(dir, { recursive: true }); });
+
+### offender rmdir-sync
+t.after(() => fs.rmdirSync(dir, { recursive: true }));
+
+### offender async-hook
+t.after(async () => { fs.rmSync(dir, { recursive: true }); });
+
+### offender unbalanced-paren-in-string
+t.after(() => { const label = ')'; fs.rmSync(dir, { recursive: true }); });
+
+### offender unbalanced-paren-in-comment
+t.after(() => {
+  // closes the fixture ) and then
+  fs.rmSync(dir, { recursive: true });
+});
+
+### offender unbalanced-paren-in-regex
+t.after(() => { if (/\)/.test(name)) fs.rmSync(dir, { recursive: true }); });
+
+### clean uses-remove-fixture
+t.after(() => removeFixture(dir));
+
+### clean block-body-uses-remove-fixture
+t.after(() => {
+  child.kill();
+  removeFixture(dir);
+});
+
+### clean removal-outside-any-hook
+const err = captureError(() => fs.rmSync(dir, { force: true }));
+
+### clean removal-named-only-in-a-string
+t.after(() => { log('fs.rmSync(dir) was not called'); removeFixture(dir); });
