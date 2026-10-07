@@ -335,6 +335,50 @@ imports the symbol** — it does not. Worth recording, because a `CONSUMERS` lin
 the artefact that rots when someone writes down what they assume rather than what they
 measured.
 
+### A correct rule with an explanation nobody re-measured — 2026-10-06
+
+In the U+0085 gate, **three of four review findings were wrong EXPLANATIONS, not wrong code.**
+The sharpest: the refusal cited a three-line harm **for a character the builder had personally
+measured as not adding a line**, in the same task. A refusal explaining itself with a
+consequence the engine has measured it does not have.
+
+Its own diagnosis is the transferable part:
+
+> **I write a correct general rule, then attach a specific explanation to it without
+> re-checking the explanation against the measurement that produced it.**
+
+This matters more here than in most codebases, because this engine's refusals are *meant* to
+be actionable — an author acts on the explanation, not on the rule. A true rule with a false
+reason sends them to the wrong place, which is the same family as `knobs.json` named for
+`manifest.json` and a remedy pointing at a stage that refuses the very timeline.
+
+**The fix that holds by construction:** the harm text is now selected **by character**, and
+the test table selects its expected string the same way, so the two cannot diverge by someone
+remembering wrongly.
+
+### A boundary row has to sit on the same path as the rule it bounds
+
+A mutant widening the refused set to all whitespace **survived**. The TAB and NBSP boundary
+rows sat on the **narration** path, which is checked against one character and never against
+the set — so they bounded a rule they did not name. Obvious written down; invisible until a
+mutant walked through it.
+
+### And the measurement that reversed its own premise
+
+The task was dispatched with: *do not gate the other six breaks on the grounds they cannot
+occur — a gate for a case that cannot happen is a rule that can never fire — but if you
+believe one can arrive by another path, measure it.*
+
+It measured. `restorePunctuation` emits the **raw measured word** when alignment fails, and
+down that path **all seven** breaks reach cue text at exit 0 with both sidecars written. A raw
+`U+000A` produced a genuine **three-line cue** while the run printed `0 cue(s) over` — the
+`MAX_LINES` violation that had just been proven *impossible* for U+0085, arriving as a
+different character down a different path.
+
+**"It cannot happen" is a claim about the paths you enumerated.** The gate is asymmetric
+because the measurements are, and that asymmetry is now documented at the gate rather than
+tidied away.
+
 ## Mutate the inputs, not just the implementation — 2026-10-06
 
 The strongest methodological finding of the graduation, and it is about the technique this
