@@ -3,9 +3,13 @@
 Failures that were expensive to find and are cheap to avoid. **Read this before any
 audio mix, remux, or timing solve.**
 
-Every entry here was discovered by measuring a finished artifact and finding it
-disagreed with the intent. None of them announce themselves — that is what makes
-them worth recording.
+Every entry here was recorded because it was expensive to find. Most were discovered by
+measuring a finished artifact and finding it disagreed with the intent; a few — entry 12 is
+the clearest — were written **pre-emptively**, from a failure mode reasoned about before it
+could cost anything. Where an entry labels its evidence, `[OBSERVED]` means measured rather
+than guaranteed; **labelling is not yet consistent across entries**, so read the body rather
+than assuming an unlabelled claim was measured. None of them announce themselves — that is
+what makes them worth recording.
 
 Format: **Symptom → Cause → Fix**, with the measurement that exposes it.
 
@@ -133,7 +137,17 @@ for every earlier video — `make-music.mjs` takes a duration argument, so every
 project that used a generated bed was immune. The first file-sourced track hit it
 immediately.
 
-**Fix.** Loop the music to cover the video, with a **crossfade at each wrap**, and
+**Fix — NOW IMPLEMENTED; this is a solved defect, kept for the arithmetic and the reason.**
+`remux-music.mjs` loops the bed with a crossfade at each wrap (`--crossfade`, default 3s),
+sizes the loop from the video (`--video-seconds` overrides it), and `--no-loop` refuses
+rather than looping. `validate-scene` E3 can catch it one stage earlier, with two bounds
+worth knowing: it reads `knobs.json`, so it is NOT evaluated when a project keeps none (the
+run says so rather than passing silently), and it accepts a short bed whose knobs declare
+`audio.music.loop.required: true`, because looping is the sanctioned remedy. So E3 flags a
+**declared, file-sourced bed shorter than the video that has not been marked for looping**.
+The arithmetic below is why the loop works.
+
+Loop the music to cover the video, with a **crossfade at each wrap**, and
 trim to the exact video length. A hard loop point in an ambient bed is audible.
 `n` copies crossfaded end-to-end yield `n*D - (n-1)*X` seconds, so the smallest
 covering `n` is `ceil((video - X) / (D - X))`:
@@ -182,16 +196,40 @@ the two sources in one project:
 
 **31.7 dB apart.** A commercial master is loudness-normalised and peak-limited —
 often clipping slightly — while a generated ambient bed is quiet by construction.
-A gain of `1.50` that was correct for the second is catastrophic for the first.
+A gain of `1.50` that was correct for the **generated bed** is catastrophic for the
+**licensed track**: the same multiplier applied to a source 31.7 dB louder is what puts the
+mix ~10 dB over, which is the symptom at the top of this entry.
 
-**Fix.** Recompute the gain whenever the source changes. Target the bed level the
-knobs ask for (`musicUnderSpeechDb`), not the previous gain number:
+**Fix.** Recompute the gain whenever the source changes — and target the right level for
+the mode you are in, because three modes differ:
+
+- **Flat bed, no ducking anywhere.** One gain serves both targets, so target the
+  under-speech level: `gain_dB = musicUnderSpeechDb − measured_RMS_of_the_new_track`.
+- **Pre-ducked generated bed** (`make-music.mjs` bakes the duck into the samples, and
+  `remux-music.mjs` accepts it without `--duck-db`). The duck is already in the audio, so
+  the gain positions a bed that already moves: target the **gaps** level, or the gaps sit a
+  duck-depth too quiet. The record beside the bed (`<bed>.duck.json`) says whether this
+  applies.
+- **Sidechain-ducked file bed** (`--duck-db` with `--duck-envelope`). The unducked gain is
+  what plays in the gaps and `--duck-db` supplies the reduction under speech, so target the
+  gaps level here too: `gain_dB = musicInGapsDb − measured_RMS_of_the_new_track`.
+
+The question is not "is `--duck-db` set" but **"does this bed already duck"** — in the
+samples or in the graph. Either way, target a level, never the previous gain number:
 
 ```
-gain_dB = musicUnderSpeechDb − measured_RMS_of_the_new_track
+gain_dB = <target level for your mode> − <measured RMS of the new track>
 ```
 
-In the reference case that gave `0.055` (≈ −25 dB) against the previous `1.50`.
+**Which RMS, for a pre-ducked bed, is NOT settled here.** Whole-track RMS includes the
+attenuated speech-time passages, so it under-states the unducked level the gaps target
+assumes, and a gain computed from it lands high. Measure a narration-silent window of the
+bed instead — or compute from the unducked source if you still have it — and then **verify
+the delivered mix** with `check-levels.mjs` rather than trusting the arithmetic. For a flat
+bed the distinction does not arise and whole-track RMS is the right input.
+
+In the reference case, a flat bed with no ducking, that gave `0.055` (≈ −25 dB) against the
+previous `1.50`.
 
 **Detect — and this is the part that bites.** The loop fix in entry 15 had already
 been verified by measuring RMS in narration-silent windows, and those measurements
@@ -199,11 +237,14 @@ were *correct*: the bed was present, at consistent level, across the whole video
 **Window measurements show presence, not absolute correctness.** They cannot
 reveal that the level is uniformly wrong.
 
-> **The rule: a source change invalidates the gain, and only a whole-file
-> comparison catches it.** Re-run `check-levels.mjs` against a reference video
-> after ANY change to the bed — new track, different preset, regenerated bed.
-> Presence checks and level checks answer different questions, and this project
-> ran the first while skipping the second.
+> **The rule: a source change invalidates the gain, and only an ABSOLUTE LEVEL
+> comparison catches it.** A window measurement can do that — the lead-in, where the
+> bed plays alone, is the cheapest one, and `check-levels.mjs` reports it. What cannot
+> catch it is a PRESENCE check: "the bed is there, at consistent level, throughout" was
+> true and told you nothing. Re-run `check-levels.mjs` after ANY change to the bed — new
+> track, different preset, regenerated bed — and compare the number against a reference
+> video rather than against itself. Presence checks and level checks answer different
+> questions, and this project ran the first while skipping the second.
 
 **Now enforced, and the placement is the point.** `remux-music.mjs` pins the gain
 to a SHA-256 of the music source in `music-gain.lock.json`, and refuses when the
@@ -215,8 +256,12 @@ error: the music source CHANGED but --music-gain did not.
   now supplied        licensed-master.mp3 (52188cb00ad4) at gain 0.48
 ```
 
-`--confirm-gain` re-pins after the level has actually been re-measured. The pin is
-committed with the project, so it travels rather than living in one machine's head.
+`--confirm-gain` re-pins. It records the caller's **acceptance** of the new values — the
+tool cannot verify that anyone measured anything, and records `operator-confirmed` either
+way — so measure the mix it produces before you deliver it:
+`node src/check-levels.mjs --file <out>`, reading the lead-in window where the bed plays
+alone. The pin is committed with the project, so it travels rather than living in one
+machine's head.
 
 > **Why the check lives where the SOURCE changes, not where the gain is parsed.**
 > Validating the gain *value* bounds it to a sane range — and 1.50 is in range for
@@ -226,21 +271,37 @@ committed with the project, so it travels rather than living in one machine's he
 > and only the second one could ever have caught this. Bounding an argument protects
 > against a bad value; pinning it to its input protects against a stale one.
 
-### ⚠️ Related: a file bed cannot duck
+### ✅ Related: a file bed could not duck — it can now
+
+**This entry described a limitation that no longer exists.** It is kept rather than deleted
+because the compromise it prescribes — pick the under-speech target and accept a quiet
+lead-in — is still the right advice when you choose not to duck, and because the next
+person to read `knobs.audio.levels` will reach for it.
 
 `knobs.audio.levels` asks for two different bed levels — typically −36 dB under
 speech and −30 dB in gaps — and the 6 dB lift is what makes tuned silence feel
 deliberate rather than empty.
 
 A **generated** bed achieves that because `make-music.mjs` consumes
-`vo-envelope.json` and bakes sidechain ducking in. **A file bed played through
-`remux-music.mjs` has no sidechain path**, so it plays flat and one gain must
+`vo-envelope.json` and bakes sidechain ducking in. A file bed played through
+`remux-music.mjs` used to have no sidechain path, so it played flat and one gain had to
 serve both targets.
 
-Pick the under-speech target — an intrusive bed is worse than a quiet gap — and
-expect the lead-in to read quiet, because the same flat gain applies there and
-most tracks open softly. Building a real sidechain from `vo-envelope.json` would
-remove the compromise.
+**`remux-music.mjs` now builds that sidechain** — the thing the last paragraph of this entry
+asked for. `--duck-db <dB>` sets how far the bed drops under narration and
+`--duck-envelope <file>` supplies the `vo-envelope.json` it is solved against; it is
+REQUIRED with `--duck-db`, because the threshold comes from the measured narration rather
+than a guess. `--duck-ratio` tunes the knee. Without `--duck-db` the graph is byte-for-byte
+what it always was, and the other ducking options are refused without it — so the old
+behaviour is still the default and nothing moves under a project that does not ask.
+
+A bed `make-music` already ducked carries that duck in its samples and is checked against
+the narration in play through the record written beside it (`<bed>.duck.json`); passing
+`--duck-db` at a bed that record says is already ducked is refused rather than ducked twice.
+
+If you do NOT duck, the original compromise stands: pick the under-speech target — an
+intrusive bed is worse than a quiet gap — and expect the lead-in to read quiet, because the
+same flat gain applies there and most tracks open softly.
 
 ---
 
@@ -491,12 +552,45 @@ rather than the engine:
    anything authored against a pre-synthesis estimate drifts — and a segment that
    came in shorter than estimated silently drops its last reveals.
 
-**Fix.** Validate the scene data against the id scheme *before* rendering — it is
-a free check against a stage that costs tens of minutes. Assert that every
-trigger target is an id the builder will emit, that every declared element is
-revealed by something, that every edge is drawn, and that no `atMs` is beyond its
-segment's measured duration. Reflowing trigger times alongside segment windows
-belongs in the synthesis stage.
+**Fix — NOW IMPLEMENTED as `validate-scene.mjs`.** This paragraph asked for a check; the
+check exists, and it runs before capture for milliseconds against a stage that costs tens of
+minutes. Run it:
+
+```
+node tools/SizzleCraft/src/validate-scene.mjs --project <dir>
+```
+
+It refuses the three failures above, with the coverage stated rather than implied: every
+authored trigger target must be an id the builder emits (A1); every node and edge a diagram
+segment declares, and the first six items a narrative one declares, must be revealed by
+something (A3); an edge must be drawn only after both its endpoints exist (A4); and no
+`atMs` may fall at or past its segment's measured end (A5). Plus diagram geometry and a
+no-go content scan. Exit 2 is a timeline it will not read; exit 1 is a scene that failed a
+check.
+
+**A1 is weaker on footage segments, and says so.** Whether the builder emits the footage ids
+or falls back to synthetic content depends on clip approval this stage does not read, so A1
+checks the **union** of both id sets. A target in neither is wrong under every outcome and is
+refused; a target in one establishes only that it *could* resolve, not that it resolves in
+the branch actually rendered. A3 and A4 skip those segments entirely for the same reason, and
+the run reports them as NOT evaluated rather than passing them.
+
+**Read A3's bounds before relying on it.** It skips a segment whose reveals the builder
+derives — one with no authored trigger carrying a target — because `write-build-html`
+generates a complete sequence for those, and flagging them would fail every correct
+auto-driven project. It skips footage segments, whose emitted ids depend on clip approval
+this stage cannot read. It checks only the **first six** narrative items, because that is
+all `write-build-html` emits — a seventh is never rendered, so it is never checked. And it
+requires an edge to be targeted by `drawEdge` specifically: `flowEdge` does reveal an edge
+in the runtime, but an edge that only ever flows was never drawn, which is the defect this
+entry is about. So A3 covers diagram nodes and edges, and
+narrative items, on author-driven non-footage segments.
+
+Two things it deliberately does NOT do, so this entry is not read as covering them.
+`validate-scene` compares no frames, so "no two segments render identically" is a post-S6
+check and lives in `qc/`. And it does not reflow: **reflowing trigger times alongside segment
+windows still belongs in the synthesis stage**, and `voice.mjs` still does not do it — see
+entry 13. The check catches the class; reflow would remove one of its causes.
 
 **Detect — the capture dedup ratio is the cheap canary.** Frame capture reports
 how many frames it deduplicated. Measured on one 4-minute project:
