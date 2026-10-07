@@ -606,6 +606,67 @@ measurement was worth. Citing one without reading it transfers its defects along
 authority — and the authority makes the defect harder to question, because the receiving
 stream now has two reasons to believe it.
 
+## A derivation with two agreeing measurements, both of one benign signal — 2026-10-07
+
+A stream was sent to add a threshold gate to `check-levels.mjs`, which until now only
+**reported**: every `CliError` in it concerned unmeasurability, and none compared a measured
+level to a threshold, so a mix defect reached a human unchallenged.
+
+It built the obvious bound — refuse a peak above full scale — and the derivation looked
+solid from three directions: `remux-music.mjs:685` emits `alimiter=limit=<ceiling>`, the
+README records −0.3 dBTP at the default, and its own render measured **−0.227 dBFS** against
+**+2.012** unlimited. Two agreeing measurements and a documented figure.
+
+**All of it was one benign signal.** With the limiter correctly in force, ffmpeg 9.0.2, AAC
+192k:
+
+| material | `--ceiling 0.1` | `--ceiling 1.0` | `--ceiling 2.0` |
+|---|---|---|---|
+| sine + pink noise | −0.26 | −0.68 | −1.91 |
+| white noise | **+2.85** | **+3.30** | +1.23 |
+| square wave | **+4.49** | | |
+
+**A correct render at the default ceiling measures +3.30 dBFS.** AAC overshoots the clamped
+peaks by an amount the *material* sets and the ceiling does not bound. The gate would have
+refused good work — and would have been defended by a README figure, a source line, and a
+real render.
+
+Two things make this transferable:
+
+1. **Agreement between measurements is not independence.** Two readings of the same benign
+   signal agree with each other and with the documentation, and are jointly wrong about the
+   population. The question is never "do my measurements agree" but **"what do they vary?"**
+   Here nothing varied the one input that mattered: the material.
+2. **It was withdrawn rather than tuned,** and the `+3.295152` reading is now pinned in a
+   test as ACCEPTED, so the bound cannot return on the same plausible reasoning. The next
+   person meets the measurement instead of an empty space that invites the same derivation.
+
+What shipped is narrower and true: one categorical condition with no number in it — **a
+whole file that is digital silence where audio was expected** — behind `--allow-silent`,
+because the README documents a *supported* all-silent S4 timeline that an unqualified rule
+would have refused. A partial result, reported as partial in the headline.
+
+**Shipping less than asked, and saying so first, was the correct outcome.** A threshold
+nobody can justify gets tuned until it stops complaining.
+
+### Two orchestration errors of mine, same day
+
+**I spawned a session without pinning its base branch**, so it branched off the project
+default (`main`) rather than the working trunk, and did its whole task **10 commits behind**.
+Its baselines looked wrong against every other stream's numbers, and it had correctly
+reported a fixture problem as "pre-existing, not mine" that another stream had fixed an hour
+earlier. It measured its tree correctly; I handed it the wrong tree. **A number that
+disagrees with every other stream's is a question about the tree, not about the stream.**
+
+**And an unexplained red I could not reproduce.** The first full-suite run after merging two
+independently-green test changes reported `# pass 1571 / # fail 1`, exit 1. Four subsequent
+runs at the same commit were clean at `1572 / 0`. **I did not capture the failing output**,
+which is the actual defect here — a one-off red with no artefact is nearly worthless, and I
+had the run in hand. The plausible cause is resource contention: another session was driving
+real ffmpeg renders concurrently. **That is a hypothesis, not a finding, and it is recorded
+as unresolved rather than closed on four greens** — the coach/pack cold-clone case is exactly
+why repetition is not proof. Future suite runs capture their output on a non-zero exit.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
