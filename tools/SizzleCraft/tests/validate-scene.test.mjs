@@ -1447,6 +1447,21 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     assert.match(r.all, /\b1 ms\b/, `expected the refusal to state the budget in force\n${r.all}`);
   });
 
+  test('scanTimeout_doesNotReportItselfAsAnExternalSignal', (t) => {
+    // The other half of the signal/timeout split. A child stopped by an EXTERNAL signal
+    // gets a different refusal that makes no claim about cost, because this stage did not
+    // stop it and measured nothing. This pins the classification from the side that CAN
+    // be produced deterministically: a real budget timeout must take the budget branch and
+    // not the signal one. If the two branches were merged back, this fails.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /did not finish within 1 ms/, `expected the budget refusal\n${r.all}`);
+    assert.ok(
+      !/was stopped by/.test(r.all),
+      `a scan stopped BY THIS BUDGET was reported as an external signal\n${r.all}`,
+    );
+  });
+
   test('scanTimeout_withAGenuinelyPathologicalPattern_stillNamesWhereItStopped', (t) => {
     // Direction A. The useful half of the old message must survive: an author needs the
     // index to act. What changes is that the index is reported as WHERE THE SCAN WAS when

@@ -183,6 +183,10 @@ function revealsTarget(trigger, seg, ids) {
  *   c. The index it reports is WHERE THE SCAN WAS when the OS stopped it. On a loaded
  *      machine that is whichever pattern held the CPU at the deadline, which need not be
  *      the most expensive one.
+ *   d. It does not account for a child stopped by something OTHER than this budget. An
+ *      external signal — an out-of-memory killer, a CI step reaping the process tree — is
+ *      reported as the signal it was, with no claim about cost or about a pattern. This
+ *      stage cannot measure a scan it did not stop.
  */
 const SCAN_TIMEOUT_FALLBACK_MS = 5000;
 
@@ -766,7 +770,22 @@ function scanInChildProcess(strings, patterns) {
   if (result.error && result.error.code !== 'ETIMEDOUT') {
     throw new CliError(`the no-go scan could not run: ${result.error.code ?? result.error.message}`);
   }
-  if (result.error?.code === 'ETIMEDOUT' || result.signal) {
+  // ...and a THIRD time, in the same shape, caught in review. This branch was
+  // `ETIMEDOUT || result.signal`, so a child stopped by any signal was told its budget
+  // was exceeded. For a timeout that is measured; for an external SIGKILL — an operator,
+  // an OOM killer, a CI harness reaping the tree — it is a sentence about a clock nobody
+  // read. Same error as the two above: a STOPPED operation reported as a DIAGNOSED one.
+  // The signal is the only fact available here, so it is the only thing stated.
+  if (!result.error && result.signal) {
+    throw new CliError(
+      `the no-go scan was stopped by ${result.signal} before it finished. This stage did not ` +
+        `stop it: its ${budget.variable} budget of ${budget.ms} ms was not reached, so nothing ` +
+        `here measured the scan's cost and nothing here can tell you why it was killed. Look ` +
+        `for whatever sent the signal — an out-of-memory killer, a CI step timeout reaping the ` +
+        `process tree, or a manual kill — and run again once it is gone.`,
+    );
+  }
+  if (result.error?.code === 'ETIMEDOUT') {
     // ...and then, for a release, this branch committed that same error in a new
     // direction. It read "stopped at the budget" as PROOF of catastrophic backtracking
     // and told the author to rewrite the named pattern. That is a property of the
