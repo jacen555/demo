@@ -18,14 +18,14 @@
 //
 // It never writes, moves or removes anything: the real rename happens, and all that is
 // altered afterwards is what ONE path's lstat reports. Bounded as the other fixtures are:
-// the directory must be a suite-owned temp directory (see test-owned-path.mjs). It
+// the directory must be a suite-owned temp directory (see suite-owned-path.mjs). It
 // announces itself and the rename on stderr, so a test can prove the condition was staged.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './test-owned-path.mjs';
+import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
 
 const VERDICTS = new Set(['different', 'absent', 'unavailable', 'unchecked']);
 

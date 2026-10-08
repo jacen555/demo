@@ -474,6 +474,106 @@ exist, so its record cannot.** Both orderings are right, for opposite reasons.
 it transfers a conclusion without the reason that bounds it — and a reader following the
 pointer finds the engine apparently contradicting itself.
 
+### A fifth variant, and the worst: my brief contained the answer — 2026-10-06
+
+My merge-before-edit instruction read **"ff-only to `X`, confirm `N` as predicted."** It
+hands the stream the expected number before it measures. That is not a verification step.
+It is an **anchor**, and it returns itself.
+
+A stream reported `1555 / 1554`, having "confirmed 1544 / 1543 as predicted". Measured,
+twice each, cold and warm:
+
+| tree | `# tests` | `# pass` |
+|---|---|---|
+| `abaf4f9` — the baseline everyone "confirmed" at 1544 | **1545** | **1544** |
+| `4a47413` — the commit reported as 1555 | **1556** | **1555** |
+
+The stream's **delta of +11 was exactly right** — isolated it: `voice-remix-apply` 158→164,
+`silent-segments` 351→356. The work was real. I concluded the totals had been **derived** —
+my predicted baseline plus its own delta, presented as a reading — and that the baseline had
+been one low for several commits, re-confirmed by every stream that passed through it.
+
+**That conclusion was wrong. See the correction immediately below.** The totals were read off
+real output; the streams and I were running *different commands*. I am leaving the wrong
+reasoning in place rather than quietly rewriting it, because the way it was wrong is worth
+more than the finding it replaced.
+
+**I did not conclude "mis-transcribed", because both of its numbers were internally
+consistent — which is the signature of a genuine environment difference, not a slip.** So I
+tested that explanation instead of preferring the convenient one: I ran the suite in *that
+stream's own worktree, at its own commit*. 1556 / 1555. I concluded nothing environmental
+differed, and that the totals had been derived rather than read.
+
+### That conclusion was WRONG, and how it was wrong is the real lesson — 2026-10-06
+
+**Both streams, independently, found the actual cause. The repo prescribes two test commands
+that disagree by one test:**
+
+```
+node --test "tools/SizzleCraft/tests/**/*.test.mjs"   ← .github/domains.yaml test_cmd
+# tests 1555 · # pass 1554
+
+node --test                                            ← package.json "test", bare discovery
+# tests 1556 · # pass 1555
+```
+
+The extra one is `tests/fixtures/test-owned-path.mjs` — **a fixture that registers no tests
+at all.** Node's default discovery matches `test-*.mjs`, so bare `node --test` runs it and
+reports `ok 8 - tests\fixtures\test-owned-path.mjs`: **a passing test that cannot fail,
+living inside the instrument we measure the repo with.** The registry glob requires
+`*.test.mjs` and never matches it.
+
+So the streams read real output. They ran the registry command; I ran `npm test`.
+
+**MY EXPERIMENT CONTROLLED THE TREE AND NOT THE COMMAND.** I ran *my* command in *their*
+tree, got my own number back, and declared the environment identical. It answered **"does
+their tree give 1556 under my command"** when the question was **"does their command give
+1555."** A true answer to the wrong question — rule 7 — committed by me, in the investigation
+whose entire subject was instruments that return the expected answer. I had even written the
+positive-control rule into the brief that same hour.
+
+**The giveaway I walked past: both of their numbers were internally consistent.** I correctly
+identified that as the signature of a real difference rather than a slip — and then tested
+only the one explanation I had thought of. Ruling out *an* alternative is not ruling out
+*the* alternative. When the evidence says "something real differs," the honest next step is
+to vary **every** axis of the measurement, starting with the one you did not choose
+deliberately.
+
+**What survives, and it survives strengthened:** the anchoring rule is still right, and the
+stream confirmed it against itself without being asked —
+
+> I *did* read my numbers off real output, yet I wrote "confirmed as predicted". Had the tool
+> printed something else I might still have typed "confirmed", because **the word was in the
+> brief before the number was on screen.**
+
+So the brief was a real defect and the process change stands. It just was not the cause of
+*this* discrepancy. **Two true findings, and I welded them into one wrong story** because the
+first one explained the second well enough to stop looking.
+
+Two of my own instruments failed inside this same investigation, and both failed silently:
+
+- A summary regex `^# (tests|pass|fail)` matched **nothing**. The test-name check beside it
+  printed `FOUND` eleven times, so the run *looked* successful — a zero from a regex that
+  never matched, sitting next to a genuine positive result.
+- A `Get-Content | Select-Object -Last 3` issued in the same batch as the `git merge` read
+  the **pre-merge** file. I raced my own measurement against my own mutation.
+- A brace-depth counter I wrote to check scope counted braces inside strings and comments,
+  and returned `-1`. It discriminated nothing.
+
+I discarded all three and measured the thing I actually cared about: whether the new tests
+**execute by name**. They do, all eleven.
+
+**The rule: a verification step that states its expected result in advance has stopped being
+a verification step.** State the expectation *after* the reading, or not at all. Ask for the
+**verbatim** instrument output **and the exact command that produced it** — the command was
+the variable I never asked for, and it was the answer. Treat the **delta** as the trustworthy
+quantity: it is computed from two readings the stream actually took, while a total can be
+inherited from whoever spoke first.
+
+This is the same family as the mp3-count-versus-request-log control, and as the phrase-grep
+that answered *"does this phrase appear"* when the question was *"is the false claim still
+asserted."* **An instrument pointed at the expected answer returns the expected answer.**
+
 ### A fixture that reproduces the symptom is not a fixture that represents the system
 
 The same stream's first scene for the layout-misattribution fix used slide ids equal to
@@ -505,6 +605,275 @@ precedent is a claim about code, and like any other claim it is worth exactly wh
 measurement was worth. Citing one without reading it transfers its defects along with its
 authority — and the authority makes the defect harder to question, because the receiving
 stream now has two reasons to believe it.
+
+## A derivation with two agreeing measurements, both of one benign signal — 2026-10-07
+
+A stream was sent to add a threshold gate to `check-levels.mjs`, which until now only
+**reported**: every `CliError` in it concerned unmeasurability, and none compared a measured
+level to a threshold, so a mix defect reached a human unchallenged.
+
+It built the obvious bound — refuse a peak above full scale — and the derivation looked
+solid from three directions: `remux-music.mjs:685` emits `alimiter=limit=<ceiling>`, the
+README records −0.3 dBTP at the default, and its own render measured **−0.227 dBFS** against
+**+2.012** unlimited. Two agreeing measurements and a documented figure.
+
+**All of it was one benign signal.** With the limiter correctly in force, ffmpeg 9.0.2, AAC
+192k:
+
+| material | `--ceiling 0.1` | `--ceiling 1.0` | `--ceiling 2.0` |
+|---|---|---|---|
+| sine + pink noise | −0.26 | −0.68 | −1.91 |
+| white noise | **+2.85** | **+3.30** | +1.23 |
+| square wave | **+4.49** | | |
+
+**A correct render at the default ceiling measures +3.30 dBFS.** AAC overshoots the clamped
+peaks by an amount the *material* sets and the ceiling does not bound. The gate would have
+refused good work — and would have been defended by a README figure, a source line, and a
+real render.
+
+Two things make this transferable:
+
+1. **Agreement between measurements is not independence.** Two readings of the same benign
+   signal agree with each other and with the documentation, and are jointly wrong about the
+   population. The question is never "do my measurements agree" but **"what do they vary?"**
+   Here nothing varied the one input that mattered: the material.
+2. **It was withdrawn rather than tuned,** and the `+3.295152` reading is now pinned in a
+   test as ACCEPTED, so the bound cannot return on the same plausible reasoning. The next
+   person meets the measurement instead of an empty space that invites the same derivation.
+
+What shipped is narrower and true: one categorical condition with no number in it — **a
+whole file that is digital silence where audio was expected** — behind `--allow-silent`,
+because the README documents a *supported* all-silent S4 timeline that an unqualified rule
+would have refused. A partial result, reported as partial in the headline.
+
+**Shipping less than asked, and saying so first, was the correct outcome.** A threshold
+nobody can justify gets tuned until it stops complaining.
+
+### Two orchestration errors of mine, same day
+
+**I spawned a session without pinning its base branch**, so it branched off the project
+default (`main`) rather than the working trunk, and did its whole task **10 commits behind**.
+Its baselines looked wrong against every other stream's numbers, and it had correctly
+reported a fixture problem as "pre-existing, not mine" that another stream had fixed an hour
+earlier. It measured its tree correctly; I handed it the wrong tree. **A number that
+disagrees with every other stream's is a question about the tree, not about the stream.**
+
+**And an unexplained red I could not reproduce.** The first full-suite run after merging two
+independently-green test changes reported `# pass 1571 / # fail 1`, exit 1. Four subsequent
+runs at the same commit were clean at `1572 / 0`. **I did not capture the failing output**,
+which is the actual defect here — a one-off red with no artefact is nearly worthless, and I
+had the run in hand. The plausible cause is resource contention: another session was driving
+real ffmpeg renders concurrently. **That is a hypothesis, not a finding, and it is recorded
+as unresolved rather than closed on four greens** — the coach/pack cold-clone case is exactly
+why repetition is not proof. Future suite runs capture their output on a non-zero exit.
+
+## The `.srt` sidecar was never measured, and two parsers disagree — 2026-10-07
+
+Every gate decision about `-->` and the seven mandatory line breaks was specced from
+**WebVTT in Chromium**. `write-subtitles` ships **two** sidecars. The `.srt` one had never
+been measured at all.
+
+**The destructive behaviour is ffmpeg-specific, and a single-source measurement would have
+reported it as a property of SRT.** The brief's warning — one parser is not a format — is
+the only reason it was caught:
+
+| shape | ffmpeg 9.0.2 (libavformat subrip) | srt-parser-2 (JS, independent) |
+|---|---|---|
+| cue text IS a whole timing line | **cue DELETED**, 2 cues → 1 | 1 cue, text kept literally |
+| timing line + following text | **timing HIJACKED**, real text lost | 2 cues, timing intact |
+| CR U+000D | consumed, **becomes a line break** | **deleted** |
+| `-->` in ordinary prose | harmless | harmless |
+
+**Both ffmpeg destructions are silent: exit 0, zero diagnostics.** Controls were run in every
+batch (one-cue/one-line, one-cue/two-line, two-cue, empty text) and reported alongside, so
+the zeros are readings rather than silence.
+
+**U+0085 survives, produces no line break, and changes no cue count — in BOTH SRT parsers,
+matching Chromium.** Three independent implementations agree. The gate's U+0085 rationale
+holds for both sidecars. No contradiction.
+
+### But the harm string was wrong for half of what we ship
+
+`CUE_HARM.arrow` is attached to a fact that says *"written into **both** subtitle sidecars as
+cue text, where …"* — and both its clauses are WebVTT-only:
+
+- *"parsed as empty and silently disappears"* — Chromium behaviour; in both SRT parsers
+  prose containing `-->` is harmless and the text survives.
+- *"forges a second cue"* — ffmpeg **deletes** the cue or **hijacks** its timing. Nothing is
+  forged, and the real harm is **worse**: silent data loss at exit 0, where the written
+  string implies a visible artefact.
+
+**The gate is correct and the measurement strengthens it** — a timing line contains `-->`, so
+the refusal is exactly what prevents ffmpeg's silent destruction. Only the explanation was
+wrong. That is the fifth-plus instance of *a correct rule with an explanation nobody
+re-measured*, this time in a string the orchestrator helped specify.
+
+### Three rules that came out of this round
+
+**A glyph is not a measurement.** `srt-parser-2` rendered U+2028/U+2029 as `alpha beta`,
+which reads exactly like conversion to a space. Reading **code points** showed both survive
+unchanged. A transformation that never happened was one character-class away from being
+reported.
+
+**Test every shape the rule names, not the first one.** The arrow was first tested only in
+its **embedded** form (`alpha-->beta`) — the harmless shape — and was nearly reported benign
+in SRT. The destructive shape is "cue text that is itself a whole timing line", which the
+WebVTT finding had already named.
+
+**A self-inconsistent instrument is a defect, not a quirk.** The stream that first met the
+two-command disagreement diagnosed it correctly as a fixture name and then filed it as
+*pre-existing and acceptable*. Its own words: it "treated a self-inconsistent instrument as a
+known quirk instead of a defect." The disagreement then stood long enough for an orchestrator
+to build a wrong theory on top of it. **A measuring tool that disagrees with itself is the
+one thing that must never be triaged as cosmetic.**
+
+## Breaking changes are cheap here — standing position, 2026-10-07
+
+**The rule now lives in the constitution, §I, "Breaking changes are cheap here — be agile".
+That is the authority; this note is the context behind it and must not restate it.** If the
+two ever disagree, the constitution wins (and this note is the one to delete).
+
+The user, ruling on a contract change and then generalising it unprompted:
+
+> "breaking changes are totally fine… I'm not running a large production workload or have
+> external users/callers… if there's a breaking change that is demonstratively better, we
+> should be willing to pivot and align to the new findings. We should be agile within this
+> repo"
+
+**Why it was promoted to policy rather than kept here.** The memory bank is context; the
+constitution is auto-loaded into every agent session. A principle that must change how
+builders and reviewers *weigh a decision* is inert sitting in context — and the existing
+reviewer criteria already penalise "a breaking public change reported as additive", which
+is the complement of this rule and needed to be read alongside it rather than against it.
+
+**What it should have changed earlier today.** Several dispositions were framed with "runs
+that exit 0 today may exit non-zero after" as a weight on the scale. It is not one, and the
+orchestrator put it there repeatedly before being corrected.
+
+**The `seg.id` ruling is the case worth keeping**, because its reasoning survives the change
+in policy: the partial screen was rejected **not** because the full pipeline rule was too
+expensive, but because a partial guard **misrepresents its own coverage** — and that is true
+whatever breakage costs. Cheap breakage changes which option you can afford; it does not
+make a misleading guard acceptable.
+
+### A hazard that nearly cost two sessions their dependencies
+
+A stream junctioned `node_modules` into a throwaway worktree with `mklink /J`, then ran
+`git worktree remove --force`. **The remove followed the junction and emptied the TARGET's
+`node_modules`.** Its next suite run reported `224 fail / 31 cancelled / 1407 tests` — which
+it correctly diagnosed as the tree, not a flake, *because it captured the output instead of
+re-running*.
+
+The orchestrator used the same technique an hour earlier and escaped only by happening to
+`rmdir` the junction link first and then verifying `ajv` survived. **That was luck, not
+method.**
+
+**Safe ordering: remove the junction with `cmd /c rmdir <link>` — which deletes the link and
+never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
+a tree containing a junction you care about.
+
+A stream junctioned `node_modules` into a throwaway worktree with `mklink /J`, then ran
+`git worktree remove --force`. **The remove followed the junction and emptied the TARGET's
+`node_modules`.** Its next suite run reported `224 fail / 31 cancelled / 1407 tests` — which
+it correctly diagnosed as the tree, not a flake, *because it captured the output instead of
+re-running*.
+
+The orchestrator used the same technique an hour earlier and escaped only by happening to
+`rmdir` the junction link first and then verifying `ajv` survived. **That was luck, not
+method.**
+
+**Safe ordering: remove the junction with `cmd /c rmdir <link>` — which deletes the link and
+never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
+a tree containing a junction you care about.
+
+## A retry that cannot fire on the likeliest case — 2026-10-08
+
+The obvious fix for an `EBUSY` teardown race is `fs.rmSync(dir, { maxRetries, retryDelay })`.
+A stream had it written and passing. **It does not cover the failure this suite actually
+produces**, and it found that by measuring both shapes instead of assuming one.
+
+I verified the decisive half myself with my own probe — a child process holding a directory
+via `cwd`, then `fs.rmSync` with `maxRetries: 3, retryDelay: 1500`:
+
+```
+ROOT held    THREW EBUSY after 1 ms     <- never waited once
+```
+
+`runScript` (`_helpers.mjs:87-93`) spawns **every** engine CLI with `cwd` set to the fixture,
+so the root is exactly what this suite holds. **A fix built on the built-in option alone
+would have been a retry that cannot fire on the likeliest case — indistinguishable from no
+retry at all**, shipped inside the fix for that very hazard. A test now pins the runtime's
+non-coverage so the "simplification" cannot be reintroduced.
+
+*(Honest divergence: I could not reproduce the stream's claim that the INNER path IS covered
+— a held inner directory threw at 1 ms for me, and a held read handle did not block removal
+at all. Not a refutation of its reading, and its design does not depend on it, but it is
+recorded as unreproduced rather than as confirmed.)*
+
+### Three more instruments that could not detect what they were built for
+
+- **An audit with a false negative, in a file whose entire purpose is not having false
+  negatives.** Its paren scan counted brackets inside strings, so
+  `t.after(() => { const label = ')'; fs.rmSync(dir, ...) })` **evaded it completely.** The
+  fix was proved load-bearing by neutering the sanitiser to the identity function and
+  watching the right control fail — not by asserting it.
+- **A test timeout used to bound a blocking `Atomics.wait` it cannot interrupt.** A
+  regression would have **hung past the timeout**, not failed at it. Replaced with
+  `t.mock.method` and a call-count assertion.
+- **A readiness signal that let the race win.** The holder used the `'spawn'` event; the OS
+  establishes `cwd` *before* the child runs code, so the removal could win against an
+  unheld directory. A race inside the fix for races — and a fixed sleep would only have
+  hidden it.
+
+## When a sweep cannot classify, enumerate the EXEMPTIONS — 2026-10-08
+
+Standing orchestrator instruction: *sweep, don't list* — a list of subjects leaves everything
+unlisted unguarded, which is how four CLIs crashing on `--help` survived (the existing tests
+asserted `--help` on **writing stages only**).
+
+A stream applied the rule and found it could not: **no rule can classify these files.**
+Shebang, `process.argv` and `parseCli` all misclassify, measured. And the behavioural
+classifier has a hole a reviewer named exactly — **a CLI that silently does its work is
+indistinguishable from a module by any observation of the behaviour being guarded.**
+Requiring an export does not save it; a file can export *and* work on import, and that mutant
+escaped.
+
+**So it inverted the default: declare the exemptions, and cover everything else.** Membership
+is declared and then re-checked. Anything unnamed is guarded whether or not anyone remembers
+the file next year.
+
+**That is the general answer to "sweep, don't list" when a sweep cannot classify**, and it is
+better than the instruction that produced it.
+
+## The ceiling on screening inputs — 2026-10-08
+
+Seven review rounds closed eight genuine disclosure routes and the reviewer's discovery rate
+never fell. The reason was structural, not diligence:
+
+> pattern `scenario-label` · `seg.id` is `scenario` · the engine generates
+> `id="scenario-label"` by concatenation at render time · **ships at exit 0**
+
+**The matching string exists in no input, so there is nothing to screen.** Confirmed from the
+source: `write-build-html.mjs` interpolates `${seg.id}` into element ids at `:276`, `:310`,
+`:315`, `:337`, `:344`, `:354` and more. Screening *contributing inputs* cannot reach a
+*derived* artefact.
+
+The ceiling is now documented in the house `DOES NOT DETECT` style **and pinned by tests** —
+including a control (`theCeiling_isNotAGeneralFailure_…`) without which both ceiling pins
+assert only `EXIT.OK`, so **a regression that broke screening entirely would satisfy them**
+and the documented limitation would silently become a general failure, still green.
+
+### Taking too much blame is the same defect as taking too little
+
+I called this "mis-specified by me". The stream corrected me: input screening closed eight
+real leaks an output screen would also have closed, so the work was **bounded, not wasted**,
+and the ceiling was unknown to both of us — found only because a reviewer finding forced a
+measurement of a concatenated id.
+
+It was right. **"I mis-specified it" is a tidier story than "neither of us had the
+measurement" — tidier, and false.** A future reader would have learned *the orchestrator
+specs badly* instead of *this ceiling is invisible until you measure a derived string*.
+Self-criticism is a claim about the record and has to be as accurate as any other.
 
 ## How a green suite lies — the 2026-10-05 measurement rules
 

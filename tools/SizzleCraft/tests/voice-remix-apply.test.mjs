@@ -1624,3 +1624,103 @@ describe('remix regenerates declared silence from the authored window', () => {
     assert.deepEqual(snapshot(dir), before, 'a run that fails C-6 publishes nothing');
   });
 });
+
+  // ----------------------------------------------------------------------------------
+  // THE SAME NARRATION RULE, ASKED BEFORE TTS. write-subtitles (S10) refuses narration that
+  // cannot become a cue, which used to mean the author paid to synthesise every segment
+  // first — MEASURED, 3 of 3 segments synthesised at exit 0 for narration S10 would then
+  // refuse. voiceTimelineBlocker now asks the same question before voice.mjs calls the TTS
+  // service at all.
+  //
+  // THE TWO GATES REACH DIFFERENT DISTANCES ON PURPOSE. This one sees narration only; S10
+  // also refuses all seven mandatory line breaks in a MEASURED WORD, which cannot move here
+  // because measured words do not exist until voice.mjs has run. Rows for both live here so
+  // neither reads as an oversight.
+  for (const [name, text, expected] of [
+    ['AnArrow', 'the arrow --> points right',
+      'segment "one" is narrated but its narration contains "-->", which is written into both subtitle sidecars ' +
+      'as cue text, where the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any ' +
+      'cue text line holding "-->" as EMPTY, so the caption silently disappears whatever else is on that line, ' +
+      'and cue text that is itself a whole timing line forges a second cue; in .srt, prose holding it was ' +
+      'harmless in both parsers tried, but cue text shaped as a whole timing line made ffmpeg either delete the ' +
+      'cue or adopt the injected timing and lose the real text, both at exit 0 with no diagnostic, while ' +
+      'srt-parser-2 left it intact — two SRT parsers disagreeing, so this is what was observed and not a ' +
+      'property of the format'],
+    ['ANextLine', 'a\u0085b and some more',
+      'segment "one" is narrated but its narration contains a line break (U+0085), which is written into both ' +
+      'subtitle sidecars as cue text, where it has no glyph, so neither it nor its effect can be seen in the text ' +
+      'it came from, and at the cue-grouping ceiling its one extra character splits a caption into two cues ' +
+      '(MEASURED: one cue became two, the second holding a single word). It adds no line — MEASURED in Chromium, ' +
+      'in ffmpeg and in srt-parser-2 alike'],
+  ]) {
+    test(`voice_narrationHolding${name}_isRefusedBeforeAnythingIsSynthesised`, (t) => {
+      const segments = [
+        { id: 'one', startMs: 0, endMs: 1800, voiceoverText: text },
+        { id: 'two', startMs: 2000, endMs: 3800, voiceoverText: 'an ordinary second line' },
+      ];
+      const dir = makeProject(t, { 'timing.json': timingBody(segments), 'brand/tokens.json': brandTokens });
+      const ttsLog = path.join(makeOutsideDir(t), 'tts.jsonl');
+
+      const r = runScript('voice.mjs', ['--apply', '--replace'], dir,
+        { nodeArgs: ['--import', FAKE_AUDIO], env: { FAKE_TTS_LOG: ttsLog } });
+
+      assertCleanExit(r, EXIT.USAGE);
+      assert.ok(r.stderr.includes(expected), `the refusal must say exactly this\n--- got ---\n${r.all}`);
+      // THE POINT OF MOVING IT, measured at the TTS BOUNDARY rather than by its leftovers.
+      // Counting segment mp3s would only show that no file survived; the fake's request log
+      // records every call at the moment it is made, so this cannot pass merely because a
+      // call happened and produced nothing.
+      assert.equal(fs.existsSync(ttsLog) ? fs.readFileSync(ttsLog, 'utf8').trim() : '', '',
+        'a refused run must make zero requests of the TTS service');
+      assert.deepEqual(
+        fs.readdirSync(dir).filter((f) => /^segment_\d+\.mp3$/.test(f)), [],
+        'and write no clip',
+      );
+    });
+
+    // The plan must refuse it too, or the plan promises a run --apply would reject.
+    test(`voice_narrationHolding${name}_isRefusedInThePlanAsWell`, (t) => {
+      const segments = [{ id: 'one', startMs: 0, endMs: 1800, voiceoverText: text }];
+      const dir = makeProject(t, { 'timing.json': timingBody(segments), 'brand/tokens.json': brandTokens });
+
+      const r = runScript('voice.mjs', [], dir, { nodeArgs: ['--import', FAKE_AUDIO] });
+
+      assertCleanExit(r, EXIT.USAGE);
+      assert.ok(r.stderr.includes(expected), `the refusal must say exactly this\n--- got ---\n${r.all}`);
+    });
+  }
+
+  // THE CONTROL. Without it, the rows above would pass against a voice stage that refused
+  // everything, and "zero requests" would mean nothing. This asserts the SAME instrument
+  // reads non-zero on a clean run.
+  test('voice_narrationWithNeitherOfThem_stillSynthesisesEverySegment', (t) => {
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 1800, voiceoverText: 'an ordinary first line' },
+      { id: 'two', startMs: 2000, endMs: 3800, voiceoverText: 'an ordinary second line' },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingBody(segments), 'brand/tokens.json': brandTokens });
+    const ttsLog = path.join(makeOutsideDir(t), 'tts.jsonl');
+
+    const r = runScript('voice.mjs', ['--apply', '--replace'], dir,
+      { nodeArgs: ['--import', FAKE_AUDIO], env: { FAKE_TTS_LOG: ttsLog } });
+
+    assertCleanExit(r, EXIT.OK, 'clean narration must still synthesise: ');
+    const requests = fs.readFileSync(ttsLog, 'utf8').trim().split('\n').filter(Boolean);
+    assert.equal(requests.length, 2, `the instrument must read non-zero here\n${r.all}`);
+    assert.equal(fs.readdirSync(dir).filter((f) => /^segment_\d+\.mp3$/.test(f)).length, 2, r.all);
+  });
+
+  // A SILENT SEGMENT IS NOT NARRATION. Its caption is governed by the silent-caption rule,
+  // which refuses all seven breaks — a different set, deliberately — so the narration gate
+  // must not reach into it and report the wrong rule.
+  test('voice_aSilentSegmentWhoseCaptionIsClean_isNotJudgedByTheNarrationRule', (t) => {
+    const segments = [
+      { id: 'one', startMs: 0, endMs: 1800, voiceoverText: 'an ordinary first line' },
+      { id: 'gap', startMs: 2000, endMs: 3000, voiceoverText: '', silence: { caption: '[music]' } },
+    ];
+    const dir = makeProject(t, { 'timing.json': timingBody(segments), 'brand/tokens.json': brandTokens });
+
+    const r = runScript('voice.mjs', [], dir, { nodeArgs: ['--import', FAKE_AUDIO] });
+
+    assertCleanExit(r, EXIT.OK, r.all);
+  });

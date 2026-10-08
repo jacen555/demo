@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import * as real from 'node:child_process';
-import { requireTestOwnedPath } from './test-owned-path.mjs';
+import { requireTestOwnedPath } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const dir = fs.realpathSync.native(params.get('dir'));

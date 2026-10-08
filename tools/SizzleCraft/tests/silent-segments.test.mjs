@@ -3196,6 +3196,8 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['silent-segment.mjs', 'segmentLabel'],
     ['cli-support.mjs', 'describeJsonValue'],
     ['cli-support.mjs', 'fingerprintBuffer'],
+    ['cli-support.mjs', 'noGoPatternsProblem'],
+    ['silent-segment.mjs', 'narrationCueProblems'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);
@@ -3618,8 +3620,20 @@ describe('a narrated segment never puts --> into cue text', () => {
   // what tells an author why a caption they can read in timing.json vanished from the video.
   // Gutting the explanation left the suite green, so one row per source pins it in full,
   // remedy included. The silent half of this rule asserts its whole message too.
-  const HARM = 'a line holding "-->" ends the cue: the caption is then parsed as empty and silently disappears, ' +
-    'and cue text that is itself a whole timing line forges a second cue';
+  // WHAT IT SAYS MUST BE WHAT WAS MEASURED, FOR BOTH FILES THIS STAGE WRITES. The earlier
+  // version described Chromium's WebVTT behaviour only, while the sentence around it says
+  // "written into BOTH subtitle sidecars". Measured against .srt afterwards, both of its
+  // clauses were false there: prose holding "-->" is harmless in both SRT parsers, and the
+  // timing-line shape deletes a cue or steals its timing rather than forging a second one.
+  //
+  // And the two SRT parsers DISAGREE with each other, so the string names what was observed
+  // and where, rather than promoting either reading to a property of the format.
+  const HARM = 'the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any cue text ' +
+    'line holding "-->" as EMPTY, so the caption silently disappears whatever else is on that line, and cue ' +
+    'text that is itself a whole timing line forges a second cue; in .srt, prose holding it was harmless in ' +
+    'both parsers tried, but cue text shaped as a whole timing line made ffmpeg either delete the cue or adopt ' +
+    'the injected timing and lose the real text, both at exit 0 with no diagnostic, while srt-parser-2 left it ' +
+    'intact — two SRT parsers disagreeing, so this is what was observed and not a property of the format';
   for (const [scenario, segments, expected] of [
     ['TheNarration', narrated('the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']),
       'timing.segments[0] ("one"): voiceoverText contains "-->" — it is written into both subtitle sidecars ' +
@@ -3729,15 +3743,26 @@ describe('a narrated segment never puts --> into cue text', () => {
   //   RAW word, and ALL SEVEN then reach cue text at exit 0 with both sidecars written.
   //   A raw U+000A that way produced a THREE-line cue while the run reported "0 cue(s)
   //   over" — the MAX_LINES violation, arriving by the path nobody was watching.
-  const BREAK_HARM = 'a cue is wrapped to at most 2 lines, and a line break in its text adds another: ' +
-    'MEASURED, a raw line break produced a three-line cue at exit 0 with the run reporting none over the limit';
-  // U+0085 is refused for a DIFFERENT reason, and says so. MEASURED in Chromium it adds no
-  // line at all — so citing the three-line harm for it would be a refusal explaining itself
-  // with a consequence the engine has measured it does not have. These two strings existing
-  // separately is the point of the rows below.
+  // "A LINE BREAK ADDS A LINE" WAS TRUE OF ONE CHARACTER, NOT OF SEVEN. Measured against
+  // .srt afterwards: U+000A breaks the line in both SRT parsers as well as in .vtt, but
+  // U+000D breaks only in ffmpeg and is dropped by srt-parser-2, and U+000B, U+000C,
+  // U+2028 and U+2029 broke no line in either SRT parser — and were never measured in
+  // Chromium at all. The gate still refuses all seven, on the ground that was always true
+  // of all seven: they reach cue text unexamined at exit 0.
+  const BREAK_HARM = 'a cue is wrapped to at most 2 lines and a line break in its text can add another: ' +
+    'MEASURED, a raw U+000A produced a three-line cue at exit 0 with the run reporting none over the limit, ' +
+    'and U+000A breaks the line in both SRT parsers too. The others differ — U+000D breaks in ffmpeg and is ' +
+    'dropped by srt-parser-2, while U+000B, U+000C, U+2028 and U+2029 broke no line in either SRT parser and ' +
+    'were not measured in Chromium — so those are refused for reaching cue text unexamined, not for a line ' +
+    'count anyone has seen';
+  // U+0085 is refused for a DIFFERENT reason, and says so. It adds no line in Chromium, in
+  // ffmpeg or in srt-parser-2 — three implementations — so citing the line-count harm for
+  // it would explain this rule with a consequence the engine has measured it does not have.
+  // The cue-grouping split is the engine's OWN grouping, so it applies to both sidecars.
   const NEL_HARM = 'it has no glyph, so neither it nor its effect can be seen in the text it came from, and ' +
     'at the cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became ' +
-    'two, the second holding a single word)';
+    'two, the second holding a single word). It adds no line — MEASURED in Chromium, in ffmpeg and in ' +
+    'srt-parser-2 alike';
   const NARRATION_REMEDY = "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.";
   // The narration CAN contain one of the other six — /\s+/ splits them out before a cue, it
   // does not forbid them — so the remedy has to be conditional on the character actually
@@ -4014,3 +4039,66 @@ describe("frame-capture checks a silent segment's window and never derives its e
   });
 });
 
+
+  // ----------------------------------------------------------------------------------
+  // THE EARLY AND LATE GATES ASK ONE PREDICATE, so they cannot drift about what narration
+  // may not carry — the isGenerablePause pattern, where the refusal stays the predicate's
+  // and each site words its own message.
+  //
+  // Asserted on the PREDICATE and on both stages, because agreement between two gates is
+  // not something either gate's own rows can show.
+  describe('one statement of what narrated text may not carry', () => {
+    const load = () => import('../src/silent-segment.mjs');
+
+    test('narrationCueProblems_namesEachReasonInReportingOrder', async () => {
+      const { narrationCueProblems } = await load();
+
+      assert.deepEqual(narrationCueProblems('an ordinary line'), []);
+      assert.deepEqual(narrationCueProblems('the arrow --> points'), ['arrow']);
+      assert.deepEqual(narrationCueProblems('a\u0085b'), ['nel']);
+      assert.deepEqual(narrationCueProblems('both --> and a\u0085b'), ['arrow', 'nel']);
+      // Not a string is not a problem to report here; the shape gate owns that.
+      assert.deepEqual(narrationCueProblems(null), []);
+      assert.deepEqual(narrationCueProblems(7), []);
+    });
+
+    // THE SIX THAT CANNOT REACH A CUE FROM NARRATION ARE NOT HERE, and that is deliberate:
+    // /\s+/ splits them out before cue text, so refusing them in narration would be a rule
+    // that could never fire. They ARE refused in a measured word, by write-subtitles.
+    test('narrationCueProblems_ignoresTheSixBreaksNarrationCannotDeliverToACue', async () => {
+      const { narrationCueProblems } = await load();
+
+      for (const ch of ['\u000a', '\u000b', '\u000c', '\u000d', '\u2028', '\u2029']) {
+        assert.deepEqual(narrationCueProblems(`a${ch}b`), [],
+          `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} is split away by /\\s+/ before a cue`);
+      }
+    });
+
+    // BOTH GATES, ONE RULE. voice.mjs (S3) refuses before synthesising; write-subtitles
+    // (S10) refuses again, because narration can be edited after voice has run and S10 does
+    // not re-run that gate. Neither is redundant and neither is dead — the S10 half is
+    // reached here without voice.mjs ever running, which is the proof it is still live.
+    for (const [name, text, tokens] of [
+      ['AnArrow', 'the arrow --> points right', ['the', 'arrow', '-->', 'points', 'right']],
+      ['ANextLine', 'a\u0085b tail', ['ab', 'tail']],
+    ]) {
+      test(`bothGates_refuseNarrationHolding${name}`, async (t) => {
+        const { voiceTimelineBlocker } = await load();
+        const plain = [{ id: 'one', startMs: 0, endMs: 1800, voiceoverText: text }];
+
+        assert.notEqual(voiceTimelineBlocker({ segments: plain, endCard: { enabled: false } }), null,
+          'the pre-TTS gate must refuse it');
+
+        const words = tokens.map((w, i) => ({ word: w, startMs: i * 400, endMs: (i + 1) * 400 }));
+        const measured = [{
+          id: 'one', startMs: 0, endMs: words.at(-1).endMs + 400, voiceoverText: text,
+          audio: { file: 'segment_000.mp3', durationMs: words.at(-1).endMs + 400, headMs: 0, tailMs: 0, words },
+        }];
+        const dir = makeProject(t, { 'timing.json': timingWith(measured) });
+
+        const r = runScript('write-subtitles.mjs', ['--apply'], dir);
+
+        assert.equal(r.code, EXIT.FAILED, `S10 must still refuse it on its own\n${r.all}`);
+      });
+    }
+  });

@@ -100,18 +100,26 @@ per project under `~/SizzleCraft/<project>/`, which is the duplication this skil
 | S4 | `remix.mjs`, `silence-gen.mjs`, `silence-asset.mjs`, `concat-audio.mjs` | Solves perceived gaps, emits `gap_NN.mp3` |
 | S4 | `silence-scan.mjs`, `vo-envelope.mjs` | Measures head/tail by decoding; builds the ducking envelope |
 | S5 | `write-build-html.mjs` | Emits `video-auto.html` |
+| S5/S6 | `validate-scene.mjs` | **Refuses an unrenderable scene BEFORE capture.** Pure data over `timing.json` — no browser, no ffmpeg, no frames — so it costs milliseconds against a stage that costs tens of minutes. Catches trigger targets that resolve to nothing, diagram nodes and edges (and the first six narrative items) that nothing reveals, edges drawn before their endpoints, diagram geometry that letterboxes or overlaps, and content a project declared it will not ship. It does **not** check narrative shots, or live-mode fields and hotspots. See bug ledger entry 14 for its bounds — it asked for exactly this check |
 | S6 | `frame-capture.mjs` | Frame capture with dedup. The long pole |
 | S7 | `encode-mp4.mjs`, `append-outro.mjs` | |
 | S8 | `make-music.mjs` | Generated bed. Named presets (`warm`, `bright`) — pass as argv or set `audio.music.preset` |
-| S9 | `remux-music.mjs` | **The cheap path** — swaps audio, preserves the video stream byte-for-byte |
+| S9 | `remux-music.mjs` | **The cheap path** — swaps audio, preserves the video stream byte-for-byte. Also builds the file-bed sidechain (`--duck-db`, `--duck-envelope`), and loops a short bed with a crossfade rather than letting it stop partway |
+| — | `write-subtitles.mjs` | WebVTT and SRT caption sidecars, cut from the word timings the TTS service reports, scaled to each clip's probed duration — not from the script, and not decoded from the audio |
+| — | `write-chapters.mjs` | MP4 chapter markers, one per segment |
 | — | `preview.mjs`, `preview-seg.mjs` | **Segment preview — use before committing to a full render.** `preview.mjs` defaults to all segments; pass ids to narrow. Publishes a binding record last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256 |
 | — | `coach-pack.mjs` | Collects the coach's input set and writes its hash manifest. Pass 1: script only. Pass 2: script, timing, storyboard, stills, audit. **Refuses a still whose binding record does not match, and refuses absence of a record** — "no record" must never read as "nothing wrong" |
 | — | `coach-rulings.mjs` | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false alarm and taste collapse. The key includes a hash of the sentence containing the quote, so **rewording the cited sentence re-opens the finding** rather than silencing it |
 | — | `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | Verification |
 
 All of the above are checked in at `tools/SizzleCraft/src/` **except `write-script.mjs`**.
-A test (`engineScripts_coverEveryPipelineStage`) pins the rest so a partial extraction fails
-loudly rather than silently.
+A test (`engineScripts_coverEveryPipelineStage`, `tests/SizzleCraft.test.mjs:89`) checks that
+**ten specific files** are present — one named per stage, S2 through S8/S9 — so deleting any
+of those ten fails loudly. It pins those ten files and nothing else: a stage with several
+scripts is only partly covered (S4 pins `remix.mjs`, `silence-gen.mjs` and `silence-scan.mjs`
+but not `silence-asset.mjs` or `concat-audio.mjs`), and the verification helpers, the caption
+and chapter writers and the coach stages are not in its list at all. Deleting one of those
+would not fail this test.
 
 ### Known SizzleCraft characteristics
 
@@ -119,12 +127,20 @@ loudly rather than silently.
   finished runtime**. Capture alone was 22 minutes for a 3:07 cut at 25% dedup.
   An audio-only remux was ~4 minutes and near-independent of length. These are one
   machine's numbers; re-measure and record in `render-log.md`.
-- **TTS is deterministic.** Re-synthesising unchanged text returns identical
-  durations. Safe to regenerate cleaned-up clips without re-solving timing.
+- **TTS is deterministic `[OBSERVED]`.** Re-synthesising unchanged text returned
+  identical durations to the millisecond on every run measured — but determinism is
+  **not documented** by `msedge-tts` or the Edge backend, so it is an observation and
+  not a guarantee. Regenerating cleaned-up clips without re-solving timing has always
+  worked and is not promised to: re-measure rather than assume. See bug ledger entry 7,
+  which this line used to contradict by stating the observation as a property.
 - **Perceived gap ≠ inserted silence.** Real gap is
   `tail(clip N) + inserted silence + head(clip N+1)`. Measured tails run
   ~276–312 ms, heads ~130 ms. Solve against perceived gap.
-- **Music is generated, not sampled** (`make-music.mjs`) — no licensing to clear.
+- **A generated bed has no licensing to clear** (`make-music.mjs` synthesises it; nothing
+  is sampled). A **file-sourced** bed is a different matter: `remux-music.mjs` accepts one,
+  and it carries whatever licence its source does — ledger entry 16 is about a commercial
+  master. Clear it yourself, and if its licence requires attribution the end card is the
+  only surface that can carry it.
 - **Capture dedup** materially reduces frame count on largely static scenes.
 
 > **SizzleCraft is new and moving.** Several rules here exist to work around gaps

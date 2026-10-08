@@ -14,7 +14,7 @@
 // so a test can assert it was left behind rather than deleted.
 //
 // Bounded as the other fixtures are: the directory must be a suite-owned temp directory
-// (see test-owned-path.mjs), so an inherited NODE_OPTIONS cannot aim it elsewhere. It
+// (see suite-owned-path.mjs), so an inherited NODE_OPTIONS cannot aim it elsewhere. It
 // announces itself and the substitution on stderr, so a test can prove the collision was
 // staged rather than passing because it never was.
 //
@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './test-owned-path.mjs';
+import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const fragment = params.get('fragment');

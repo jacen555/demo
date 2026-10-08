@@ -17,8 +17,10 @@
  *   createBoundary             path confinement that survives links
  *   parseBoundedNumber         numeric input that cannot reach a filter graph
  *
- * It is the only module here with no side effects on import, so it is directly
- * unit-testable; the CLI scripts themselves are exercised as subprocesses.
+ * It is one of eight modules here with no side effects on import, so it is directly
+ * unit-testable; the CLI scripts themselves are exercised as subprocesses. The eight are
+ * enumerated and re-checked in `tests/cli-help-contract.test.mjs`, which exempts exactly
+ * them from the rule that every CLI must answer --help before doing any work.
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -800,6 +802,65 @@ export function describeJsonValue(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'an array';
   return `a ${typeof value}`;
+}
+
+/**
+ * The bounds on a no-go pattern list.
+ *
+ * These are compiled with `new RegExp` from a project's own file and run against every
+ * string that reaches a frame, and Node cannot time-limit a match, so the list is bounded
+ * at authoring time. The numbers came from validate-scene, which was the only stage that
+ * had any.
+ */
+const MAX_NO_GO_PATTERNS = 256;
+const MAX_NO_GO_PATTERN_LENGTH = 512;
+
+/**
+ * What is wrong with a `project.noGoPatterns` value, or null when nothing is.
+ *
+ * ONE STATEMENT OF A RULE TWO STAGES DISAGREED ABOUT. `validate-scene` refused a non-string
+ * element and bounded both the count and each pattern's length; `write-build-html` checked
+ * `Array.isArray` and nothing else, then called `new RegExp(src, 'i')` — so a number was
+ * coerced to its decimal form and silently became a pattern that scanned every rendered
+ * string. MEASURED on one timing.json before this existed: `[123]`, 300 patterns and a
+ * 600-character pattern were each refused by one stage at exit 2 and accepted by the other
+ * at exit 0.
+ *
+ * Declaring the field in `timing-schema.json` would NOT have closed that. Nothing invokes a
+ * validator — no stage spawns `validate-timing`, and neither consumer compiles the schema —
+ * so a declaration would have recorded the divergence while reading as a guarantee.
+ *
+ * `where` is the caller's own name for the field, because the two stages name it
+ * differently and both are right in their own context: the rule is shared, the wording is
+ * local.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DECIDE: what ABSENCE means. Both stages refuse a missing
+ * key — absence must not read as permission — but a report stage records it as a finding
+ * and a render stage throws, and `write-build-html` asks only on the code-mode path, the
+ * one that renders source data into the frame. Those are different jobs with different
+ * reach, not a divergence to be tidied away. Each caller checks for absence itself and then
+ * asks this about the value it has.
+ *
+ * CONSUMERS(noGoPatternsProblem): validate-scene.mjs, write-build-html.mjs
+ * A test asserts the list above matches the modules that actually import this symbol, in
+ * both directions, so a third private copy has to be a deliberate act.
+ */
+export function noGoPatternsProblem(value, where) {
+  if (!Array.isArray(value)) {
+    return `${where} must be an array of regular-expression strings, not ${describeJsonValue(value)}`;
+  }
+  if (value.length > MAX_NO_GO_PATTERNS) {
+    return `${where} declares ${value.length} patterns, above the bound of ${MAX_NO_GO_PATTERNS}`;
+  }
+  for (const [index, source] of value.entries()) {
+    if (typeof source !== 'string') {
+      return `${where}[${index}] is ${describeJsonValue(source)}, not a regular-expression string`;
+    }
+    if (source.length > MAX_NO_GO_PATTERN_LENGTH) {
+      return `${where}[${index}] is ${source.length} characters, above the bound of ${MAX_NO_GO_PATTERN_LENGTH}`;
+    }
+  }
+  return null;
 }
 
 /**

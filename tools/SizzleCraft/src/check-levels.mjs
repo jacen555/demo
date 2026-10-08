@@ -12,13 +12,37 @@
  * so this gate exited 1 on every correct narration-only render — the lead-in window is
  * deliberately silent, and astats reports that correctly as `-inf`. Silence is now its
  * own state. See astats-levels.mjs for why that distinction is the whole check.
+ *
+ * A fourth, and it is a CHANGE OF CONTRACT rather than a bug fix: this script only ever
+ * REPORTED. Every refusal in it concerned unmeasurability — bad usage, a missing file,
+ * ffmpeg failing, levels it could not read — and none compared a measured level against
+ * anything, which its own usage said plainly ("0 every file measured"). So a mix defect
+ * that slipped past the graph audit in mix-parameters.mjs reached a human unchallenged,
+ * and that audit's header lists seven classes it cannot see, including everything outside
+ * the filter graph. The windows are now JUDGED as well as printed, and a render that
+ * delivered NO AUDIO exits 1. Runs that exited 0 before can exit 1 now; that is the point.
+ *
+ * What that gate is NOT is the broad level check it was first built as. A peak-above-full-
+ * scale bound was implemented here and then WITHDRAWN after measurement: a correctly
+ * limited render at the DEFAULT --ceiling measured +3.30 dBFS post-AAC, because the encode
+ * overshoots the clamped sample peaks by an amount the material sets and the ceiling does
+ * not bound. It would have refused good work. judgeDeliveredLevels carries the sweep and
+ * the reasoning; what survives is one categorical refusal with no number in it, and the
+ * honest reading is that this closes a narrow hole rather than the whole one.
+ *
+ * The gate is DEFAULT-ON, and its one escape is narrow on purpose. `--allow-silent` is not
+ * a switch that turns the gate off: it declares the one thing that makes a silent render
+ * correct — a timeline that is silent in EVERY segment, which concat-audio supports and
+ * generates (README). Defaulting the other way would make the gate opt-in, and a delivery
+ * check nobody remembers to pass a flag to is a check that does not run. The full report
+ * still prints before the refusal.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { EXIT, CliError, runCli, requireExistingFile } from './cli-support.mjs';
-import { readAstatsLevels, formatLevels, describeUnusableLevels } from './astats-levels.mjs';
+import { readAstatsLevels, formatLevels, describeUnusableLevels, judgeDeliveredLevels } from './astats-levels.mjs';
 
 const USAGE = `
 check-levels — report RMS/peak audio levels for rendered video files.
@@ -31,12 +55,24 @@ Options
   --file <[label=]path>  a file to measure; repeatable. Label defaults to the filename.
   --project <dir>        project root; files may not escape it (default: current directory)
   --ffmpeg <path>        ffmpeg binary (default: read from ffmpeg-path.txt in the project)
+  --allow-silent         this project's timeline is silent in EVERY segment, so a render
+                         with no audio in it is correct (see concat-audio in the README)
   --help                 show this message
 
 A window reported as "digital silence" (-inf) is a MEASUREMENT, not a failure — the
 lead-in of a narration-only render is silent by design.
 
-Exit codes: 0 every file measured (silence included) · 1 ffmpeg failed or a window was unmeasurable · 2 bad usage
+THE REPORT IS ALSO A GATE. Every window is judged after it is printed, and one condition
+fails the run:
+  * a WHOLE FILE that is digital silence, unless --allow-silent says the timeline is
+    deliberately silent in every segment — the render carries no audio at all.
+A silent WINDOW is still correct and still passes. There is no peak bound (a correct
+render's encode can overshoot full scale), no RMS band, and no general opt-out. See
+judgeDeliveredLevels in astats-levels.mjs for the measurements behind both omissions and
+for the much larger list of defects this does NOT catch.
+
+Exit codes: 0 every window measured, audio delivered (silence in a window included) · 1
+ffmpeg failed, a window was unmeasurable, or the render carries no audio · 2 bad usage
 `.trimStart();
 
 await runCli(() => {
@@ -48,6 +84,7 @@ await runCli(() => {
         file: { type: 'string', multiple: true, default: [] },
         project: { type: 'string' },
         ffmpeg: { type: 'string' },
+        'allow-silent': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
       allowPositionals: true,
@@ -85,20 +122,34 @@ await runCli(() => {
   // narration. The measurement is useful either way; the label just has to stop
   // asserting a configuration it cannot see from here.
   const sections = [
-    ['whole file', []],
-    ['lead-in (first 1.5s — music only, no speech yet)', ['-t', '1.5']],
-    ['last 2s (tail — music only when the project ends on an end card)', ['-sseof', '-2']],
+    ['whole file', [], { wholeFile: true, audioExpected: !values['allow-silent'] }],
+    ['lead-in (first 1.5s — music only, no speech yet)', ['-t', '1.5'], {}],
+    ['last 2s (tail — music only when the project ends on an end card)', ['-sseof', '-2'], {}],
   ];
 
   const labelWidth = Math.max(...files.map((f) => f.label.length), 20);
+  const refusals = [];
   let first = true;
-  for (const [heading, args] of sections) {
+  for (const [heading, args, gate] of sections) {
     console.log(first ? heading : `\n${heading}`);
     first = false;
     for (const { label, file } of files) {
       const s = stats(FF, file, args);
       console.log(`  ${label.padEnd(labelWidth)} ${formatLevels(s)}`);
+      // Judged AFTER the line is printed, and collected rather than thrown, so the whole
+      // report reaches the reader. A gate that stops at the first bad window hides the
+      // other measurements, which are the context for deciding what went wrong.
+      const refusal = judgeDeliveredLevels(s, { label: `${label} — ${heading}`, ...gate });
+      if (refusal) refusals.push(refusal);
     }
+  }
+
+  if (refusals.length > 0) {
+    throw new CliError(
+      `${refusals.length} delivered file(s) carry no audio — this render must not be delivered:\n` +
+        refusals.map((r) => `  ${r}`).join('\n'),
+      EXIT.FAILED,
+    );
   }
   return EXIT.OK;
 });

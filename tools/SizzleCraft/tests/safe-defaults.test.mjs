@@ -21,7 +21,7 @@ import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, Cli
 import { normalizeEndCardFields } from '../src/end-card.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from '../src/gain-pin.mjs';
 import { MIX_PARAMETERS, NOT_IN_FORCE } from '../src/mix-parameters.mjs';
-import { assertCleanExit, pcmWav } from './_helpers.mjs';
+import { assertCleanExit, pcmWav, removeFixture } from './_helpers.mjs';
 
 /**
  * What a pin records for the CONDITIONAL pinned parameters when they are not in force.
@@ -62,7 +62,7 @@ const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'sr
 /** Creates a throwaway project dir, removed when the test ends. */
 function makeProject(t, files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-test-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeFixture(dir));
   for (const [rel, body] of Object.entries(files)) {
     const target = path.join(dir, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -203,7 +203,7 @@ describe('write-build-html code mode', () => {
     const r = build(dir);
 
     assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /no-go match/, 'and name the pattern that matched');
+    assert.match(r.all, /no-go match/, 'and report that a no-go pattern matched');
     assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
   });
 
@@ -272,7 +272,7 @@ describe('write-build-html code mode', () => {
   // notice — it is composited into the video and encoded.
   test('codeMode_jsonFileViaLinkPointingOutsideTheProject_refusesAndDoesNotDiscloseTheVictim', (t) => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-victim-'));
-    t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+    t.after(() => removeFixture(outside));
     const SENTINEL = 'SENTINEL-SECRET-b7f3e1a9';
     const victim = path.join(outside, 'secret.json');
     fs.writeFileSync(victim, JSON.stringify({ token: SENTINEL }));

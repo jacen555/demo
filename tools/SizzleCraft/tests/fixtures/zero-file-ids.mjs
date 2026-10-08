@@ -25,7 +25,7 @@
 // with them in the query string of its URL. But that URL can come from a NODE_OPTIONS a
 // parent shell passes down as well as from the command line, so how it is armed bounds
 // nothing. What bounds it is that the directory must be a suite-owned temp directory (see
-// test-owned-path.mjs; os.tmpdir() itself comes from the environment, TEMP on Windows),
+// suite-owned-path.mjs; os.tmpdir() itself comes from the environment, TEMP on Windows),
 // and that it never writes, moves or removes anything — all it can do is withhold an
 // inode. It is announced on stderr once armed, so a test can prove the IDs were withheld
 // rather than passing because they never were.
@@ -34,7 +34,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './test-owned-path.mjs';
+import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 if (!params.get('dir')) throw new Error('zero-file-ids: its --import URL must carry dir');

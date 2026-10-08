@@ -68,6 +68,41 @@ do not improvise.
   **orchestrator-owned**. Domain builders MUST NOT edit them unless explicitly
   instructed for that task.
 
+### Breaking changes are cheap here — be agile
+
+Forge has **no production workload and no external users or callers.** It exists to be
+reused going forward, and its artefacts are rebuilt from scratch rather than maintained.
+
+**Therefore: "this would break existing callers / refuse projects that build today" is a
+fact to STATE, not a reason to stop.** When a change is demonstrably better, pivot and
+align to the new finding. Prefer the correct design over the compatible one.
+
+This is stated explicitly because the default engineering instinct is the opposite, and
+that instinct has already distorted decisions in this repo — proposals were weighed down
+by a compatibility cost that does not exist here.
+
+**What this does NOT relax — all of it still binds:**
+
+- **"Demonstrably better" means demonstrated.** A break justified by reasoning alone is
+  not justified. Measure it, and §VII still applies: it must build and the tests must pass.
+- **Honest reporting is unchanged and is the complement of this rule, not a casualty of
+  it.** A breaking change reported as `additive` or `unchanged` remains an automatic
+  **FAIL** (§VIII, and the reviewer agents' own criteria). Breaking freely is permitted
+  precisely *because* breaks are declared plainly; concealment removes the thing that makes
+  agility safe.
+- **Say what breaks, in the commit.** The PR title grammar (§X) and the body must make the
+  break visible to a reader who was not in the conversation.
+- **The gates do not move.** Pre-edit approval (§III), tests at the task's tier (§VI), and
+  an independent cross-family reviewer (§VIII) apply to a breaking change exactly as to
+  any other.
+- **A partial guard is still worse than none.** Cheap breakage is not a licence to ship a
+  check that misrepresents its own coverage — that reasoning is independent of what
+  compatibility costs.
+
+**Scope:** this governs *backward compatibility*, and nothing else. It is not a general
+licence for churn: §IV's surgical-diff rule stands, and unrelated rewriting is still a
+review FAIL.
+
 ---
 
 ## II. Rigor Tiers
@@ -270,6 +305,28 @@ TEST-FIRST-EVIDENCE:
 The reviewer MUST return `VERDICT: FAIL` for any non-exempt behavior change at Tier 1 or
 Tier 2 where `TEST-FIRST-EVIDENCE` is missing, the named tests do not cover the changed
 contract, or the exemption is not credible.
+
+### Reviewers: do not read the Tier 1 rule onto a Tier 2 change
+
+**Failing-test-first is a Tier 1 requirement.** At Tier 2 the requirement is *tests that
+cover the changed contract* — the block above is named "Test-First Evidence" and is required
+at both tiers, which has repeatedly been misread as making the Tier 1 sequence mandatory
+everywhere. It does not. That is why `Pre-fix result` accepts
+**`not-run-with-justification`**.
+
+**A fix discovered during review cannot be test-first, by construction.** Once a reviewer
+names a defect, nobody can un-know it in order to watch a test fail first. Demanding the
+sequence there is demanding the impossible, and the only way to comply would be to pretend.
+
+For those, the builder MUST supply evidence that the test **discriminates** — a mutation
+that the test kills is the strongest available and is the house form — and MUST report
+plainly that it was written after the fix. **Honestly-labelled retrospective evidence is
+acceptable at Tier 2; retrospective evidence presented as test-first is not**, and that
+remains a FAIL.
+
+A reviewer that believes the gap matters anyway should say so and **route the decision to
+the orchestrator as an accepted-gate-gap**, rather than failing a change it has already
+verified discriminates. The orchestrator rules.
 
 ---
 

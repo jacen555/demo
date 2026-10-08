@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { EXIT, resolveKnob, resolveBooleanKnob, CliError } from '../src/cli-support.mjs';
-import { srcDir, makeProject, runScript, timingFixture, contiguousSegments, assertCleanExit } from './_helpers.mjs';
+import { srcDir, makeProject, runScript, timingFixture, contiguousSegments, assertCleanExit, removeFixture } from './_helpers.mjs';
 
 const captureProject = (t, project) =>
   makeProject(t, {
@@ -203,7 +203,7 @@ describe('env knob precedence is enforceable', () => {
 
   test('envKnobScanner_offenderInASubdirectory_isFound', (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-scan-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.after(() => removeFixture(root));
     fs.mkdirSync(path.join(root, 'nested', 'deeper'), { recursive: true });
     fs.writeFileSync(path.join(root, 'nested', 'deeper', 'knob.mjs'), 'const x = process.env.SIZZLECRAFT_FPS;\n');
 

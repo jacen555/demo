@@ -31,7 +31,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { EXIT } from '../src/cli-support.mjs';
-import { makeProject, runScript, tryMakeFileLink } from './_helpers.mjs';
+import { makeProject, runScript, tryMakeFileLink, removeFixture } from './_helpers.mjs';
 
 const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 // The stage writes under the tool's own coach/ folder, not into the project — that is
@@ -293,7 +293,7 @@ describe('coach-pack collects an input set and binds it with a manifest', () => 
     fs.writeFileSync(path.join(r.dir, 'script.md'), '# Script\n\nSegment one.\n');
     fs.writeFileSync(path.join(r.dir, 'storyboard.html'), '<!doctype html><title>sb</title>\n');
     // The stage writes into the real coach/ folder, so each test takes its own away again.
-    t.after(() => fs.rmSync(path.dirname(manifestPathFor(r.dir)), { recursive: true, force: true }));
+    t.after(() => removeFixture(path.dirname(manifestPathFor(r.dir))));
     return r.dir;
   }
 
@@ -555,7 +555,7 @@ describe('coach-pack collects an input set and binds it with a manifest', () => 
   // package so `node_modules` still resolves from it.
   function toolFixture(t) {
     const root = fs.mkdtempSync(path.join(SRC_DIR, '..', '.tool-fixture-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.after(() => removeFixture(root));
     fs.cpSync(SRC_DIR, path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'coach'), { recursive: true });
     fs.writeFileSync(path.join(root, 'coach', 'rubric.md'), '# stub rubric\n');
@@ -590,7 +590,7 @@ describe('coach-pack collects an input set and binds it with a manifest', () => 
     const dir = previewed(t);
     const root = toolFixture(t);
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-escape-'));
-    t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+    t.after(() => removeFixture(elsewhere));
     try {
       fs.symlinkSync(elsewhere, path.join(root, 'coach', 'pack'), 'junction');
     } catch {
@@ -610,7 +610,7 @@ describe('coach-pack collects an input set and binds it with a manifest', () => 
     const dir = previewed(t);
     const root = toolFixture(t);
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-escape-'));
-    t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+    t.after(() => removeFixture(elsewhere));
 
     fs.rmSync(path.join(root, 'coach'), { recursive: true, force: true });
     try {
