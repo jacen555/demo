@@ -1361,7 +1361,19 @@ const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)sl
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.
 // Preview calls it fire-and-forget from fireTriggersUpTo; the capture script awaits it before screenshot.
 window.__footage=${hasFootage};
-window.__setFootageFrame=function(absMs){const ls=document.querySelectorAll('.footage-layer'),ps=[];ls.forEach(el=>{const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(!dir||!Number.isFinite(s)||!Number.isFinite(e))return;if(absMs<s-1||absMs>e+1)return;const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));const url=dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg';if(el.dataset.cur===url)return;if(el.__pendingUrl===url&&el.__pendingPromise){ps.push(el.__pendingPromise);return;}const p=new Promise(res=>{const im=new Image();im.onload=()=>res(true);im.onerror=()=>res(false);im.src=url;}).then(ok=>{if(ok){el.style.backgroundImage='url("'+url+'")';el.dataset.cur=url;}if(el.__pendingUrl===url){el.__pendingUrl=null;el.__pendingPromise=null;}return ok;});el.__pendingUrl=url;el.__pendingPromise=p;ps.push(p);});return Promise.all(ps);};
+// THE FRAME INDEX IS DERIVED IN ONE PLACE. __setFootageFrame swaps the background to this
+// url, and __frameSig puts the url it WILL be showing into the dedup signature; the second
+// one's comment already said it must use "the SAME math", with nothing making it so. Two
+// statements of one derivation, where a drift means the signature describes a different
+// frame from the one captured — which is a false dedup, and corrupt output rather than a
+// visible failure.
+// Returns null when the layer is outside its window. THE FALLBACK STAYS AT EACH CALLER,
+// because they want different things there: __setFootageFrame skips the layer entirely,
+// while __frameSig records el.dataset.cur, which is stable precisely because the index is
+// not changing this frame. __frameSig must never read dataset.cur for an IN-window layer:
+// it is committed after image load and so lags by one frame.
+function __footageUrlAt(el,absMs){const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(!dir||!Number.isFinite(s)||!Number.isFinite(e))return null;if(absMs<s-1||absMs>e+1)return null;const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));return dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg';}
+window.__setFootageFrame=function(absMs){const ls=document.querySelectorAll('.footage-layer'),ps=[];ls.forEach(el=>{const url=__footageUrlAt(el,absMs);if(url===null)return;if(el.dataset.cur===url)return;if(el.__pendingUrl===url&&el.__pendingPromise){ps.push(el.__pendingPromise);return;}const p=new Promise(res=>{const im=new Image();im.onload=()=>res(true);im.onerror=()=>res(false);im.src=url;}).then(ok=>{if(ok){el.style.backgroundImage='url("'+url+'")';el.dataset.cur=url;}if(el.__pendingUrl===url){el.__pendingUrl=null;el.__pendingPromise=null;}return ok;});el.__pendingUrl=url;el.__pendingPromise=p;ps.push(p);});return Promise.all(ps);};
 function setSlide(n){if(n===currentSlide)return;document.querySelectorAll('.sl').forEach(s=>s.classList.remove('on'));document.getElementById('seg-'+(n-1))?.classList.add('on');currentSlide=n;elementTriggers.filter(t=>t.s===n&&t.withSegment).forEach(apply);}
 let __lastFireT=0;
 // Seek-safety: on a backwards / non-monotonic seek (preview scrub), cumulative state (fired, fxDone,
@@ -1412,7 +1424,7 @@ window.__frameSig=function(frameNo){
   // For layers outside their active window (index not changing this frame) dataset.cur is stable, so
   // it is read directly with no lag.
   const ft=[],__absMs=(window.__t||0)*1000;
-  document.querySelectorAll('.footage-layer').forEach(el=>{const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(dir&&Number.isFinite(s)&&Number.isFinite(e)&&__absMs>=s-1&&__absMs<=e+1){const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((__absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));ft.push(dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg');}else ft.push(el.dataset.cur||'-');});
+  document.querySelectorAll('.footage-layer').forEach(el=>{const url=__footageUrlAt(el,__absMs);ft.push(url===null?(el.dataset.cur||'-'):url);});
   p.push('G'+ft.join(',')); // footage frame that WILL be shown per layer (deterministic in t)
   const safe=on&&on.querySelector('.safe');p.push('L'+(safe?(safe.style.getPropertyValue('--fit')||'1'):'1')); // layout fit
   return p.join('~');
