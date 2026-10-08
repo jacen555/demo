@@ -1104,6 +1104,36 @@ export function resolveFfmpegPointer(root) {
 }
 
 /**
+ * Resolves the ffmpeg binary, preferring `--ffmpeg` over the project's `ffmpeg-path.txt`.
+ *
+ * THE OTHER FFMPEG RESOLVER, AND IT IS NOT A DUPLICATE OF `resolveFfmpegPointer`. Three
+ * things differ and each is deliberate:
+ *   - it takes an override, because its callers offer `--ffmpeg` and the sidecar stages
+ *     do not;
+ *   - it reads the pointer with plain `readFileSync`, so a link at `ffmpeg-path.txt` is
+ *     FOLLOWED here and REFUSED there;
+ *   - its refusal names `--ffmpeg` as a way out, which would be false advice on a stage
+ *     that has no such flag.
+ *
+ * Collapsing the two would silently change what a planted link does on four stages. They
+ * are named apart so that the next reader comparing them finds this note first.
+ *
+ * CONSUMERS(resolveFfmpegOrOverride): check-levels.mjs, remux-music.mjs
+ */
+export function resolveFfmpegOrOverride(projectDir, override) {
+  if (override) return override;
+  const pointer = path.join(projectDir, 'ffmpeg-path.txt');
+  if (!fs.existsSync(pointer)) {
+    throw new CliError(
+      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
+    );
+  }
+  const ff = fs.readFileSync(pointer, 'utf8').trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
+  return ff;
+}
+
+/**
  * Guards a write. Returns the absolute destination, or throws if the destination
  * already exists and the caller did not explicitly ask to replace it.
  */

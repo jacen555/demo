@@ -38,10 +38,9 @@
  * still prints before the refusal.
  */
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { EXIT, CliError, runCli, requireExistingFile } from './cli-support.mjs';
+import { EXIT, CliError, runCli, requireExistingFile, resolveFfmpegOrOverride as resolveFfmpeg } from './cli-support.mjs';
 import { readAstatsLevels, formatLevels, describeUnusableLevels, judgeDeliveredLevels } from './astats-levels.mjs';
 
 const USAGE = `
@@ -154,19 +153,7 @@ await runCli(() => {
   return EXIT.OK;
 });
 
-/** Resolves the ffmpeg binary, preferring --ffmpeg over the project's ffmpeg-path.txt. */
-function resolveFfmpeg(projectDir, override) {
-  if (override) return override;
-  const pointer = path.join(projectDir, 'ffmpeg-path.txt');
-  if (!fs.existsSync(pointer)) {
-    throw new CliError(
-      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
-    );
-  }
-  const ff = fs.readFileSync(pointer, 'utf8').trim();
-  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
-  return ff;
-}
+
 
 /**
  * Measures RMS and peak for `file`. Throws rather than returning NaN: a level this

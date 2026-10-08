@@ -39,6 +39,7 @@ import { parseArgs } from 'node:util';
 import {
   EXIT, CliError, runCli, requireExistingFile, resolveOutput, parseBoundedNumber,
   resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile, readEngineFile,
+  resolveFfmpegOrOverride as resolveFfmpeg,
 } from './cli-support.mjs';
 import { videoStreamVerdict } from './remux-verify.mjs';
 import { classifyGainPin, confirmedLockRecord, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
@@ -785,19 +786,7 @@ await runCli(async () => {
   return EXIT.OK;
 });
 
-/** Resolves the ffmpeg binary, preferring --ffmpeg over the project's ffmpeg-path.txt. */
-function resolveFfmpeg(projectDir, override) {
-  if (override) return override;
-  const pointer = path.join(projectDir, 'ffmpeg-path.txt');
-  if (!fs.existsSync(pointer)) {
-    throw new CliError(
-      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
-    );
-  }
-  const ff = fs.readFileSync(pointer, 'utf8').trim();
-  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
-  return ff;
-}
+
 
 /**
  * Reads the envelope the duck is calibrated from, validating the one field it depends on.
