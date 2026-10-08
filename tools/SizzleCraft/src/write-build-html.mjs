@@ -327,6 +327,22 @@ try {
   );
   process.exit(EXIT.USAGE);
 }
+/**
+ * Does this `path.relative` result leave the root it was measured from?
+ *
+ * An EMPTY result counts as escaping here, because all three callers are asking "is this a
+ * file strictly inside the root" and a candidate that IS the root is not one.
+ *
+ * DELIBERATELY NOT USED by the clip-root check in `evidenceSrcOrBase` further down, which
+ * spells the same four conditions out and reaches the OPPOSITE verdict on the empty case:
+ * there, an empty relative means "this is the clip root" and is accepted. Same expression,
+ * two meanings — so they stay apart, and that site carries a note back to this one.
+ *
+ * Declared above its first caller rather than beside its third: `const` is not hoisted,
+ * and a helper reached through a function defined earlier is only safe by argument about
+ * call order. This needs no argument.
+ */
+const escapesRoot = rel => !rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 const safeEvidenceSrc = raw => {
   const s = String(raw ?? '').trim();
   if (!s || s.includes('\0') || s.includes('\\') || s.includes('%') || /[?#]/.test(s)) throw new Error('unsafe evidence src rejected');
@@ -335,7 +351,7 @@ const safeEvidenceSrc = raw => {
   if (parts.some(p => p === '' || p === '.' || p === '..')) throw new Error('unsafe evidence src rejected');
   const absolute = path.resolve(dir, ...parts);
   const inside = path.relative(EVIDENCE_ROOT, absolute);
-  if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) throw new Error('unsafe evidence src rejected');
+  if (escapesRoot(inside)) throw new Error('unsafe evidence src rejected');
   // Reject reparse points (POSIX symlinks AND Windows symlinks/junctions/mount points) on every
   // component, then re-check containment on the fully resolved realpath. lstat() is what distinguishes a
   // link from its target; on Windows a junction reports isSymbolicLink() === true for lstat, and any
@@ -349,7 +365,7 @@ const safeEvidenceSrc = raw => {
   }
   let real; try { real = fs.realpathSync(absolute); } catch { throw new Error('unsafe evidence src rejected'); }
   const realInside = path.relative(EVIDENCE_ROOT, real);
-  if (!realInside || realInside === '..' || realInside.startsWith(`..${path.sep}`) || path.isAbsolute(realInside)) throw new Error('unsafe evidence src rejected');
+  if (escapesRoot(realInside)) throw new Error('unsafe evidence src rejected');
   return path.relative(dir, absolute).split(path.sep).join('/');
 };
 // Aggregate, don't throw on the first bad path: a run with three broken sources should report all three
@@ -403,7 +419,7 @@ const mode = seg => { const v = seg.visual || {}; if ((v.mode === 'footage' || (
 const FRAME_FILE_RE = /^frame_[0-9]{5}\.(?:jpg|jpeg|png|webp)$/i;
 const containedRelative = (root, candidate, where) => {
   const rel = path.relative(root, candidate);
-  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error(`footage lineage mismatch: ${where} escaped its clip root`);
+  if (escapesRoot(rel)) throw new Error(`footage lineage mismatch: ${where} escaped its clip root`);
   return rel;
 };
 const frameSetFacts = id => {
@@ -492,6 +508,10 @@ const safeFrameDir = (raw, clipId) => {
     const absolute = path.resolve(dir, norm);
     const clipRoot = path.resolve(EVIDENCE_ROOT, 'footage', clipId);
     const inside = path.relative(clipRoot, absolute);
+    // NOT escapesRoot(): this is the one site where an EMPTY relative is accepted, because
+    // here it means "the candidate IS the clip root" rather than "it is not inside one".
+    // Spelled out on purpose — the four conditions match that helper and the verdict does
+    // not, so collapsing them would invert this check.
     return (!inside || (!inside.startsWith(`..${path.sep}`) && inside !== '..' && !path.isAbsolute(inside))) ? norm : base;
   } catch {
     return base;
