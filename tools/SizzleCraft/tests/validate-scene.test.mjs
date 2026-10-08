@@ -1496,6 +1496,11 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
       ] }),
     });
     const r = runAtDefaultBudget(dir);
+    // Pin that this invocation actually REACHED the refusal. Both assertions below are
+    // absence checks, and a scan that simply completed would satisfy them without ever
+    // exercising the path under test — a test that passes for the wrong reason.
+    assert.equal(r.code, EXIT.USAGE, `expected this run to reach the timeout refusal\n${r.all}`);
+    assert.match(r.all, /within 5000 ms/, `expected the timeout refusal, not some other error\n${r.all}`);
     assert.ok(!r.all.includes(PATHOLOGICAL), `the pattern source leaked into the refusal\n${r.all}`);
     assert.ok(!r.all.includes(PATHOLOGICAL_BAIT), `the scanned text leaked into the refusal\n${r.all}`);
   });
