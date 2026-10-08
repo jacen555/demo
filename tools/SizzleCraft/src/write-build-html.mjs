@@ -397,7 +397,7 @@ let EVIDENCE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack'
 const evidenceApprovedClip = id => !!id && (EVIDENCE.assets || []).some(a => a && a.kind === 'clip' && a.approvedForUse === true && a.id === id);
 // clipId is used verbatim as a path segment; force it to a single safe token (no separators / `..`)
 // so neither the fallback path nor the frame URLs can escape evidence-pack/footage/.
-const safeClipId = id => { const s = String(id || ''); return (/^[A-Za-z0-9._-]{1,128}$/.test(s) && s !== '.' && s !== '..') ? s : ''; };
+const safeClipId = id => { const s = String(id || ''); return (TOKEN_RE.test(s) && s !== '.' && s !== '..') ? s : ''; };
 const footageClip = id => { const cid = safeClipId(id); return cid ? ((FOOTAGE.clips || []).find(c => c.id === cid) || null) : null; };
 // C-3/C-11: a clip may only be composited when it is approved AND redaction-clear in clips.json AND has
 // a matching approved evidence-pack asset (kind:"clip", approvedForUse:true, id===clipId) — the manifest
