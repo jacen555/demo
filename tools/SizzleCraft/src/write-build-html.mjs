@@ -21,15 +21,21 @@ Exit codes: 0 success/plan · 1 build failed · 2 bad usage or refused overwrite
 `.trimStart();
 
 // Parsed before any read, so --help cannot reach the filesystem.
-const cli = (() => {
-  try {
-    return parseCli({ usage: USAGE, options: { out: { type: 'string' } } });
-  } catch (err) {
-    if (err.name === 'HelpRequested') { console.log(err.usage); process.exit(EXIT.OK); }
-    console.error(`error: ${err.message}`);
-    process.exit(err.exitCode ?? EXIT.FAILED);
-  }
-})();
+//
+// THROUGH THE SHARED guard(), which this file already imports and uses at sixteen other
+// sites, the first of them fourteen lines below. What stood here was a private re-
+// implementation of it that duck-typed `err.name === 'HelpRequested'` and caught EVERY
+// error, where guard matches on `instanceof` and rethrows anything that is neither
+// CliError nor HelpRequested.
+//
+// Those are equivalent only if nothing else can escape parseCli, so that was measured
+// rather than assumed: 22 adversarial inputs — unknown flags, a value on a boolean, a
+// stray positional, and a --project that is missing, a file, empty, 5000 characters, a
+// NUL byte, a device name, reserved characters, a non-existent UNC, a trailing dot and a
+// drive-relative form — produced only CliError and HelpRequested, and the duck-type never
+// disagreed with instanceof. CliError always carries an exitCode, so `err.exitCode ??
+// EXIT.FAILED` and guard's `err.exitCode` cannot differ either.
+const cli = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
 
 const dir = cli.projectDir;
 // timing.json is ENGINE-chosen: the caller named a project directory, not this file. Joined
