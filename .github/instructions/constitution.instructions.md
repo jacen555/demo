@@ -306,6 +306,28 @@ The reviewer MUST return `VERDICT: FAIL` for any non-exempt behavior change at T
 Tier 2 where `TEST-FIRST-EVIDENCE` is missing, the named tests do not cover the changed
 contract, or the exemption is not credible.
 
+### Reviewers: do not read the Tier 1 rule onto a Tier 2 change
+
+**Failing-test-first is a Tier 1 requirement.** At Tier 2 the requirement is *tests that
+cover the changed contract* — the block above is named "Test-First Evidence" and is required
+at both tiers, which has repeatedly been misread as making the Tier 1 sequence mandatory
+everywhere. It does not. That is why `Pre-fix result` accepts
+**`not-run-with-justification`**.
+
+**A fix discovered during review cannot be test-first, by construction.** Once a reviewer
+names a defect, nobody can un-know it in order to watch a test fail first. Demanding the
+sequence there is demanding the impossible, and the only way to comply would be to pretend.
+
+For those, the builder MUST supply evidence that the test **discriminates** — a mutation
+that the test kills is the strongest available and is the house form — and MUST report
+plainly that it was written after the fix. **Honestly-labelled retrospective evidence is
+acceptable at Tier 2; retrospective evidence presented as test-first is not**, and that
+remains a FAIL.
+
+A reviewer that believes the gap matters anyway should say so and **route the decision to
+the orchestrator as an accepted-gate-gap**, rather than failing a change it has already
+verified discriminates. The orchestrator rules.
+
 ---
 
 ## VII. Build & Verify Before Handoff
