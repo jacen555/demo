@@ -17,10 +17,67 @@ export const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '.
 /** An absolute path guaranteed not to be an executable, for the "ffmpeg never ran" cases. */
 export const MISSING_FFMPEG = path.join(os.tmpdir(), 'sizzlecraft-no-such-dir', 'no-such-ffmpeg.exe');
 
+/**
+ * How long a teardown tolerates a handle the OS has not released yet.
+ *
+ * MEASURED, NOT GUESSED. Under 12 concurrent ffmpeg encodes a full-suite run failed with
+ * `EBUSY: resource busy or locked, unlink '...\.tool-fixture-kuTT3z\src\encoder-page.html'`
+ * in a `t.after` hook — a test whose body had already passed, failed by its own cleanup
+ * because Windows still held a child process's handle on the fixture.
+ *
+ * `{ force: true }` does not cover this: force suppresses ENOENT and nothing else.
+ *
+ * THE BUDGET IS THE REPO'S OWN CONVENTION. voice.mjs:300-315 (the C-14 bounded self-heal)
+ * is the stated shape for riding out a transient failure: four attempts, linear backoff of
+ * `1500 * attempt`, ~9s total, then fail honestly. This is that same convention — one
+ * attempt plus three retries, waiting `retryDelay * attempt` between them. Nothing here
+ * was tuned until the tests went green.
+ */
+export const FIXTURE_REMOVAL = { maxRetries: 3, retryDelay: 1500 };
+
+/** Codes Windows raises for "someone still holds this", all of which may clear on their own. */
+const RELEASABLE = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY', 'EMFILE', 'ENFILE']);
+
+/** Blocks the thread. Teardown hooks are synchronous, so the wait has to be too. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Removes a test fixture, riding out a handle Windows has not released yet.
+ *
+ * WHY THIS LOOP EXISTS AND `fs.rmSync`'s OWN `maxRetries` IS NOT ENOUGH. Measured, not
+ * assumed: `fs.rmSync` retries a busy entry INSIDE the tree, but an EBUSY on the root
+ * `rmdir` is rethrown immediately — with `maxRetries: 3, retryDelay: 1500` a
+ * directory held as a live child's working directory failed in 0 ms, having never waited
+ * once. That is exactly the shape this suite produces: `runScript` spawns every engine
+ * CLI with `cwd` set to the fixture, so a child that has not fully exited holds the ROOT.
+ * Relying on the built-in option alone would have shipped a retry that cannot fire on the
+ * most likely case, which is indistinguishable from no retry at all.
+ *
+ * AND IT STILL FAILS WHEN IT SHOULD. When the budget is exhausted the real error is
+ * rethrown, so a path that genuinely cannot be removed still fails the run. A cleanup that
+ * gave up quietly would leave fixtures accumulating inside the package while every run
+ * reported clean.
+ *
+ * `overrides` exists for the tests that pin this behaviour; callers should not pass it.
+ */
+export function removeFixture(dir, overrides = {}) {
+  const { maxRetries, retryDelay } = { ...FIXTURE_REMOVAL, ...overrides };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      if (attempt >= maxRetries || !RELEASABLE.has(err.code)) throw err;
+      sleepSync(retryDelay * (attempt + 1));
+    }
+  }
+}
+
 /** Creates a throwaway project dir, removed when the test ends. */
 export function makeProject(t, files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-test-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeFixture(dir));
   for (const [rel, body] of Object.entries(files)) {
     const target = path.join(dir, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -314,7 +371,7 @@ const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fix
  */
 export function makeEngineCopy(t) {
   const engineDir = fs.mkdtempSync(path.join(path.dirname(srcDir), 'tests', '.engine-'));
-  t.after(() => fs.rmSync(engineDir, { recursive: true, force: true }));
+  t.after(() => removeFixture(engineDir));
   for (const entry of fs.readdirSync(srcDir)) {
     if (entry.endsWith('.mjs') || entry.endsWith('.json')) {
       fs.copyFileSync(path.join(srcDir, entry), path.join(engineDir, entry));

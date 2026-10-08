@@ -46,7 +46,7 @@ import {
 } from '../src/envelope-ducking.mjs';
 import {
   makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, pcmWav, plantOnMarker, MISSING_FFMPEG,
-  FAKE_AUDIO, refuseUnlink, failClose, tryMakeDirLink,
+  FAKE_AUDIO, refuseUnlink, failClose, tryMakeDirLink, removeFixture,
 } from './_helpers.mjs';
 import { frames, VOICED_LEVEL } from './fixtures/fake-audio-backends.mjs';
 
@@ -1956,7 +1956,7 @@ describe('the fake page.goto() swap is confined to suite-owned files', () => {
   // regression can only ever damage a file this test made.
   const foreignDir = (t) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-seam-'));
-    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    t.after(() => removeFixture(dir));
     return dir;
   };
   const runSwapping = (dir, target, source) =>

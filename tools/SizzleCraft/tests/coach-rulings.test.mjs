@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { EXIT } from '../src/cli-support.mjs';
 import { normaliseForKey, sentenceContaining } from '../src/coach-rulings.mjs';
-import { makeProject, runScript, tryMakeFileLink } from './_helpers.mjs';
+import { makeProject, runScript, tryMakeFileLink, removeFixture } from './_helpers.mjs';
 
 import { fileURLToPath } from 'node:url';
 
@@ -673,7 +673,7 @@ describe('coach-rulings reads the manifest from the coach pack folder', () => {
   // `/.tool-fixture-*/` is already git-ignored.
   function toolFixture(t) {
     const root = fs.mkdtempSync(path.join(SRC_DIR, '..', '.tool-fixture-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    t.after(() => removeFixture(root));
     fs.cpSync(SRC_DIR, path.join(root, 'src'), { recursive: true });
     fs.mkdirSync(path.join(root, 'coach', 'pack'), { recursive: true });
     fs.writeFileSync(path.join(root, 'coach', 'rubric.md'), '# stub rubric\n');
