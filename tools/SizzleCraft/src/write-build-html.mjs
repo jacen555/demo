@@ -303,6 +303,19 @@ const elId = (value, where) => { const t = String(value ?? ''); assertNotDisclos
 // Provenance for a screening refusal, by POSITION. `seg.id` is itself screened, so it must
 // not appear in a message about screening.
 const segWhere = (seg, field) => `segments[${timing.segments.indexOf(seg)}].${field}`;
+/**
+ * The id the builder gives a generated element: `<segment>-<kind>-<item's id, or its index>`.
+ *
+ * ONE STATEMENT BECAUSE TWO PLACES HAVE TO AGREE. The same id is emitted into the SVG and
+ * then referenced again as an action target in the cue list further down — nine sites in
+ * all. If the two spellings ever drifted, the action would target an element that does not
+ * exist, and nothing would say so: the cue would simply do nothing at render time.
+ *
+ * `item.id || j` and not `??`: an id of `''` falls back to the index here, deliberately.
+ * `validate-scene.mjs` builds the same shape with `??`, so an empty-string id behaves
+ * differently there. The two are NOT interchangeable and this is not shared with it.
+ */
+const generatedElId = (segId, kind, item, j) => `${segId}-${kind}-${item.id || j}`;
 // jsonScript() is the ONLY sanctioned way to embed timing-derived JSON inside a <script> block.
 // Valid JSON is NOT script-safe: a narration/title/payload string containing `</script><script>` would
 // terminate the block early and inject attacker markup, and U+2028/U+2029 are raw line terminators in
@@ -591,8 +604,8 @@ function diagram(seg) {
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     const st = multicolor ? ` style="--ce:${ca(j)}"` : '';
-    const marker = multicolor ? `${seg.id}-arr-${e.id || j}` : 'arrow';
-    return `<path id="${elId(`${seg.id}-edge-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
+    const marker = multicolor ? generatedElId(seg.id, 'arr', e, j) : 'arrow';
+    return `<path id="${elId(generatedElId(seg.id, 'edge', e, j), segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
   }).join('');
   // Edge labels are emitted AFTER the nodes so they paint on TOP (never hidden behind a box or an
   // arrowhead) and carry a stroke halo (see `.delabel` CSS) so the text stays legible over any line.
@@ -602,7 +615,7 @@ function diagram(seg) {
     if (!e.label) return '';
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
-    return `<text id="${elId(`${seg.id}-edgelabel-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
+    return `<text id="${elId(generatedElId(seg.id, 'edgelabel', e, j), segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
   }).join('');
   // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
   // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
@@ -613,7 +626,7 @@ function diagram(seg) {
 const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
   const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
-    `<marker id="${elId(`${seg.id}-arr-${e.id || j}`, segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
+    `<marker id="${elId(generatedElId(seg.id, 'arr', e, j), segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
   return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900', segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
 }
 
@@ -621,9 +634,9 @@ function live(seg) {
   const v = seg.visual || {}, url = v.url || 'app.localhost', shot = v.shot || v.image;
   const shotSrc = shot ? (checkedSrc(shot, seg.id, 'visual.shot') || '') : '';   // aggregates via safeEvidenceSrc(shot)
   const fields = (v.fields || []).map((f, j) =>
-    `<div id="${elId(`${seg.id}-field-${f.id || j}`, segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
+    `<div id="${elId(generatedElId(seg.id, 'field', f, j), segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
   const hotspots = (v.hotspots || []).map((hp, j) =>
-    `<div id="${elId(`${seg.id}-hotspot-${hp.id || j}`, segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
+    `<div id="${elId(generatedElId(seg.id, 'hotspot', hp, j), segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
   return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url, segWhere(seg, 'visual.url'))}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc, segWhere(seg, 'visual.shot'))}" alt=""/>` : ''}${fields}${hotspots}<div id="${elId(`${seg.id}-cursor`, segWhere(seg, 'generated element id'))}" class="cursor"></div></div></div>`;
 }
 
@@ -917,7 +930,7 @@ function autoTriggers(seg) {
   if ((seg.triggers || []).some(t => t.target)) return out; // author drives the rest
   if (m === 'diagram') {
     const seq = [...(v.nodes || []).map(n => ({ target: `${seg.id}-node-${n.id}`, action: 'revealNode' })),
-                 ...(v.edges || []).map((e, j) => ({ target: `${seg.id}-edge-${e.id || j}`, action: 'drawEdge' }))];
+                 ...(v.edges || []).map((e, j) => ({ target: generatedElId(seg.id, 'edge', e, j), action: 'drawEdge' }))];
     const step = Math.min(900, (dur * 0.7) / (seq.length || 1));
     seq.forEach((t, k) => out.push({ atMs: Math.round(700 + k * step), target: t.target, action: t.action }));
     // Standard+ engagement: interactive-animation-enabled workflow by default — numbered step badges,
@@ -928,8 +941,8 @@ function autoTriggers(seg) {
       const base = Math.round(700 + seq.length * step) + 400;
       const particles = lvl === 'rich' ? 4 : 2;
       (v.nodes || []).forEach((n, k) => out.push({ atMs: base + k * 120, target: `${seg.id}-node-${n.id}`, action: 'stepBadge', payload: { stepIndex: k + 1 } }));
-      (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: `${seg.id}-edge-${e.id || j}`, action: 'flowEdge', payload: { particles } }));
-      (v.edges || []).forEach((e, j) => { const eid = `${seg.id}-edge-${e.id || j}`; out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
+      (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: generatedElId(seg.id, 'edge', e, j), action: 'flowEdge', payload: { particles } }));
+      (v.edges || []).forEach((e, j) => { const eid = generatedElId(seg.id, 'edge', e, j); out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
     }
   } else if (m === 'code') {
     // The block carries `.el`, so like every other element it stays hidden until something
