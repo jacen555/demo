@@ -17,8 +17,10 @@
  *   createBoundary             path confinement that survives links
  *   parseBoundedNumber         numeric input that cannot reach a filter graph
  *
- * It is the only module here with no side effects on import, so it is directly
- * unit-testable; the CLI scripts themselves are exercised as subprocesses.
+ * It is one of eight modules here with no side effects on import, so it is directly
+ * unit-testable; the CLI scripts themselves are exercised as subprocesses. The eight are
+ * enumerated and re-checked in `tests/cli-help-contract.test.mjs`, which exempts exactly
+ * them from the rule that every CLI must answer --help before doing any work.
  */
 import path from 'node:path';
 import fs from 'node:fs';

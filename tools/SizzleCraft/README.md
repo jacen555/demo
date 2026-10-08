@@ -344,23 +344,37 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
 
 - `--apply` performs the work. Without it nothing is written, deleted or appended.
 - `--replace` is additionally required to overwrite something that already exists.
-- `--help` **creates no file in the project directory** on any of the 34 files in `src/` —
-  measured by running each with `--help` in an empty directory and listing it afterwards.
-  That is the claim the measurement supports; nothing here checks what a script might
-  write elsewhere, and `silence-scan.mjs` launches a headless Chromium at module scope
-  (`silence-scan.mjs:4`) *before* it reads anything, so `--help` costs a browser launch
-  there whatever it leaves behind. What is not universal is the *handling*. Comparing each
-  file's `--help` output against its own bare run: **21 print usage**; **8 are
-  side-effect-free modules with no CLI at all** — `astats-levels`, `cli-support`,
-  `end-card`, `envelope-ducking`, `gain-pin`, `mix-parameters`, `remux-verify`,
-  `silent-segment` — which exit `0` and print nothing, for `--help` as for anything else,
-  because they are imported rather than invoked; `probe-render-capability.mjs` runs its
-  probe and ignores the flag; and **four die with an unhandled exception** —
-  `audio-probe.mjs` and `silence-scan.mjs` crash inside `node:fs` opening a file,
-  `canonical-json.mjs` crashes parsing empty stdin, and `silence-asset.mjs` throws at
-  **module scope** (`silence-asset.mjs:8`), which no argv handling could precede. Those
-  four are read-only or asset-dependent helpers rather than writing stages, so no artifact
-  is destroyed; they report a Node stack trace where the 21 report usage.
+- **`--help` is handled before any work on every CLI in `src/`** — no file read, no
+  process spawned, no browser launched. All of them route through `parseCli`, which
+  throws `HelpRequested` *before it returns*, so a script cannot fall through into its own
+  I/O with help requested.
+  **26 of the 34 files are CLIs; the other 8 are side-effect-free modules** —
+  `astats-levels`, `cli-support`, `end-card`, `envelope-ducking`, `gain-pin`,
+  `mix-parameters`, `remux-verify`, `silent-segment` — which are imported rather than
+  invoked and deliberately have no CLI. Giving them one would manufacture uniformity over
+  a real distinction.
+  This is swept rather than listed. `tests/cli-help-contract.test.mjs` enumerates `src/`
+  at run time, and the eight modules are a **declared exemption set**: anything not named
+  in it is an entry point and must obey the rule. That direction is deliberate — the
+  previous version asserted `--help` on the **writing stages only**, by name, so every
+  file nobody listed went unguarded, which is how five of them stayed broken. Listing the
+  exemptions instead means a script added later is covered whether or not anyone remembers
+  the test, and dropping one from coverage takes a deliberate edit. The exemptions are
+  re-checked rather than trusted: each must still exist, still do nothing when run, and
+  still export something. Inferring the split from behaviour was tried and abandoned,
+  because a CLI that silently does its work is indistinguishable from a module by any
+  observation of the behaviour being guarded.
+  Five files failed that rule and were fixed: `audio-probe.mjs` and `silence-scan.mjs`
+  crashed inside `node:fs` having read `--help` as a filename, `canonical-json.mjs`
+  crashed parsing empty stdin, `silence-asset.mjs` threw at module scope, and
+  `probe-render-capability.mjs` scanned argv with `indexOf` and so ignored the flag
+  entirely. `silence-scan.mjs` needed a restructure rather than a guard: it launched a
+  headless Chromium at module scope *above* the argument read, so no parsing could precede
+  it. Asking it for help cost a browser launch and then a stack trace; measured after the
+  move, `--help` takes 3.3 s against 67.4 s for a real scan. A separate test proves no
+  launch happens by making one impossible — `PLAYWRIGHT_BROWSERS_PATH` pointed at a
+  directory that does not exist — with a control confirming real work fails under the same
+  setting, so the result is not an artefact of an ignored variable.
 - Output paths are confined to the project root, and the confinement **follows links** —
   a junction inside the project pointing outside it is refused, not followed. The
   confinement is applied to the path actually **written**, not just to its directory.
@@ -990,13 +1004,12 @@ directly by hand. See the skill for the stage ordering.
 - **The destructive and verification paths are now honest.** Two rules hold across the
   engine: *nothing irreversible happens without being asked*, and *no script claims to
   have done work it did not*. Every writing stage plans by default; every verifier can
-  fail; path confinement follows links; and `--help` created no file in the project
-  directory in the check described above. Covered by
-  `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs` and
-  `tests/safe-defaults.test.mjs` — though the `--help` tests there cover the **writing
-  stages only**, never every script, which is why the four that crash on `--help`
-  (above) went unnoticed. What `--help` does not do is get *handled* everywhere, and on
-  two scripts it reads a file or launches a browser first.
+  fail; path confinement follows links; and `--help` is answered before any work on every
+  CLI. Covered by `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs`,
+  `tests/safe-defaults.test.mjs` and `tests/cli-help-contract.test.mjs`. The `--help`
+  tests in the first three cover the **writing stages only**, by name, which is why five
+  files went unguarded until the rule was swept rather than listed; `cli-help-contract`
+  is the sweep, and it enumerates `src/` at run time so it cannot go stale the same way.
 - **A verifier must also be able to *pass*.** `validate-timing`'s contiguity check
   asserted strict adjacency, but `voice.mjs` deliberately inserts a lead-in and
   inter-segment silence — so every timeline the real pipeline produces failed on every

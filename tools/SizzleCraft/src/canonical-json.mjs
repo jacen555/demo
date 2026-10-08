@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parseCli, runCli } from './cli-support.mjs';
 
 export const FIXED = 'fixed-key-order-json-utf8-v1';
 export const DECLARED = 'declared-field-order-json-utf8-v1';
@@ -78,9 +79,28 @@ export function canonicalBytes(value, mode = FIXED) {
   return Buffer.from(canonicalText(value, mode), 'utf8');
 }
 
+const USAGE = `
+canonical-json — serialise JSON deterministically. Reads stdin, writes stdout.
+
+  node canonical-json.mjs < input.json                               fixed key order
+  node canonical-json.mjs ${FIXED} < input.json
+  node canonical-json.mjs ${DECLARED} < input.json
+
+Options
+  --project <dir>   project root (unused; accepted for a uniform CLI)
+  --help            show this message
+
+THE HASHING BACKBONE. Changing this output silently invalidates every stored timing hash.
+
+Exit codes: 0 success · 1 the input is not canonicalisable · 2 bad usage`.trim();
+
+// Argument parsing comes first. This block used to read stdin before looking at argv, so
+// `--help` with no piped input died on `SyntaxError: Unexpected end of JSON input`.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const mode = process.argv[2] || FIXED;
-  const input = fs.readFileSync(0, 'utf8');
-  const value = JSON.parse(input);
-  process.stdout.write(canonicalBytes(value, mode));
+  await runCli(() => {
+    const { positionals } = parseCli({ usage: USAGE, allowPositionals: true });
+    const mode = positionals[0] ?? FIXED;
+    const value = JSON.parse(fs.readFileSync(0, 'utf8'));
+    process.stdout.write(canonicalBytes(value, mode));
+  });
 }
