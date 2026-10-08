@@ -127,9 +127,21 @@ const run = (dir, args = []) =>
     env: { [SCAN_TIMEOUT_KNOB]: GENEROUS_SCAN_BUDGET_MS },
   });
 
-/** Runs with NO budget override, so the engine's own default is what is under test. */
+/**
+ * Runs with the knob explicitly CLEARED from the child environment, so the engine's own
+ * default is what is under test.
+ *
+ * `runScript` spreads `process.env` into the child, so merely omitting an override is not
+ * the same as testing the default: an operator who has exported
+ * SIZZLECRAFT_SCAN_TIMEOUT_MS in their shell would have these tests silently measuring
+ * their value instead of 5000. Node drops `undefined` entries when building the child
+ * environment, which is how the variable is removed rather than blanked — and a blank
+ * string would not do, since resolveKnob treats an empty variable as unset anyway.
+ */
 const runAtDefaultBudget = (dir, args = []) =>
-  runScript('validate-scene.mjs', ['--project', dir, ...args], dir);
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, {
+    env: { [SCAN_TIMEOUT_KNOB]: undefined },
+  });
 
 /**
  * Asserts the run refused, that THE NAMED CHECK is the one that refused, and that the
@@ -1385,9 +1397,17 @@ describe('round 2 · reveal semantics read from the renderer', () => {
 const runWithEnv = (dir, env, args = []) =>
   runScript('validate-scene.mjs', ['--project', dir, ...args], dir, { env });
 
-/** A pattern that really is exponential: (a+)+$ against a long non-matching run of a's. */
-const PATHOLOGICAL = '(a+)+$';
-const PATHOLOGICAL_BAIT = 'a'.repeat(50) + 'b';
+/**
+ * A pattern that really is expensive: a nested quantifier against a long non-matching run.
+ *
+ * Deliberately NOT `(a+)+$`. The refusal text names `(a+)+$` as a constant example of the
+ * shape to look for, and `scanTimeout_neverPrintsThePatternSource` asserts the refusal does
+ * not contain the project's pattern. With the two identical, that assertion could not tell
+ * a real leak from the engine's own fixed example — it failed under load for exactly that
+ * reason, and a leak check that cannot discriminate is worse than none.
+ */
+const PATHOLOGICAL = '(zz+)+$';
+const PATHOLOGICAL_BAIT = 'z'.repeat(50) + 'q';
 
 describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
   test('scanTimeout_withStructurallyInnocentPatterns_doesNotBlameBacktracking', (t) => {
@@ -1444,6 +1464,28 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     );
   });
 
+  test('runAtDefaultBudget_withTheKnobExportedInTheParent_stillMeasuresTheEngineDefault', (t) => {
+    // THE CONTROL FOR runAtDefaultBudget's CLEARING. runScript spreads process.env into
+    // the child, so "pass no override" is NOT the same as "use the default": an operator
+    // with the variable exported would have the default-budget tests quietly measuring
+    // their number. Export a 1 ms budget here and assert 5000 is still what bounds the
+    // run — if the clearing were inert this reports "within 1 ms" and fails.
+    const previous = process.env[SCAN_TIMEOUT_KNOB];
+    process.env[SCAN_TIMEOUT_KNOB] = '1';
+    t.after(() => {
+      if (previous === undefined) delete process.env[SCAN_TIMEOUT_KNOB];
+      else process.env[SCAN_TIMEOUT_KNOB] = previous;
+    });
+    const dir = makeProject(t, {
+      'timing.json': scene({
+        project: { noGoPatterns: [PATHOLOGICAL] },
+        segments: [{ ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT }, narrativeSeg()],
+      }),
+    });
+    const r = runAtDefaultBudget(dir);
+    assert.match(r.all, /within 5000 ms/, `the exported budget leaked into a default-budget run\n${r.all}`);
+  });
+
   test('scanTimeout_neverPrintsThePatternSource', (t) => {
     // scanMain() withholds the pattern and the match on purpose: a no-go pattern is as
     // sensitive as the string it hides. The timeout path must not become the leak.
@@ -1455,6 +1497,7 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     });
     const r = runAtDefaultBudget(dir);
     assert.ok(!r.all.includes(PATHOLOGICAL), `the pattern source leaked into the refusal\n${r.all}`);
+    assert.ok(!r.all.includes(PATHOLOGICAL_BAIT), `the scanned text leaked into the refusal\n${r.all}`);
   });
 
   test('scanTimeoutKnob_raisingTheBudget_letsTheSameProjectPass', (t) => {

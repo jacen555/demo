@@ -800,8 +800,10 @@ function scanInChildProcess(strings, patterns) {
         `set ${variable} to a larger number of milliseconds and run again.\n` +
         `  - a pattern is genuinely expensive — likely if it stops at the same index on an ` +
         `idle machine with the budget raised. Read that pattern in the source file and look ` +
-        `for an unbounded quantifier wrapped around an alternation, such as "(a|aa){30}$", ` +
-        `whose cost roughly doubles for each extra character it fails to match.\n` +
+        `for a repeated group whose body can match the same text in more than one way, such ` +
+        `as "(a|aa){30}$" or "(a+)+$". On text that ultimately does NOT match, the engine can ` +
+        `be forced to try every combination, and the number of combinations grows with the ` +
+        `repeat count far faster than the text does.\n` +
         `\n` +
         `The scan is not left unbounded either way: this stage exists to be cheap.`,
     );
