@@ -38,7 +38,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   EXIT, CliError, runCli, requireExistingFile, resolveOutput, parseBoundedNumber,
-  resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile,
+  resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile, readEngineFile,
 } from './cli-support.mjs';
 import { videoStreamVerdict } from './remux-verify.mjs';
 import { classifyGainPin, confirmedLockRecord, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
@@ -844,21 +844,8 @@ function readDuckEnvelope(envelopePath) {
  */
 function readBedDuckRecord(projectDir, recordPath) {
   const label = 'ducking record';
-  const file = resolveInternalArtifact(projectDir, recordPath, label, 'read');
-  let st;
-  try {
-    st = fs.statSync(file, { throwIfNoEntry: false });
-  } catch (err) {
-    throw new CliError(`${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`);
-  }
-  if (st === undefined) return undefined;
-  if (!st.isFile()) throw new CliError(`${label} ${file} is not a regular file — refusing to read it`);
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    throw new CliError(`${label}: could not read ${file} (${err.code ?? err.message}) — refusing`);
-  }
+  const { file, text } = readEngineFile(projectDir, recordPath, label);
+  if (text === null) return undefined;
   try {
     return JSON.parse(text);
   } catch {

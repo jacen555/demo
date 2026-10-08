@@ -1032,7 +1032,7 @@ export function summarise(problems) {
  * NOT `readOptionalEngineJson`, which parses, demands a JSON object and words its refusals
  * its own way. This returns the text and lets the caller decide what it is.
  *
- * CONSUMERS(readEngineFile): write-chapters.mjs, write-subtitles.mjs
+ * CONSUMERS(readEngineFile): remux-music.mjs, write-chapters.mjs, write-subtitles.mjs
  *
  * @returns {{file: string, text: string|null}} `text` is null only when nothing is there
  */
