@@ -179,9 +179,9 @@ function revealsTarget(trigger, seg, ids) {
  *      that the scan did not finish; catastrophic backtracking and a loaded machine are
  *      indistinguishable from outside, and this code measures neither.
  *   b. It does not detect a pathological pattern that finishes INSIDE the budget. A
- *      `(a+)+$` given short bait may complete within the budget and pass, and will not
- *      be quick on a longer string later. How its cost grows is not measured here and
- *      is not claimed.
+ *      `(a+)+$` given short bait may complete within the budget and pass. Longer input
+ *      may cost more. How its cost grows is not measured here and is not claimed —
+ *      including whether a later string is quick.
  *   c. The index it reports is the LAST INDEX THE SCAN REPORTED REACHING, which is not
  *      the same as where execution was when the OS stopped it. The marker is written
  *      before the pattern runs, and work continues after the last pattern, so the child

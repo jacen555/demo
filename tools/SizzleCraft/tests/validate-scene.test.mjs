@@ -1248,7 +1248,7 @@ describe('round 2 · reveal semantics read from the renderer', () => {
     // `(a|aa){30}$` is 12 characters, so neither the length bound nor a nested-quantifier
     // heuristic touches it, and against a non-matching subject it backtracks exponentially.
     // Node cannot time-limit a regex in-process, so the scan runs under a real bound and
-    // the refusal names the pattern that stalled it.
+    // the refusal names the last pattern index the scan reported reaching.
     const seg = diagramSeg();
     seg.voiceoverText = `${'a'.repeat(40)}b`;
     const dir = makeProject(t, {
@@ -1264,7 +1264,11 @@ describe('round 2 · reveal semantics read from the renderer', () => {
     // from the suite would change the very thing under test.
     const r = runAtDefaultBudget(dir);
     assertCleanExit(r, EXIT.USAGE);
-    assert.match(r.all, /noGoPatterns\[1\]/, `the refusal must name the pattern that stalled\n${r.all}`);
+    assert.match(
+      r.all,
+      /noGoPatterns\[1\]/,
+      `the refusal must name the last index the scan reported reaching\n${r.all}`,
+    );
   });
 
   test('groupedAlternationWithAQuantifier_isStillAccepted', (t) => {
@@ -1482,7 +1486,7 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     const r = runAtDefaultBudget(dir);
     assert.equal(r.code, EXIT.USAGE, `expected a stopped scan to refuse as USAGE\n${r.all}`);
     assert.match(r.all, /within 5000 ms/, `expected the ENGINE default budget to be in force\n${r.all}`);
-    assert.match(r.all, /noGoPatterns\[0\]/, `expected the in-flight pattern index\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `expected the last index reported reached\n${r.all}`);
     assert.ok(
       !/catastrophic|backtracking|exponential/i.test(r.all),
       `even when backtracking IS the cause, this code did not measure that\n${r.all}`,
