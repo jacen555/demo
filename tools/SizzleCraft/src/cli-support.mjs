@@ -948,6 +948,153 @@ export function readOptionalEngineJson(root, candidate, label, expect = {}) {
   return parsed;
 }
 
+// ---------------------------------------------------------------------------------------
+// THE SIDECAR STAGES' SHARED VOCABULARY.
+//
+// `write-subtitles.mjs` (S10) and `write-chapters.mjs` (S11) read the same timeline, refuse
+// the same shapes and name the same things, and each carried its own copy of all of it.
+// Six of the seven were BYTE-IDENTICAL; the seventh differed only in a parameter name.
+// Verified by extracting each function from both files and comparing exactly, rather than
+// by reading them side by side — which is how two helpers that differ in one identifier
+// get collapsed into one that is wrong for both.
+//
+// NOT moved here, and deliberately:
+//   safeFileBase   strips disallowed characters to '' in S10 and to '-' in S11, so the two
+//                  stages derive DIFFERENT filenames from one project name ("my video" ->
+//                  "myvideo" / "my-video"). It looks like the same helper and is not.
+//   readTimeline   differs by one refusal phrase AND calls each stage's own 66-line
+//                  `timelineProblems`. Sharing it would mean injecting both a phrase and a
+//                  validator to serve two callers — more indirection for no less code.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * A finite, non-negative count of milliseconds.
+ *
+ * CONSUMERS(isMs): write-chapters.mjs, write-subtitles.mjs
+ */
+export function isMs(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Names a segment by its INDEX IN THE TIMELINE, for a diagnostic about the file's shape.
+ *
+ * NOT `silent-segment.mjs`'s `segmentLabel`, which says `segment "id"` and speaks about a
+ * segment as a thing in its own right. This one says `timing.segments[3] ("intro")` and
+ * speaks about a position in a file the reader is being asked to go and edit. Both are
+ * correct for their caller and the engine needs both, so they carry different names —
+ * sharing one spelling between two different outputs is how the wrong one gets imported.
+ *
+ * CONSUMERS(timelineSegmentLabel): write-chapters.mjs, write-subtitles.mjs
+ */
+export function timelineSegmentLabel(s, i) {
+  const id = s !== null && typeof s === 'object' && typeof s.id === 'string' ? ` ("${s.id}")` : '';
+  return `timing.segments[${i}]${id}`;
+}
+
+/**
+ * Names a value for a diagnostic. A string is described by its length, never quoted: this
+ * is about a file's shape, and its contents are not this message's to repeat.
+ *
+ * A SUPERSET OF `describeJsonValue`, NOT A COPY OF IT — it is listed here next to it so
+ * the difference is visible rather than rediscovered. This one distinguishes `undefined`
+ * ("missing"), prints a number's value, gives a string's length, and says "an object"
+ * where the other says "a object". The two serve different messages and both are right.
+ *
+ * CONSUMERS(describeValue): write-chapters.mjs, write-subtitles.mjs
+ */
+export function describeValue(v) {
+  if (v === undefined) return 'missing';
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'string') return `a string (${v.length} characters)`;
+  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+}
+
+/**
+ * Collapses a list of problems into one message, showing at most five.
+ *
+ * CONSUMERS(summarise): write-chapters.mjs, write-subtitles.mjs
+ */
+export function summarise(problems) {
+  if (problems.length === 1) return problems[0];
+  const shown = problems.slice(0, 5).map(p => `\n  - ${p}`).join('');
+  const more = problems.length > 5 ? `\n  … and ${problems.length - 5} more` : '';
+  return `timing.json has ${problems.length} problems:${shown}${more}`;
+}
+
+/**
+ * Reads a file the engine looks for on its own initiative, refusing a link at it wherever
+ * it points and anything that is not a regular file. The caller never named this path, so
+ * a link there is not an instruction to read something else.
+ *
+ * NOT `readOptionalEngineJson`, which parses, demands a JSON object and words its refusals
+ * its own way. This returns the text and lets the caller decide what it is.
+ *
+ * CONSUMERS(readEngineFile): write-chapters.mjs, write-subtitles.mjs
+ *
+ * @returns {{file: string, text: string|null}} `text` is null only when nothing is there
+ */
+export function readEngineFile(root, name, label) {
+  const file = resolveInternalArtifact(root, name, label, 'read');
+  let st;
+  try {
+    st = fs.statSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(`${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`);
+  }
+  if (st === undefined) return { file, text: null };
+  if (!st.isFile()) throw new CliError(`${label} ${file} is not a regular file — refusing to read it`);
+  try {
+    return { file, text: fs.readFileSync(file, 'utf8') };
+  } catch (err) {
+    throw new CliError(`${label}: could not read ${file} (${err.code ?? err.message}) — refusing`);
+  }
+}
+
+/**
+ * Refuses an input that is absent or not a regular file, before anything is written.
+ * Existence alone let a directory at the embed source through: both sidecars were
+ * replaced and only ffmpeg then refused a directory as a video.
+ *
+ * CONSUMERS(requireRegularFile): write-chapters.mjs, write-subtitles.mjs
+ */
+export function requireRegularFile(abs, label, hint) {
+  let st;
+  try {
+    st = fs.statSync(abs, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(`${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`);
+  }
+  if (st === undefined) throw new CliError(`${label} not found: ${abs} — ${hint}`);
+  if (st.isDirectory()) throw new CliError(`${label} ${abs} is a directory, not a video file`);
+  if (!st.isFile()) throw new CliError(`${label} ${abs} is not a regular file`);
+}
+
+/**
+ * Reads the ffmpeg binary from the project's `ffmpeg-path.txt`, AS AN ENGINE ARTIFACT.
+ *
+ * The plan prints what this returns in its "would run" line, so the pointer is read like
+ * timing.json: a link at it is refused, wherever it points. Followed, a link to any file in
+ * the project put that file's contents into the plan.
+ *
+ * THERE IS A SECOND, DIFFERENT ffmpeg RESOLVER IN THIS ENGINE and the two must not be
+ * merged. `check-levels.mjs` and `remux-music.mjs` share `resolveFfmpegOrOverride`, which
+ * takes a `--ffmpeg` override, reads the pointer with plain `readFileSync` and so FOLLOWS a
+ * link, and words its refusal differently. Unifying them would silently change what a
+ * planted link does on four stages. They are named apart for that reason.
+ *
+ * CONSUMERS(resolveFfmpegPointer): write-chapters.mjs, write-subtitles.mjs
+ */
+export function resolveFfmpegPointer(root) {
+  const { text } = readEngineFile(root, 'ffmpeg-path.txt', 'ffmpeg pointer');
+  if (text === null) throw new CliError(`ffmpeg-path.txt not found in ${root} — create it containing the path to ffmpeg`);
+  const ff = text.trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${root} is empty`);
+  return ff;
+}
+
 /**
  * Guards a write. Returns the absolute destination, or throws if the destination
  * already exists and the caller did not explicitly ask to replace it.
