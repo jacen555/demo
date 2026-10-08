@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, describeJsonValue } from './cli-support.mjs';
 import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker, segmentLabel } from './silent-segment.mjs';
+import { BRAND_PALETTE } from './brand-palette.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -86,7 +87,7 @@ guard(() => {
   if (problems.length) throw new CliError(problems.join('\n'));
 });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const PAL = ['#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C'];
+const PAL = BRAND_PALETTE;
 const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}`;
 
 const panel = (s, i) => {

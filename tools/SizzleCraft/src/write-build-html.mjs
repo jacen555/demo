@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError, noGoPatternsProblem } from './cli-support.mjs';
+import { BRAND_PALETTE } from './brand-palette.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -515,7 +516,7 @@ function footageLayer(seg) {
 // fixed Azure/Fluent PALETTE (assigned per-component by index). Background and palette
 // are decoupled — the same multicolor components read cleanly on any background, and
 // text/surface vars adapt to the background's light|dark mode for AA contrast.
-const PALETTE = ['#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C'];
+const PALETTE = BRAND_PALETTE;
 const ca = j => PALETTE[j % PALETTE.length];
 const BACKGROUNDS = {
   white: { mode: 'light', stage: `radial-gradient(circle at 7% 6%,rgba(0,120,212,.10),transparent 30%),radial-gradient(circle at 93% 7%,rgba(227,0,140,.07),transparent 32%),radial-gradient(circle at 91% 94%,rgba(16,124,16,.07),transparent 32%),radial-gradient(circle at 9% 93%,rgba(247,99,12,.07),transparent 32%),linear-gradient(160deg,#FFFFFF,#F5F8FC)` },
