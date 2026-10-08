@@ -786,6 +786,95 @@ method.**
 never follows it — and only then `git worktree remove`.** Never let a recursive remover walk
 a tree containing a junction you care about.
 
+## A retry that cannot fire on the likeliest case — 2026-10-08
+
+The obvious fix for an `EBUSY` teardown race is `fs.rmSync(dir, { maxRetries, retryDelay })`.
+A stream had it written and passing. **It does not cover the failure this suite actually
+produces**, and it found that by measuring both shapes instead of assuming one.
+
+I verified the decisive half myself with my own probe — a child process holding a directory
+via `cwd`, then `fs.rmSync` with `maxRetries: 3, retryDelay: 1500`:
+
+```
+ROOT held    THREW EBUSY after 1 ms     <- never waited once
+```
+
+`runScript` (`_helpers.mjs:87-93`) spawns **every** engine CLI with `cwd` set to the fixture,
+so the root is exactly what this suite holds. **A fix built on the built-in option alone
+would have been a retry that cannot fire on the likeliest case — indistinguishable from no
+retry at all**, shipped inside the fix for that very hazard. A test now pins the runtime's
+non-coverage so the "simplification" cannot be reintroduced.
+
+*(Honest divergence: I could not reproduce the stream's claim that the INNER path IS covered
+— a held inner directory threw at 1 ms for me, and a held read handle did not block removal
+at all. Not a refutation of its reading, and its design does not depend on it, but it is
+recorded as unreproduced rather than as confirmed.)*
+
+### Three more instruments that could not detect what they were built for
+
+- **An audit with a false negative, in a file whose entire purpose is not having false
+  negatives.** Its paren scan counted brackets inside strings, so
+  `t.after(() => { const label = ')'; fs.rmSync(dir, ...) })` **evaded it completely.** The
+  fix was proved load-bearing by neutering the sanitiser to the identity function and
+  watching the right control fail — not by asserting it.
+- **A test timeout used to bound a blocking `Atomics.wait` it cannot interrupt.** A
+  regression would have **hung past the timeout**, not failed at it. Replaced with
+  `t.mock.method` and a call-count assertion.
+- **A readiness signal that let the race win.** The holder used the `'spawn'` event; the OS
+  establishes `cwd` *before* the child runs code, so the removal could win against an
+  unheld directory. A race inside the fix for races — and a fixed sleep would only have
+  hidden it.
+
+## When a sweep cannot classify, enumerate the EXEMPTIONS — 2026-10-08
+
+Standing orchestrator instruction: *sweep, don't list* — a list of subjects leaves everything
+unlisted unguarded, which is how four CLIs crashing on `--help` survived (the existing tests
+asserted `--help` on **writing stages only**).
+
+A stream applied the rule and found it could not: **no rule can classify these files.**
+Shebang, `process.argv` and `parseCli` all misclassify, measured. And the behavioural
+classifier has a hole a reviewer named exactly — **a CLI that silently does its work is
+indistinguishable from a module by any observation of the behaviour being guarded.**
+Requiring an export does not save it; a file can export *and* work on import, and that mutant
+escaped.
+
+**So it inverted the default: declare the exemptions, and cover everything else.** Membership
+is declared and then re-checked. Anything unnamed is guarded whether or not anyone remembers
+the file next year.
+
+**That is the general answer to "sweep, don't list" when a sweep cannot classify**, and it is
+better than the instruction that produced it.
+
+## The ceiling on screening inputs — 2026-10-08
+
+Seven review rounds closed eight genuine disclosure routes and the reviewer's discovery rate
+never fell. The reason was structural, not diligence:
+
+> pattern `scenario-label` · `seg.id` is `scenario` · the engine generates
+> `id="scenario-label"` by concatenation at render time · **ships at exit 0**
+
+**The matching string exists in no input, so there is nothing to screen.** Confirmed from the
+source: `write-build-html.mjs` interpolates `${seg.id}` into element ids at `:276`, `:310`,
+`:315`, `:337`, `:344`, `:354` and more. Screening *contributing inputs* cannot reach a
+*derived* artefact.
+
+The ceiling is now documented in the house `DOES NOT DETECT` style **and pinned by tests** —
+including a control (`theCeiling_isNotAGeneralFailure_…`) without which both ceiling pins
+assert only `EXIT.OK`, so **a regression that broke screening entirely would satisfy them**
+and the documented limitation would silently become a general failure, still green.
+
+### Taking too much blame is the same defect as taking too little
+
+I called this "mis-specified by me". The stream corrected me: input screening closed eight
+real leaks an output screen would also have closed, so the work was **bounded, not wasted**,
+and the ceiling was unknown to both of us — found only because a reviewer finding forced a
+measurement of a concatenated id.
+
+It was right. **"I mis-specified it" is a tidier story than "neither of us had the
+measurement" — tidier, and false.** A future reader would have learned *the orchestrator
+specs badly* instead of *this ceiling is invisible until you measure a derived string*.
+Self-criticism is a claim about the record and has to be as accurate as any other.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together
