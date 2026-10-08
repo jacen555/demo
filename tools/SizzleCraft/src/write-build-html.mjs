@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError, noGoPatternsProblem } from './cli-support.mjs';
+import { BRAND_PALETTE } from './brand-palette.mjs';
+import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from './diagram-defaults.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -21,15 +23,21 @@ Exit codes: 0 success/plan · 1 build failed · 2 bad usage or refused overwrite
 `.trimStart();
 
 // Parsed before any read, so --help cannot reach the filesystem.
-const cli = (() => {
-  try {
-    return parseCli({ usage: USAGE, options: { out: { type: 'string' } } });
-  } catch (err) {
-    if (err.name === 'HelpRequested') { console.log(err.usage); process.exit(EXIT.OK); }
-    console.error(`error: ${err.message}`);
-    process.exit(err.exitCode ?? EXIT.FAILED);
-  }
-})();
+//
+// THROUGH THE SHARED guard(), which this file already imports and uses at sixteen other
+// sites, the first of them fourteen lines below. What stood here was a private re-
+// implementation of it that duck-typed `err.name === 'HelpRequested'` and caught EVERY
+// error, where guard matches on `instanceof` and rethrows anything that is neither
+// CliError nor HelpRequested.
+//
+// Those are equivalent only if nothing else can escape parseCli, so that was measured
+// rather than assumed: 22 adversarial inputs — unknown flags, a value on a boolean, a
+// stray positional, and a --project that is missing, a file, empty, 5000 characters, a
+// NUL byte, a device name, reserved characters, a non-existent UNC, a trailing dot and a
+// drive-relative form — produced only CliError and HelpRequested, and the duck-type never
+// disagreed with instanceof. CliError always carries an exitCode, so `err.exitCode ??
+// EXIT.FAILED` and guard's `err.exitCode` cannot differ either.
+const cli = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
 
 const dir = cli.projectDir;
 // timing.json is ENGINE-chosen: the caller named a project directory, not this file. Joined
@@ -296,6 +304,19 @@ const elId = (value, where) => { const t = String(value ?? ''); assertNotDisclos
 // Provenance for a screening refusal, by POSITION. `seg.id` is itself screened, so it must
 // not appear in a message about screening.
 const segWhere = (seg, field) => `segments[${timing.segments.indexOf(seg)}].${field}`;
+/**
+ * The id the builder gives a generated element: `<segment>-<kind>-<item's id, or its index>`.
+ *
+ * ONE STATEMENT BECAUSE TWO PLACES HAVE TO AGREE. The same id is emitted into the SVG and
+ * then referenced again as an action target in the cue list further down — nine sites in
+ * all. If the two spellings ever drifted, the action would target an element that does not
+ * exist, and nothing would say so: the cue would simply do nothing at render time.
+ *
+ * `item.id || j` and not `??`: an id of `''` falls back to the index here, deliberately.
+ * `validate-scene.mjs` builds the same shape with `??`, so an empty-string id behaves
+ * differently there. The two are NOT interchangeable and this is not shared with it.
+ */
+const generatedElId = (segId, kind, item, j) => `${segId}-${kind}-${item.id || j}`;
 // jsonScript() is the ONLY sanctioned way to embed timing-derived JSON inside a <script> block.
 // Valid JSON is NOT script-safe: a narration/title/payload string containing `</script><script>` would
 // terminate the block early and inject attacker markup, and U+2028/U+2029 are raw line terminators in
@@ -320,6 +341,22 @@ try {
   );
   process.exit(EXIT.USAGE);
 }
+/**
+ * Does this `path.relative` result leave the root it was measured from?
+ *
+ * An EMPTY result counts as escaping here, because all three callers are asking "is this a
+ * file strictly inside the root" and a candidate that IS the root is not one.
+ *
+ * DELIBERATELY NOT USED by the clip-root check in `evidenceSrcOrBase` further down, which
+ * spells the same four conditions out and reaches the OPPOSITE verdict on the empty case:
+ * there, an empty relative means "this is the clip root" and is accepted. Same expression,
+ * two meanings — so they stay apart, and that site carries a note back to this one.
+ *
+ * Declared above its first caller rather than beside its third: `const` is not hoisted,
+ * and a helper reached through a function defined earlier is only safe by argument about
+ * call order. This needs no argument.
+ */
+const escapesRoot = rel => !rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 const safeEvidenceSrc = raw => {
   const s = String(raw ?? '').trim();
   if (!s || s.includes('\0') || s.includes('\\') || s.includes('%') || /[?#]/.test(s)) throw new Error('unsafe evidence src rejected');
@@ -328,7 +365,7 @@ const safeEvidenceSrc = raw => {
   if (parts.some(p => p === '' || p === '.' || p === '..')) throw new Error('unsafe evidence src rejected');
   const absolute = path.resolve(dir, ...parts);
   const inside = path.relative(EVIDENCE_ROOT, absolute);
-  if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) throw new Error('unsafe evidence src rejected');
+  if (escapesRoot(inside)) throw new Error('unsafe evidence src rejected');
   // Reject reparse points (POSIX symlinks AND Windows symlinks/junctions/mount points) on every
   // component, then re-check containment on the fully resolved realpath. lstat() is what distinguishes a
   // link from its target; on Windows a junction reports isSymbolicLink() === true for lstat, and any
@@ -342,7 +379,7 @@ const safeEvidenceSrc = raw => {
   }
   let real; try { real = fs.realpathSync(absolute); } catch { throw new Error('unsafe evidence src rejected'); }
   const realInside = path.relative(EVIDENCE_ROOT, real);
-  if (!realInside || realInside === '..' || realInside.startsWith(`..${path.sep}`) || path.isAbsolute(realInside)) throw new Error('unsafe evidence src rejected');
+  if (escapesRoot(realInside)) throw new Error('unsafe evidence src rejected');
   return path.relative(dir, absolute).split(path.sep).join('/');
 };
 // Aggregate, don't throw on the first bad path: a run with three broken sources should report all three
@@ -374,7 +411,7 @@ let EVIDENCE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack'
 const evidenceApprovedClip = id => !!id && (EVIDENCE.assets || []).some(a => a && a.kind === 'clip' && a.approvedForUse === true && a.id === id);
 // clipId is used verbatim as a path segment; force it to a single safe token (no separators / `..`)
 // so neither the fallback path nor the frame URLs can escape evidence-pack/footage/.
-const safeClipId = id => { const s = String(id || ''); return (/^[A-Za-z0-9._-]{1,128}$/.test(s) && s !== '.' && s !== '..') ? s : ''; };
+const safeClipId = id => { const s = String(id || ''); return (TOKEN_RE.test(s) && s !== '.' && s !== '..') ? s : ''; };
 const footageClip = id => { const cid = safeClipId(id); return cid ? ((FOOTAGE.clips || []).find(c => c.id === cid) || null) : null; };
 // C-3/C-11: a clip may only be composited when it is approved AND redaction-clear in clips.json AND has
 // a matching approved evidence-pack asset (kind:"clip", approvedForUse:true, id===clipId) — the manifest
@@ -396,7 +433,7 @@ const mode = seg => { const v = seg.visual || {}; if ((v.mode === 'footage' || (
 const FRAME_FILE_RE = /^frame_[0-9]{5}\.(?:jpg|jpeg|png|webp)$/i;
 const containedRelative = (root, candidate, where) => {
   const rel = path.relative(root, candidate);
-  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error(`footage lineage mismatch: ${where} escaped its clip root`);
+  if (escapesRoot(rel)) throw new Error(`footage lineage mismatch: ${where} escaped its clip root`);
   return rel;
 };
 const frameSetFacts = id => {
@@ -485,6 +522,10 @@ const safeFrameDir = (raw, clipId) => {
     const absolute = path.resolve(dir, norm);
     const clipRoot = path.resolve(EVIDENCE_ROOT, 'footage', clipId);
     const inside = path.relative(clipRoot, absolute);
+    // NOT escapesRoot(): this is the one site where an EMPTY relative is accepted, because
+    // here it means "the candidate IS the clip root" rather than "it is not inside one".
+    // Spelled out on purpose — the four conditions match that helper and the verdict does
+    // not, so collapsing them would invert this check.
     return (!inside || (!inside.startsWith(`..${path.sep}`) && inside !== '..' && !path.isAbsolute(inside))) ? norm : base;
   } catch {
     return base;
@@ -509,7 +550,7 @@ function footageLayer(seg) {
 // fixed Azure/Fluent PALETTE (assigned per-component by index). Background and palette
 // are decoupled — the same multicolor components read cleanly on any background, and
 // text/surface vars adapt to the background's light|dark mode for AA contrast.
-const PALETTE = ['#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C'];
+const PALETTE = BRAND_PALETTE;
 const ca = j => PALETTE[j % PALETTE.length];
 const BACKGROUNDS = {
   white: { mode: 'light', stage: `radial-gradient(circle at 7% 6%,rgba(0,120,212,.10),transparent 30%),radial-gradient(circle at 93% 7%,rgba(227,0,140,.07),transparent 32%),radial-gradient(circle at 91% 94%,rgba(16,124,16,.07),transparent 32%),radial-gradient(circle at 9% 93%,rgba(247,99,12,.07),transparent 32%),linear-gradient(160deg,#FFFFFF,#F5F8FC)` },
@@ -544,17 +585,17 @@ function narrative(seg) {
 function diagram(seg) {
   const v = seg.visual || {}, nodes = v.nodes || [], edges = v.edges || [];
   const nodeAt = id => nodes.find(n => n.id === id) || {};
-  const cx = n => Number(n.x || 0) + Number(n.w || 240) / 2, cy = n => Number(n.y || 0) + Number(n.h || 96) / 2;
+  const cx = n => Number(n.x || ND.x) + Number(n.w || ND.w) / 2, cy = n => Number(n.y || ND.y) + Number(n.h || ND.h) / 2;
   // point on node n's border along the line toward (tx,ty), with a small gap so the arrowhead clears the box
   const border = (n, tx, ty, gap = 10) => {
-    const nx = Number(n.x || 0), ny = Number(n.y || 0), nw = Number(n.w || 240), nh = Number(n.h || 96);
+    const nx = Number(n.x || ND.x), ny = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
     const px = nx + nw / 2, py = ny + nh / 2, dx = tx - px, dy = ty - py;
     if (!dx && !dy) return [px, py];
     const s = Math.min(dx ? (nw / 2 + gap) / Math.abs(dx) : Infinity, dy ? (nh / 2 + gap) / Math.abs(dy) : Infinity);
     return [px + dx * s, py + dy * s];
   };
   const nodeSvg = nodes.map((n, j) => {
-    const x = Number(n.x || 0), y = Number(n.y || 0), nw = Number(n.w || 240), nh = Number(n.h || 96);
+    const x = Number(n.x || ND.x), y = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
     const st = multicolor ? ` style="--ca:${ca(j)}"` : '';
     // Node label uses a wrapping HTML block (foreignObject) instead of a single SVG <text> line so long
     // labels wrap + fit INSIDE the box (no overflow past the rounded rect). See `.nodelabel` CSS.
@@ -564,8 +605,8 @@ function diagram(seg) {
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     const st = multicolor ? ` style="--ce:${ca(j)}"` : '';
-    const marker = multicolor ? `${seg.id}-arr-${e.id || j}` : 'arrow';
-    return `<path id="${elId(`${seg.id}-edge-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
+    const marker = multicolor ? generatedElId(seg.id, 'arr', e, j) : 'arrow';
+    return `<path id="${elId(generatedElId(seg.id, 'edge', e, j), segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
   }).join('');
   // Edge labels are emitted AFTER the nodes so they paint on TOP (never hidden behind a box or an
   // arrowhead) and carry a stroke halo (see `.delabel` CSS) so the text stays legible over any line.
@@ -575,7 +616,7 @@ function diagram(seg) {
     if (!e.label) return '';
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
-    return `<text id="${elId(`${seg.id}-edgelabel-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
+    return `<text id="${elId(generatedElId(seg.id, 'edgelabel', e, j), segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
   }).join('');
   // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
   // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
@@ -586,17 +627,17 @@ function diagram(seg) {
 const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
   const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
-    `<marker id="${elId(`${seg.id}-arr-${e.id || j}`, segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
-  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900', segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
+    `<marker id="${elId(generatedElId(seg.id, 'arr', e, j), segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
+  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX, segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
 }
 
 function live(seg) {
   const v = seg.visual || {}, url = v.url || 'app.localhost', shot = v.shot || v.image;
   const shotSrc = shot ? (checkedSrc(shot, seg.id, 'visual.shot') || '') : '';   // aggregates via safeEvidenceSrc(shot)
   const fields = (v.fields || []).map((f, j) =>
-    `<div id="${elId(`${seg.id}-field-${f.id || j}`, segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
+    `<div id="${elId(generatedElId(seg.id, 'field', f, j), segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
   const hotspots = (v.hotspots || []).map((hp, j) =>
-    `<div id="${elId(`${seg.id}-hotspot-${hp.id || j}`, segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
+    `<div id="${elId(generatedElId(seg.id, 'hotspot', hp, j), segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
   return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url, segWhere(seg, 'visual.url'))}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc, segWhere(seg, 'visual.shot'))}" alt=""/>` : ''}${fields}${hotspots}<div id="${elId(`${seg.id}-cursor`, segWhere(seg, 'generated element id'))}" class="cursor"></div></div></div>`;
 }
 
@@ -890,7 +931,7 @@ function autoTriggers(seg) {
   if ((seg.triggers || []).some(t => t.target)) return out; // author drives the rest
   if (m === 'diagram') {
     const seq = [...(v.nodes || []).map(n => ({ target: `${seg.id}-node-${n.id}`, action: 'revealNode' })),
-                 ...(v.edges || []).map((e, j) => ({ target: `${seg.id}-edge-${e.id || j}`, action: 'drawEdge' }))];
+                 ...(v.edges || []).map((e, j) => ({ target: generatedElId(seg.id, 'edge', e, j), action: 'drawEdge' }))];
     const step = Math.min(900, (dur * 0.7) / (seq.length || 1));
     seq.forEach((t, k) => out.push({ atMs: Math.round(700 + k * step), target: t.target, action: t.action }));
     // Standard+ engagement: interactive-animation-enabled workflow by default — numbered step badges,
@@ -901,8 +942,8 @@ function autoTriggers(seg) {
       const base = Math.round(700 + seq.length * step) + 400;
       const particles = lvl === 'rich' ? 4 : 2;
       (v.nodes || []).forEach((n, k) => out.push({ atMs: base + k * 120, target: `${seg.id}-node-${n.id}`, action: 'stepBadge', payload: { stepIndex: k + 1 } }));
-      (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: `${seg.id}-edge-${e.id || j}`, action: 'flowEdge', payload: { particles } }));
-      (v.edges || []).forEach((e, j) => { const eid = `${seg.id}-edge-${e.id || j}`; out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
+      (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: generatedElId(seg.id, 'edge', e, j), action: 'flowEdge', payload: { particles } }));
+      (v.edges || []).forEach((e, j) => { const eid = generatedElId(seg.id, 'edge', e, j); out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
     }
   } else if (m === 'code') {
     // The block carries `.el`, so like every other element it stays hidden until something
@@ -1321,14 +1362,31 @@ const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)sl
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.
 // Preview calls it fire-and-forget from fireTriggersUpTo; the capture script awaits it before screenshot.
 window.__footage=${hasFootage};
-window.__setFootageFrame=function(absMs){const ls=document.querySelectorAll('.footage-layer'),ps=[];ls.forEach(el=>{const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(!dir||!Number.isFinite(s)||!Number.isFinite(e))return;if(absMs<s-1||absMs>e+1)return;const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));const url=dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg';if(el.dataset.cur===url)return;if(el.__pendingUrl===url&&el.__pendingPromise){ps.push(el.__pendingPromise);return;}const p=new Promise(res=>{const im=new Image();im.onload=()=>res(true);im.onerror=()=>res(false);im.src=url;}).then(ok=>{if(ok){el.style.backgroundImage='url("'+url+'")';el.dataset.cur=url;}if(el.__pendingUrl===url){el.__pendingUrl=null;el.__pendingPromise=null;}return ok;});el.__pendingUrl=url;el.__pendingPromise=p;ps.push(p);});return Promise.all(ps);};
+// THE FRAME INDEX IS DERIVED IN ONE PLACE. __setFootageFrame swaps the background to this
+// url, and __frameSig puts the url it WILL be showing into the dedup signature; the second
+// one's comment already said it must use "the SAME math", with nothing making it so. Two
+// statements of one derivation, where a drift means the signature describes a different
+// frame from the one captured — which is a false dedup, and corrupt output rather than a
+// visible failure.
+// Returns null when the layer is outside its window. THE FALLBACK STAYS AT EACH CALLER,
+// because they want different things there: __setFootageFrame skips the layer entirely,
+// while __frameSig records el.dataset.cur, which is stable precisely because the index is
+// not changing this frame. __frameSig must never read dataset.cur for an IN-window layer:
+// it is committed after image load and so lags by one frame.
+function __footageUrlAt(el,absMs){const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(!dir||!Number.isFinite(s)||!Number.isFinite(e))return null;if(absMs<s-1||absMs>e+1)return null;const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));return dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg';}
+window.__setFootageFrame=function(absMs){const ls=document.querySelectorAll('.footage-layer'),ps=[];ls.forEach(el=>{const url=__footageUrlAt(el,absMs);if(url===null)return;if(el.dataset.cur===url)return;if(el.__pendingUrl===url&&el.__pendingPromise){ps.push(el.__pendingPromise);return;}const p=new Promise(res=>{const im=new Image();im.onload=()=>res(true);im.onerror=()=>res(false);im.src=url;}).then(ok=>{if(ok){el.style.backgroundImage='url("'+url+'")';el.dataset.cur=url;}if(el.__pendingUrl===url){el.__pendingUrl=null;el.__pendingPromise=null;}return ok;});el.__pendingUrl=url;el.__pendingPromise=p;ps.push(p);});return Promise.all(ps);};
 function setSlide(n){if(n===currentSlide)return;document.querySelectorAll('.sl').forEach(s=>s.classList.remove('on'));document.getElementById('seg-'+(n-1))?.classList.add('on');currentSlide=n;elementTriggers.filter(t=>t.s===n&&t.withSegment).forEach(apply);}
 let __lastFireT=0;
 // Seek-safety: on a backwards / non-monotonic seek (preview scrub), cumulative state (fired, fxDone,
 // __drv tweens) and injected overlays (.fx-spot/.callout/.rollover-tip/.stepbadge/.flow-dot/.progress)
 // would otherwise persist and once()/fired would short-circuit re-creation. Reset them, then re-apply
 // triggers up to the new time so the frame is reconstructed deterministically from scratch.
-function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>n.remove());document.querySelectorAll('.show,.clicked,.hovered,.pulsing,.is-marked,.is-dim,.is-off,.is-focus').forEach(el=>el.classList.remove('show','clicked','hovered','pulsing','is-marked','is-dim','is-off','is-focus'));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
+// THE RESET AND THE SIGNATURE MUST COVER THE SAME OVERLAYS. __resetSeekState removes these
+// and __frameSig reads them back as part of the per-frame signature; an overlay in one list
+// and not the other is either an element that survives a seek unsignaled or one signed
+// after it is gone. Either way dedup compares frames that are not the same frame.
+const OVERLAY_SEL='.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress';
+function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll(OVERLAY_SEL).forEach(n=>n.remove());const RESET=['show','clicked','hovered','pulsing','is-marked','is-dim','is-off','is-focus'];document.querySelectorAll('.'+RESET.join(',.')).forEach(el=>el.classList.remove(...RESET));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
 function fireTriggersUpTo(time){if(time<__lastFireT-0.0005)__resetSeekState();__lastFireT=time;window.__t=time;let target=1;for(const s of slideShowTimes)if(time>=s.showAt)target=s.slide;setSlide(target);for(const tr of elementTriggers)if(time>=tr.t)apply(tr);window.__syncTweens(time);if(window.__footage)window.__setFootageFrame(time*1000);}
 window.fireTriggersUpTo=fireTriggersUpTo;
 // Deterministic per-frame visual-state signature for capture-time dedup (dedupHolds). Two frames are
@@ -1351,7 +1409,7 @@ window.__frameSig=function(frameNo){
   const ids=sel=>Array.from(document.querySelectorAll(sel)).map((el,i)=>el.id||('#'+i)).sort().join(',');
   p.push('V'+ids('.show')); // every revealed/shown element (reveal/drawEdge + effect-shown elements)
   p.push('C'+ids('.clicked')+'|'+ids('.hovered')+'|'+ids('.pulsing')+'|'+ids('.is-marked')+'|'+ids('.is-dim')+'|'+ids('.is-off')+'|'+ids('.is-focus')); // discrete stateful classes, incl. held marks + code-focus dimming
-  const ov=[];document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>ov.push(n.className+':'+(n.textContent||'')+':'+(n.style.left||'')+','+(n.style.top||'')+','+(n.style.width||'')+','+(n.style.height||'')+','+(n.style.transform||'')+','+(n.style.opacity||'')));
+  const ov=[];document.querySelectorAll(OVERLAY_SEL).forEach(n=>ov.push(n.className+':'+(n.textContent||'')+':'+(n.style.left||'')+','+(n.style.top||'')+','+(n.style.width||'')+','+(n.style.height||'')+','+(n.style.transform||'')+','+(n.style.opacity||'')));
   const pw=[];document.querySelectorAll('.progress i').forEach(i=>pw.push(i.style.width||''));
   p.push('O'+ov.sort().join(';')+'|'+pw.join(',')); // dynamic overlays: EVERY inline pixel-affecting prop
   // (left/top/width/height/transform/opacity) + text/progress. .fx-spot settles style.height, callout
@@ -1367,7 +1425,7 @@ window.__frameSig=function(frameNo){
   // For layers outside their active window (index not changing this frame) dataset.cur is stable, so
   // it is read directly with no lag.
   const ft=[],__absMs=(window.__t||0)*1000;
-  document.querySelectorAll('.footage-layer').forEach(el=>{const s=+el.dataset.segstart,e=+el.dataset.segend,dir=el.dataset.framedir;if(dir&&Number.isFinite(s)&&Number.isFinite(e)&&__absMs>=s-1&&__absMs<=e+1){const fps=+el.dataset.fps||30,count=Math.max(1,+el.dataset.framecount||1),start=+el.dataset.startms||0;let idx=Math.round(((__absMs-s)+start)/1000*fps)+1;idx=Math.max(1,Math.min(count,idx));ft.push(dir+'/frame_'+String(idx).padStart(5,'0')+'.jpg');}else ft.push(el.dataset.cur||'-');});
+  document.querySelectorAll('.footage-layer').forEach(el=>{const url=__footageUrlAt(el,__absMs);ft.push(url===null?(el.dataset.cur||'-'):url);});
   p.push('G'+ft.join(',')); // footage frame that WILL be shown per layer (deterministic in t)
   const safe=on&&on.querySelector('.safe');p.push('L'+(safe?(safe.style.getPropertyValue('--fit')||'1'):'1')); // layout fit
   return p.join('~');
