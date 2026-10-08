@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveOutput, describeWrite, planFooter, describeJsonValue } from './cli-support.mjs';
 import { isSilentSegment, silentCaption, silentSegmentProblems, wordsInSegment, segmentEntryBlocker, segmentLabel } from './silent-segment.mjs';
 import { BRAND_PALETTE } from './brand-palette.mjs';
+import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from './diagram-defaults.mjs';
 
 const USAGE = `
 write-storyboard — render storyboard.html from timing.json (pipeline stage S2).
@@ -111,7 +112,7 @@ const panel = (s, i) => {
     ${s.label ? `<figcaption>${esc(s.label)}</figcaption>` : ''}</figure>`).join('');
 
   const diagram = v.nodes ? `
-    <svg viewBox="${esc(v.viewBox || '0 0 1600 900')}" class="dg">
+    <svg viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX)}" class="dg">
       ${(v.edges || []).map((e, j) => {
         const a = (v.nodes || []).find(n => n.id === e.from) || {}, b = (v.nodes || []).find(n => n.id === e.to) || {};
         const ax = (+a.x || 0) + (+a.w || 240) / 2, ay = (+a.y || 0) + (+a.h || 96) / 2;
@@ -120,13 +121,13 @@ const panel = (s, i) => {
       }).join('')}
       ${(v.nodes || []).map((n, j) => `
         <g>
-          <rect x="${+n.x || 0}" y="${+n.y || 0}" width="${+n.w || 240}" height="${+n.h || 96}" rx="14"
+          <rect x="${+n.x || ND.x}" y="${+n.y || ND.y}" width="${+n.w || ND.w}" height="${+n.h || ND.h}" rx="14"
                 fill="#fff" stroke="${PAL[j % PAL.length]}" stroke-width="4"/>
-          <foreignObject x="${+n.x || 0}" y="${+n.y || 0}" width="${+n.w || 240}" height="${+n.h || 96}">
+          <foreignObject x="${+n.x || ND.x}" y="${+n.y || ND.y}" width="${+n.w || ND.w}" height="${+n.h || ND.h}">
             <div xmlns="http://www.w3.org/1999/xhtml" class="nl">${esc(n.label || n.id)}</div>
           </foreignObject>
-          <circle cx="${(+n.x || 0) + 22}" cy="${(+n.y || 0) + 22}" r="20" fill="${PAL[j % PAL.length]}"/>
-          <text x="${(+n.x || 0) + 22}" y="${(+n.y || 0) + 30}" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">${j + 1}</text>
+          <circle cx="${(+n.x || ND.x) + 22}" cy="${(+n.y || ND.y) + 22}" r="20" fill="${PAL[j % PAL.length]}"/>
+          <text x="${(+n.x || ND.x) + 22}" y="${(+n.y || ND.y) + 30}" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">${j + 1}</text>
         </g>`).join('')}
     </svg>` : '';
 

@@ -80,6 +80,7 @@ const SIDE_EFFECT_FREE_MODULES = new Set([
   'astats-levels.mjs',
   'brand-palette.mjs',
   'cli-support.mjs',
+  'diagram-defaults.mjs',
   'end-card.mjs',
   'envelope-ducking.mjs',
   'gain-pin.mjs',

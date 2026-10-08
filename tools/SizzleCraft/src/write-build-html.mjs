@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError, noGoPatternsProblem } from './cli-support.mjs';
 import { BRAND_PALETTE } from './brand-palette.mjs';
+import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from './diagram-defaults.mjs';
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -584,17 +585,17 @@ function narrative(seg) {
 function diagram(seg) {
   const v = seg.visual || {}, nodes = v.nodes || [], edges = v.edges || [];
   const nodeAt = id => nodes.find(n => n.id === id) || {};
-  const cx = n => Number(n.x || 0) + Number(n.w || 240) / 2, cy = n => Number(n.y || 0) + Number(n.h || 96) / 2;
+  const cx = n => Number(n.x || ND.x) + Number(n.w || ND.w) / 2, cy = n => Number(n.y || ND.y) + Number(n.h || ND.h) / 2;
   // point on node n's border along the line toward (tx,ty), with a small gap so the arrowhead clears the box
   const border = (n, tx, ty, gap = 10) => {
-    const nx = Number(n.x || 0), ny = Number(n.y || 0), nw = Number(n.w || 240), nh = Number(n.h || 96);
+    const nx = Number(n.x || ND.x), ny = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
     const px = nx + nw / 2, py = ny + nh / 2, dx = tx - px, dy = ty - py;
     if (!dx && !dy) return [px, py];
     const s = Math.min(dx ? (nw / 2 + gap) / Math.abs(dx) : Infinity, dy ? (nh / 2 + gap) / Math.abs(dy) : Infinity);
     return [px + dx * s, py + dy * s];
   };
   const nodeSvg = nodes.map((n, j) => {
-    const x = Number(n.x || 0), y = Number(n.y || 0), nw = Number(n.w || 240), nh = Number(n.h || 96);
+    const x = Number(n.x || ND.x), y = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
     const st = multicolor ? ` style="--ca:${ca(j)}"` : '';
     // Node label uses a wrapping HTML block (foreignObject) instead of a single SVG <text> line so long
     // labels wrap + fit INSIDE the box (no overflow past the rounded rect). See `.nodelabel` CSS.
@@ -627,7 +628,7 @@ const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
   const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
     `<marker id="${elId(generatedElId(seg.id, 'arr', e, j), segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
-  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900', segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
+  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX, segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
 }
 
 function live(seg) {
