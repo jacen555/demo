@@ -19,10 +19,16 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+/** This suite's own copy — _helpers.mjs is reserved and not sanctioned for this task. */
+const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
 import { EXIT } from '../src/cli-support.mjs';
-import { classifyScanOutcome } from '../src/validate-scene.mjs';
+import { classifyScanOutcome } from '../src/scan-outcome.mjs';
 import { makeProject, runScript, assertCleanExit } from './_helpers.mjs';
 
 // ---------------------------------------------------------------------------
@@ -1627,5 +1633,72 @@ describe('scan outcome classification: report the ending that happened', () => {
   test('classify_aCleanRun_isNotRefused', () => {
     // The control for all four refusals above: if this threw, they would pass for free.
     assert.equal(thrownBy(ok), null, 'a clean scan must not be refused');
+  });
+
+  test('validateScene_invokedThroughAnUnusualPathSpelling_stillActuallyRuns', (t) => {
+    // REGRESSION PIN, from review. classifyScanOutcome was briefly exported from
+    // validate-scene.mjs behind an "am I the entry point?" guard that compared
+    // path.resolve(process.argv[1]) against fileURLToPath(import.meta.url). A spelling the
+    // comparison does not recognise makes the guard false, and the validator then exits 0
+    // having checked NOTHING. A validator whose failure mode is indistinguishable from a
+    // clean pass is the worst outcome available, so the guard was removed and the
+    // classifier moved to its own module.
+    //
+    // The spelling used here is a DIRECTORY JUNCTION, which is the vector review named and
+    // the only one I could make reproduce: Node resolves the module to its real path for
+    // import.meta.url but leaves the junction spelling in process.argv[1], so a string
+    // comparison between them is false. I first wrote this test with a case-flipped path
+    // and it did NOT reproduce — Node keeps the given spelling in both, so the comparison
+    // matched and the test passed against the very guard it was meant to catch. It was a
+    // control that could not fail. Measured, not assumed: against the guarded build this
+    // invocation exits 0 with zero output and the planted match goes unreported.
+    //
+    // CLEANUP IS DELIBERATELY NON-RECURSIVE. fs.rmdirSync removes the reparse point only.
+    // A recursive remove would follow the junction and empty the real src/ directory —
+    // this domain destroyed a node_modules that way this week.
+    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-srclink-'));
+    const link = path.join(linkDir, 'src');
+    try {
+      fs.symlinkSync(SRC_DIR, link, 'junction');
+    } catch {
+      t.skip('could not create a directory junction on this platform');
+      return;
+    }
+
+    // The link's whole lifetime is this try/finally, NOT a t.after hook, and that is
+    // deliberate twice over.
+    //
+    // First, removal here MUST be non-recursive: fs.rmdirSync takes the reparse point away
+    // and leaves the target alone. A recursive remove pointed at a junction can follow it
+    // and empty the real src/ directory — this domain destroyed a node_modules exactly
+    // that way this week. So this must not go through the retrying RECURSIVE removal that
+    // fixture-teardown.test.mjs requires of teardown hooks; that rule is right for fixture
+    // directories a child process may hold, and wrong for a link.
+    //
+    // Second, a junction is a reparse point, not an open handle, so it has none of the
+    // EBUSY exposure that rule exists to absorb. finally still runs on a thrown assertion,
+    // so nothing leaks.
+    try {
+      const dir = makeProject(t, {
+        'timing.json': scene({
+          project: { noGoPatterns: ['https?://'] },
+          segments: [{ ...diagramSeg(), voiceoverText: 'go to https://example.com' }, narrativeSeg()],
+        }),
+      });
+      const r = spawnSync(process.execPath, [path.join(link, 'validate-scene.mjs'), '--project', dir], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, [SCAN_TIMEOUT_KNOB]: '60000' },
+      });
+      const all = (r.stdout ?? '') + (r.stderr ?? '');
+      // Assert the REPORT, not just the exit code: a silently skipped CLI exits 0 with no
+      // output, which a bare code check would read as a pass.
+      assert.match(all, /D1/, `the validator produced no report — did it run at all?\n${all}`);
+      assert.equal(r.status, EXIT.FAILED, `a planted no-go match must fail, not pass silently\n${all}`);
+    } finally {
+      fs.rmdirSync(link);
+      fs.rmdirSync(linkDir);
+    }
   });
 });

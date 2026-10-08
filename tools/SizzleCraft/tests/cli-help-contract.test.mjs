@@ -73,7 +73,7 @@ const UNKNOWN_FLAG = '--sizzlecraft-no-such-flag';
  * work on import. There is no observation of the guarded behaviour that establishes
  * membership independently of it, so membership is declared and then checked.
  *
- * These eight are side-effect-free modules: imported, never invoked. Giving them a CLI
+ * These nine are side-effect-free modules: imported, never invoked. Giving them a CLI
  * would manufacture uniformity over a real distinction.
  */
 const SIDE_EFFECT_FREE_MODULES = new Set([
@@ -84,6 +84,11 @@ const SIDE_EFFECT_FREE_MODULES = new Set([
   'gain-pin.mjs',
   'mix-parameters.mjs',
   'remux-verify.mjs',
+  // Classifies how validate-scene's bounded scan child ended. It lives apart from
+  // validate-scene.mjs precisely so its tests can import it WITHOUT an "am I the entry
+  // point?" guard: that guard compares path strings, and a directory junction defeats it,
+  // making the validator exit 0 having checked nothing. Measured, not theorised.
+  'scan-outcome.mjs',
   'silent-segment.mjs',
 ]);
 
