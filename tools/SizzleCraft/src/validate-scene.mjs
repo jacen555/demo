@@ -24,14 +24,25 @@
  * EXIT CODES (the engine-wide contract in cli-support.mjs)
  *   0  every evaluated check passed
  *   1  at least one check failed — the scene is not fit to capture
- *   2  the caller's fault: no timing.json, unparseable JSON, an invalid no-go pattern
+ *   2  the caller's fault: no timing.json, unparseable JSON, an invalid no-go pattern, an
+ *      unusable SIZZLECRAFT_SCAN_TIMEOUT_MS, or a no-go scan that could not be completed
+ *      within its budget (unmeasurable, which is not the same as failed)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { EXIT, CliError, runCli, requireExistingFile, resolveWithinRoot, noGoPatternsProblem } from './cli-support.mjs';
+import {
+  EXIT,
+  CliError,
+  runCli,
+  requireExistingFile,
+  resolveWithinRoot,
+  noGoPatternsProblem,
+  resolveKnob,
+} from './cli-support.mjs';
+import { classifyScanOutcome } from './scan-outcome.mjs';
 import { isSilentSegment, shapeBlocker } from './silent-segment.mjs';
 
 const USAGE = `usage: node src/validate-scene.mjs [--project DIR] [--timing FILE] [--knobs FILE]
@@ -141,7 +152,7 @@ function revealsTarget(trigger, seg, ids) {
  * that reaches a frame. Length and count are cheap bounds; neither is the real control,
  * because `(a|aa){30}$` is twelve characters and backtracks exponentially.
  *
- * The real control is D1_SCAN_TIMEOUT_MS: the scan runs in a child process under a hard
+ * The real control is the scan budget: the scan runs in a child process under a hard
  * timeout. A heuristic that tried to RECOGNISE dangerous patterns was written and
  * withdrawn — it missed bounded forms like `(a|aa){30}` while refusing ordinary ones like
  * `(foo|bar)+`, and a guard that rejects everyday patterns gets switched off, which costs
@@ -154,8 +165,55 @@ function revealsTarget(trigger, seg, ids) {
  *
  * The length and count bounds themselves MOVED to cli-support's `noGoPatternsProblem`, so
  * write-build-html — which read the same field with no bounds at all — is held to them too.
+ *
+ * THE BUDGET IS OPERATOR-SETTABLE, and that is part of the remedy rather than a
+ * convenience. 5000 ms is a judgement about a machine, not about a pattern: the same
+ * innocent scan that finishes in 40 ms on an idle laptop was measured crossing 5000 ms
+ * on this repo's own suite under a 12-worker load. When the bound is the thing that is
+ * wrong, the operator must be able to say so without editing the engine — otherwise the
+ * only available response to a false refusal is to delete the check.
+ *
+ * WHAT THIS BOUND DOES NOT DO — stated here because the code below spent a release
+ * claiming otherwise:
+ *   a. It does not identify a slow pattern. A child killed at the budget proves only
+ *      that the scan did not finish; catastrophic backtracking and a loaded machine are
+ *      indistinguishable from outside, and this code measures neither.
+ *   b. It does not detect a pathological pattern that finishes INSIDE the budget. A
+ *      `(a+)+$` given short bait may complete within the budget and pass. Longer input
+ *      may cost more. How its cost grows is not measured here and is not claimed —
+ *      including whether a later string is quick.
+ *   c. The index it reports is the LAST INDEX THE SCAN REPORTED REACHING, which is not
+ *      the same as where execution was when the OS stopped it. The marker is written
+ *      before the pattern runs, and work continues after the last pattern, so the child
+ *      may have been in that pattern, past it, or past the loop entirely. On a loaded
+ *      machine the index also need not belong to the most expensive pattern.
+ *   d. It does not account for a child stopped by something OTHER than this budget. An
+ *      external signal — an out-of-memory killer, a CI step reaping the process tree — is
+ *      reported as the signal it was, with no claim about cost, about elapsed time, or
+ *      about a pattern. This stage cannot measure a scan it did not stop, and that cuts
+ *      both ways: it can no more say the budget was NOT reached than that it was.
  */
-const D1_SCAN_TIMEOUT_MS = 5000;
+const SCAN_TIMEOUT_FALLBACK_MS = 5000;
+
+/**
+ * Resolves the scan budget through the shared knob resolver (argv > env > config >
+ * default, stated once in cli-support.mjs and enforced by env-precedence.test.mjs).
+ *
+ * An unusable value is REFUSED, never quietly replaced by the default: a budget read as
+ * "use 5000" is how a typo silently disables the thing the operator was trying to set.
+ */
+function resolveScanTimeoutMs() {
+  const { value, source, variable } = resolveKnob('SCAN_TIMEOUT_MS', { fallback: SCAN_TIMEOUT_FALLBACK_MS });
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms <= 0) {
+    throw new CliError(
+      `${variable} must be a positive whole number of milliseconds — got ${JSON.stringify(String(value))} ` +
+        `(from ${source}). It is refused rather than read as ${SCAN_TIMEOUT_FALLBACK_MS}, because a budget ` +
+        `that silently reverts to the default cannot be raised by the operator who needed it raised.`,
+    );
+  }
+  return { ms, variable };
+}
 
 /**
  * The slide mode, mirroring write-build-html.mjs:168.
@@ -695,40 +753,22 @@ function checkD1(timing, report) {
  * process killed by the OS is the only bound that actually holds.
  *
  * The child writes the index it is about to test to stderr before testing it, so when the
- * OS kills it the parent can still name the pattern that stalled. Without that, the
+ * OS kills it the parent can still name the last index the scan reported reaching — not
+ * the pattern that stalled, which nothing here establishes. Without that marker the
  * refusal would be "one of your 40 patterns", which is a bound without a remedy.
  */
 function scanInChildProcess(strings, patterns) {
   const self = fileURLToPath(import.meta.url);
+  const budget = resolveScanTimeoutMs();
   const result = spawnSync(process.execPath, [self, '--scan-stdin'], {
     input: JSON.stringify({ strings, patterns }),
     encoding: 'utf8',
-    timeout: D1_SCAN_TIMEOUT_MS,
+    timeout: budget.ms,
     maxBuffer: 64 * 1024 * 1024,
   });
 
-  // ORDER MATTERS. `maxBuffer` overflow sets error.code ENOBUFS and ALSO kills the child,
-  // so it arrives with a signal set. Testing `result.signal` first reported a buffer
-  // overflow as catastrophic backtracking and blamed whichever pattern happened to be
-  // running — a confident, specific, wrong diagnosis, which is worse than a vague one
-  // because it sends the author to rewrite an innocent pattern. Classify by error code
-  // first, and reserve the timeout story for an actual timeout.
-  if (result.error && result.error.code !== 'ETIMEDOUT') {
-    throw new CliError(`the no-go scan could not run: ${result.error.code ?? result.error.message}`);
-  }
-  if (result.error?.code === 'ETIMEDOUT' || result.signal) {
-    // The LAST marker, not the first. The child's stderr is a running log — `scanning 0`,
-    // `scanning 1`, ... — so `exec` returns index 0 every time and the refusal names an
-    // innocent pattern with complete confidence. Measured: a stall on pattern 1 was
-    // reported as pattern 0.
-    const started = [...(result.stderr ?? '').matchAll(/^scanning (\d+)$/gm)].at(-1);
-    const which = started ? `project.noGoPatterns[${started[1]}]` : 'one of the project.noGoPatterns';
-    throw new CliError(
-      `${which} did not finish within ${D1_SCAN_TIMEOUT_MS} ms and was stopped. That is catastrophic ` +
-        `backtracking — a pattern such as "(a|aa){30}$" is exponential in the length of the text it ` +
-        `fails to match. Rewrite it; the scan cannot be left unbounded because this stage exists to be cheap.`,
-    );
-  }
+  classifyScanOutcome(result, budget);
+
   if (result.status !== 0) {
     // The child reports an invalid pattern by INDEX, never by source — see scanMain().
     throw new CliError((result.stdout || result.stderr || 'the no-go scan failed').trim());
@@ -739,6 +779,7 @@ function scanInChildProcess(strings, patterns) {
     throw new CliError('the no-go scan returned unreadable output');
   }
 }
+
 
 /**
  * The child half of the scan. Reads `{strings, patterns}` on stdin, prints findings as
@@ -957,6 +998,10 @@ function readJson(abs, label) {
   }
 }
 
+// The CLI runs unconditionally: there is no "am I the entry point?" guard here, because a
+// guard that compares path strings can be defeated by a junction or symlink and would then
+// make this validator exit 0 having checked nothing. classifyScanOutcome lives in
+// scan-outcome.mjs so it can be imported by its tests without needing one.
 await runCli(async () => {
   let values;
   try {

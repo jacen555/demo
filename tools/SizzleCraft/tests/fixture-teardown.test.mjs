@@ -220,7 +220,9 @@ function suiteSources(dir) {
 
 describe('fixture teardown survives a busy machine', () => {
   for (const holdAt of ['root', 'inner']) {
-    test(`removeFixture_directoryHeldByALiveChildProcessAtThe${holdAt === 'root' ? 'Root' : 'Inner'}Path_succeedsOnceTheHandleIsReleased`, async (t) => {
+    const where = holdAt === 'root' ? 'AtTheTreeRoot' : 'OneLevelIn';
+
+    test(`removeFixture_directoryHeldByALiveChildProcess${where}_succeedsOnceTheHandleIsReleased`, async (t) => {
       const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
       await ready;
 
@@ -230,7 +232,7 @@ describe('fixture teardown survives a busy machine', () => {
       assert.equal(fs.existsSync(dir), false, 'the fixture must actually be gone');
     }, { skip: windowsOnly, timeout: 60_000 });
 
-    test(`removeFixture_theSameHeldDirectoryAtThe${holdAt === 'root' ? 'Root' : 'Inner'}PathWithoutTheRetryBudget_failsWithEbusy`, async (t) => {
+    test(`removeFixture_theSameHeldDirectory${where}WithoutTheRetryBudget_failsWithEbusy`, async (t) => {
       // THE POSITIVE CONTROL. Identical setup, retry budget removed. If this ever passes,
       // the directory was not locked and the test above is vacuous.
       const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
@@ -240,36 +242,40 @@ describe('fixture teardown survives a busy machine', () => {
 
       assert.equal(err?.code, 'EBUSY', `the held directory must genuinely refuse removal, got ${err?.code}`);
     }, { skip: windowsOnly, timeout: 60_000 });
+
+    test(`removeFixture_aHeldDirectory${where}_isNotCoveredByTheRuntimesOwnRetryOption`, async (t) => {
+      // WHY THIS PACKAGE CANNOT JUST PASS `maxRetries` TO fs.rmSync.
+      //
+      // AN EARLIER VERSION OF THIS TEST NAMED THE WRONG AXIS, and the orchestrator caught
+      // it by failing to reproduce the claim. The distinction is not root-versus-inner,
+      // it is DIRECTORY-versus-FILE: measured, the runtime rides out an EBUSY on a file at
+      // any depth and refuses to wait even once on a directory at any depth. That is why
+      // this runs at both depths — to pin that depth does NOT rescue the directory case.
+      //
+      // `runScript` spawns every engine CLI with cwd set to the fixture, so a held
+      // DIRECTORY is this suite's common shape. Relying on the built-in option would have
+      // shipped a retry that cannot fire on it.
+      const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
+      await ready;
+
+      // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which
+      // the reviewer correctly rejected: on the loaded machine this change is verified
+      // against, scheduling delay alone can exceed 1500ms without the runtime having
+      // retried anything. This asserts the OUTCOME instead. The budget below would wait
+      // ~55s if the runtime honoured it, twenty times the 2500ms hold — so a removal that
+      // still raises EBUSY can only mean the retry never happened. Nothing is timed.
+      const generous = { maxRetries: 10, retryDelay: 1000 };
+      const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true, ...generous }));
+
+      assert.equal(err?.code, 'EBUSY', 'the runtime must not have ridden out a hold its budget easily covered');
+      assert.equal(fs.existsSync(dir), true, 'and the fixture must still be there');
+
+      // The same hold, the same wait available, through this package's loop instead: gone.
+      // That difference is the whole justification for hand-rolling the retry.
+      removeFixture(dir);
+      assert.equal(fs.existsSync(dir), false);
+    }, { skip: windowsOnly, timeout: 60_000 });
   }
-
-  test('removeFixture_rootHeldDirectory_isNotCoveredByTheRuntimesOwnRetryOption', async (t) => {
-    // WHY THIS PACKAGE CANNOT JUST PASS `maxRetries` TO fs.rmSync. Measured: the runtime
-    // retries a busy entry INSIDE the tree, but rethrows EBUSY on the ROOT rmdir without
-    // waiting at all. `runScript` spawns every engine CLI with cwd set to the fixture, so
-    // the root is precisely what this suite holds. Relying on the built-in option would
-    // have shipped a retry that cannot fire on the most likely case — the signature
-    // failure this repo keeps paying for.
-    const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt: 'root' });
-    await ready;
-
-    // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which the
-    // reviewer correctly rejected: on the loaded machine this change is verified against,
-    // scheduling delay alone can exceed 1500ms without the runtime having retried
-    // anything, so the test could fail for a reason that is not the property under test.
-    // This asserts the OUTCOME instead. The budget below would wait ~55s if the runtime
-    // honoured it on the root, which is twenty times the 2500ms hold — so a removal that
-    // still raises EBUSY can only mean the retry never happened. Nothing is timed.
-    const generous = { maxRetries: 10, retryDelay: 1000 };
-    const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true, ...generous }));
-
-    assert.equal(err?.code, 'EBUSY', 'the runtime must not have ridden out a hold its budget easily covered');
-    assert.equal(fs.existsSync(dir), true, 'and the fixture must still be there');
-
-    // The same hold, the same wait available, through this package's loop instead: gone.
-    // That difference is the whole justification for hand-rolling the retry.
-    removeFixture(dir);
-    assert.equal(fs.existsSync(dir), false);
-  }, { skip: windowsOnly, timeout: 60_000 });
 
   test('removeFixture_aHandleThatIsNeverReleased_throwsRatherThanSilentlyGivingUp', async (t) => {
     // A retry that gives up quietly is a swallow: the fixture stays on disk inside the
