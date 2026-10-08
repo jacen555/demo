@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal } from './cli-support.mjs';
+import { EXIT, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveInternalArtifact, openExclusiveEngineFile, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal, mp3AudioStart as audioStart } from './cli-support.mjs';
 import { isSilentSegment, silentDurationMs, silentMp3, silenceAssetBytes, buildCalibration, voiceWriteSet, voiceTimelineBlocker, renderBlocker, segmentClipName, gapAssetName } from './silent-segment.mjs';
 
 const USAGE = `
@@ -454,12 +454,6 @@ for (let i = 0; i < timing.segments.length; i++) {
 const contentMs = timing.segments[timing.segments.length - 1].endMs;
 
 // ---- 5. concatenate ------------------------------------------------------------------------
-function audioStart(buffer) {
-  if (buffer.length >= 10 && buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
-    return 10 + (((buffer[6] & 0x7f) << 21) | ((buffer[7] & 0x7f) << 14) | ((buffer[8] & 0x7f) << 7) | (buffer[9] & 0x7f));
-  }
-  return 0;
-}
 const parts = [];
 if (leadFile) parts.push(leadFile);
 for (let i = 0; i < results.length; i++) {

@@ -37,11 +37,12 @@
  * nothing; an absent `audio` is no measurement at all. Keeping that distinction is what
  * lets "voice has not run" stay a failure for silent and narrated segments alike.
  */
-import crypto from 'node:crypto';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  CliError, EXIT, assertDistinctDestinations, createBoundary, pathExists, resolveEngineOutput, resolveWithinRoot,
+  CliError, EXIT, assertDistinctDestinations, createBoundary, narrationFingerprint, pathExists,
+  resolveEngineOutput, resolveWithinRoot,
 } from './cli-support.mjs';
 
 // MPEG-2 Layer III, 24 kHz, 96 kbps, mono — the msedge-tts profile this engine
@@ -553,7 +554,7 @@ export function wordsInSegment(seg) {
 export function buildCalibration(segments, clips, { voiceId, roundedSpeed }) {
   const calSegs = segments.map((s, i) => {
     const clip = clips[i];
-    const textHash = crypto.createHash('sha256').update(String(s.voiceoverText ?? ''), 'utf8').digest('hex');
+    const textHash = narrationFingerprint(s.voiceoverText);
     if (isSilentSegment(s)) {
       // No `effWps`, no speech. `silent: true` says WHY the rate is missing, so a reader
       // is never left to guess whether it was omitted or lost.

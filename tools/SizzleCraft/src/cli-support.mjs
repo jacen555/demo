@@ -435,6 +435,14 @@ export const KNOB_PREFIX = 'SIZZLECRAFT_';
  * count, same 23 characters, same audio duration — while being different scripts needing
  * different audio. A lineage gate built on the summary passes the rewrite it exists to
  * catch. The hash is over the exact bytes, so nothing survives it but the text itself.
+ *
+ * ONE STATEMENT, ON BOTH SIDES OF ONE GATE. The reader imported this while the WRITER
+ * restated the expression inline in `silent-segment.mjs`'s `buildCalibration` — so the
+ * two halves of a lineage check were two copies of a rule, and changing the hash in one
+ * place would have made every calibration fail to verify against the text it was taken
+ * from. The CONSUMERS line below exists so the next inline copy is a deliberate act.
+ *
+ * CONSUMERS(narrationFingerprint): silent-segment.mjs, validate-timing.mjs
  */
 export function narrationFingerprint(text) {
   return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex');
@@ -946,6 +954,210 @@ export function readOptionalEngineJson(root, candidate, label, expect = {}) {
   }
 
   return parsed;
+}
+
+// ---------------------------------------------------------------------------------------
+// THE SIDECAR STAGES' SHARED VOCABULARY.
+//
+// `write-subtitles.mjs` (S10) and `write-chapters.mjs` (S11) read the same timeline, refuse
+// the same shapes and name the same things, and each carried its own copy of all of it.
+// Six of the seven were BYTE-IDENTICAL; the seventh differed only in a parameter name.
+// Verified by extracting each function from both files and comparing exactly, rather than
+// by reading them side by side — which is how two helpers that differ in one identifier
+// get collapsed into one that is wrong for both.
+//
+// NOT moved here, and deliberately:
+//   safeFileBase   strips disallowed characters to '' in S10 and to '-' in S11, so the two
+//                  stages derive DIFFERENT filenames from one project name ("my video" ->
+//                  "myvideo" / "my-video"). It looks like the same helper and is not.
+//   readTimeline   differs by one refusal phrase AND calls each stage's own 66-line
+//                  `timelineProblems`. Sharing it would mean injecting both a phrase and a
+//                  validator to serve two callers — more indirection for no less code.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * A finite, non-negative count of milliseconds.
+ *
+ * CONSUMERS(isMs): write-chapters.mjs, write-subtitles.mjs
+ */
+export function isMs(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Names a segment by its INDEX IN THE TIMELINE, for a diagnostic about the file's shape.
+ *
+ * NOT `silent-segment.mjs`'s `segmentLabel`, which says `segment "id"` and speaks about a
+ * segment as a thing in its own right. This one says `timing.segments[3] ("intro")` and
+ * speaks about a position in a file the reader is being asked to go and edit. Both are
+ * correct for their caller and the engine needs both, so they carry different names —
+ * sharing one spelling between two different outputs is how the wrong one gets imported.
+ *
+ * CONSUMERS(timelineSegmentLabel): write-chapters.mjs, write-subtitles.mjs
+ */
+export function timelineSegmentLabel(s, i) {
+  const id = s !== null && typeof s === 'object' && typeof s.id === 'string' ? ` ("${s.id}")` : '';
+  return `timing.segments[${i}]${id}`;
+}
+
+/**
+ * Names a value for a diagnostic. A string is described by its length, never quoted: this
+ * is about a file's shape, and its contents are not this message's to repeat.
+ *
+ * A SUPERSET OF `describeJsonValue`, NOT A COPY OF IT — it is listed here next to it so
+ * the difference is visible rather than rediscovered. This one distinguishes `undefined`
+ * ("missing"), prints a number's value, gives a string's length, and says "an object"
+ * where the other says "a object". The two serve different messages and both are right.
+ *
+ * CONSUMERS(describeValue): write-chapters.mjs, write-subtitles.mjs
+ */
+export function describeValue(v) {
+  if (v === undefined) return 'missing';
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'string') return `a string (${v.length} characters)`;
+  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+}
+
+/**
+ * Collapses a list of problems into one message, showing at most five.
+ *
+ * CONSUMERS(summarise): write-chapters.mjs, write-subtitles.mjs
+ */
+export function summarise(problems) {
+  if (problems.length === 1) return problems[0];
+  const shown = problems.slice(0, 5).map(p => `\n  - ${p}`).join('');
+  const more = problems.length > 5 ? `\n  … and ${problems.length - 5} more` : '';
+  return `timing.json has ${problems.length} problems:${shown}${more}`;
+}
+
+/**
+ * Reads a file the engine looks for on its own initiative, refusing a link at it wherever
+ * it points and anything that is not a regular file. The caller never named this path, so
+ * a link there is not an instruction to read something else.
+ *
+ * NOT `readOptionalEngineJson`, which parses, demands a JSON object and words its refusals
+ * its own way. This returns the text and lets the caller decide what it is.
+ *
+ * CONSUMERS(readEngineFile): remux-music.mjs, write-chapters.mjs, write-subtitles.mjs
+ *
+ * @returns {{file: string, text: string|null}} `text` is null only when nothing is there
+ */
+export function readEngineFile(root, name, label) {
+  const file = resolveInternalArtifact(root, name, label, 'read');
+  let st;
+  try {
+    st = fs.statSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(`${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`);
+  }
+  if (st === undefined) return { file, text: null };
+  if (!st.isFile()) throw new CliError(`${label} ${file} is not a regular file — refusing to read it`);
+  try {
+    return { file, text: fs.readFileSync(file, 'utf8') };
+  } catch (err) {
+    throw new CliError(`${label}: could not read ${file} (${err.code ?? err.message}) — refusing`);
+  }
+}
+
+/**
+ * Refuses an input that is absent or not a regular file, before anything is written.
+ * Existence alone let a directory at the embed source through: both sidecars were
+ * replaced and only ffmpeg then refused a directory as a video.
+ *
+ * CONSUMERS(requireRegularFile): write-chapters.mjs, write-subtitles.mjs
+ */
+export function requireRegularFile(abs, label, hint) {
+  let st;
+  try {
+    st = fs.statSync(abs, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(`${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`);
+  }
+  if (st === undefined) throw new CliError(`${label} not found: ${abs} — ${hint}`);
+  if (st.isDirectory()) throw new CliError(`${label} ${abs} is a directory, not a video file`);
+  if (!st.isFile()) throw new CliError(`${label} ${abs} is not a regular file`);
+}
+
+/**
+ * Reads the ffmpeg binary from the project's `ffmpeg-path.txt`, AS AN ENGINE ARTIFACT.
+ *
+ * The plan prints what this returns in its "would run" line, so the pointer is read like
+ * timing.json: a link at it is refused, wherever it points. Followed, a link to any file in
+ * the project put that file's contents into the plan.
+ *
+ * THERE IS A SECOND, DIFFERENT ffmpeg RESOLVER IN THIS ENGINE and the two must not be
+ * merged. `check-levels.mjs` and `remux-music.mjs` share `resolveFfmpegOrOverride`, which
+ * takes a `--ffmpeg` override, reads the pointer with plain `readFileSync` and so FOLLOWS a
+ * link, and words its refusal differently. Unifying them would silently change what a
+ * planted link does on four stages. They are named apart for that reason.
+ *
+ * CONSUMERS(resolveFfmpegPointer): write-chapters.mjs, write-subtitles.mjs
+ */
+export function resolveFfmpegPointer(root) {
+  const { text } = readEngineFile(root, 'ffmpeg-path.txt', 'ffmpeg pointer');
+  if (text === null) throw new CliError(`ffmpeg-path.txt not found in ${root} — create it containing the path to ffmpeg`);
+  const ff = text.trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${root} is empty`);
+  return ff;
+}
+
+/**
+ * Where the audio frames start in an MP3 buffer: past an ID3v2 tag, or at byte 0.
+ *
+ * The tag's size is a SYNCHSAFE 28-bit integer — seven bits per byte, the top bit of each
+ * always clear so the size can never itself look like a frame sync. Reading it as a plain
+ * big-endian 32-bit value is wrong for any tag over 128 bytes, which is all of them.
+ *
+ * `voice.mjs` and `remix.mjs` each carried this, differing only in a parameter name and a
+ * brace. Proven equivalent by EXECUTION rather than by reading — 23 buffers covering an
+ * empty buffer, buffers shorter than the header, ID3 headers with flags 0x00/0x10/0xff and
+ * synchsafe sizes from zero to all-bits-set, and a non-ID3 frame — because two
+ * transcriptions of a bit expression can read alike and shift differently.
+ *
+ * `concat-audio.mjs` KEEPS ITS OWN, and it is not a third copy: it also adds the footer
+ * when the flags bit is set, then walks forward to the first MPEG sync word. Over those
+ * same 23 buffers it returns a different offset for 19 of them. Folding it in here would
+ * change what concat-audio does to every clip it joins.
+ *
+ * CONSUMERS(mp3AudioStart): remix.mjs, voice.mjs
+ */
+export function mp3AudioStart(buffer) {
+  if (buffer.length >= 10 && buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
+    return 10 + (((buffer[6] & 0x7f) << 21) | ((buffer[7] & 0x7f) << 14) | ((buffer[8] & 0x7f) << 7) | (buffer[9] & 0x7f));
+  }
+  return 0;
+}
+
+/**
+ * Resolves the ffmpeg binary, preferring `--ffmpeg` over the project's `ffmpeg-path.txt`.
+ *
+ * THE OTHER FFMPEG RESOLVER, AND IT IS NOT A DUPLICATE OF `resolveFfmpegPointer`. Three
+ * things differ and each is deliberate:
+ *   - it takes an override, because its callers offer `--ffmpeg` and the sidecar stages
+ *     do not;
+ *   - it reads the pointer with plain `readFileSync`, so a link at `ffmpeg-path.txt` is
+ *     FOLLOWED here and REFUSED there;
+ *   - its refusal names `--ffmpeg` as a way out, which would be false advice on a stage
+ *     that has no such flag.
+ *
+ * Collapsing the two would silently change what a planted link does on four stages. They
+ * are named apart so that the next reader comparing them finds this note first.
+ *
+ * CONSUMERS(resolveFfmpegOrOverride): check-levels.mjs, remux-music.mjs
+ */
+export function resolveFfmpegOrOverride(projectDir, override) {
+  if (override) return override;
+  const pointer = path.join(projectDir, 'ffmpeg-path.txt');
+  if (!fs.existsSync(pointer)) {
+    throw new CliError(
+      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
+    );
+  }
+  const ff = fs.readFileSync(pointer, 'utf8').trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
+  return ff;
 }
 
 /**

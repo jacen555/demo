@@ -38,7 +38,8 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   EXIT, CliError, runCli, requireExistingFile, resolveOutput, parseBoundedNumber,
-  resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile,
+  resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile, readEngineFile,
+  resolveFfmpegOrOverride as resolveFfmpeg,
 } from './cli-support.mjs';
 import { videoStreamVerdict } from './remux-verify.mjs';
 import { classifyGainPin, confirmedLockRecord, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
@@ -785,19 +786,7 @@ await runCli(async () => {
   return EXIT.OK;
 });
 
-/** Resolves the ffmpeg binary, preferring --ffmpeg over the project's ffmpeg-path.txt. */
-function resolveFfmpeg(projectDir, override) {
-  if (override) return override;
-  const pointer = path.join(projectDir, 'ffmpeg-path.txt');
-  if (!fs.existsSync(pointer)) {
-    throw new CliError(
-      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
-    );
-  }
-  const ff = fs.readFileSync(pointer, 'utf8').trim();
-  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
-  return ff;
-}
+
 
 /**
  * Reads the envelope the duck is calibrated from, validating the one field it depends on.
@@ -844,21 +833,8 @@ function readDuckEnvelope(envelopePath) {
  */
 function readBedDuckRecord(projectDir, recordPath) {
   const label = 'ducking record';
-  const file = resolveInternalArtifact(projectDir, recordPath, label, 'read');
-  let st;
-  try {
-    st = fs.statSync(file, { throwIfNoEntry: false });
-  } catch (err) {
-    throw new CliError(`${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`);
-  }
-  if (st === undefined) return undefined;
-  if (!st.isFile()) throw new CliError(`${label} ${file} is not a regular file — refusing to read it`);
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    throw new CliError(`${label}: could not read ${file} (${err.code ?? err.message}) — refusing`);
-  }
+  const { file, text } = readEngineFile(projectDir, recordPath, label);
+  if (text === null) return undefined;
   try {
     return JSON.parse(text);
   } catch {

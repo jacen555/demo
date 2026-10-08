@@ -3197,6 +3197,16 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['cli-support.mjs', 'describeJsonValue'],
     ['cli-support.mjs', 'fingerprintBuffer'],
     ['cli-support.mjs', 'noGoPatternsProblem'],
+    ['cli-support.mjs', 'isMs'],
+    ['cli-support.mjs', 'timelineSegmentLabel'],
+    ['cli-support.mjs', 'describeValue'],
+    ['cli-support.mjs', 'summarise'],
+    ['cli-support.mjs', 'readEngineFile'],
+    ['cli-support.mjs', 'requireRegularFile'],
+    ['cli-support.mjs', 'resolveFfmpegPointer'],
+    ['cli-support.mjs', 'narrationFingerprint'],
+    ['cli-support.mjs', 'resolveFfmpegOrOverride'],
+    ['cli-support.mjs', 'mp3AudioStart'],
     ['silent-segment.mjs', 'narrationCueProblems'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {

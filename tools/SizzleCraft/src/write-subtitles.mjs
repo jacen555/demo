@@ -30,6 +30,13 @@ import {
   assertDistinctDestinations,
   describeWrite,
   planFooter,
+  isMs,
+  timelineSegmentLabel as segmentLabel,
+  describeValue,
+  summarise,
+  readEngineFile,
+  requireRegularFile,
+  resolveFfmpegPointer as resolveFfmpeg,
 } from './cli-support.mjs';
 import {
   isSilentSegment, silentSegmentProblems, silentCaption, durationShortfallRemedy, durationMeasureRemedy,
@@ -729,9 +736,7 @@ function wordProblems(seg, where, gates) {
   return problems;
 }
 
-function isMs(v) {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
-}
+
 
 /**
  * Measured spoken words that fall inside a declared silent window.
@@ -771,83 +776,14 @@ function spokenWordsInSilentWindows(segs, gates) {
   return problems;
 }
 
-function segmentLabel(s, i) {
-  const id = s !== null && typeof s === 'object' && typeof s.id === 'string' ? ` ("${s.id}")` : '';
-  return `timing.segments[${i}]${id}`;
-}
 
-/**
- * Names a value for a diagnostic. A string is described by its length, never quoted: this
- * is about a file's shape, and its contents are not this message's to repeat.
- */
-function describeValue(v) {
-  if (v === undefined) return 'missing';
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'an array';
-  if (typeof v === 'number') return String(v);
-  if (typeof v === 'string') return `a string (${v.length} characters)`;
-  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
-}
 
-function summarise(problems) {
-  if (problems.length === 1) return problems[0];
-  const shown = problems.slice(0, 5).map(p => `\n  - ${p}`).join('');
-  const more = problems.length > 5 ? `\n  … and ${problems.length - 5} more` : '';
-  return `timing.json has ${problems.length} problems:${shown}${more}`;
-}
 
-/**
- * Reads a file the engine looks for on its own initiative, refusing a link at it wherever
- * it points and anything that is not a regular file. The caller never named this path, so
- * a link there is not an instruction to read something else.
- *
- * @returns {{file: string, text: string|null}} `text` is null only when nothing is there
- */
-function readEngineFile(root, name, label) {
-  const file = resolveInternalArtifact(root, name, label, 'read');
-  let st;
-  try {
-    st = fs.statSync(file, { throwIfNoEntry: false });
-  } catch (err) {
-    throw new CliError(`${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`);
-  }
-  if (st === undefined) return { file, text: null };
-  if (!st.isFile()) throw new CliError(`${label} ${file} is not a regular file — refusing to read it`);
-  try {
-    return { file, text: fs.readFileSync(file, 'utf8') };
-  } catch (err) {
-    throw new CliError(`${label}: could not read ${file} (${err.code ?? err.message}) — refusing`);
-  }
-}
 
-/**
- * Refuses an input that is absent or not a regular file, before anything is written.
- * Existence alone let a directory at the embed source through: both sidecars were
- * replaced and only ffmpeg then refused a directory as a video.
- */
-function requireRegularFile(abs, label, hint) {
-  let st;
-  try {
-    st = fs.statSync(abs, { throwIfNoEntry: false });
-  } catch (err) {
-    throw new CliError(`${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`);
-  }
-  if (st === undefined) throw new CliError(`${label} not found: ${abs} — ${hint}`);
-  if (st.isDirectory()) throw new CliError(`${label} ${abs} is a directory, not a video file`);
-  if (!st.isFile()) throw new CliError(`${label} ${abs} is not a regular file`);
-}
 
-/**
- * Reads the ffmpeg binary from the project's ffmpeg-path.txt.
- *
- * The plan prints what this returns in its "would run" line, so the pointer is read like
- * timing.json: a link at it is refused, wherever it points. Followed, a link to any file in
- * the project put that file's contents into the plan.
- */
-function resolveFfmpeg(root) {
-  const { text } = readEngineFile(root, 'ffmpeg-path.txt', 'ffmpeg pointer');
-  if (text === null) throw new CliError(`ffmpeg-path.txt not found in ${root} — create it containing the path to ffmpeg`);
-  const ff = text.trim();
-  if (!ff) throw new CliError(`ffmpeg-path.txt in ${root} is empty`);
-  return ff;
-}
+
+
+
+
+
+

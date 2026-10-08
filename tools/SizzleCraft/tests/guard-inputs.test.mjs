@@ -1687,3 +1687,1406 @@ describe('project.noGoPatterns has one shape, and both stages enforce it', () =>
     }
   }
 });
+
+// ===========================================================================
+// A NO-GO PATTERN IS ITSELF THE SECRET.
+//
+// The field is a list of the strings an author does not want reaching a frame, so the
+// list is by construction a list of sensitive strings. `validate-scene` already ruled on
+// this in writing (src/validate-scene.mjs:748-754): "NEITHER THE MATCH NOR THE PATTERN IS
+// EVER PRINTED ... The pattern is no safer than the match." `write-build-html` stated the
+// same principle at :479 — "the log should not carry it" — applied it to the matched
+// value, and then printed the pattern anyway, on both of its refusal paths.
+//
+// MEASURED on the real sample project (tools/EvalLoopDemo/timing.json), whose patterns
+// include `microsoft-ppe\.com` and `cortex-supportgraph`: those strings were written to
+// stdout and from there into any CI log, at the exact moment the guard succeeded.
+//
+// The sentinel below is chosen so the PATTERN SOURCE is textually distinguishable from
+// the TEXT IT MATCHES: the source contains `\-`, the matched value contains a plain `-`.
+// A test that asserted absence of the bare word could not tell the two leaks apart, and
+// the matched value was already withheld before this change.
+// ===========================================================================
+
+describe('a no-go pattern is never echoed, on either refusal path', () => {
+  const PATTERN_SOURCE = 'cortex\\-supportgraph';   // what the author wrote: has a backslash
+  const MATCHED_VALUE = 'cortex-supportgraph';      // what it matches: no backslash
+
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_whenAPatternMatches_refusesWithoutEchoingThePatternSource', (t) => {
+    const dir = codeProject(t, [PATTERN_SOURCE], { host: MATCHED_VALUE });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    // THE LEAK ASSERTION.
+    assert.doesNotMatch(r.all, /cortex\\-supportgraph/,
+      `the pattern SOURCE was echoed into output\n${r.all}`);
+    // POSITIVE CONTROLS — an absence assertion alone is satisfied by a stage that printed
+    // nothing at all, or crashed, or never reached the scan.
+    assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/,
+      `the refusal must still say WHICH pattern, by index\n${r.all}`);
+    assert.match(r.all, /\bhost\b/, `the refusal must still say WHERE it matched\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAPatternMatches_stillWithholdsTheMatchedValue', (t) => {
+    const dir = codeProject(t, [PATTERN_SOURCE], { host: MATCHED_VALUE });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    // This held before the change and must keep holding: fixing one leak must not open
+    // the other by, say, reporting the hit instead of the pattern.
+    assert.doesNotMatch(r.all, /cortex-supportgraph/,
+      `the MATCHED VALUE was echoed into output\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAPatternWillNotCompile_refusesWithoutEchoingThePatternSource', (t) => {
+    const dir = codeProject(t, ['SECRETHOST(unclosed'], { k: 'v' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /SECRETHOST/,
+      `the uncompilable pattern's SOURCE was echoed into output\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, `an uncompilable pattern must refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/,
+      `the refusal must still say WHICH pattern, by index\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenALaterPatternWillNotCompile_namesThatPatternsIndexNotTheFirst', (t) => {
+    const dir = codeProject(t, ['fine', 'alsofine', 'SECRETHOST(unclosed'], { k: 'v' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    // The index is the only handle the author gets now, so it has to be the RIGHT index.
+    assert.match(r.all, /noGoPatterns\[2\]/,
+      `the refusal must name the offending index, not a placeholder\n${r.all}`);
+    assert.doesNotMatch(r.all, /SECRETHOST/, `and still not echo it\n${r.all}`);
+  });
+});
+
+// A MATCHING KEY **IS** THE MATCHED VALUE.
+//
+// The walk reports a hit by its JSON path, and the engine has deliberately ruled that
+// path printable — the author needs it and it is normally structure, not content
+// (tests/safe-defaults.test.mjs:222). But when the pattern matches an object KEY, that
+// key IS the text that matched, so putting it in the path printed the matched value in
+// the very message that promises to withhold it:
+//
+//   timing.project.noGoPatterns[0] matched at SUPERSECRET4471
+//   The matched text and the pattern are both withheld deliberately
+//
+// MEASURED end to end on a copy of the real sample project, before the fix. The key's
+// ORDINAL is the handle, exactly as the pattern's index is: it says which key without
+// saying what it is.
+describe('a no-go pattern that matches a KEY does not print that key', () => {
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_whenAPatternMatchesAKey_doesNotEchoThatKey', (t) => {
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'], { SUPERSECRET4471: 'harmless' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/,
+      `the matching KEY is the matched value and must not be echoed\n${r.all}`);
+    // POSITIVE CONTROLS — absence alone is satisfied by a stage that never reached the scan.
+    assert.notEqual(r.code, EXIT.OK, `a key match must still refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `it must still say WHICH pattern\n${r.all}`);
+    assert.match(r.all, /key/i, `and that the hit was on a key, not a value\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAPatternMatchesALaterKey_givesThatKeysOrdinal', (t) => {
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'],
+      { alpha: 'a', beta: 'b', SUPERSECRET4471: 'harmless' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    // The ordinal is the only handle the author gets, so it must be the RIGHT one.
+    assert.match(r.all, /#2\b/, `the refusal must give the matching key's ordinal\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/, `and still not echo it\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAPatternMatchesAValue_stillNamesTheKeyPath', (t) => {
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'], { host: 'SUPERSECRET4471' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    // The path stays for a VALUE match — that is the ruled, tested behaviour and it is
+    // what makes the refusal actionable. Withholding it too would fix nothing and cost
+    // the author the only locator they have.
+    assert.match(r.all, /\bhost\b/, `a value match must still report its path\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/, `without the matched value\n${r.all}`);
+  });
+});
+
+// A KEY IS DISCLOSED BY EVERY HIT BENEATH IT, NOT JUST ITS OWN.
+//
+// The first fix for the matching-key leak substituted an ordinal for that key's OWN hit,
+// and the recursion went on carrying the real key name into the paths of its descendants.
+// MEASURED, with the incomplete fix in place, on one object — the same run both withheld
+// the key and leaked it, two lines apart:
+//
+//   timing.project.noGoPatterns[0] matched at key #0 under (root)
+//   timing.project.noGoPatterns[0] matched at SUPERSECRET4471.host
+//
+// So the decision to print a key cannot depend on which pattern is being walked when it is
+// reached. It is now taken once, against every pattern, before the walk.
+describe('a no-go pattern is not disclosed through an ancestor path', () => {
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_whenAHitSitsBeneathAMatchingKey_doesNotEchoThatAncestorKey', (t) => {
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'],
+      { SUPERSECRET4471: { host: 'SUPERSECRET9999' } });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/,
+      `the matching ANCESTOR key leaked through a descendant's path\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET9999/, `nor may the matched value appear\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, `it must still refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `and still say which pattern\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAnAncestorKeyCarriesAPatternsSourceText_doesNotEchoIt', (t) => {
+    // The key does NOT match the pattern — it IS the pattern's source, backslash and all.
+    // Printing it would hand over the regex itself, which is the thing being protected.
+    const dir = codeProject(t, ['cortex\\-supportgraph'],
+      { 'cortex\\-supportgraph': { host: 'cortex-supportgraph' } });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /cortex\\-supportgraph/,
+      `the pattern SOURCE leaked through an ancestor key name\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, `it must still refuse, got ${r.code}\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAnOrdinaryKeyIsAnAncestor_keepsItSoThePathStaysUsable', (t) => {
+    // THE COUNTER-CASE. Withholding every key would make the refusal unactionable, which
+    // is its own defect — only keys that would disclose something are replaced.
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'],
+      { config: { endpoint: 'SUPERSECRET4471' } });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.match(r.all, /config\.endpoint/,
+      `an ordinary path must survive intact, or the author cannot find the hit\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/, `without the matched value\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenKeysAreIntegerLike_theOrdinalIsEnumerationOrderAndSaysSo', (t) => {
+    // V8 enumerates integer-like keys FIRST, so `key #N` is not the Nth key in the file.
+    // Measured: Object.keys({"b":1,"2":2,"a":3}) === ["2","b","a"]. The refusal states
+    // this rather than letting the number read as a position in the source text.
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'],
+      { b: 1, 2: 'SUPERSECRET4471', a: 3 });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.match(r.all, /enumeration order/,
+      `the refusal must say what the ordinal counts\n${r.all}`);
+    assert.match(r.all, /integer-like keys first/,
+      `and warn that it is not the order in the file\n${r.all}`);
+  });
+});
+
+// AN ARRAY INDEX IS A PATH COMPONENT TOO.
+//
+// Keys were screened; `[i]` was not. MEASURED with pattern source `10` and an array whose
+// element 10 is the string "10": the refusal printed `matched at items[10]`, which carries
+// both the pattern source and the matched value.
+//
+// Unlike a key there is no non-disclosing substitute that is still a locator — the index
+// IS the digits that collide — so the component is withheld. The author keeps the pattern's
+// index and the rest of the path, which is enough to find it in their own file.
+describe('a no-go pattern is not disclosed through an array index', () => {
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_whenAnArrayIndexWouldDiscloseThePattern_withholdsThatComponent', (t) => {
+    const items = [...Array(10).fill('x'), '10'];
+    const dir = codeProject(t, ['10'], { items });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /items\[10\]/,
+      `the array index disclosed the pattern source and the matched value\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, `it must still refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /\bitems\b/,
+      `the containing array must still be named, or the refusal is unactionable\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `and still say which pattern\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenAnArrayIndexIsHarmless_keepsItSoThePathStaysUsable', (t) => {
+    // THE COUNTER-CASE. Withholding every index would cost the author their locator.
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'], { items: ['a', 'b', 'SUPERSECRET4471'] });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.match(r.all, /items\[2\]/,
+      `an ordinary index must survive intact\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/, `without the matched value\n${r.all}`);
+  });
+});
+
+// A PATH CAN DISCLOSE WHAT NONE OF ITS COMPONENTS DOES.
+//
+// Screening each component is not the same as screening what gets printed. With pattern
+// `foo.bar` and nested keys `foo` and `bar`, neither key matches on its own and neither
+// carries the source text — but the path they ASSEMBLE INTO does. MEASURED before the fix:
+//
+//   timing.project.noGoPatterns[0] matched at foo.bar
+//
+// So the finished string is screened too, immediately before it is emitted.
+describe('a no-go pattern is not disclosed by an assembled path', () => {
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_whenThePathItselfMatchesAPattern_withholdsThePath', (t) => {
+    const dir = codeProject(t, ['foo.bar'], { foo: { bar: 'foo.bar' } });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /foo\.bar/,
+      `the assembled path matched the pattern and was printed anyway\n${r.all}`);
+    assert.notEqual(r.code, EXIT.OK, `it must still refuse, got ${r.code}\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `and still say which pattern\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenThePathIsHarmless_printsItInFull', (t) => {
+    // THE COUNTER-CASE — screening the whole path must not swallow ordinary ones.
+    const dir = codeProject(t, ['SUPERSECRET[0-9]+'], { foo: { bar: 'SUPERSECRET4471' } });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.match(r.all, /foo\.bar/, `an ordinary path must survive intact\n${r.all}`);
+    assert.doesNotMatch(r.all, /SUPERSECRET4471/, `without the matched value\n${r.all}`);
+  });
+});
+
+// ===========================================================================
+// AN IDENTIFIER IS AUTHOR CONTENT THAT SHIPS.
+//
+// The frame-level guard scans `visual.json`. It never sees the structure around it — and
+// segment, node, edge, field and hotspot ids are interpolated into the rendered HTML as DOM
+// element ids. MEASURED: `seg.id` alone has 54 interpolations in this stage, and `jsonHtml`,
+// the animation targets and the SVG marker refs carry the rest. So an id containing a no-go
+// string reaches `video-auto.html` on a SUCCESSFUL build — the one path the guard cannot
+// refuse, because every VALUE passed.
+//
+// `TOKEN_RE` already gated these ids, but only for DOM safety: `cortex-supportgraph` is a
+// perfectly valid token. Screening them is the same rule applied to the same list.
+//
+// The refusal names the identifier BY POSITION and never quotes it. Quoting it would do the
+// damage the screen exists to prevent, in the message announcing it — which is exactly the
+// defect this task started from.
+// ===========================================================================
+
+describe('an author-controlled identifier is screened before it can ship', () => {
+  const projectWith = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { k: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  // Every id-shaped field the stage interpolates, not just the one that was reported.
+  for (const [what, mutate, where] of [
+    ['aSegmentId', (s) => { s.id = 'cortex-supportgraph'; }, /segments\[0\]\.id/],
+    ['ANodeId', (s) => { s.visual.nodes = [{ id: 'cortex-supportgraph', label: 'n', x: 10, y: 10, w: 100, h: 40 }]; },
+      /segments\[0\]\.visual\.nodes\[0\]\.id/],
+    ['AnEdgeEndpoint', (s) => {
+      s.visual.nodes = [{ id: 'a', label: 'n', x: 10, y: 10, w: 100, h: 40 }];
+      s.visual.edges = [{ id: 'e1', from: 'cortex-supportgraph', to: 'a' }];
+    }, /segments\[0\]\.visual\.edges\[0\]\.from/],
+    ['AFieldId', (s) => { s.visual.fields = [{ id: 'cortex-supportgraph', x: 10, y: 10 }]; },
+      /segments\[0\]\.visual\.fields\[0\]\.id/],
+    ['AHotspotId', (s) => { s.visual.hotspots = [{ id: 'cortex-supportgraph', x: 10, y: 10 }]; },
+      /segments\[0\]\.visual\.hotspots\[0\]\.id/],
+  ]) {
+    test(`writeBuildHtml_when${what}MatchesANoGoPattern_refusesByPositionWithoutQuotingIt`, (t) => {
+      const dir = projectWith(t, ['cortex-supportgraph'], mutate);
+
+      const r = runScript('write-build-html.mjs', [], dir);
+
+      // A CRASH ALSO SATISFIES `notEqual(code, OK)`. The first version of this screen threw
+      // a CliError at module top level, outside guard(), and exited 1 with a stack — and
+      // this assertion passed. assertCleanExit pins the code AND the absence of a stack.
+      assertCleanExit(r, EXIT.USAGE, `${where}: `);
+      assert.doesNotMatch(r.all, /cortex-supportgraph/,
+        `the identifier was quoted in the refusal that screens it\n${r.all}`);
+      assert.match(r.all, where, `and it must say WHICH identifier, by position\n${r.all}`);
+      assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false,
+        'and nothing may be written');
+    });
+  }
+
+  test('writeBuildHtml_whenIdentifiersAreOrdinary_stillBuilds', (t) => {
+    // THE COUNTER-CASE. "Refuse every id" satisfies all of the above just as well.
+    const dir = projectWith(t, ['cortex-supportgraph'], (s) => {
+      s.visual.nodes = [{ id: 'svc', label: 'n', x: 10, y: 10, w: 100, h: 40 }];
+    });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.equal(r.code, EXIT.OK, `an ordinary project must still build\n${r.all}`);
+  });
+
+  test('writeBuildHtml_whenNoGoPatternsIsAbsent_theIdentifierScreenIsInert', (t) => {
+    // REACH IS NOT WIDENED. Absence is codeBlock's to judge on the code-mode path; this
+    // screen must not turn it into a whole-stage refusal, and must not issue a shape
+    // verdict of its own.
+    const seg = {
+      id: 'cortex-supportgraph', startMs: 0, endMs: 6000, voiceoverText: 'a plain slide',
+      visual: { mode: 'statement', title: 'Plain' },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    delete timing.project.noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.equal(r.code, EXIT.OK, `no patterns configured means nothing to screen against\n${r.all}`);
+  });
+});
+
+// THE WALK'S STATED LIMITATION, PINNED.
+//
+// The no-go walk tests strings and numbers only. A pattern matching the literal `true`,
+// `false` or `null` does not refuse. That is deliberate, not pending: those three tokens are
+// the ENTIRE set a boolean or null can render as, so none can carry author content. It is
+// pinned here so the next reader meets a measured limitation rather than an absence, and so
+// that changing it is a deliberate act with a failing test attached.
+describe('the no-go walk does not detect booleans or null, and that is stated', () => {
+  const codeProject = (t, noGoPatterns, json) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_aPatternMatchingAStringValue_refuses_theControl', (t) => {
+    // THE POSITIVE CONTROL. Without it, the test below passes on any stage that never
+    // reached the scan at all — which is how the first measurement of this got it wrong.
+    const dir = codeProject(t, ['plain'], { note: 'plain' });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.match(r.all, /no-go match/, `the scan must be reached and working\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aPatternMatchingABooleanOrNull_isNowRefusedToo', (t) => {
+    // THIS PINNED A LIMITATION AND NO LONGER DOES. The walk tests strings and numbers only,
+    // so a pattern matching the literal `true`/`false`/`null` did not refuse — MEASURED,
+    // with the control above as proof the scan was reached. Emission-point screening closed
+    // it without touching the walk: `jsonHtml` renders every scalar through `esc(value, …)`.
+    //
+    // Repointed rather than deleted. A stale limitation left asserted after it is closed is
+    // the prose-drift defect in test form, and it would read as proof the gap still exists.
+    const dir = codeProject(t, ['true'], { enabled: true });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK,
+      `a boolean reaching the frame is text on the screen like any other\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aPatternMatchingNullAlone_isRefused', (t) => {
+    // SPLIT FROM THE TEST ABOVE BECAUSE IT COULD NOT DISCRIMINATE. The original used
+    // `['true','null']` against `{enabled:true, missing:null}` — `true` alone triggers the
+    // refusal, so the assertion passed whether or not `null` was screened. It was not:
+    // `jsonHtml` returned the literal `<span class="j-null">null</span>` without calling
+    // `esc()`, so a project whose only pattern was `null` published that token.
+    const dir = codeProject(t, ['null'], { missing: null });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.notEqual(r.code, EXIT.OK,
+      `the rendered null literal must be screened like any other emitted token\n${r.all}`);
+  });
+});
+
+// FOUR MORE ROUTES, EACH MEASURED BEFORE IT WAS CLOSED.
+//
+// Every one of these was reachable with the identifier screen already in place, which is the
+// argument for screening by RULE rather than by the example that prompted it.
+describe('the remaining author-controlled routes to a diagnostic or the artefact', () => {
+  const projectWith = (t, noGoPatterns, mutate, mode = 'code') => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode, title: 'One scenario', json: { k: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    return makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+  };
+
+  test('writeBuildHtml_anIdentifierThatIsBothAnInvalidTokenAndANoGoMatch_isNotQuotedByTheTokenError', (t) => {
+    // ORDER MATTERS AS MUCH AS WORDING. assertTok used to quote the offending value, and it
+    // ran FIRST — so a value failing both checks was disclosed by the shape error before the
+    // screen ever saw it.
+    const dir = projectWith(t, ['cortex-supportgraph'], (s) => { s.id = 'cortex-supportgraph has spaces'; });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /cortex-supportgraph/,
+      `the token error quoted a value the screen exists to withhold\n${r.all}`);
+    assertCleanExit(r, EXIT.USAGE, 'both-invalid: ');
+    assert.match(r.all, /segments\[0\]\.id/, `and it must still say which field\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aFieldIdThatIsNotADomToken_isRefusedRatherThanInterpolatedIntoAnIdAttribute', (t) => {
+    // fields/hotspots are interpolated into `id="…"` UNESCAPED at :422/:424 and assertTok
+    // never covered them, so a quote could close the attribute.
+    const dir = projectWith(t, [], (s) => { s.visual.fields = [{ id: 'a" onload="x', x: 10, y: 10 }]; });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'field-token: ');
+    assert.match(r.all, /segments\[0\]\.visual\.fields\[0\]\.id/, `named by position\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('writeBuildHtml_aFootageClipIdMatchingANoGoPattern_isRefusedBeforeItShipsAsDataClip', (t) => {
+    const dir = projectWith(t, ['cortex-supportgraph'],
+      (s) => { s.visual.footage = { clipId: 'cortex-supportgraph' }; });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `clipId was quoted\n${r.all}`);
+    assertCleanExit(r, EXIT.USAGE, 'clipId: ');
+    assert.match(r.all, /segments\[0\]\.visual\.footage\.clipId/, `named by position\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aTriggerTargetMatchingANoGoPattern_isRefusedBeforeItIsQuotedOrShipped', (t) => {
+    const dir = projectWith(t, ['cortex-supportgraph'],
+      (s) => { s.triggers = [{ atMs: 100, target: 'cortex-supportgraph', action: 'rise' }]; });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `the trigger target was quoted\n${r.all}`);
+    assertCleanExit(r, EXIT.USAGE, 'trigger: ');
+    assert.match(r.all, /segments\[0\]\.triggers\[0\]\.target/, `named by position\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anAssembledJsonPathMatchingAPattern_doesNotShipInTheRenderedHtml', (t) => {
+    // MEASURED before this check: pattern `foo.bar`, data {foo:{bar:"safe"}} — no key and no
+    // value matches, the build exited 0, and `data-path="foo.bar"` was written into
+    // video-auto.html by jsonHtml at :441.
+    const dir = projectWith(t, ['foo.bar'], (s) => { s.visual.json = { foo: { bar: 'safe' } }; });
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assert.notEqual(r.code, EXIT.OK, `the assembled path must refuse, got ${r.code}\n${r.all}`);
+    const out = path.join(dir, 'video-auto.html');
+    assert.equal(fs.existsSync(out), false, 'and nothing may be written');
+  });
+
+  test('writeBuildHtml_anOrdinaryAssembledPath_stillShipsNormally', (t) => {
+    // THE COUNTER-CASE — screening assembled paths must not refuse ordinary nesting.
+    const dir = projectWith(t, ['cortex-supportgraph'], (s) => { s.visual.json = { foo: { bar: 'safe' } }; });
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assert.equal(r.code, EXIT.OK, `an ordinary project must still build\n${r.all}`);
+    const html = fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+    assert.match(html, /data-path="foo\.bar"/, 'and the path still ships, because it discloses nothing');
+  });
+});
+
+// ===========================================================================
+// THE CEILING IS CLOSED. THESE WERE ITS PINS; THEY ARE NOW ITS REGRESSION SUITE.
+//
+// These tests previously asserted that a DERIVED string ships at EXIT.OK, because screening
+// contributing inputs could not see one. Emission-point screening closed that, so they are
+// repointed rather than deleted: the same inputs, the opposite expectation. They are the
+// tests that fail if the closure is ever reverted.
+//
+// THE GUARD IS BEST-EFFORT BY DECISION. Closing this ceiling did not make screening
+// complete, and it is not intended to become complete — 23 routes were closed across seven
+// review rounds and the counts did not converge (4, 4, 3, 3, 2, 3, 4). Asked whether what
+// remained was a finite tail, the reviewer answered "the remaining routes are not a finite
+// tail closed by those chokepoints", and the owner ruled to stop there. See the POLICY block
+// in src/write-build-html.mjs for the open classes. **Adding a new emission path without
+// routing it through a screen reopens disclosure silently.**
+//
+// The controls are NOT duplicates of the refusal tests. Two tests asserting refusal would
+// both be satisfied by a stage that refuses unconditionally, so they cannot tell "the
+// ceiling is gone because screening works" from "everything refuses because screening
+// broke". The controls prove a build whose pattern matches only engine scaffolding still
+// succeeds. When the closure landed, the refusal tests flipped to red and the controls
+// stayed green — exactly the signal they exist to give.
+// ===========================================================================
+
+describe('the closed ceiling: derived strings are screened where they are formed', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { k: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('aDerivedIdentifier_isNowScreenedWhereItIsFormed', (t) => {
+    // THE WORKED EXAMPLE, REPOINTED. `scenario-label` never appears in timing.json: the id
+    // is `scenario` and the engine concatenates the suffix at render time. No input screen
+    // could ever see it; `elId()` screens the string at the moment it is formed, which is
+    // the only place it exists. This test asserted EXIT.OK until that landed.
+    const { dir, run } = build(t, ['scenario-label'], () => {});
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK,
+      `a derived identifier must be screened where it is formed\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false,
+      'and the artefact that would have carried it is not written');
+  });
+
+  test('anAssembledArrayPath_isNowScreenedBeforeItShips', (t) => {
+    // The object-path form was already screened; the array branch was not. Both are now.
+    const { dir, run } = build(t, ['foo\\[0\\]'], (s) => { s.visual.json = { foo: ['safe'] }; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `data-path="foo[0]" must not ship\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('screeningStillDiscriminates_aPatternMatchingOnlyScaffoldingStillBuilds', (t) => {
+    // THE CONTROL, and it is doing more work now than it was.
+    //
+    // The two tests above assert REFUSAL, and a stage that refused unconditionally would
+    // satisfy both — so on their own they cannot tell "the ceiling closed" from "screening
+    // broke and now everything refuses". This distinguishes them: the real project's
+    // `https?://` matches the generated document 62 times, every one of them engine
+    // scaffolding, and it must still build.
+    const { dir, run } = build(t, ['https?://'], () => {});
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK,
+      `scaffolding must never trip the guard, or the closure above is worthless\n${r.all}`);
+    const html = fs.readFileSync(path.join(dir, 'video-auto.html'), 'utf8');
+    assert.match(html, /xmlns=['"]http/, 'and the scaffolding it matched is still in the artefact');
+  });
+
+  test('screeningStillDiscriminates_anOrdinaryObjectPathStillRefuses', (t) => {
+    // The second half of the control: a route that was ALREADY screened before this change
+    // must still be screened after it.
+    const { run } = build(t, ['foo.bar'], (s) => { s.visual.json = { foo: { bar: 'safe' } }; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK,
+      `the assembled OBJECT path was screened before and must still be\n${r.all}`);
+  });
+});
+
+// ===========================================================================
+// SCREENING AT THE POINT OF EMISSION.
+//
+// The ceiling was: screening CONTRIBUTING INPUTS cannot catch a DERIVED string, because the
+// matching text exists nowhere in timing.json. The fix is NOT to scan the finished document
+// — MEASURED, that is worse than doing nothing: the real project's own `https?://` pattern
+// matches the generated HTML 62 times, and 62 of 62 are engine scaffolding (61 SVG `xmlns`
+// + 1 w3.org ref) with ZERO author hits. A whole-document scan refuses the only real
+// project we have, for nothing.
+//
+// Instead both author surfaces are screened where they are EMITTED, which is also the last
+// place provenance still exists:
+//   - `esc(value, where)` — every author string reaching the HTML. MEASURED: the 62
+//     scaffolding matches never pass through it, so they cannot produce a false positive.
+//   - `elId(value, where)` — the CONCATENATED identifier, screened as it is formed.
+//
+// BOTH DIRECTIONS ARE PROVEN BELOW. A suite that only proved refusals would be satisfied by
+// a stage that refuses everything — the exact failure mode measured above.
+// ===========================================================================
+
+describe('author content is screened where it is emitted, and scaffolding is not', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { k: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  // ---- DIRECTION 1: protected text must be refused, wherever it is emitted ----
+
+  test('writeBuildHtml_aProtectedStringInAVisibleTitle_isRefusedByPositionWithoutQuotingIt', (t) => {
+    const { dir, run } = build(t, ['cortex-supportgraph'],
+      (s) => { s.visual.title = 'cortex-supportgraph rollout'; });
+
+    const r = run();
+
+    assertCleanExit(r, EXIT.USAGE, 'title: ');
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `the title was quoted back\n${r.all}`);
+    assert.match(r.all, /segments\[0\]/, `named by position\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('writeBuildHtml_aProtectedStringInAnAssembledArrayPath_isRefused', (t) => {
+    const { run } = build(t, ['foo\\[0\\]'], (s) => { s.visual.json = { foo: ['safe'] }; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `data-path="foo[0]" must not ship\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aProtectedStringInAShotSource_isRefused', (t) => {
+    // The file must EXIST, or `checkedSrc` drops the shot and nothing is emitted — in which
+    // case not refusing is correct, and this test would be red for a reason that has
+    // nothing to do with screening. It was, on the first attempt.
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'statement', title: 'One scenario', shots: [{ src: 'evidence-pack/cortex-supportgraph.png', label: 'a shot' }] },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = ['cortex-supportgraph'];
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'evidence-pack/cortex-supportgraph.png': 'PNG',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assert.notEqual(r.code, EXIT.OK, `an evidence src must not ship unscreened\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `nor be quoted\n${r.all}`);
+  });
+
+  // ---- DIRECTION 2: the engine's own scaffolding must NOT be refused ----
+
+  test('writeBuildHtml_theRealProjectsOwnNinePatterns_stillBuild', (t) => {
+    // The full realistic list, not a representative one. Eight match nothing; the ninth
+    // (`https?://`) matches 62 scaffolding sites and must still build.
+    const { run } = build(t, [
+      'cortex-supportgraph', '[-.]ppe\\b', '\\bppe[-.]', '\\btest[12]\\b', 'microsoft-ppe\\.com',
+      'frontieragentcatalog', 'https?://', '\\b[a-z0-9-]+\\.(com|net|io|azure|microsoft)\\b', '\\b!?16\\d{5}\\b',
+    ], () => {});
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `the real project's own pattern list must still build\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anEngineFallbackIsScreenedToo_becauseItShipsInTheArtefact', (t) => {
+    // A DELIBERATE DECISION. `v.title || seg.title || 'Demo'` renders the engine's own word
+    // when the author supplies none. The line is not visibility — `data-path` is screened
+    // and is never visible — it is PROVENANCE PLUS SHIPPING: author text, or engine text
+    // standing in for it, all of which is written into the artefact. `xmlns` is neither.
+    const { run } = build(t, ['SizzleCraft'], (s) => { s.visual.mode = 'statement'; delete s.visual.title; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `fallback text still ships in the artefact\n${r.all}`);
+  });
+});
+
+// ===========================================================================
+// THE COMPLETENESS GUARD — AND IT IS A GUARD, NOT A PROOF.
+//
+// Emission-point screening is only as complete as its call sites. A site that interpolates
+// author text into the HTML without going through `esc()` or `elId()` is a silent hole, and
+// a silent hole is the same defect class as the ceiling this replaced.
+//
+// IT DOES NOT DETECT:
+//   1. Anything on its own allowlist. The check must skip genuinely safe interpolations —
+//      numeric geometry, engine-computed fragments, loop counters. That allowlist is
+//      HAND-MAINTAINED, so a name added to it silently widens what the guard ignores. THIS
+//      HAS ALREADY HAPPENED ONCE: `codePathId` was listed as a screening helper when it only
+//      BUILDS an id, so the guard waved through `id="${codePathId(segId, p)}"`. A reviewer
+//      found it, not the guard. An allowlist rots exactly like the prose it replaced.
+//   2. Author text reaching the artefact other than through a template interpolation in this
+//      file — a value written via `jsonScript`, or assembled in a helper and returned whole.
+//   3. Whether the `where` label at a site is ACCURATE. It checks that provenance is
+//      supplied, not that it is correct.
+//
+// So: it makes a regression loud, and it does not make the screening complete.
+// ===========================================================================
+
+describe('every author interpolation into the HTML goes through a screening helper', () => {
+  const SAFE = new Set([
+    'x', 'y', 'nw', 'nh', 'w', 'h', 'ax', 'ay', 'bx', 'by', 'i', 'j', 'k', 'idx', 'n', 'depth',
+    'inner', 'cards', 'shots', 'fields', 'hotspots', 'slideHtml', 'endCardSlide', 'runtime',
+    'css', 'gsapInline', 'block', 'marker', 'arrowDims', 'st', 'cstyle', 'items', 'seq', 'out',
+    'paths', 'hs', 'at', 'base', 'eid', 'prefix', 'm', 'mode', 'pad(depth)', 'statCls', 'fit',
+  ]);
+  // ONLY ACTUAL SCREENING HELPERS BELONG HERE. `codePathId` was listed once — it BUILDS an
+  // id and screens nothing — and the guard waved its bypass through. `String(` and `Number(`
+  // were listed for the same bad reason: they convert, they do not screen, so
+  // `id="${String(seg.id)}"` would have passed. Both rounds of that mistake were caught by a
+  // reviewer rather than by this guard, which is note 1 of its DOES NOT DETECT list earning
+  // its place twice over. Removing them was free — measured: no site relies on either.
+  const SCREENED = /^(esc|elId)\(/;
+
+  test('everyGeneratedElementId_goesThroughTheScreeningHelpers', () => {
+    const stage = new URL('../src/write-build-html.mjs', import.meta.url);
+    const src = fs.readFileSync(stage, 'utf8').split(/\r?\n/);
+    const bypasses = [];
+    src.forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return;
+      if (!/id="\$\{/.test(line)) return;
+      for (const m of line.matchAll(/id="\$\{([^}]+)\}/g)) {
+        const expr = m[1].trim();
+        if (SCREENED.test(expr) || SAFE.has(expr)) continue;
+        bypasses.push(`:${i + 1}  ${expr.slice(0, 60)}`);
+      }
+    });
+
+    assert.deepEqual(bypasses, [],
+      'these element ids are emitted without passing through elId()/esc():\n  ' + bypasses.join('\n  '));
+  });
+
+  test('theCompletenessGuardItself_failsWhenABypassIsIntroduced', () => {
+    // THE POSITIVE CONTROL. A guard that cannot fail is decoration — and this one scans
+    // text, so it is exactly the kind that silently matches nothing.
+    //
+    // The `String(...)` case is here because it was a REAL hole: `String` sat in the
+    // allowlist as though it screened something, when it only converts.
+    const planted = [
+      'const a = `<div id="${seg.id}-planted">`;',
+      'const b = `<div id="${String(seg.id)}">`;',
+    ];
+    const bypasses = [];
+    planted.forEach((line) => {
+      for (const m of line.matchAll(/id="\$\{([^}]+)\}/g)) {
+        const expr = m[1].trim();
+        if (SCREENED.test(expr) || SAFE.has(expr)) continue;
+        bypasses.push(expr);
+      }
+    });
+
+    assert.equal(bypasses.length, 2, 'the guard must report both planted bypasses');
+    assert.match(bypasses[0], /seg\.id/);
+    assert.match(bypasses[1], /^String\(/, 'a converter is not a screening helper');
+  });
+});
+
+// THREE ROUTES A REVIEWER FOUND AFTER THE FIRST EMISSION PASS, each measured.
+//
+// Each was reachable WITH emission screening already in place, and one was waved through by
+// my own completeness guard — see its allowlist note.
+describe('emission screening reaches the derived id, the payload and the null literal', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_aPatternMatchingOnlyTheDerivedCodePathId_isRefused', (t) => {
+    // `scenario-path-safe` matches neither the segment id, nor the key, nor the JSON path —
+    // only the id `codePathId()` assembles from them. It shipped at exit 0 before this.
+    const { dir, run } = build(t, ['scenario-path-safe'], () => {});
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a derived code-path id must be screened\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('writeBuildHtml_aPatternMatchingAnExplicitTriggerPayload_isRefused', (t) => {
+    // The payload is serialised into `elementTriggers` and the runtime paints it into a
+    // callout. `jsonScript` makes that embedding script-safe; it says nothing about whether
+    // the text belongs on screen.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { text: 'cortex-supportgraph' } }];
+    });
+
+    const r = run();
+
+    assertCleanExit(r, EXIT.USAGE, 'payload: ');
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted back\n${r.all}`);
+    assert.match(r.all, /segments\[0\]\.triggers\[0\]\.payload\.text/, `named by position\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryTriggerPayload_stillBuilds', (t) => {
+    // THE CONTROL — screening payloads must not refuse every project that uses one.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { text: 'a harmless caption' } }];
+    });
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `an ordinary payload must still build\n${r.all}`);
+  });
+});
+
+// TWO MORE, BOTH FOUND BY THE REVIEWER AFTER THE PAYLOAD AND ID ROUTES WERE CLOSED.
+describe('screening covers non-string payloads and unwalked diagnostic paths', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_aNumericTriggerPayload_isScreenedLikeAString', (t) => {
+    // The runtime stringifies whatever it paints, so `4471` reaches the frame as "4471".
+    // Screening only `typeof === 'string'` would repeat the coercion bug the shape predicate
+    // exists to prevent, in a new place.
+    const { run } = build(t, ['4471'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { text: 4471 } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a numeric payload still reaches the frame\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aNonexistentHighlightPath_isScreenedBeforeItIsQuoted', (t) => {
+    // This path does NOT exist in the JSON, so the no-go walk never saw it — and the
+    // "does not exist" diagnostic quotes it back.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.visual.highlights = [{ path: 'cortex-supportgraph' }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `it must refuse\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/,
+      `an unwalked path must not be quoted into the diagnostic\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryNonexistentHighlightPath_stillSaysWhatIsWrong', (t) => {
+    // THE CONTROL — screening must not turn a helpful "does not exist" error into silence.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.visual.highlights = [{ path: 'nope' }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a bad path must still refuse\n${r.all}`);
+    assert.match(r.all, /does not exist/, `and must still explain itself\n${r.all}`);
+  });
+});
+
+// THREE MORE FROM REVIEW ROUND 3. Two are the SAME CLASS — an author value quoted in a
+// diagnostic that the no-go walk never ran on — which is why the fix for each is "screen it
+// before the message is built", not "stop quoting it".
+//
+// WHY THERE IS NO STATIC GUARD FOR THIS CLASS, unlike the element-id one: MEASURED, seven
+// author-shaped values are interpolated into CliError messages in this stage, and all seven
+// are SAFE because they are screened upstream. A scanner cannot see an upstream screen, so it
+// would report all seven as violations. A guard that flags correct code gets switched off,
+// and an allowlist of the seven is the same rot one level up. The invariant is therefore held
+// by the tests below and by the comments at each screening site, and that is stated plainly
+// rather than dressed up as automation.
+describe('author values are screened before any diagnostic quotes them', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_anArrayTriggerPayload_isScreenedOnWhatTheRuntimeWouldPaint', (t) => {
+    // MEASURED: String(['protected-value']) === 'protected-value'. Skipping arrays because
+    // they are `typeof 'object'` let the painted text through unscreened.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { text: ['cortex-supportgraph'] } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `an array payload paints its contents\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted back\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aDisclosingJsonFilePath_isScreenedBeforeTheNotFoundMessageQuotesIt', (t) => {
+    // A MISSING file is exactly the case where the no-go walk never runs, and the refusal
+    // names the path.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      delete s.visual.json;
+      s.visual.jsonFile = 'cortex-supportgraph.json';
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `it must refuse\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/,
+      `the jsonFile path was quoted into the diagnostic unscreened\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryMissingJsonFile_stillSaysWhatIsWrong', (t) => {
+    // THE CONTROL — screening must not turn a useful "not found" into silence.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      delete s.visual.json;
+      s.visual.jsonFile = 'absent.json';
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a missing file must still refuse\n${r.all}`);
+    assert.match(r.all, /not found|jsonFile/, `and must still explain itself\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aNonNumericFrameDimension_isRefusedRatherThanInterpolated', (t) => {
+    // `|| 3840` accepted any truthy value, so a string reached a CSS rule and a `content=`
+    // attribute — markup injection as well as an unscreened author string. Same "truthy is
+    // not valid" shape as the no-go list once accepting `[123]`.
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = [];
+    timing.project.width = '3840"><script>x</script>';
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'width: ');
+    assert.match(r.all, /project\.width/, `named by position\n${r.all}`);
+    assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
+  });
+
+  test('writeBuildHtml_ordinaryFrameDimensions_stillBuild', (t) => {
+    // THE CONTROL — a real project sets these, and they must keep working.
+    const { run } = build(t, [], () => {});
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `ordinary dimensions must still build\n${r.all}`);
+  });
+});
+
+// ROUND 4. Two of these are again "a diagnostic quotes an author value the walk never saw",
+// which is why the fix this time is MECHANISM, not another site: `quoted(value, where)`
+// screens by the act of formatting, so forgetting to screen first is unrepresentable rather
+// than merely discouraged. The reviewer proposed it after I had measured and rejected a
+// static scanner for the same class — the scanner could not see upstream screens and flagged
+// all seven safe sites.
+describe('screening is enforced by the act of quoting, and covers action and dimensions', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_aDisclosingStartMs_isScreenedBeforeTheTimelineDiagnosticQuotesIt', (t) => {
+    const { run } = build(t, ['cortex-supportgraph'], (s) => { s.startMs = 'cortex-supportgraph'; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `an unusable time must refuse\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/,
+      `the timeline diagnostic quoted an unscreened author value\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryBadStartMs_stillSaysWhatIsWrong', (t) => {
+    // THE CONTROL — screening must not turn a useful diagnostic into silence.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => { s.startMs = 'not-a-number'; });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `it must still refuse\n${r.all}`);
+    assert.match(r.all, /startMs/, `and must still name the field\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aDisclosingTriggerAction_isRefusedBeforeItShipsAsKind', (t) => {
+    // `action` is serialised as `kind` into elementTriggers and ships; the payload is not the
+    // only part of a trigger that leaves the build.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'cortex-supportgraph' }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a disclosing action must refuse\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryTriggerAction_stillBuilds', (t) => {
+    // THE CONTROL — every project uses actions.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'rise' }];
+    });
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `an ordinary action must still build\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aFractionalFrameDimension_isRefusedBecauseTheMessageSaysWholePixels', (t) => {
+    // The bound and its own wording disagreed: `raw <= 0` admitted 0.5 while the refusal
+    // promised 1..16384. A message that is not true of the check is the prose-drift defect
+    // in executable form.
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = [];
+    timing.project.width = 0.5;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+
+    const r = runScript('write-build-html.mjs', ['--apply'], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'fractional width: ');
+    assert.match(r.all, /whole number of pixels/, `and the message must match the check\n${r.all}`);
+  });
+});
+
+// ROUND 5. Both of these are the SAME ROOT as `[123]` becoming the live pattern `/123/i`:
+// trusting a coercion, or a hand-written list, instead of the thing that actually ships.
+// The fixes REMOVE the lists rather than extending them.
+describe('everything serialised into the trigger data is screened, not a list of field names', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_aPayloadFieldOutsideTheOldFieldList_isScreened', (t) => {
+    // `extra` was in no list, and the WHOLE payload is serialised into elementTriggers.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { extra: 'cortex-supportgraph' } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `an unlisted payload field still ships\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aPayloadNestedInsideAnArrayInsideAnObject_isScreened', (t) => {
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { chain: [{ deep: 'cortex-supportgraph' }] } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `nesting is not a hiding place\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anObjectValuedTriggerTarget_isRefusedRatherThanCoerced', (t) => {
+    // `String({id:'…'})` is `[object Object]`, which discloses nothing and passes — while the
+    // object's properties serialise unchanged and ship.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: { id: 'cortex-supportgraph' }, action: 'rise' }];
+    });
+
+    const r = run();
+
+    assertCleanExit(r, EXIT.USAGE, 'object target: ');
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted\n${r.all}`);
+    assert.match(r.all, /must be a string/, `and must say what is wrong\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryRichPayload_stillBuilds', (t) => {
+    // THE CONTROL. Recursive screening must not refuse every project that uses a payload —
+    // and this one has an unlisted field, a nested object and an array, all harmless.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout',
+        payload: { text: 'a caption', extra: 'fine', chain: [{ deep: 'also fine' }], n: 7 } }];
+    });
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `an ordinary rich payload must still build\n${r.all}`);
+  });
+});
+
+// ROUND 6. All three are the same family again: a derived or structural string that ships,
+// and that the screen reached only by coincidence of where it was looked for.
+describe('keys, modes and every serialised trigger target are screened', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_aProtectedPayloadKeyWithAHarmlessValue_isScreened', (t) => {
+    // The KEY serialises verbatim. Walking only values repeats, in the payload, the
+    // matching-key defect already fixed in the code-block walk.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { 'cortex-supportgraph': 'safe' } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a payload KEY ships too\n${r.all}`);
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anUnknownVisualMode_isRefusedRatherThanInterpolated', (t) => {
+    // `v.mode` reached `data-mode` and a class name unescaped, so an unknown value was both
+    // injection and an unscreened author string.
+    const { run } = build(t, [], (s) => { s.visual.mode = 'code" onload="x'; });
+
+    const r = run();
+
+    assertCleanExit(r, EXIT.USAGE, 'mode: ');
+    assert.match(r.all, /visual\.mode/, `named by position\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryVisualMode_stillBuilds', (t) => {
+    // THE CONTROL — every project sets a mode.
+    const { run } = build(t, [], (s) => { s.visual.mode = 'statement'; });
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `a supported mode must still build\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aDerivedTriggerTargetWithNoRenderedElement_isStillScreened', (t) => {
+    // `${seg.id}-title` is serialised into elementTriggers by autoTriggers whether or not a
+    // title element is rendered, so screening at `elId()` reached only the subset that
+    // became DOM. Screening now happens where they are serialised.
+    const { run } = build(t, ['scenario-title'], () => {});
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `a derived trigger target ships regardless\n${r.all}`);
+  });
+
+  test('writeBuildHtml_ordinaryDerivedTriggerTargets_stillBuild', (t) => {
+    // THE CONTROL — every segment generates these targets, so over-screening them would
+    // refuse every project.
+    const { run } = build(t, ['cortex-supportgraph'], () => {});
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `ordinary generated targets must still build\n${r.all}`);
+  });
+});
+
+// ROUND 7. The reviewer's verdict on my own question was that these are NOT a finite tail —
+// and these four bear that out: a coercion the target fix did not cover, a disclosure inside
+// the screen's own label, and two more unguarded top-level throws.
+describe('round 7: coercion, the screens own label, and unguarded top-level throws', () => {
+  const build = (t, noGoPatterns, mutate) => {
+    const seg = {
+      id: 'scenario', startMs: 0, endMs: 6000, voiceoverText: 'one scenario field by field',
+      visual: { mode: 'code', title: 'One scenario', json: { safe: 'v' } },
+    };
+    mutate(seg);
+    const timing = JSON.parse(timingFixture([seg]));
+    timing.project.noGoPatterns = noGoPatterns;
+    const dir = makeProject(t, {
+      'timing.json': JSON.stringify(timing),
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+    return { dir, run: () => runScript('write-build-html.mjs', ['--apply'], dir) };
+  };
+
+  test('writeBuildHtml_anObjectValuedTriggerAction_isRefusedRatherThanCoerced', (t) => {
+    // `String({…})` is `[object Object]` — discloses nothing, passes, ships with keys intact.
+    // The same rule as `target`, which this fix did not originally cover.
+    const { run } = build(t, ['cortex-supportgraph'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: { 'cortex-supportgraph': 1 } }];
+    });
+
+    const r = run();
+
+    assertCleanExit(r, EXIT.USAGE, 'object action: ');
+    assert.doesNotMatch(r.all, /cortex-supportgraph/, `and must not be quoted\n${r.all}`);
+  });
+
+  test('writeBuildHtml_aNestedPayloadRefusal_doesNotDiscloseThePathInItsOwnMessage', (t) => {
+    // The screen built its location label from the keys it walked, so refusing
+    // `{foo:{bar:"foo.bar"}}` under pattern `foo.bar` printed the match in the message
+    // announcing it. A guard that discloses what it refuses — inside the guard.
+    const { run } = build(t, ['foo\\.bar'], (s) => {
+      s.triggers = [{ atMs: 100, target: 'scenario-label', action: 'callout', payload: { foo: { bar: 'foo.bar' } } }];
+    });
+
+    const r = run();
+
+    assert.notEqual(r.code, EXIT.OK, `it must refuse\n${r.all}`);
+    assert.doesNotMatch(r.all, /foo\.bar/,
+      `the screen's own label disclosed the match\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anUnparseableTimingJson_refusesBySizeWithoutQuotingBytes', (t) => {
+    // V8's SyntaxError quotes bytes of the input, and this parse was at module top level, so
+    // the first thing the stage reads could disclose through a stack.
+    const dir = makeProject(t, {
+      'timing.json': 'LEAKSENTINEL7f3a: not json at all',
+      'evidence-pack/.gitkeep': '',
+      'node_modules/gsap/dist/gsap.min.js': '/* stub */',
+    });
+
+    const r = runScript('write-build-html.mjs', [], dir);
+
+    assertCleanExit(r, EXIT.USAGE, 'unparseable: ');
+    assert.doesNotMatch(r.all, /LEAKSENTINEL/, `the parser quoted input bytes\n${r.all}`);
+    assert.match(r.all, /characters/, `and it must report the file by size\n${r.all}`);
+  });
+
+  test('writeBuildHtml_anOrdinaryProject_stillBuilds_afterAllOfThis', (t) => {
+    // THE STANDING CONTROL for the whole task: every refusal added above must leave a
+    // correct project building.
+    const { run } = build(t, ['cortex-supportgraph'], () => {});
+
+    const r = run();
+
+    assert.equal(r.code, EXIT.OK, `a correct project must still build\n${r.all}`);
+  });
+});
