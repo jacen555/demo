@@ -24,14 +24,24 @@
  * EXIT CODES (the engine-wide contract in cli-support.mjs)
  *   0  every evaluated check passed
  *   1  at least one check failed — the scene is not fit to capture
- *   2  the caller's fault: no timing.json, unparseable JSON, an invalid no-go pattern
+ *   2  the caller's fault: no timing.json, unparseable JSON, an invalid no-go pattern, an
+ *      unusable SIZZLECRAFT_SCAN_TIMEOUT_MS, or a no-go scan that could not be completed
+ *      within its budget (unmeasurable, which is not the same as failed)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { EXIT, CliError, runCli, requireExistingFile, resolveWithinRoot, noGoPatternsProblem } from './cli-support.mjs';
+import {
+  EXIT,
+  CliError,
+  runCli,
+  requireExistingFile,
+  resolveWithinRoot,
+  noGoPatternsProblem,
+  resolveKnob,
+} from './cli-support.mjs';
 import { isSilentSegment, shapeBlocker } from './silent-segment.mjs';
 
 const USAGE = `usage: node src/validate-scene.mjs [--project DIR] [--timing FILE] [--knobs FILE]
@@ -141,7 +151,7 @@ function revealsTarget(trigger, seg, ids) {
  * that reaches a frame. Length and count are cheap bounds; neither is the real control,
  * because `(a|aa){30}$` is twelve characters and backtracks exponentially.
  *
- * The real control is D1_SCAN_TIMEOUT_MS: the scan runs in a child process under a hard
+ * The real control is the scan budget: the scan runs in a child process under a hard
  * timeout. A heuristic that tried to RECOGNISE dangerous patterns was written and
  * withdrawn — it missed bounded forms like `(a|aa){30}` while refusing ordinary ones like
  * `(foo|bar)+`, and a guard that rejects everyday patterns gets switched off, which costs
@@ -154,8 +164,47 @@ function revealsTarget(trigger, seg, ids) {
  *
  * The length and count bounds themselves MOVED to cli-support's `noGoPatternsProblem`, so
  * write-build-html — which read the same field with no bounds at all — is held to them too.
+ *
+ * THE BUDGET IS OPERATOR-SETTABLE, and that is part of the remedy rather than a
+ * convenience. 5000 ms is a judgement about a machine, not about a pattern: the same
+ * innocent scan that finishes in 40 ms on an idle laptop was measured crossing 5000 ms
+ * on this repo's own suite under a 12-worker load. When the bound is the thing that is
+ * wrong, the operator must be able to say so without editing the engine — otherwise the
+ * only available response to a false refusal is to delete the check.
+ *
+ * WHAT THIS BOUND DOES NOT DO — stated here because the code below spent a release
+ * claiming otherwise:
+ *   a. It does not identify a slow pattern. A child killed at the budget proves only
+ *      that the scan did not finish; catastrophic backtracking and a loaded machine are
+ *      indistinguishable from outside, and this code measures neither.
+ *   b. It does not detect a pathological pattern that finishes INSIDE the budget. A
+ *      `(a+)+$` that happens to be given short bait is quadratic-but-quick here and
+ *      passes, and will not be quick on a longer string later.
+ *   c. The index it reports is WHERE THE SCAN WAS when the OS stopped it. On a loaded
+ *      machine that is whichever pattern held the CPU at the deadline, which need not be
+ *      the most expensive one.
  */
-const D1_SCAN_TIMEOUT_MS = 5000;
+const SCAN_TIMEOUT_FALLBACK_MS = 5000;
+
+/**
+ * Resolves the scan budget through the shared knob resolver (argv > env > config >
+ * default, stated once in cli-support.mjs and enforced by env-precedence.test.mjs).
+ *
+ * An unusable value is REFUSED, never quietly replaced by the default: a budget read as
+ * "use 5000" is how a typo silently disables the thing the operator was trying to set.
+ */
+function resolveScanTimeoutMs() {
+  const { value, source, variable } = resolveKnob('SCAN_TIMEOUT_MS', { fallback: SCAN_TIMEOUT_FALLBACK_MS });
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms <= 0) {
+    throw new CliError(
+      `${variable} must be a positive whole number of milliseconds — got ${JSON.stringify(String(value))} ` +
+        `(from ${source}). It is refused rather than read as ${SCAN_TIMEOUT_FALLBACK_MS}, because a budget ` +
+        `that silently reverts to the default cannot be raised by the operator who needed it raised.`,
+    );
+  }
+  return { ms, variable };
+}
 
 /**
  * The slide mode, mirroring write-build-html.mjs:168.
@@ -700,10 +749,11 @@ function checkD1(timing, report) {
  */
 function scanInChildProcess(strings, patterns) {
   const self = fileURLToPath(import.meta.url);
+  const budget = resolveScanTimeoutMs();
   const result = spawnSync(process.execPath, [self, '--scan-stdin'], {
     input: JSON.stringify({ strings, patterns }),
     encoding: 'utf8',
-    timeout: D1_SCAN_TIMEOUT_MS,
+    timeout: budget.ms,
     maxBuffer: 64 * 1024 * 1024,
   });
 
@@ -717,16 +767,43 @@ function scanInChildProcess(strings, patterns) {
     throw new CliError(`the no-go scan could not run: ${result.error.code ?? result.error.message}`);
   }
   if (result.error?.code === 'ETIMEDOUT' || result.signal) {
+    // ...and then, for a release, this branch committed that same error in a new
+    // direction. It read "stopped at the budget" as PROOF of catastrophic backtracking
+    // and told the author to rewrite the named pattern. That is a property of the
+    // MACHINE being asserted as a property of the PATTERN. A timeout bounds cost; it
+    // does not establish cause. The accusation was falsifiable and false: this repo's
+    // own fixture names `SAP path` — a literal, with no quantifier and no alternation,
+    // structurally incapable of backtracking — and innocent scans were measured crossing
+    // the budget from CPU contention alone under a 12-worker load.
+    //
+    // So report the measurement and leave the conclusion to the reader, as this engine's
+    // other guards already do (envelope-ducking.mjs:418-420: "a guard that invents a
+    // cause is worse than one that reports a difference"). Both causes get named, and
+    // each gets an action, because a bound with no remedy is just a wall.
+    //
     // The LAST marker, not the first. The child's stderr is a running log — `scanning 0`,
     // `scanning 1`, ... — so `exec` returns index 0 every time and the refusal names an
     // innocent pattern with complete confidence. Measured: a stall on pattern 1 was
     // reported as pattern 0.
     const started = [...(result.stderr ?? '').matchAll(/^scanning (\d+)$/gm)].at(-1);
-    const which = started ? `project.noGoPatterns[${started[1]}]` : 'one of the project.noGoPatterns';
+    const where = started
+      ? `It was inside project.noGoPatterns[${started[1]}] at that moment`
+      : 'It was stopped before it reported reaching any pattern';
+    const { variable } = budget;
     throw new CliError(
-      `${which} did not finish within ${D1_SCAN_TIMEOUT_MS} ms and was stopped. That is catastrophic ` +
-        `backtracking — a pattern such as "(a|aa){30}$" is exponential in the length of the text it ` +
-        `fails to match. Rewrite it; the scan cannot be left unbounded because this stage exists to be cheap.`,
+      `the no-go scan did not finish within ${budget.ms} ms and was stopped. ${where}.\n` +
+        `\n` +
+        `THAT IS WHERE IT STOPPED, NOT WHY. This stage cannot tell these two apart, so it ` +
+        `names both rather than picking one:\n` +
+        `  - the machine was too busy for the budget — likely if the scan normally passes ` +
+        `here, or if a build, a render or a parallel test run was in flight. Raise it: ` +
+        `set ${variable} to a larger number of milliseconds and run again.\n` +
+        `  - a pattern is genuinely expensive — likely if it stops at the same index on an ` +
+        `idle machine with the budget raised. Read that pattern in the source file and look ` +
+        `for an unbounded quantifier wrapped around an alternation, such as "(a|aa){30}$", ` +
+        `whose cost roughly doubles for each extra character it fails to match.\n` +
+        `\n` +
+        `The scan is not left unbounded either way: this stage exists to be cheap.`,
     );
   }
   if (result.status !== 0) {

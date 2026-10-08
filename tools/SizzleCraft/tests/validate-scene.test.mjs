@@ -113,7 +113,23 @@ function knobs(extra = {}) {
   );
 }
 
-const run = (dir, args = []) => runScript('validate-scene.mjs', ['--project', dir, ...args], dir);
+// The suite pins the scan budget generously rather than inheriting the 5000 ms default.
+// That default is a judgement about a machine, and these tests run on CI boxes and on
+// 12-worker local load rigs where an innocent scan was MEASURED crossing it — producing a
+// refusal that had nothing to do with the check under test. Tests that are specifically
+// about the budget override this explicitly; `scanTimeout_withAGenuinelyPathologicalPattern`
+// deliberately does not, so the 5000 ms default itself stays pinned by one test.
+const SCAN_TIMEOUT_KNOB = 'SIZZLECRAFT_SCAN_TIMEOUT_MS';
+const GENEROUS_SCAN_BUDGET_MS = '60000';
+
+const run = (dir, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, {
+    env: { [SCAN_TIMEOUT_KNOB]: GENEROUS_SCAN_BUDGET_MS },
+  });
+
+/** Runs with NO budget override, so the engine's own default is what is under test. */
+const runAtDefaultBudget = (dir, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir);
 
 /**
  * Asserts the run refused, that THE NAMED CHECK is the one that refused, and that the
@@ -1225,7 +1241,9 @@ describe('round 2 · reveal semantics read from the renderer', () => {
         project: { noGoPatterns: ['PR \\d+', '(a|aa){30}$'] },
       }),
     });
-    const r = run(dir);
+    // At the ENGINE default budget: this test is about the bound firing, so overriding it
+    // from the suite would change the very thing under test.
+    const r = runAtDefaultBudget(dir);
     assertCleanExit(r, EXIT.USAGE);
     assert.match(r.all, /noGoPatterns\[1\]/, `the refusal must name the pattern that stalled\n${r.all}`);
   });
@@ -1334,5 +1352,128 @@ describe('round 2 · reveal semantics read from the renderer', () => {
     // cheap one, and it bounds the cost of the scan that actually enforces the limit.
     const dir = makeProject(t, { 'timing.json': scene({ project: { noGoPatterns: ['a'.repeat(5000)] } }) });
     assertCleanExit(run(dir), EXIT.USAGE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D1 · the no-go scan's timeout
+//
+// A TIMEOUT BOUNDS COST. IT DOES NOT ESTABLISH CAUSE. The stage already knows this
+// about one failure shape and says so at validate-scene.mjs:710-715 — ENOBUFS also
+// kills the child, so classifying by signal reported a buffer overflow as catastrophic
+// backtracking and "sends the author to rewrite an innocent pattern". One branch later
+// it committed the same error in a new direction: an ETIMEDOUT was asserted, flatly, to
+// BE catastrophic backtracking.
+//
+// It is not. A child killed at the budget proves the scan did not finish; it says
+// nothing about why. Measured on this repo's own suite under a 12-worker load, innocent
+// scans crossed 5000 ms purely from CPU contention.
+//
+// THE POSITIVE CONTROL IS THIS FILE'S OWN FIXTURE. scene() ships
+// noGoPatterns[2] = 'SAP path' — a LITERAL. No quantifier, no alternation, no
+// backreference: structurally incapable of backtracking at all. A refusal that blames
+// backtracking here is not merely unproven, it is false about a pattern that cannot do
+// the thing it is accused of.
+//
+// So the contract these tests pin is: report the MEASUREMENT (what was bounded, where it
+// stopped) and name every candidate cause WITH AN ACTION, rather than picking one and
+// asserting it. That is the standard already stated for this engine's other guards at
+// envelope-ducking.mjs:418-420 — "a guard that invents a cause is worse than one that
+// reports a difference."
+// ---------------------------------------------------------------------------
+
+const runWithEnv = (dir, env, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, { env });
+
+/** A pattern that really is exponential: (a+)+$ against a long non-matching run of a's. */
+const PATHOLOGICAL = '(a+)+$';
+const PATHOLOGICAL_BAIT = 'a'.repeat(50) + 'b';
+
+describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
+  test('scanTimeout_withStructurallyInnocentPatterns_doesNotBlameBacktracking', (t) => {
+    // Every pattern in scene() is innocent and [2] is a bare literal, so ANY backtracking
+    // claim this run makes is provably wrong. The budget is driven to 1 ms to make the
+    // timeout certain without depending on how loaded the machine is — the alternative,
+    // a pattern tuned to straddle the default budget, is a wall-clock race.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.equal(r.code, EXIT.USAGE, `expected the unmeasurable scan to refuse as USAGE\n${r.all}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(r.all),
+      `the scan was stopped, which does not establish WHY. These patterns cannot backtrack:\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_namesContentionAndPattern_asCandidateCauses_withAnActionForEach', (t) => {
+    // Both causes are live and this code cannot tell them apart. Naming one is a guess;
+    // naming neither is a bound without a remedy. Name both, with what to do about each.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /\bload\b|\bcontention\b|\bbusy\b/i, `expected the load cause to be named\n${r.all}`);
+    assert.match(r.all, /pattern/i, `expected the pattern cause to be named\n${r.all}`);
+    assert.match(
+      r.all,
+      new RegExp(SCAN_TIMEOUT_KNOB),
+      `expected the raise-the-budget remedy to be actionable by name\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_statesTheBudgetItExceeded', (t) => {
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /\b1 ms\b/, `expected the refusal to state the budget in force\n${r.all}`);
+  });
+
+  test('scanTimeout_withAGenuinelyPathologicalPattern_stillNamesWhereItStopped', (t) => {
+    // Direction A. The useful half of the old message must survive: an author needs the
+    // index to act. What changes is that the index is reported as WHERE THE SCAN WAS when
+    // it was stopped — a fact — rather than as the proven culprit.
+    const dir = makeProject(t, {
+      'timing.json': scene({ project: { noGoPatterns: [PATHOLOGICAL] }, segments: [
+        { ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT },
+        narrativeSeg(),
+      ] }),
+    });
+    const r = runAtDefaultBudget(dir);
+    assert.equal(r.code, EXIT.USAGE, `expected a stopped scan to refuse as USAGE\n${r.all}`);
+    assert.match(r.all, /within 5000 ms/, `expected the ENGINE default budget to be in force\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `expected the in-flight pattern index\n${r.all}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(r.all),
+      `even when backtracking IS the cause, this code did not measure that\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_neverPrintsThePatternSource', (t) => {
+    // scanMain() withholds the pattern and the match on purpose: a no-go pattern is as
+    // sensitive as the string it hides. The timeout path must not become the leak.
+    const dir = makeProject(t, {
+      'timing.json': scene({ project: { noGoPatterns: [PATHOLOGICAL] }, segments: [
+        { ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT },
+        narrativeSeg(),
+      ] }),
+    });
+    const r = runAtDefaultBudget(dir);
+    assert.ok(!r.all.includes(PATHOLOGICAL), `the pattern source leaked into the refusal\n${r.all}`);
+  });
+
+  test('scanTimeoutKnob_raisingTheBudget_letsTheSameProjectPass', (t) => {
+    // The remedy has to WORK, not merely be mentioned. Same project, same patterns: a
+    // budget of 1 ms refuses it and the default budget clears it. Without this pair the
+    // knob could be inert and the message would still read well.
+    const dir = makeProject(t, { 'timing.json': scene(), 'knobs.json': knobs() });
+    assert.equal(runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' }).code, EXIT.USAGE);
+    assertClean(runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '60000' }));
+  });
+
+  test('scanTimeoutKnob_nonPositiveValue_isRefusedRatherThanIgnored', (t) => {
+    // An unusable budget read as "use the default" is how a typo silently disables the
+    // thing the operator was trying to set — the defect resolveBooleanKnob already names.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    for (const bad of ['0', '-1', 'soon']) {
+      const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: bad });
+      assert.equal(r.code, EXIT.USAGE, `expected ${JSON.stringify(bad)} to be refused\n${r.all}`);
+      assert.match(r.all, new RegExp(SCAN_TIMEOUT_KNOB), `expected the variable to be named\n${r.all}`);
+    }
   });
 });
