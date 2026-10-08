@@ -1368,7 +1368,12 @@ let __lastFireT=0;
 // __drv tweens) and injected overlays (.fx-spot/.callout/.rollover-tip/.stepbadge/.flow-dot/.progress)
 // would otherwise persist and once()/fired would short-circuit re-creation. Reset them, then re-apply
 // triggers up to the new time so the frame is reconstructed deterministically from scratch.
-function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>n.remove());document.querySelectorAll('.show,.clicked,.hovered,.pulsing,.is-marked,.is-dim,.is-off,.is-focus').forEach(el=>el.classList.remove('show','clicked','hovered','pulsing','is-marked','is-dim','is-off','is-focus'));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
+// THE RESET AND THE SIGNATURE MUST COVER THE SAME OVERLAYS. __resetSeekState removes these
+// and __frameSig reads them back as part of the per-frame signature; an overlay in one list
+// and not the other is either an element that survives a seek unsignaled or one signed
+// after it is gone. Either way dedup compares frames that are not the same frame.
+const OVERLAY_SEL='.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress';
+function __resetSeekState(){fired.clear();fxDone.clear();for(const e of __drv){try{e.tw.kill();}catch(_){}}__drv.length=0;document.querySelectorAll(OVERLAY_SEL).forEach(n=>n.remove());const RESET=['show','clicked','hovered','pulsing','is-marked','is-dim','is-off','is-focus'];document.querySelectorAll('.'+RESET.join(',.')).forEach(el=>el.classList.remove(...RESET));try{gsap.set('*',{clearProps:'transform,opacity'});}catch(_){}currentSlide=0;}
 function fireTriggersUpTo(time){if(time<__lastFireT-0.0005)__resetSeekState();__lastFireT=time;window.__t=time;let target=1;for(const s of slideShowTimes)if(time>=s.showAt)target=s.slide;setSlide(target);for(const tr of elementTriggers)if(time>=tr.t)apply(tr);window.__syncTweens(time);if(window.__footage)window.__setFootageFrame(time*1000);}
 window.fireTriggersUpTo=fireTriggersUpTo;
 // Deterministic per-frame visual-state signature for capture-time dedup (dedupHolds). Two frames are
@@ -1391,7 +1396,7 @@ window.__frameSig=function(frameNo){
   const ids=sel=>Array.from(document.querySelectorAll(sel)).map((el,i)=>el.id||('#'+i)).sort().join(',');
   p.push('V'+ids('.show')); // every revealed/shown element (reveal/drawEdge + effect-shown elements)
   p.push('C'+ids('.clicked')+'|'+ids('.hovered')+'|'+ids('.pulsing')+'|'+ids('.is-marked')+'|'+ids('.is-dim')+'|'+ids('.is-off')+'|'+ids('.is-focus')); // discrete stateful classes, incl. held marks + code-focus dimming
-  const ov=[];document.querySelectorAll('.fx-spot,.callout,.rollover-tip,.stepbadge,.flow-dot,.progress').forEach(n=>ov.push(n.className+':'+(n.textContent||'')+':'+(n.style.left||'')+','+(n.style.top||'')+','+(n.style.width||'')+','+(n.style.height||'')+','+(n.style.transform||'')+','+(n.style.opacity||'')));
+  const ov=[];document.querySelectorAll(OVERLAY_SEL).forEach(n=>ov.push(n.className+':'+(n.textContent||'')+':'+(n.style.left||'')+','+(n.style.top||'')+','+(n.style.width||'')+','+(n.style.height||'')+','+(n.style.transform||'')+','+(n.style.opacity||'')));
   const pw=[];document.querySelectorAll('.progress i').forEach(i=>pw.push(i.style.width||''));
   p.push('O'+ov.sort().join(';')+'|'+pw.join(',')); // dynamic overlays: EVERY inline pixel-affecting prop
   // (left/top/width/height/transform/opacity) + text/progress. .fx-spot settles style.height, callout
