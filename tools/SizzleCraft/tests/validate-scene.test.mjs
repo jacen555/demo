@@ -1398,9 +1398,10 @@ describe('round 2 · reveal semantics read from the renderer', () => {
 // backtracking here is not merely unproven, it is false about a pattern that cannot do
 // the thing it is accused of.
 //
-// So the contract these tests pin is: report the MEASUREMENT (what was bounded, where it
-// stopped) and name every candidate cause WITH AN ACTION, rather than picking one and
-// asserting it. That is the standard already stated for this engine's other guards at
+// So the contract these tests pin is: report the MEASUREMENT (what was bounded, and the
+// last position the scan reported reaching) and name candidate causes WITH AN ACTION,
+// without claiming the list is exhaustive and without picking one and asserting it. That
+// is the standard already stated for this engine's other guards at
 // envelope-ducking.mjs:418-420 — "a guard that invents a cause is worse than one that
 // reports a difference."
 // ---------------------------------------------------------------------------
@@ -1473,10 +1474,11 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     );
   });
 
-  test('scanTimeout_withAGenuinelyPathologicalPattern_stillNamesWhereItStopped', (t) => {
+  test('scanTimeout_withAGenuinelyPathologicalPattern_stillNamesTheLastIndexReported', (t) => {
     // Direction A. The useful half of the old message must survive: an author needs the
-    // index to act. What changes is that the index is reported as WHERE THE SCAN WAS when
-    // it was stopped — a fact — rather than as the proven culprit.
+    // index to act. What changes is that the index is reported as the LAST POSITION THE
+    // SCAN REPORTED REACHING — which is what the marker establishes — rather than as the
+    // proven culprit, or as where execution was when the OS stopped it.
     const dir = makeProject(t, {
       'timing.json': scene({ project: { noGoPatterns: [PATHOLOGICAL] }, segments: [
         { ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT },
