@@ -43,12 +43,114 @@ const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
 // coercing — silent coercion could collapse distinct invalid ids to the same token (duplicate element
 // ids) or desync explicit trigger targets from the rendered ids.
 const TOKEN_RE = /^[A-Za-z0-9._-]{1,128}$/;
-const assertTok = (val, where) => { const t = String(val == null ? '' : val); if (!TOKEN_RE.test(t)) throw new Error(`invalid DOM token ${JSON.stringify(val)} at ${where} — must match ${TOKEN_RE} (fix timing.json and re-run schema validation)`); return t; };
-for (const s of (timing.segments || [])) {
-  if (s && s.id != null) assertTok(s.id, `segments[].id ${JSON.stringify(s.id)}`);
-  const v = s.visual; if (!v) continue;
-  (v.nodes || []).forEach((n, i) => { if (n && n.id != null) assertTok(n.id, `${s.id}.nodes[${i}].id`); });
-  (v.edges || []).forEach((e, i) => { if (!e) return; if (e.id != null) assertTok(e.id, `${s.id}.edges[${i}].id`); if (e.from != null) assertTok(e.from, `${s.id}.edges[${i}].from`); if (e.to != null) assertTok(e.to, `${s.id}.edges[${i}].to`); });
+// THE TOKEN ERROR IS POSITIONAL TOO. It used to quote the offending value, which meant an
+// identifier that was BOTH an invalid DOM token AND a no-go match got echoed here — before
+// the screen below ever saw it. Order matters as much as wording: screen first, then shape.
+const assertTok = (val, where) => { const t = String(val == null ? '' : val); if (!TOKEN_RE.test(t)) throw new CliError(`${where} is not a valid DOM token — it must match ${TOKEN_RE} (fix timing.json and re-run schema validation). It is named by position and deliberately not quoted.`); return t; };
+// AN IDENTIFIER IS AUTHOR CONTENT THAT SHIPS. The ids above are interpolated into the
+// rendered HTML as DOM element ids and into this stage's diagnostics, so a no-go string in
+// one reaches the artefact on a SUCCESSFUL build — the case the frame-level guard never
+// sees, because it scans visual.json and not the structure around it. `cortex-supportgraph`
+// is a perfectly valid DOM token, so TOKEN_RE passes it straight through.
+//
+// ===========================================================================
+// THE CEILING ON THIS APPROACH. READ THIS BEFORE ADDING ANOTHER INPUT SCREEN.
+//
+// This screens CONTRIBUTING INPUTS. The artefact contains DERIVED STRINGS, and a derived
+// string can match a pattern when none of its inputs does. There is then nothing to screen,
+// because the matching text exists nowhere in timing.json.
+//
+// THE WORKED EXAMPLE, MEASURED:
+//   pattern `scenario-label`, segments[0].id `scenario`
+//   -> the id does not match, so this screen passes it
+//   -> `:~310` emits id="${seg.id}-label", generating `scenario-label` at render time
+//   -> exit 0, and `scenario-label` ships inside video-auto.html
+//
+// IT DOES NOT DETECT (each measured, each still open):
+//   1. Assembled ARRAY paths. Pattern `foo\[0\]` with `{foo:["safe"]}` ships
+//      data-path="foo[0]" at exit 0. The object-path equivalent IS screened; the array
+//      branch is not.
+//   2. `visual.jsonFile` and `visual.pick`, which reach QUOTED error messages before the
+//      no-go walk runs; and an invalid `visual.highlights[].path`, quoted after it, because
+//      it is not part of the walked JSON.
+//   3. Concatenated identifiers — the worked example above, and every `${seg.id}-…` form.
+//   4. `visual.shots[].src` and `visual.image`, emitted into the HTML with no no-go check.
+//
+// CLOSING THESE REQUIRES SCREENING THE OUTPUT, NOT MORE INPUTS: scan the generated HTML
+// before it is written and each diagnostic before it is printed, which tests what actually
+// ships instead of guessing at its ingredients. That is a different design with its own open
+// questions — the engine's own markup may match an aggressive pattern, the cost on a large
+// document is unmeasured, and a refusal cannot quote the text it is refusing. It is tracked
+// as its own task. Adding a ninth input screen here will not converge; seven review rounds
+// closed eight routes and the discovery rate did not fall.
+//
+// Pinned by `theCeilingOnInputScreening_isAMeasuredFact` in tests/guard-inputs.test.mjs, so
+// this stays a measured limitation rather than a comment that rots.
+// ===========================================================================
+//
+// This screen deliberately issues NO verdict on the pattern list itself: a malformed list is
+// codeBlock's to judge, on the code-mode path, and reporting it here would widen this
+// stage's reach to projects that never render source data. Anything unusable is skipped and
+// the screen simply does less.
+const noGoScreen = (() => {
+  const raw = timing.project?.noGoPatterns;
+  if (!Array.isArray(raw)) return null;
+  const usable = [];
+  for (const src of raw) {
+    if (typeof src !== 'string') continue;
+    try { usable.push({ src, re: new RegExp(src, 'i') }); } catch { /* codeBlock reports it */ }
+  }
+  return usable.length ? (s) => usable.some(c => c.re.test(s) || s.includes(c.src)) : null;
+})();
+// The refusal names the identifier BY POSITION and never quotes it — quoting it here would
+// do precisely the damage the screen exists to prevent, in the message announcing it.
+const assertNotDisclosing = (val, where) => {
+  if (noGoScreen && noGoScreen(String(val == null ? '' : val))) {
+    throw new CliError(
+      `${where} matches timing.project.noGoPatterns.\n` +
+      'Identifiers are written into the rendered HTML as DOM element ids and into this\n' +
+      "stage's diagnostics, so a no-go string in one reaches the video and the logs even\n" +
+      'when every value passes. It is named by position and deliberately not quoted —\n' +
+      'read it in timing.json and rename it.');
+  }
+  return val;
+};
+for (const [si, s] of (timing.segments || []).entries()) {
+  // Labels are POSITIONAL. They previously embedded `s.id`, which put the very identifier
+  // being screened into the message that screens it.
+  //
+  // SCREEN BEFORE SHAPE, everywhere: `assertTok`'s refusal names a field, so a value that
+  // fails both checks must be caught by the screen first or the token error discloses it.
+  //
+  // `guard()` is what makes this a refusal rather than a crash: a CliError thrown at module
+  // top level escapes as an uncaught exception with a stack, and the first version of this
+  // screen did exactly that — exit 1 with a stack trace instead of a clean USAGE refusal.
+  guard(() => {
+    const tok = (val, where) => { assertNotDisclosing(val, where); assertTok(val, where); };
+    if (s && s.id != null) tok(s.id, `segments[${si}].id`);
+    const v = s && s.visual; if (!v) return;
+    (v.nodes || []).forEach((n, i) => { if (n && n.id != null) tok(n.id, `segments[${si}].visual.nodes[${i}].id`); });
+    (v.edges || []).forEach((e, i) => {
+      if (!e) return;
+      const at = `segments[${si}].visual.edges[${i}]`;
+      if (e.id != null) tok(e.id, `${at}.id`);
+      if (e.from != null) tok(e.from, `${at}.from`);
+      if (e.to != null) tok(e.to, `${at}.to`);
+    });
+    // Fields and hotspots are interpolated into `id="…"` at :422 and :424 UNESCAPED, and
+    // `assertTok` never covered them — so a quote in one could close the attribute. They are
+    // DOM identifiers by use, so they get the same two checks as the rest.
+    (v.fields || []).forEach((f, i) => { if (f && f.id != null) tok(f.id, `segments[${si}].visual.fields[${i}].id`); });
+    (v.hotspots || []).forEach((hp, i) => { if (hp && hp.id != null) tok(hp.id, `segments[${si}].visual.hotspots[${i}].id`); });
+    // `clipId` is already shape-constrained by safeClipId because it is used as a path
+    // segment, but it is ALSO emitted as `data-clip` at :325/:329, so it ships. Shape and
+    // disclosure are different questions and a valid token can still be a no-go string.
+    if (v.footage?.clipId != null) assertNotDisclosing(v.footage.clipId, `segments[${si}].visual.footage.clipId`);
+    // An explicit trigger target is an author-written reference to a DOM id. It is compared
+    // against generated ids, quoted in a refusal at :665, and serialised into the shipped
+    // trigger data.
+    (s.triggers || []).forEach((t, i) => { if (t && t.target != null) assertNotDisclosing(t.target, `segments[${si}].triggers[${i}].target`); });
+  });
 }
 // Every slide switch, hold and trigger time is computed from startMs/endMs, and this stage does not
 // run validate-timing. A missing time became NaN, which JSON writes as null, and the hold cap
@@ -473,11 +575,20 @@ function codeBlock(seg) {
   // This is the only mode that renders data nobody wrote for the screen, so the patterns
   // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
   //
-  // The refusal names the PATTERN and the JSON PATH, never the matched value. An earlier
-  // version printed 80 characters of it "so the author could see what tripped" — which
-  // moves the very content the pattern exists to contain into the console and the render
-  // log. A guard that discloses what it refuses has done the damage it was preventing.
-  // The author can look up the path in their own source; the log should not carry it.
+  // The refusal names the PATTERN'S INDEX and the JSON PATH, never the pattern's source
+  // text and never the matched value. An earlier version printed 80 characters of the
+  // match "so the author could see what tripped" — which moves the very content the
+  // pattern exists to contain into the console and the render log. A guard that discloses
+  // what it refuses has done the damage it was preventing.
+  //
+  // That reasoning was written here, applied to the match, and NOT applied to the pattern,
+  // which this stage went on to print on both refusal paths. A no-go list is by
+  // construction a list of the strings an author wants kept off the screen — on the one
+  // real sample project they are internal hostnames — so echoing the pattern leaks the
+  // same class of value, through the path that fires when the guard SUCCEEDS.
+  // validate-scene.mjs:748 had already ruled the other way for the same field: "The
+  // pattern is no safer than the match." The index is the handle; it says which pattern
+  // without saying what it is, and the author can read it in their own file.
   const patterns = timing.project?.noGoPatterns;
   if (!Array.isArray(patterns)) {
     // ABSENT IS NOT PERMISSION. Defaulting to "no patterns" makes the frame-boundary
@@ -500,32 +611,94 @@ function codeBlock(seg) {
     const shape = noGoPatternsProblem(patterns, 'timing.project.noGoPatterns');
     if (shape) throw new CliError(shape);
     const hits = [];
-    for (const src of patterns) {
-      let re;
-      try { re = new RegExp(src, 'i'); }
-      catch { throw new CliError(`timing.project.noGoPatterns contains an invalid regular expression: ${JSON.stringify(src)}`); }
+    // Compile every pattern BEFORE walking, so a key can be tested against all of them.
+    // A key is disclosed through the path of any hit beneath it, not just its own, so the
+    // decision to print it cannot depend on which pattern is currently being walked.
+    const compiled = patterns.map((src, index) => {
+      try { return { index, src, re: new RegExp(src, 'i') }; }
+      catch { throw new CliError(`timing.project.noGoPatterns[${index}] is not a valid regular expression`); }
+    });
+    // A KEY IS PRINTABLE ONLY IF IT DISCLOSES NOTHING. It is withheld when it matches any
+    // pattern — a matching key IS the matched value — and also when it carries a pattern's
+    // source text literally, which is how an author who names a key after their own regex
+    // would otherwise have that regex echoed. Everything else is ordinary structure and is
+    // kept, because the path is the author's only locator and a refusal nobody can act on
+    // is its own defect.
+    //
+    // `i` is the key's position in Object.keys() ENUMERATION order, which is not the order
+    // in the file: V8 emits integer-like keys first. The trailing note below says so rather
+    // than letting the number read as a line position.
+    const discloses = (s) => compiled.some(c => c.re.test(s) || s.includes(c.src));
+    // A DEGENERATE PATTERN DEGRADES THIS, AND THAT IS CORRECT. `.*` makes `discloses` true
+    // for every string, so every component is withheld and the refusal keeps only the
+    // pattern's index. But `.*` also matches every value in the data, so that project
+    // refuses whatever it contains: the locators are uninformative because the pattern is,
+    // not because the screening is wrong. `noGoPatternsProblem` bounds count and length and
+    // deliberately does not judge what a pattern matches.
+    const shownKey = (k, i) => (discloses(k) ? `key #${i}` : k);
+    // AN ARRAY INDEX IS A PATH COMPONENT TOO, and it is screened the same way. Unlike a key
+    // there is no non-disclosing substitute that is still a locator — the index IS the
+    // digits that would collide — so the component is dropped. The containing path and the
+    // pattern's index remain, which is enough to find it in the source file.
+    const shownIndex = (i) => (discloses(String(i)) ? '[…]' : `[${i}]`);
+    // AND THE FINISHED PATH IS SCREENED TOO. Screening each component is not the same as
+    // screening what is printed: with pattern `foo.bar`, the keys `foo` and `bar` each pass
+    // on their own and the path they assemble into does not. There is no safe partial form
+    // of a string whose whole is the disclosure, so it is withheld; the pattern's index
+    // remains, and the author can run that pattern over their own file.
+    const shownPath = (at) => (discloses(at) ? '(path withheld — it would itself disclose)' : at);
+    for (const { index, re } of compiled) {
       // Walk values rather than the serialised blob, so a hit can be reported by path.
-      const walk = (val, at) => {
+      //
+      // IT DOES NOT DETECT:
+      //   1. Booleans or null. The walk tests strings and numbers only, so a pattern that
+      //      matches the literal `true`, `false` or `null` does not refuse and those tokens
+      //      reach the frame. MEASURED, with a positive control: pattern `plain` against a
+      //      string value refuses; pattern `true` against `{enabled: true}` builds. This is
+      //      deliberate rather than pending — those three tokens are the entire set a
+      //      boolean or null can render as, so none of them can carry author content, and
+      //      refusing on them would add noise without withholding anything.
+      //   2. Authored copy — titles, labels, subtitles, voiceover. Only `visual.json` source
+      //      data is scanned, because copy is human-reviewed and source data is not.
+      //   3. Anything outside this segment's rendered object. Identifiers are screened
+      //      separately at the top of this stage, where they are read.
+      //
+      // The walk carries TWO paths. `at` is what gets PRINTED, with disclosing components
+      // already substituted. `real` is the path as `jsonHtml` will emit it in `data-path`
+      // (`:441`), and it is screened in its own right: with pattern `foo.bar` and data
+      // `{foo:{bar:"safe"}}`, no key and no value matches, yet `data-path="foo.bar"` shipped
+      // in the HTML at exit 0. MEASURED before this check existed.
+      const walk = (val, at, real) => {
         if (typeof val === 'string' || typeof val === 'number') {
-          if (re.test(String(val))) hits.push({ src, at: at || '(root)' });
+          if (re.test(String(val))) hits.push({ index, at: at || '(root)' });
         } else if (Array.isArray(val)) {
-          val.forEach((v, i) => walk(v, `${at}[${i}]`));
+          val.forEach((v, i) => walk(v, `${at}${shownIndex(i)}`, `${real}[${i}]`));
         } else if (val && typeof val === 'object') {
-          for (const k of Object.keys(val)) {
-            if (re.test(k)) hits.push({ src, at: at ? `${at}.${k}` : k });
-            walk(val[k], at ? `${at}.${k}` : k);
-          }
+          Object.keys(val).forEach((k, i) => {
+            const shown = shownKey(k, i);
+            const here = at ? `${at}.${shown}` : shown;
+            const realHere = real ? `${real}.${k}` : k;
+            if (re.test(k)) hits.push({ index, at: here });
+            // The assembled path ships even when neither end of it matches. Only tested
+            // below the root, where it differs from the key already tested above.
+            else if (real && re.test(realHere)) hits.push({ index, at: here });
+            walk(val[k], here, realHere);
+          });
         }
       };
-      walk(data, '');
+      walk(data, '', '');
     }
     if (hits.length) {
       throw new CliError(
         `segment "${seg.id}": code mode refused — ${hits.length} no-go match(es).\n` +
-        hits.slice(0, 10).map(h => `  /${h.src}/i matched at ${h.at}`).join('\n') +
+        hits.slice(0, 10).map(h => `  timing.project.noGoPatterns[${h.index}] matched at ${shownPath(h.at)}`).join('\n') +
         (hits.length > 10 ? `\n  …and ${hits.length - 10} more` : '') +
-        '\n\nThe matched values are deliberately not printed. Redact the source object or\n' +
-        'narrow visual.pick; do not render it and rely on it being small on screen.');
+        '\n\nThe matched text and the pattern are both withheld deliberately — read them in\n' +
+        'the source file. A path component shown as `key #N` or `[…]` is one that would\n' +
+        'itself have disclosed one of them; N counts keys in JavaScript enumeration order,\n' +
+        'which puts integer-like keys first and so is not the order they appear in the file.\n' +
+        'Redact the source object or narrow visual.pick; do not render it and rely on it\n' +
+        'being small on screen.');
     }
   }
 

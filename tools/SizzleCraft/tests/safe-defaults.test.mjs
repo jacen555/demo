@@ -203,7 +203,7 @@ describe('write-build-html code mode', () => {
     const r = build(dir);
 
     assert.notEqual(r.code, EXIT.OK, `a no-go match must refuse, got ${r.code}\n${r.all}`);
-    assert.match(r.all, /no-go match/, 'and name the pattern that matched');
+    assert.match(r.all, /no-go match/, 'and report that a no-go pattern matched');
     assert.equal(fs.existsSync(path.join(dir, 'video-auto.html')), false);
   });
 
