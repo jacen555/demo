@@ -46,14 +46,26 @@ function sleepSync(ms) {
 /**
  * Removes a test fixture, riding out a handle Windows has not released yet.
  *
- * WHY THIS LOOP EXISTS AND `fs.rmSync`'s OWN `maxRetries` IS NOT ENOUGH. Measured, not
- * assumed: `fs.rmSync` retries a busy entry INSIDE the tree, but an EBUSY on the root
- * `rmdir` is rethrown immediately — with `maxRetries: 3, retryDelay: 1500` a
- * directory held as a live child's working directory failed in 0 ms, having never waited
- * once. That is exactly the shape this suite produces: `runScript` spawns every engine
- * CLI with `cwd` set to the fixture, so a child that has not fully exited holds the ROOT.
- * Relying on the built-in option alone would have shipped a retry that cannot fire on the
- * most likely case, which is indistinguishable from no retry at all.
+ * WHY THIS LOOP EXISTS AND `fs.rmSync`'s OWN `maxRetries` IS NOT ENOUGH. Measured on the
+ * two axes that could have mattered, because an earlier version of this comment named the
+ * wrong one:
+ *
+ *   child's cwd = directory, at tree root      EBUSY  after    1 ms  (rmdir)
+ *   child's cwd = directory, one level in      EBUSY  after    1 ms  (rmdir)
+ *   exclusive handle on a file, at tree root   REMOVED after 4514 ms
+ *   exclusive handle on a file, three deep     REMOVED after 4530 ms
+ *
+ * THE AXIS IS KIND, NOT DEPTH. `fs.rmSync` rides out an EBUSY on a FILE at any depth —
+ * 4.5s is its own 1500+3000 backoff — and rethrows an EBUSY on a DIRECTORY at any depth
+ * without waiting once. Depth is irrelevant; an earlier draft of this comment said "root
+ * vs inside the tree" and was wrong about why.
+ *
+ * SO, HONESTLY: the captured production failure was `unlink encoder-page.html`, a FILE,
+ * which the built-in option WOULD have covered. What it does not cover is a held
+ * DIRECTORY — and `runScript` below spawns every engine CLI with `cwd` set to the fixture,
+ * so a child that has not fully exited holds a directory. That case is why the loop is
+ * here. Relying on the built-in alone would have left the suite's most common hold shape
+ * with a retry that cannot fire, which is indistinguishable from no retry at all.
  *
  * AND IT STILL FAILS WHEN IT SHOULD. When the budget is exhausted the real error is
  * rethrown, so a path that genuinely cannot be removed still fails the run. A cleanup that

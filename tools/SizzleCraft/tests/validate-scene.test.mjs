@@ -19,9 +19,16 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+/** This suite's own copy — _helpers.mjs is reserved and not sanctioned for this task. */
+const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
 import { EXIT } from '../src/cli-support.mjs';
+import { classifyScanOutcome } from '../src/scan-outcome.mjs';
 import { makeProject, runScript, assertCleanExit } from './_helpers.mjs';
 
 // ---------------------------------------------------------------------------
@@ -113,7 +120,35 @@ function knobs(extra = {}) {
   );
 }
 
-const run = (dir, args = []) => runScript('validate-scene.mjs', ['--project', dir, ...args], dir);
+// The suite pins the scan budget generously rather than inheriting the 5000 ms default.
+// That default is a judgement about a machine, and these tests run on CI boxes and on
+// 12-worker local load rigs where an innocent scan was MEASURED crossing it — producing a
+// refusal that had nothing to do with the check under test. Tests that are specifically
+// about the budget override this explicitly; `scanTimeout_withAGenuinelyPathologicalPattern`
+// deliberately does not, so the 5000 ms default itself stays pinned by one test.
+const SCAN_TIMEOUT_KNOB = 'SIZZLECRAFT_SCAN_TIMEOUT_MS';
+const GENEROUS_SCAN_BUDGET_MS = '60000';
+
+const run = (dir, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, {
+    env: { [SCAN_TIMEOUT_KNOB]: GENEROUS_SCAN_BUDGET_MS },
+  });
+
+/**
+ * Runs with the knob explicitly CLEARED from the child environment, so the engine's own
+ * default is what is under test.
+ *
+ * `runScript` spreads `process.env` into the child, so merely omitting an override is not
+ * the same as testing the default: an operator who has exported
+ * SIZZLECRAFT_SCAN_TIMEOUT_MS in their shell would have these tests silently measuring
+ * their value instead of 5000. Node drops `undefined` entries when building the child
+ * environment, which is how the variable is removed rather than blanked — and a blank
+ * string would not do, since resolveKnob treats an empty variable as unset anyway.
+ */
+const runAtDefaultBudget = (dir, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, {
+    env: { [SCAN_TIMEOUT_KNOB]: undefined },
+  });
 
 /**
  * Asserts the run refused, that THE NAMED CHECK is the one that refused, and that the
@@ -1213,7 +1248,7 @@ describe('round 2 · reveal semantics read from the renderer', () => {
     // `(a|aa){30}$` is 12 characters, so neither the length bound nor a nested-quantifier
     // heuristic touches it, and against a non-matching subject it backtracks exponentially.
     // Node cannot time-limit a regex in-process, so the scan runs under a real bound and
-    // the refusal names the pattern that stalled it.
+    // the refusal names the last pattern index the scan reported reaching.
     const seg = diagramSeg();
     seg.voiceoverText = `${'a'.repeat(40)}b`;
     const dir = makeProject(t, {
@@ -1225,9 +1260,15 @@ describe('round 2 · reveal semantics read from the renderer', () => {
         project: { noGoPatterns: ['PR \\d+', '(a|aa){30}$'] },
       }),
     });
-    const r = run(dir);
+    // At the ENGINE default budget: this test is about the bound firing, so overriding it
+    // from the suite would change the very thing under test.
+    const r = runAtDefaultBudget(dir);
     assertCleanExit(r, EXIT.USAGE);
-    assert.match(r.all, /noGoPatterns\[1\]/, `the refusal must name the pattern that stalled\n${r.all}`);
+    assert.match(
+      r.all,
+      /noGoPatterns\[1\]/,
+      `the refusal must name the last index the scan reported reaching\n${r.all}`,
+    );
   });
 
   test('groupedAlternationWithAQuantifier_isStillAccepted', (t) => {
@@ -1334,5 +1375,426 @@ describe('round 2 · reveal semantics read from the renderer', () => {
     // cheap one, and it bounds the cost of the scan that actually enforces the limit.
     const dir = makeProject(t, { 'timing.json': scene({ project: { noGoPatterns: ['a'.repeat(5000)] } }) });
     assertCleanExit(run(dir), EXIT.USAGE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D1 · the no-go scan's timeout
+//
+// A TIMEOUT BOUNDS COST. IT DOES NOT ESTABLISH CAUSE. The stage already knows this
+// about one failure shape and says so at validate-scene.mjs:710-715 — ENOBUFS also
+// kills the child, so classifying by signal reported a buffer overflow as catastrophic
+// backtracking and "sends the author to rewrite an innocent pattern". One branch later
+// it committed the same error in a new direction: an ETIMEDOUT was asserted, flatly, to
+// BE catastrophic backtracking.
+//
+// It is not. A child killed at the budget proves the scan did not finish; it says
+// nothing about why. Measured on this repo's own suite under a 12-worker load, innocent
+// scans crossed 5000 ms purely from CPU contention.
+//
+// THE POSITIVE CONTROL IS THIS FILE'S OWN FIXTURE. scene() ships
+// noGoPatterns[2] = 'SAP path' — a LITERAL. No quantifier, no alternation, no
+// backreference: structurally incapable of backtracking at all. A refusal that blames
+// backtracking here is not merely unproven, it is false about a pattern that cannot do
+// the thing it is accused of.
+//
+// So the contract these tests pin is: report the MEASUREMENT (what was bounded, and the
+// last position the scan reported reaching) and name candidate causes WITH AN ACTION,
+// without claiming the list is exhaustive and without picking one and asserting it. That
+// is the standard already stated for this engine's other guards at
+// envelope-ducking.mjs:418-420 — "a guard that invents a cause is worse than one that
+// reports a difference."
+// ---------------------------------------------------------------------------
+
+const runWithEnv = (dir, env, args = []) =>
+  runScript('validate-scene.mjs', ['--project', dir, ...args], dir, { env });
+
+/**
+ * A pattern that really is expensive: a nested quantifier against a long non-matching run.
+ *
+ * Deliberately NOT `(a+)+$`. The refusal text names `(a+)+$` as a constant example of the
+ * shape to look for, and `scanTimeout_neverPrintsThePatternSource` asserts the refusal does
+ * not contain the project's pattern. With the two identical, that assertion could not tell
+ * a real leak from the engine's own fixed example — it failed under load for exactly that
+ * reason, and a leak check that cannot discriminate is worse than none.
+ */
+const PATHOLOGICAL = '(zz+)+$';
+const PATHOLOGICAL_BAIT = 'z'.repeat(50) + 'q';
+
+describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
+  test('scanTimeout_withStructurallyInnocentPatterns_doesNotBlameBacktracking', (t) => {
+    // Every pattern in scene() is innocent and [2] is a bare literal, so ANY backtracking
+    // claim this run makes is provably wrong. The budget is driven to 1 ms to make the
+    // timeout certain without depending on how loaded the machine is — the alternative,
+    // a pattern tuned to straddle the default budget, is a wall-clock race.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.equal(r.code, EXIT.USAGE, `expected the unmeasurable scan to refuse as USAGE\n${r.all}`);
+    // The word check below is an ABSENCE assertion, and any other USAGE refusal would
+    // satisfy it without the timeout branch ever running. Pin the branch first.
+    assert.match(r.all, /did not finish within 1 ms/, `expected the timeout refusal, not some other USAGE error\n${r.all}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(r.all),
+      `the scan was stopped, which does not establish WHY. These patterns cannot backtrack:\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_namesContentionAndPattern_asCandidateCauses_withAnActionForEach', (t) => {
+    // Both causes are live and this code cannot tell them apart. Naming one is a guess;
+    // naming neither is a bound without a remedy. Name both, with what to do about each.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /\bload\b|\bcontention\b|\bbusy\b/i, `expected the load cause to be named\n${r.all}`);
+    assert.match(r.all, /pattern/i, `expected the pattern cause to be named\n${r.all}`);
+    assert.match(
+      r.all,
+      new RegExp(SCAN_TIMEOUT_KNOB),
+      `expected the raise-the-budget remedy to be actionable by name\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_statesTheBudgetItExceeded', (t) => {
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /\b1 ms\b/, `expected the refusal to state the budget in force\n${r.all}`);
+  });
+
+  test('scanTimeout_doesNotReportItselfAsAnExternalSignal', (t) => {
+    // The other half of the signal/timeout split. A child stopped by an EXTERNAL signal
+    // gets a different refusal that makes no claim about cost, because this stage did not
+    // stop it and measured nothing. This pins the classification from the side that CAN
+    // be produced deterministically: a real budget timeout must take the budget branch and
+    // not the signal one. If the two branches were merged back, this fails.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.match(r.all, /did not finish within 1 ms/, `expected the budget refusal\n${r.all}`);
+    assert.ok(
+      !/was stopped by/.test(r.all),
+      `a scan stopped BY THIS BUDGET was reported as an external signal\n${r.all}`,
+    );
+  });
+
+  test('scanTimeout_withAGenuinelyPathologicalPattern_stillNamesTheLastIndexReported', (t) => {
+    // Direction A. The useful half of the old message must survive: an author needs the
+    // index to act. What changes is that the index is reported as the LAST POSITION THE
+    // SCAN REPORTED REACHING — which is what the marker establishes — rather than as the
+    // proven culprit, or as where execution was when the OS stopped it.
+    const dir = makeProject(t, {
+      'timing.json': scene({ project: { noGoPatterns: [PATHOLOGICAL] }, segments: [
+        { ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT },
+        narrativeSeg(),
+      ] }),
+    });
+    const r = runAtDefaultBudget(dir);
+    assert.equal(r.code, EXIT.USAGE, `expected a stopped scan to refuse as USAGE\n${r.all}`);
+    assert.match(r.all, /within 5000 ms/, `expected the ENGINE default budget to be in force\n${r.all}`);
+    assert.match(r.all, /noGoPatterns\[0\]/, `expected the last index reported reached\n${r.all}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(r.all),
+      `even when backtracking IS the cause, this code did not measure that\n${r.all}`,
+    );
+  });
+
+  test('runAtDefaultBudget_withTheKnobExportedInTheParent_stillMeasuresTheEngineDefault', (t) => {
+    // THE CONTROL FOR runAtDefaultBudget's CLEARING. runScript spreads process.env into
+    // the child, so "pass no override" is NOT the same as "use the default": an operator
+    // with the variable exported would have the default-budget tests quietly measuring
+    // their number. Export a 1 ms budget here and assert 5000 is still what bounds the
+    // run — if the clearing were inert this reports "within 1 ms" and fails.
+    const previous = process.env[SCAN_TIMEOUT_KNOB];
+    process.env[SCAN_TIMEOUT_KNOB] = '1';
+    t.after(() => {
+      if (previous === undefined) delete process.env[SCAN_TIMEOUT_KNOB];
+      else process.env[SCAN_TIMEOUT_KNOB] = previous;
+    });
+    const dir = makeProject(t, {
+      'timing.json': scene({
+        project: { noGoPatterns: [PATHOLOGICAL] },
+        segments: [{ ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT }, narrativeSeg()],
+      }),
+    });
+    const r = runAtDefaultBudget(dir);
+    assert.match(r.all, /within 5000 ms/, `the exported budget leaked into a default-budget run\n${r.all}`);
+  });
+
+  test('scanTimeout_neverPrintsThePatternSource', (t) => {
+    // scanMain() withholds the pattern and the match on purpose: a no-go pattern is as
+    // sensitive as the string it hides. The timeout path must not become the leak.
+    const dir = makeProject(t, {
+      'timing.json': scene({ project: { noGoPatterns: [PATHOLOGICAL] }, segments: [
+        { ...diagramSeg(), voiceoverText: PATHOLOGICAL_BAIT },
+        narrativeSeg(),
+      ] }),
+    });
+    const r = runAtDefaultBudget(dir);
+    // Pin that this invocation actually REACHED the refusal. Both assertions below are
+    // absence checks, and a scan that simply completed would satisfy them without ever
+    // exercising the path under test — a test that passes for the wrong reason.
+    assert.equal(r.code, EXIT.USAGE, `expected this run to reach the timeout refusal\n${r.all}`);
+    assert.match(r.all, /within 5000 ms/, `expected the timeout refusal, not some other error\n${r.all}`);
+    assert.ok(!r.all.includes(PATHOLOGICAL), `the pattern source leaked into the refusal\n${r.all}`);
+    assert.ok(!r.all.includes(PATHOLOGICAL_BAIT), `the scanned text leaked into the refusal\n${r.all}`);
+  });
+
+  test('scanTimeoutKnob_raisingTheBudget_letsTheSameProjectPass', (t) => {
+    // The remedy has to WORK, not merely be mentioned. Same project, same patterns: a
+    // budget of 1 ms refuses it and the default budget clears it. Without this pair the
+    // knob could be inert and the message would still read well.
+    const dir = makeProject(t, { 'timing.json': scene(), 'knobs.json': knobs() });
+    // The refusing half has to refuse FOR THE REASON UNDER TEST. A bare USAGE check would
+    // be satisfied by any other refusal, and the pair would then prove nothing about the
+    // budget: the "before" would be an unrelated error and the "after" merely a clean run.
+    const refused = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.equal(refused.code, EXIT.USAGE, `expected a 1 ms budget to stop the scan\n${refused.all}`);
+    assert.match(refused.all, /did not finish within 1 ms/, `expected the timeout refusal\n${refused.all}`);
+    assertClean(runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '60000' }));
+  });
+
+  test('scanTimeoutKnob_nonPositiveValue_isRefusedRatherThanIgnored', (t) => {
+    // An unusable budget read as "use the default" is how a typo silently disables the
+    // thing the operator was trying to set — the defect resolveBooleanKnob already names.
+    const dir = makeProject(t, { 'timing.json': scene() });
+    for (const bad of ['0', '-1', 'soon']) {
+      const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: bad });
+      assert.equal(r.code, EXIT.USAGE, `expected ${JSON.stringify(bad)} to be refused\n${r.all}`);
+      // Naming the variable does NOT discriminate here: the timeout refusal names it too,
+      // as its raise-the-budget remedy. So assert the knob refusal's own words, otherwise
+      // a value that was quietly read as the default and then timed out would pass this.
+      assert.match(
+        r.all,
+        /must be a positive whole number of milliseconds/,
+        `expected the knob to be refused outright, not read as the default\n${r.all}`,
+      );
+      assert.match(r.all, new RegExp(SCAN_TIMEOUT_KNOB), `expected the variable to be named\n${r.all}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Classifying HOW the scan child ended.
+//
+// These go through the exported classifier rather than a real run, because the case that
+// matters here — an EXTERNAL kill, with a signal and no error — cannot be produced from a
+// harness without polling the process table for a grandchild and racing to kill it. That
+// is the load-sensitive test shape this domain removed earlier, so it is not reintroduced
+// to test a six-line branch. The classifier is the seam; the reachable cases below are
+// also asserted through it so the whole decision is covered by one mechanism.
+// ---------------------------------------------------------------------------
+describe('scan outcome classification: report the ending that happened', () => {
+  const BUDGET = { ms: 5000, variable: SCAN_TIMEOUT_KNOB };
+  const ok = { error: undefined, signal: null, status: 0, stdout: '[]', stderr: '' };
+
+  const thrownBy = (result) => {
+    try {
+      classifyScanOutcome(result, BUDGET);
+    } catch (err) {
+      return err;
+    }
+    return null;
+  };
+
+  test('classify_externalSignalWithNoError_namesTheSignalAndClaimsNothingAboutCost', () => {
+    const err = thrownBy({ ...ok, signal: 'SIGKILL', status: null });
+    assert.ok(err, 'a child killed by an external signal must be refused, not read as success');
+    assert.match(err.message, /stopped by SIGKILL/, err.message);
+    // THE WHOLE POINT. This stage did not stop the child and timed nothing, so it must not
+    // report a budget overrun -- the defect this change set exists to remove.
+    assert.ok(!/did not finish within/.test(err.message), `an external kill was reported as a budget overrun\n${err.message}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(err.message),
+      `an external kill was blamed on a pattern\n${err.message}`,
+    );
+    // ...and it must not assert the complementary timing fact either. "The budget was not
+    // reached" is just as unmeasured as "the budget was exceeded": nothing here read a clock.
+    assert.ok(
+      !/not reached|had not elapsed|before the budget/i.test(err.message),
+      `the refusal asserted how much of the budget had elapsed, which nothing here measured\n${err.message}`,
+    );
+  });
+
+  test('classify_externalSignal_namesNoPatternIndex', () => {
+    // The timeout branch names an index because it has one. This branch has no deadline and
+    // no in-flight marker it can trust, so naming an index would be an invention.
+    const err = thrownBy({ ...ok, signal: 'SIGKILL', status: null, stderr: 'scanning 0\nscanning 1\n' });
+    assert.ok(!/noGoPatterns\[/.test(err.message), `an external kill named a pattern index\n${err.message}`);
+  });
+
+  test('classify_timeout_isStillReportedAsABudgetOverrun', () => {
+    const err = thrownBy({ ...ok, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM', status: null });
+    assert.ok(err, 'a timeout must be refused');
+    // A real timeout arrives WITH a signal set. It must take the budget branch regardless,
+    // or the split would have broken the case it was meant to leave alone.
+    assert.match(err.message, /did not finish within 5000 ms/, err.message);
+    assert.ok(!/stopped by SIGTERM/.test(err.message), `a budget timeout was reported as an external kill\n${err.message}`);
+  });
+
+  test('classify_bufferOverflow_isReportedByItsErrorCode_notAsATimeout', () => {
+    // The ordering this file already fixed once: ENOBUFS also kills the child, so it
+    // arrives with a signal. Classify by error code first.
+    const err = thrownBy({ ...ok, error: { code: 'ENOBUFS' }, signal: 'SIGTERM', status: null });
+    assert.match(err.message, /could not run: ENOBUFS/, err.message);
+    assert.ok(!/did not finish within/.test(err.message), `a buffer overflow was reported as a timeout\n${err.message}`);
+  });
+
+  test('classify_aCleanRun_isNotRefused', () => {
+    // The control for all four refusals above: if this threw, they would pass for free.
+    assert.equal(thrownBy(ok), null, 'a clean scan must not be refused');
+  });
+
+  // The marker index had NO test before this. The "last marker, not the first" fix and the
+  // wording of the position claim were both measured and then shipped unpinned, which is
+  // how every other defect in this file survived to be found by a reviewer.
+  const timedOutAfter = (stderr) => thrownBy({ ...ok, error: { code: 'ETIMEDOUT' }, status: null, stderr });
+
+  test('classifyTimeout_severalMarkers_namesTheLastOneReachedNotTheFirst', () => {
+    const err = timedOutAfter('scanning 0\nscanning 1\nscanning 2\n');
+    assert.match(err.message, /noGoPatterns\[2\]/, `named something other than the last marker\n${err.message}`);
+    assert.ok(
+      !/noGoPatterns\[0\]/.test(err.message),
+      `named the FIRST marker — exec() on a running log returns index 0 every time, and that ` +
+        `sends the author to an innocent pattern\n${err.message}`,
+    );
+  });
+
+  test('classifyTimeout_doesNotClaimTheScanWasExecutingThatPattern', () => {
+    // From review, twice. A phrasing DENYLIST is a test for the instances I happened to
+    // write: it killed "was inside ... at that moment", then passed over the headline
+    // "THAT IS WHERE IT STOPPED" two lines below, and would still accept a fresh invention
+    // like "execution terminated during pattern [1]". No denylist can prove prose truthful.
+    //
+    // So pin the WHOLE message instead. Any new sentence, in any wording, fails this until
+    // a human reads the diff and restates it here. That is the honest ceiling for a
+    // semantic claim: the test cannot judge truth, but it can refuse to let an unreviewed
+    // claim appear. The denylist assertions are kept BELOW as a named-regression layer, so
+    // a failure says which old defect returned rather than just "the message changed".
+    const err = timedOutAfter('scanning 0\nscanning 1\n');
+    const APPROVED =
+      'the no-go scan did not finish within 5000 ms and was stopped. The last index it ' +
+      'reported reaching was project.noGoPatterns[1]. That marker is written before the ' +
+      'pattern runs, and the scan does more work after its last pattern, so this does not ' +
+      'say where the child was when it was stopped.\n' +
+      '\n' +
+      'THAT IS THE LAST POSITION REPORTED, NOT WHERE IT STOPPED OR WHY. This stage times ' +
+      'nothing and attributes nothing. Two causes are common enough to be worth naming, ' +
+      'and they are not the only ones — process startup, pattern compilation and writing ' +
+      'the result all cost time inside the same budget:\n' +
+      '  - the machine was too busy for the budget — likely if the scan normally passes ' +
+      'here, or if a build, a render or a parallel test run was in flight. Raise it: set ' +
+      'SIZZLECRAFT_SCAN_TIMEOUT_MS to a larger number of milliseconds and run again.\n' +
+      '  - a pattern is genuinely expensive — likely if it stops at the same index on an ' +
+      'idle machine with the budget raised. Read that pattern in the source file and look ' +
+      'for a repeated group whose body can match the same text in more than one way, such ' +
+      'as "(a|aa){30}$" or "(a+)+$". On text that ultimately does NOT match, the engine can ' +
+      'be forced to try every combination, and the number of combinations grows with the ' +
+      'repeat count far faster than the text does.\n' +
+      '\n' +
+      'The scan is not left unbounded either way: this stage exists to be cheap.';
+    assert.equal(
+      err.message,
+      APPROVED,
+      `the timeout refusal changed. Every sentence here is a claim about something this ` +
+        `stage did NOT measure, and six have already had to be withdrawn. Read the new ` +
+        `wording, satisfy yourself it asserts only what the markers and the budget ` +
+        `establish, then update this string.`,
+    );
+
+    // Named regressions, each a claim that actually shipped and was withdrawn.
+    assert.ok(
+      !/was inside|at that moment|was executing|was still in/i.test(err.message),
+      `the refusal asserted where execution WAS, which the markers do not establish\n${err.message}`,
+    );
+    assert.ok(
+      !/THAT IS WHERE IT STOPPED/.test(err.message),
+      `the headline reasserted a stop position the markers do not establish\n${err.message}`,
+    );
+    assert.ok(
+      !/cannot tell the two causes apart|names both rather than picking one/.test(err.message),
+      `the refusal presented its two example causes as the only two\n${err.message}`,
+    );
+  });
+
+  test('classifyTimeout_noMarkersAtAll_namesNoIndexRatherThanGuessingZero', () => {
+    const err = timedOutAfter('');
+    assert.match(err.message, /did not finish within 5000 ms/, err.message);
+    assert.ok(!/noGoPatterns\[/.test(err.message), `invented an index with no marker to support it\n${err.message}`);
+  });
+
+  test('validateScene_invokedThroughAnUnusualPathSpelling_stillActuallyRuns', (t) => {
+    // REGRESSION PIN, from review. classifyScanOutcome was briefly exported from
+    // validate-scene.mjs behind an "am I the entry point?" guard that compared
+    // path.resolve(process.argv[1]) against fileURLToPath(import.meta.url). A spelling the
+    // comparison does not recognise makes the guard false, and the validator then exits 0
+    // having checked NOTHING. A validator whose failure mode is indistinguishable from a
+    // clean pass is the worst outcome available, so the guard was removed and the
+    // classifier moved to its own module.
+    //
+    // The spelling used here is a DIRECTORY JUNCTION, which is the vector review named and
+    // the only one I could make reproduce: Node resolves the module to its real path for
+    // import.meta.url but leaves the junction spelling in process.argv[1], so a string
+    // comparison between them is false. I first wrote this test with a case-flipped path
+    // and it did NOT reproduce — Node keeps the given spelling in both, so the comparison
+    // matched and the test passed against the very guard it was meant to catch. It was a
+    // control that could not fail. Measured, not assumed: against the guarded build this
+    // invocation exits 0 with zero output and the planted match goes unreported.
+    //
+    // CLEANUP IS DELIBERATELY NON-RECURSIVE. fs.rmdirSync removes the reparse point only.
+    // A recursive remove would follow the junction and empty the real src/ directory —
+    // this domain destroyed a node_modules that way this week.
+    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-srclink-'));
+    const link = path.join(linkDir, 'src');
+    try {
+      fs.symlinkSync(SRC_DIR, link, 'junction');
+    } catch {
+      t.skip('could not create a directory junction on this platform');
+      return;
+    }
+
+    // The link's whole lifetime is this try/finally, NOT a t.after hook, and that is
+    // deliberate twice over.
+    //
+    // First, removal here MUST be non-recursive: fs.rmdirSync takes the reparse point away
+    // and leaves the target alone. A recursive remove pointed at a junction can follow it
+    // and empty the real src/ directory — this domain destroyed a node_modules exactly
+    // that way this week. So this must not go through the retrying RECURSIVE removal that
+    // fixture-teardown.test.mjs requires of teardown hooks; that rule is right for fixture
+    // directories a child process may hold, and wrong for a link.
+    //
+    // Second, a junction is a reparse point, not an open handle, so it has none of the
+    // EBUSY exposure that rule exists to absorb. finally still runs on a thrown assertion,
+    // so nothing leaks.
+    try {
+      const dir = makeProject(t, {
+        'timing.json': scene({
+          project: { noGoPatterns: ['https?://'] },
+          segments: [{ ...diagramSeg(), voiceoverText: 'go to https://example.com' }, narrativeSeg()],
+        }),
+      });
+      const r = spawnSync(process.execPath, [path.join(link, 'validate-scene.mjs'), '--project', dir], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, [SCAN_TIMEOUT_KNOB]: '60000' },
+      });
+      const all = (r.stdout ?? '') + (r.stderr ?? '');
+      // Anchor on the D1 row AND its FAIL status. A bare /D1/ also matches the `ok` row,
+      // so paired with an exit 1 earned by some other check it would pass against a D1
+      // that ran and found nothing. The point of this test is that D1 actually ran.
+      assert.match(
+        all,
+        /^\s*D1\s+.*\sFAIL \(\d+\)\s*$/m,
+        `no failing D1 row — did the validator run at all?\n${all}`,
+      );
+      assert.equal(r.status, EXIT.FAILED, `a planted no-go match must fail, not pass silently\n${all}`);
+    } finally {
+      // Non-recursive either way: unlink takes a POSIX symlink, rmdir takes a Windows
+      // junction, and NEITHER follows the link. A recursive remove here would empty the
+      // real src/.
+      try {
+        fs.unlinkSync(link);
+      } catch {
+        fs.rmdirSync(link);
+      }
+      fs.rmdirSync(linkDir);
+    }
   });
 });
