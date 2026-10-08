@@ -1104,6 +1104,33 @@ export function resolveFfmpegPointer(root) {
 }
 
 /**
+ * Where the audio frames start in an MP3 buffer: past an ID3v2 tag, or at byte 0.
+ *
+ * The tag's size is a SYNCHSAFE 28-bit integer — seven bits per byte, the top bit of each
+ * always clear so the size can never itself look like a frame sync. Reading it as a plain
+ * big-endian 32-bit value is wrong for any tag over 128 bytes, which is all of them.
+ *
+ * `voice.mjs` and `remix.mjs` each carried this, differing only in a parameter name and a
+ * brace. Proven equivalent by EXECUTION rather than by reading — 23 buffers covering an
+ * empty buffer, buffers shorter than the header, ID3 headers with flags 0x00/0x10/0xff and
+ * synchsafe sizes from zero to all-bits-set, and a non-ID3 frame — because two
+ * transcriptions of a bit expression can read alike and shift differently.
+ *
+ * `concat-audio.mjs` KEEPS ITS OWN, and it is not a third copy: it also adds the footer
+ * when the flags bit is set, then walks forward to the first MPEG sync word. Over those
+ * same 23 buffers it returns a different offset for 19 of them. Folding it in here would
+ * change what concat-audio does to every clip it joins.
+ *
+ * CONSUMERS(mp3AudioStart): remix.mjs, voice.mjs
+ */
+export function mp3AudioStart(buffer) {
+  if (buffer.length >= 10 && buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
+    return 10 + (((buffer[6] & 0x7f) << 21) | ((buffer[7] & 0x7f) << 14) | ((buffer[8] & 0x7f) << 7) | (buffer[9] & 0x7f));
+  }
+  return 0;
+}
+
+/**
  * Resolves the ffmpeg binary, preferring `--ffmpeg` over the project's `ffmpeg-path.txt`.
  *
  * THE OTHER FFMPEG RESOLVER, AND IT IS NOT A DUPLICATE OF `resolveFfmpegPointer`. Three

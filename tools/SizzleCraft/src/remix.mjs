@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { parseFile } from 'music-metadata';
 import { normalizeEndCardFields } from './end-card.mjs';
-import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveWithinRoot, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal, openExclusiveEngineFile } from './cli-support.mjs';
+import { EXIT, CliError, guard, parseCli, requireExistingFile, resolveEngineOutput, resolveWithinRoot, describeWrite, planFooter, requireFiniteNumber, assertDistinctDestinations, timingSeal, openExclusiveEngineFile, mp3AudioStart as audioStart } from './cli-support.mjs';
 import {
   isSilentSegment, silentSegmentProblems, silentDurationMs, silentMp3, silentMp3DurationMs, silenceAssetBytes,
   silentRecordState, hasAudioFile, unvoicedNarrationProblem, segmentClipName, gapAssetName, remixWriteSet,
@@ -426,11 +426,6 @@ try {
   // ---- 5. re-concatenate ---------------------------------------------------------------------
   // From the bytes just staged, held in memory, and the narrated clips, which are only read:
   // no destination is published yet, so none is read back.
-  function audioStart(b) {
-    if (b.length >= 10 && b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33)
-      return 10 + (((b[6] & 0x7f) << 21) | ((b[7] & 0x7f) << 14) | ((b[8] & 0x7f) << 7) | (b[9] & 0x7f));
-    return 0;
-  }
   const parts = [];
   if (leadAsset) parts.push(leadAsset.bytes);
   for (let i = 0; i < segs.length; i++) {
