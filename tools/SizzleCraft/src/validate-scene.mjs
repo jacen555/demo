@@ -179,11 +179,14 @@ function revealsTarget(trigger, seg, ids) {
  *      that the scan did not finish; catastrophic backtracking and a loaded machine are
  *      indistinguishable from outside, and this code measures neither.
  *   b. It does not detect a pathological pattern that finishes INSIDE the budget. A
- *      `(a+)+$` that happens to be given short bait is quadratic-but-quick here and
- *      passes, and will not be quick on a longer string later.
- *   c. The index it reports is WHERE THE SCAN WAS when the OS stopped it. On a loaded
- *      machine that is whichever pattern held the CPU at the deadline, which need not be
- *      the most expensive one.
+ *      `(a+)+$` given short bait may complete within the budget and pass, and will not
+ *      be quick on a longer string later. How its cost grows is not measured here and
+ *      is not claimed.
+ *   c. The index it reports is the LAST INDEX THE SCAN REPORTED REACHING, which is not
+ *      the same as where execution was when the OS stopped it. The marker is written
+ *      before the pattern runs, and work continues after the last pattern, so the child
+ *      may have been in that pattern, past it, or past the loop entirely. On a loaded
+ *      machine the index also need not belong to the most expensive pattern.
  *   d. It does not account for a child stopped by something OTHER than this budget. An
  *      external signal — an out-of-memory killer, a CI step reaping the process tree — is
  *      reported as the signal it was, with no claim about cost, about elapsed time, or
@@ -750,7 +753,8 @@ function checkD1(timing, report) {
  * process killed by the OS is the only bound that actually holds.
  *
  * The child writes the index it is about to test to stderr before testing it, so when the
- * OS kills it the parent can still name the pattern that stalled. Without that, the
+ * OS kills it the parent can still name the last index the scan reported reaching — not
+ * the pattern that stalled, which nothing here establishes. Without that marker the
  * refusal would be "one of your 40 patterns", which is a bound without a remedy.
  */
 function scanInChildProcess(strings, patterns) {

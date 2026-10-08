@@ -81,15 +81,18 @@ export function classifyScanOutcome(result, budget) {
     // scan reported, and that is all it is.
     const started = [...(result.stderr ?? '').matchAll(/^scanning (\d+)$/gm)].at(-1);
     const where = started
-      ? `The last position it reported reaching was project.noGoPatterns[${started[1]}]; it ` +
-        `may have been in that pattern, or past it and finishing up`
+      ? `The last index it reported reaching was project.noGoPatterns[${started[1]}]. That ` +
+        `marker is written before the pattern runs, and the scan does more work after its ` +
+        `last pattern, so this does not say where the child was when it was stopped`
       : 'It was stopped before it reported reaching any pattern';
     const { variable } = budget;
     throw new CliError(
       `the no-go scan did not finish within ${budget.ms} ms and was stopped. ${where}.\n` +
         `\n` +
-        `THAT IS THE LAST POSITION REPORTED, NOT WHERE IT STOPPED OR WHY. This stage cannot ` +
-        `tell the two causes apart, so it names both rather than picking one:\n` +
+        `THAT IS THE LAST POSITION REPORTED, NOT WHERE IT STOPPED OR WHY. This stage times ` +
+        `nothing and attributes nothing. Two causes are common enough to be worth naming, ` +
+        `and they are not the only ones — process startup, pattern compilation and writing ` +
+        `the result all cost time inside the same budget:\n` +
         `  - the machine was too busy for the budget — likely if the scan normally passes ` +
         `here, or if a build, a render or a parallel test run was in flight. Raise it: ` +
         `set ${variable} to a larger number of milliseconds and run again.\n` +

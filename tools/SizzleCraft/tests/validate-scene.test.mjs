@@ -1651,27 +1651,60 @@ describe('scan outcome classification: report the ending that happened', () => {
   });
 
   test('classifyTimeout_doesNotClaimTheScanWasExecutingThatPattern', () => {
-    // The marker is written BEFORE the pattern runs, and the loop is followed by unmarked
-    // work (building findings, JSON.stringify, console.log). A child that finished the last
-    // pattern and was stopped while serialising emits exactly this stderr. So the index is
-    // the last position REPORTED; asserting execution was there at the moment of
-    // termination is the same unmeasured-cause error one step further in.
+    // From review, twice. A phrasing DENYLIST is a test for the instances I happened to
+    // write: it killed "was inside ... at that moment", then passed over the headline
+    // "THAT IS WHERE IT STOPPED" two lines below, and would still accept a fresh invention
+    // like "execution terminated during pattern [1]". No denylist can prove prose truthful.
+    //
+    // So pin the WHOLE message instead. Any new sentence, in any wording, fails this until
+    // a human reads the diff and restates it here. That is the honest ceiling for a
+    // semantic claim: the test cannot judge truth, but it can refuse to let an unreviewed
+    // claim appear. The denylist assertions are kept BELOW as a named-regression layer, so
+    // a failure says which old defect returned rather than just "the message changed".
     const err = timedOutAfter('scanning 0\nscanning 1\n');
-    assert.match(err.message, /last position it reported reaching/, err.message);
+    const APPROVED =
+      'the no-go scan did not finish within 5000 ms and was stopped. The last index it ' +
+      'reported reaching was project.noGoPatterns[1]. That marker is written before the ' +
+      'pattern runs, and the scan does more work after its last pattern, so this does not ' +
+      'say where the child was when it was stopped.\n' +
+      '\n' +
+      'THAT IS THE LAST POSITION REPORTED, NOT WHERE IT STOPPED OR WHY. This stage times ' +
+      'nothing and attributes nothing. Two causes are common enough to be worth naming, ' +
+      'and they are not the only ones — process startup, pattern compilation and writing ' +
+      'the result all cost time inside the same budget:\n' +
+      '  - the machine was too busy for the budget — likely if the scan normally passes ' +
+      'here, or if a build, a render or a parallel test run was in flight. Raise it: set ' +
+      'SIZZLECRAFT_SCAN_TIMEOUT_MS to a larger number of milliseconds and run again.\n' +
+      '  - a pattern is genuinely expensive — likely if it stops at the same index on an ' +
+      'idle machine with the budget raised. Read that pattern in the source file and look ' +
+      'for a repeated group whose body can match the same text in more than one way, such ' +
+      'as "(a|aa){30}$" or "(a+)+$". On text that ultimately does NOT match, the engine can ' +
+      'be forced to try every combination, and the number of combinations grows with the ' +
+      'repeat count far faster than the text does.\n' +
+      '\n' +
+      'The scan is not left unbounded either way: this stage exists to be cheap.';
+    assert.equal(
+      err.message,
+      APPROVED,
+      `the timeout refusal changed. Every sentence here is a claim about something this ` +
+        `stage did NOT measure, and six have already had to be withdrawn. Read the new ` +
+        `wording, satisfy yourself it asserts only what the markers and the budget ` +
+        `establish, then update this string.`,
+    );
+
+    // Named regressions, each a claim that actually shipped and was withdrawn.
     assert.ok(
       !/was inside|at that moment|was executing|was still in/i.test(err.message),
       `the refusal asserted where execution WAS, which the markers do not establish\n${err.message}`,
     );
-    // The headline too, not just the sentence naming the index. The first version of THIS
-    // TEST checked only the phrasing above and passed while the very next line of the
-    // message said "THAT IS WHERE IT STOPPED" -- restating the unmeasured claim in capitals
-    // two lines below the qualified one, and flatly contradicting it. A test for a class of
-    // defect that inspects only one sentence is a test for an instance.
     assert.ok(
       !/THAT IS WHERE IT STOPPED/.test(err.message),
       `the headline reasserted a stop position the markers do not establish\n${err.message}`,
     );
-    assert.match(err.message, /THAT IS THE LAST POSITION REPORTED/, err.message);
+    assert.ok(
+      !/cannot tell the two causes apart|names both rather than picking one/.test(err.message),
+      `the refusal presented its two example causes as the only two\n${err.message}`,
+    );
   });
 
   test('classifyTimeout_noMarkersAtAll_namesNoIndexRatherThanGuessingZero', () => {
