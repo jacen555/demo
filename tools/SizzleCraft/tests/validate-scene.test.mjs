@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { EXIT } from '../src/cli-support.mjs';
+import { classifyScanOutcome } from '../src/validate-scene.mjs';
 import { makeProject, runScript, assertCleanExit } from './_helpers.mjs';
 
 // ---------------------------------------------------------------------------
@@ -1554,5 +1555,77 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
       );
       assert.match(r.all, new RegExp(SCAN_TIMEOUT_KNOB), `expected the variable to be named\n${r.all}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Classifying HOW the scan child ended.
+//
+// These go through the exported classifier rather than a real run, because the case that
+// matters here — an EXTERNAL kill, with a signal and no error — cannot be produced from a
+// harness without polling the process table for a grandchild and racing to kill it. That
+// is the load-sensitive test shape this domain removed earlier, so it is not reintroduced
+// to test a six-line branch. The classifier is the seam; the reachable cases below are
+// also asserted through it so the whole decision is covered by one mechanism.
+// ---------------------------------------------------------------------------
+describe('scan outcome classification: report the ending that happened', () => {
+  const BUDGET = { ms: 5000, variable: SCAN_TIMEOUT_KNOB };
+  const ok = { error: undefined, signal: null, status: 0, stdout: '[]', stderr: '' };
+
+  const thrownBy = (result) => {
+    try {
+      classifyScanOutcome(result, BUDGET);
+    } catch (err) {
+      return err;
+    }
+    return null;
+  };
+
+  test('classify_externalSignalWithNoError_namesTheSignalAndClaimsNothingAboutCost', () => {
+    const err = thrownBy({ ...ok, signal: 'SIGKILL', status: null });
+    assert.ok(err, 'a child killed by an external signal must be refused, not read as success');
+    assert.match(err.message, /stopped by SIGKILL/, err.message);
+    // THE WHOLE POINT. This stage did not stop the child and timed nothing, so it must not
+    // report a budget overrun -- the defect this change set exists to remove.
+    assert.ok(!/did not finish within/.test(err.message), `an external kill was reported as a budget overrun\n${err.message}`);
+    assert.ok(
+      !/catastrophic|backtracking|exponential/i.test(err.message),
+      `an external kill was blamed on a pattern\n${err.message}`,
+    );
+    // ...and it must not assert the complementary timing fact either. "The budget was not
+    // reached" is just as unmeasured as "the budget was exceeded": nothing here read a clock.
+    assert.ok(
+      !/not reached|had not elapsed|before the budget/i.test(err.message),
+      `the refusal asserted how much of the budget had elapsed, which nothing here measured\n${err.message}`,
+    );
+  });
+
+  test('classify_externalSignal_namesNoPatternIndex', () => {
+    // The timeout branch names an index because it has one. This branch has no deadline and
+    // no in-flight marker it can trust, so naming an index would be an invention.
+    const err = thrownBy({ ...ok, signal: 'SIGKILL', status: null, stderr: 'scanning 0\nscanning 1\n' });
+    assert.ok(!/noGoPatterns\[/.test(err.message), `an external kill named a pattern index\n${err.message}`);
+  });
+
+  test('classify_timeout_isStillReportedAsABudgetOverrun', () => {
+    const err = thrownBy({ ...ok, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM', status: null });
+    assert.ok(err, 'a timeout must be refused');
+    // A real timeout arrives WITH a signal set. It must take the budget branch regardless,
+    // or the split would have broken the case it was meant to leave alone.
+    assert.match(err.message, /did not finish within 5000 ms/, err.message);
+    assert.ok(!/stopped by SIGTERM/.test(err.message), `a budget timeout was reported as an external kill\n${err.message}`);
+  });
+
+  test('classify_bufferOverflow_isReportedByItsErrorCode_notAsATimeout', () => {
+    // The ordering this file already fixed once: ENOBUFS also kills the child, so it
+    // arrives with a signal. Classify by error code first.
+    const err = thrownBy({ ...ok, error: { code: 'ENOBUFS' }, signal: 'SIGTERM', status: null });
+    assert.match(err.message, /could not run: ENOBUFS/, err.message);
+    assert.ok(!/did not finish within/.test(err.message), `a buffer overflow was reported as a timeout\n${err.message}`);
+  });
+
+  test('classify_aCleanRun_isNotRefused', () => {
+    // The control for all four refusals above: if this threw, they would pass for free.
+    assert.equal(thrownBy(ok), null, 'a clean scan must not be refused');
   });
 });

@@ -185,8 +185,9 @@ function revealsTarget(trigger, seg, ids) {
  *      the most expensive one.
  *   d. It does not account for a child stopped by something OTHER than this budget. An
  *      external signal — an out-of-memory killer, a CI step reaping the process tree — is
- *      reported as the signal it was, with no claim about cost or about a pattern. This
- *      stage cannot measure a scan it did not stop.
+ *      reported as the signal it was, with no claim about cost, about elapsed time, or
+ *      about a pattern. This stage cannot measure a scan it did not stop, and that cuts
+ *      both ways: it can no more say the budget was NOT reached than that it was.
  */
 const SCAN_TIMEOUT_FALLBACK_MS = 5000;
 
@@ -761,6 +762,30 @@ function scanInChildProcess(strings, patterns) {
     maxBuffer: 64 * 1024 * 1024,
   });
 
+  classifyScanOutcome(result, budget);
+
+  if (result.status !== 0) {
+    // The child reports an invalid pattern by INDEX, never by source — see scanMain().
+    throw new CliError((result.stdout || result.stderr || 'the no-go scan failed').trim());
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new CliError('the no-go scan returned unreadable output');
+  }
+}
+
+/**
+ * Decides HOW the scan child ended and refuses with the ending that actually happened.
+ * Throws a CliError for every ending this stage cannot use; returns for a clean one.
+ *
+ * Exported so the endings can be tested directly. The case that most needs testing — an
+ * external kill, which arrives as a signal with no error — cannot be produced from a test
+ * harness without polling the process table for a grandchild and racing to kill it, and a
+ * load-sensitive test is exactly what this domain spent a week removing. The decision is
+ * separated from the spawn so it can be exercised without one.
+ */
+export function classifyScanOutcome(result, budget) {
   // ORDER MATTERS. `maxBuffer` overflow sets error.code ENOBUFS and ALSO kills the child,
   // so it arrives with a signal set. Testing `result.signal` first reported a buffer
   // overflow as catastrophic backtracking and blamed whichever pattern happened to be
@@ -779,10 +804,11 @@ function scanInChildProcess(strings, patterns) {
   if (!result.error && result.signal) {
     throw new CliError(
       `the no-go scan was stopped by ${result.signal} before it finished. This stage did not ` +
-        `stop it: its ${budget.variable} budget of ${budget.ms} ms was not reached, so nothing ` +
-        `here measured the scan's cost and nothing here can tell you why it was killed. Look ` +
-        `for whatever sent the signal — an out-of-memory killer, a CI step timeout reaping the ` +
-        `process tree, or a manual kill — and run again once it is gone.`,
+        `stop it: it did not report a timeout against its ${budget.variable} budget of ` +
+        `${budget.ms} ms, so nothing here measured how long the scan ran or what it cost, and ` +
+        `nothing here can tell you why it was killed. Look for whatever sent the signal — an ` +
+        `out-of-memory killer, a CI step timeout reaping the process tree, or a manual kill — ` +
+        `and run again once it is gone.`,
     );
   }
   if (result.error?.code === 'ETIMEDOUT') {
@@ -826,15 +852,6 @@ function scanInChildProcess(strings, patterns) {
         `\n` +
         `The scan is not left unbounded either way: this stage exists to be cheap.`,
     );
-  }
-  if (result.status !== 0) {
-    // The child reports an invalid pattern by INDEX, never by source — see scanMain().
-    throw new CliError((result.stdout || result.stderr || 'the no-go scan failed').trim());
-  }
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new CliError('the no-go scan returned unreadable output');
   }
 }
 
@@ -1055,7 +1072,12 @@ function readJson(abs, label) {
   }
 }
 
-await runCli(async () => {
+// The CLI runs only when this file IS the entry point. classifyScanOutcome is exported
+// for its tests, and importing it to test it would otherwise execute the whole validator
+// against the test runner's argv. Same guard, same reason, as coach-rulings.mjs:198.
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) await runCli(async () => {
   let values;
   try {
     ({ values } = parseArgs({
