@@ -71,9 +71,18 @@ export function classifyScanOutcome(result, budget) {
     // `scanning 1`, ... — so `exec` returns index 0 every time and the refusal names an
     // innocent pattern with complete confidence. Measured: a stall on pattern 1 was
     // reported as pattern 0.
+    //
+    // And the marker says REACHED, not `was executing`. validate-scene.mjs writes it
+    // BEFORE running the pattern, and the loop is followed by unmarked work — building
+    // the findings strings, JSON.stringify, console.log. A child that finished the last
+    // pattern and was stopped while serialising produces exactly the same final marker.
+    // So naming that index as where execution WAS is the same unmeasured-cause error this
+    // branch exists to correct, pointed one step further in. It is the last position the
+    // scan reported, and that is all it is.
     const started = [...(result.stderr ?? '').matchAll(/^scanning (\d+)$/gm)].at(-1);
     const where = started
-      ? `It was inside project.noGoPatterns[${started[1]}] at that moment`
+      ? `The last position it reported reaching was project.noGoPatterns[${started[1]}]; it ` +
+        `may have been in that pattern, or past it and finishing up`
       : 'It was stopped before it reported reaching any pattern';
     const { variable } = budget;
     throw new CliError(

@@ -1635,6 +1635,41 @@ describe('scan outcome classification: report the ending that happened', () => {
     assert.equal(thrownBy(ok), null, 'a clean scan must not be refused');
   });
 
+  // The marker index had NO test before this. The "last marker, not the first" fix and the
+  // wording of the position claim were both measured and then shipped unpinned, which is
+  // how every other defect in this file survived to be found by a reviewer.
+  const timedOutAfter = (stderr) => thrownBy({ ...ok, error: { code: 'ETIMEDOUT' }, status: null, stderr });
+
+  test('classifyTimeout_severalMarkers_namesTheLastOneReachedNotTheFirst', () => {
+    const err = timedOutAfter('scanning 0\nscanning 1\nscanning 2\n');
+    assert.match(err.message, /noGoPatterns\[2\]/, `named something other than the last marker\n${err.message}`);
+    assert.ok(
+      !/noGoPatterns\[0\]/.test(err.message),
+      `named the FIRST marker — exec() on a running log returns index 0 every time, and that ` +
+        `sends the author to an innocent pattern\n${err.message}`,
+    );
+  });
+
+  test('classifyTimeout_doesNotClaimTheScanWasExecutingThatPattern', () => {
+    // The marker is written BEFORE the pattern runs, and the loop is followed by unmarked
+    // work (building findings, JSON.stringify, console.log). A child that finished the last
+    // pattern and was stopped while serialising emits exactly this stderr. So the index is
+    // the last position REPORTED; asserting execution was there at the moment of
+    // termination is the same unmeasured-cause error one step further in.
+    const err = timedOutAfter('scanning 0\nscanning 1\n');
+    assert.match(err.message, /last position it reported reaching/, err.message);
+    assert.ok(
+      !/was inside|at that moment|was executing|was still in/i.test(err.message),
+      `the refusal asserted where execution WAS, which the markers do not establish\n${err.message}`,
+    );
+  });
+
+  test('classifyTimeout_noMarkersAtAll_namesNoIndexRatherThanGuessingZero', () => {
+    const err = timedOutAfter('');
+    assert.match(err.message, /did not finish within 5000 ms/, err.message);
+    assert.ok(!/noGoPatterns\[/.test(err.message), `invented an index with no marker to support it\n${err.message}`);
+  });
+
   test('validateScene_invokedThroughAnUnusualPathSpelling_stillActuallyRuns', (t) => {
     // REGRESSION PIN, from review. classifyScanOutcome was briefly exported from
     // validate-scene.mjs behind an "am I the entry point?" guard that compared
@@ -1692,12 +1727,24 @@ describe('scan outcome classification: report the ending that happened', () => {
         env: { ...process.env, [SCAN_TIMEOUT_KNOB]: '60000' },
       });
       const all = (r.stdout ?? '') + (r.stderr ?? '');
-      // Assert the REPORT, not just the exit code: a silently skipped CLI exits 0 with no
-      // output, which a bare code check would read as a pass.
-      assert.match(all, /D1/, `the validator produced no report — did it run at all?\n${all}`);
+      // Anchor on the D1 row AND its FAIL status. A bare /D1/ also matches the `ok` row,
+      // so paired with an exit 1 earned by some other check it would pass against a D1
+      // that ran and found nothing. The point of this test is that D1 actually ran.
+      assert.match(
+        all,
+        /^\s*D1\s+.*\sFAIL \(\d+\)\s*$/m,
+        `no failing D1 row — did the validator run at all?\n${all}`,
+      );
       assert.equal(r.status, EXIT.FAILED, `a planted no-go match must fail, not pass silently\n${all}`);
     } finally {
-      fs.rmdirSync(link);
+      // Non-recursive either way: unlink takes a POSIX symlink, rmdir takes a Windows
+      // junction, and NEITHER follows the link. A recursive remove here would empty the
+      // real src/.
+      try {
+        fs.unlinkSync(link);
+      } catch {
+        fs.rmdirSync(link);
+      }
       fs.rmdirSync(linkDir);
     }
   });
