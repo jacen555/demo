@@ -1418,6 +1418,9 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     const dir = makeProject(t, { 'timing.json': scene() });
     const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
     assert.equal(r.code, EXIT.USAGE, `expected the unmeasurable scan to refuse as USAGE\n${r.all}`);
+    // The word check below is an ABSENCE assertion, and any other USAGE refusal would
+    // satisfy it without the timeout branch ever running. Pin the branch first.
+    assert.match(r.all, /did not finish within 1 ms/, `expected the timeout refusal, not some other USAGE error\n${r.all}`);
     assert.ok(
       !/catastrophic|backtracking|exponential/i.test(r.all),
       `the scan was stopped, which does not establish WHY. These patterns cannot backtrack:\n${r.all}`,
@@ -1510,7 +1513,12 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     // budget of 1 ms refuses it and the default budget clears it. Without this pair the
     // knob could be inert and the message would still read well.
     const dir = makeProject(t, { 'timing.json': scene(), 'knobs.json': knobs() });
-    assert.equal(runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' }).code, EXIT.USAGE);
+    // The refusing half has to refuse FOR THE REASON UNDER TEST. A bare USAGE check would
+    // be satisfied by any other refusal, and the pair would then prove nothing about the
+    // budget: the "before" would be an unrelated error and the "after" merely a clean run.
+    const refused = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '1' });
+    assert.equal(refused.code, EXIT.USAGE, `expected a 1 ms budget to stop the scan\n${refused.all}`);
+    assert.match(refused.all, /did not finish within 1 ms/, `expected the timeout refusal\n${refused.all}`);
     assertClean(runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: '60000' }));
   });
 
@@ -1521,6 +1529,14 @@ describe('D1 scan timeout: a bound on cost, not a diagnosis', () => {
     for (const bad of ['0', '-1', 'soon']) {
       const r = runWithEnv(dir, { [SCAN_TIMEOUT_KNOB]: bad });
       assert.equal(r.code, EXIT.USAGE, `expected ${JSON.stringify(bad)} to be refused\n${r.all}`);
+      // Naming the variable does NOT discriminate here: the timeout refusal names it too,
+      // as its raise-the-budget remedy. So assert the knob refusal's own words, otherwise
+      // a value that was quietly read as the default and then timed out would pass this.
+      assert.match(
+        r.all,
+        /must be a positive whole number of milliseconds/,
+        `expected the knob to be refused outright, not read as the default\n${r.all}`,
+      );
       assert.match(r.all, new RegExp(SCAN_TIMEOUT_KNOB), `expected the variable to be named\n${r.all}`);
     }
   });
