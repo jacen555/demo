@@ -435,6 +435,14 @@ export const KNOB_PREFIX = 'SIZZLECRAFT_';
  * count, same 23 characters, same audio duration — while being different scripts needing
  * different audio. A lineage gate built on the summary passes the rewrite it exists to
  * catch. The hash is over the exact bytes, so nothing survives it but the text itself.
+ *
+ * ONE STATEMENT, ON BOTH SIDES OF ONE GATE. The reader imported this while the WRITER
+ * restated the expression inline in `silent-segment.mjs`'s `buildCalibration` — so the
+ * two halves of a lineage check were two copies of a rule, and changing the hash in one
+ * place would have made every calibration fail to verify against the text it was taken
+ * from. The CONSUMERS line below exists so the next inline copy is a deliberate act.
+ *
+ * CONSUMERS(narrationFingerprint): silent-segment.mjs, validate-timing.mjs
  */
 export function narrationFingerprint(text) {
   return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex');

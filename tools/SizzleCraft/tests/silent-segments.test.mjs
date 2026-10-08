@@ -3204,6 +3204,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['cli-support.mjs', 'readEngineFile'],
     ['cli-support.mjs', 'requireRegularFile'],
     ['cli-support.mjs', 'resolveFfmpegPointer'],
+    ['cli-support.mjs', 'narrationFingerprint'],
     ['silent-segment.mjs', 'narrationCueProblems'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
