@@ -1662,6 +1662,16 @@ describe('scan outcome classification: report the ending that happened', () => {
       !/was inside|at that moment|was executing|was still in/i.test(err.message),
       `the refusal asserted where execution WAS, which the markers do not establish\n${err.message}`,
     );
+    // The headline too, not just the sentence naming the index. The first version of THIS
+    // TEST checked only the phrasing above and passed while the very next line of the
+    // message said "THAT IS WHERE IT STOPPED" -- restating the unmeasured claim in capitals
+    // two lines below the qualified one, and flatly contradicting it. A test for a class of
+    // defect that inspects only one sentence is a test for an instance.
+    assert.ok(
+      !/THAT IS WHERE IT STOPPED/.test(err.message),
+      `the headline reasserted a stop position the markers do not establish\n${err.message}`,
+    );
+    assert.match(err.message, /THAT IS THE LAST POSITION REPORTED/, err.message);
   });
 
   test('classifyTimeout_noMarkersAtAll_namesNoIndexRatherThanGuessingZero', () => {

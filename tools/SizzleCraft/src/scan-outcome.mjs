@@ -88,8 +88,8 @@ export function classifyScanOutcome(result, budget) {
     throw new CliError(
       `the no-go scan did not finish within ${budget.ms} ms and was stopped. ${where}.\n` +
         `\n` +
-        `THAT IS WHERE IT STOPPED, NOT WHY. This stage cannot tell these two apart, so it ` +
-        `names both rather than picking one:\n` +
+        `THAT IS THE LAST POSITION REPORTED, NOT WHERE IT STOPPED OR WHY. This stage cannot ` +
+        `tell the two causes apart, so it names both rather than picking one:\n` +
         `  - the machine was too busy for the budget — likely if the scan normally passes ` +
         `here, or if a build, a render or a parallel test run was in flight. Raise it: ` +
         `set ${variable} to a larger number of milliseconds and run again.\n` +
