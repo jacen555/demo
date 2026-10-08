@@ -36,7 +36,15 @@ const dir = cli.projectDir;
 // raw, a planted link was followed and handed to JSON.parse, whose message quotes the bytes
 // it parsed — disclosing a file outside the project on the bare invocation path.
 const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
-const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+// AND THE PARSE ITSELF IS GUARDED, BY SIZE. An unparseable timing.json threw at module top
+// level, so the refusal was a V8 stack — and V8's SyntaxError quotes bytes of the input, which
+// is the disclosure this stage exists to prevent, on the very first thing it reads. Reported
+// by size, matching write-chapters.mjs:197 and the other three stages standardised on exit 2.
+const timing = guard(() => {
+  const text = fs.readFileSync(timingPath, 'utf8');
+  try { return JSON.parse(text); }
+  catch { throw new CliError(`${timingPath} is not valid JSON (${text.length} characters)`); }
+});
 // Harden DOM tokens: segment ids AND node/edge ids (and edge from/to) get interpolated into DOM/SVG
 // element ids (e.g. `${seg.id}-label`, `${seg.id}-shot-0`, node/edge ids) and `url(#…)` marker refs. The
 // timing schema already constrains these to a safe token, so VALIDATE (fail fast) here rather than
@@ -54,38 +62,70 @@ const assertTok = (val, where) => { const t = String(val == null ? '' : val); if
 // is a perfectly valid DOM token, so TOKEN_RE passes it straight through.
 //
 // ===========================================================================
-// THE CEILING ON THIS APPROACH. READ THIS BEFORE ADDING ANOTHER INPUT SCREEN.
+// WHERE SCREENING HAPPENS, AND WHY IT IS NOT OVER THE FINISHED DOCUMENT.
 //
-// This screens CONTRIBUTING INPUTS. The artefact contains DERIVED STRINGS, and a derived
-// string can match a pattern when none of its inputs does. There is then nothing to screen,
-// because the matching text exists nowhere in timing.json.
+// This gate screens CONTRIBUTING INPUTS, and inputs alone were once the whole story — which
+// left a ceiling, because the artefact also contains DERIVED strings. The worked example:
+// pattern `scenario-label` against `segments[0].id` of `scenario`. The id does not match;
+// the engine concatenates the suffix at render time; the matching text existed NOWHERE in
+// timing.json, so no input screen could ever see it, and it shipped at exit 0.
 //
-// THE WORKED EXAMPLE, MEASURED:
-//   pattern `scenario-label`, segments[0].id `scenario`
-//   -> the id does not match, so this screen passes it
-//   -> `:~310` emits id="${seg.id}-label", generating `scenario-label` at render time
-//   -> exit 0, and `scenario-label` ships inside video-auto.html
+// That ceiling is CLOSED, and not by scanning the output. MEASURED on the real project: its
+// own `https?://` pattern matches the generated document 62 times — 61 SVG `xmlns`
+// declarations and one w3.org reference — and ZERO author strings. A whole-document scan
+// refuses the only real project we have while catching nothing, which is worse than doing
+// nothing at all. Do not add one, including as a backstop.
 //
-// IT DOES NOT DETECT (each measured, each still open):
-//   1. Assembled ARRAY paths. Pattern `foo\[0\]` with `{foo:["safe"]}` ships
-//      data-path="foo[0]" at exit 0. The object-path equivalent IS screened; the array
-//      branch is not.
-//   2. `visual.jsonFile` and `visual.pick`, which reach QUOTED error messages before the
-//      no-go walk runs; and an invalid `visual.highlights[].path`, quoted after it, because
-//      it is not part of the walked JSON.
-//   3. Concatenated identifiers — the worked example above, and every `${seg.id}-…` form.
-//   4. `visual.shots[].src` and `visual.image`, emitted into the HTML with no no-go check.
+// Instead both author surfaces are screened AT THE POINT OF EMISSION, which is also the last
+// place provenance still exists:
+//   - `esc(value, where)` — every author string that reaches the HTML. Scaffolding is
+//     literal template text and never passes through it, so those 62 false positives are
+//     impossible by construction rather than by heuristic.
+//   - `elId(value, where)` — the CONCATENATED identifier, screened at the moment it is
+//     formed, which is the only place a derived id exists.
 //
-// CLOSING THESE REQUIRES SCREENING THE OUTPUT, NOT MORE INPUTS: scan the generated HTML
-// before it is written and each diagnostic before it is printed, which tests what actually
-// ships instead of guessing at its ingredients. That is a different design with its own open
-// questions — the engine's own markup may match an aggressive pattern, the cost on a large
-// document is unmeasured, and a refusal cannot quote the text it is refusing. It is tracked
-// as its own task. Adding a ninth input screen here will not converge; seven review rounds
-// closed eight routes and the discovery rate did not fall.
+// This input gate still earns its place: it refuses before any rendering work is done, and
+// it is the only screen that sees an identifier the renderer may never emit.
 //
-// Pinned by `theCeilingOnInputScreening_isAMeasuredFact` in tests/guard-inputs.test.mjs, so
-// this stays a measured limitation rather than a comment that rots.
+// ===========================================================================
+// THE POLICY: THIS GUARD IS BEST-EFFORT BY DECISION, NOT BY OMISSION.
+//
+// It screens what passes the chokepoints. It is NOT a completeness guarantee, and it is not
+// intended to become one. 23 disclosure routes were closed across seven independent review
+// rounds; the counts per round went 4, 4, 3, 3, 2, 3, 4 and did not converge. Asked directly
+// whether what remained was a finite tail of the classes already closed, the reviewer
+// answered:
+//
+//     "the remaining routes are not a finite tail closed by those chokepoints"
+//
+// The project owner then ruled that the guard is declared best-effort and the tail is not
+// chased. That is a decision taken WITH the measurement in hand, not a task running out of
+// energy — an eighth round would have found a ninth class.
+//
+// KNOWN OPEN CLASSES, named so the next reader meets the reason rather than re-deriving it:
+//   1. Coercion at any unscreened shape boundary. `String(x)` on an object is
+//      `[object Object]` — it discloses nothing and passes, while the object's keys ship.
+//      `target` and `action` now refuse non-string shapes; anything new must do the same.
+//   2. Diagnostics not routed through `quoted()`. Any message that interpolates an author
+//      value and relies on a remembered upstream screen is one refactor from leaking.
+//   3. `cli-support.mjs` forwards `err.message` (`:947`, and `err.code ?? err.message` at
+//      `:139`, `:188`, `:204`). Another stream owns that file; logged, not reached into.
+//
+// AND THE RULE THAT FOLLOWS FROM ALL OF IT: adding a new emission path without routing it
+// through a screen REOPENS DISCLOSURE SILENTLY. There is no check that will tell you.
+//
+// HAZARD, learned the hard way: this file now has a guard whose ABSENCE IS INVISIBLE TO
+// EVERY STATIC CHECK WE RUN. A duplicated `const screenPayload = …` was syntactically valid,
+// `node --check` accepted it, and screening was simply OFF — semantically dead, no warning,
+// no error. Only a failing test saw it. Treat `node --check` passing as evidence of nothing
+// about this guard.
+// ===========================================================================
+//
+// Completeness is ENFORCED where it can be, not asserted: `everyGeneratedElementId_goes`
+// `ThroughTheScreeningHelpers` in tests/guard-inputs.test.mjs fails when an element id
+// bypasses both helpers. It carries its own "IT DOES NOT DETECT" list — a guard against
+// regression, not a proof — and it found two `-title` sites hand-enumeration had missed,
+// then twice waved through bypasses because its own allowlist had rotted.
 // ===========================================================================
 //
 // This screen deliberately issues NO verdict on the pattern list itself: a malformed list is
@@ -108,12 +148,27 @@ const assertNotDisclosing = (val, where) => {
   if (noGoScreen && noGoScreen(String(val == null ? '' : val))) {
     throw new CliError(
       `${where} matches timing.project.noGoPatterns.\n` +
-      'Identifiers are written into the rendered HTML as DOM element ids and into this\n' +
-      "stage's diagnostics, so a no-go string in one reaches the video and the logs even\n" +
-      'when every value passes. It is named by position and deliberately not quoted —\n' +
-      'read it in timing.json and rename it.');
+      'This value is written into the rendered HTML — as visible text, as a DOM element id,\n' +
+      'as an attribute, or as trigger data the runtime paints into the frame — and into this\n' +
+      "stage's diagnostics, so a no-go string in it reaches the video and the logs even when\n" +
+      'every scanned value passes. It is named by position and deliberately not quoted —\n' +
+      'read it in timing.json and change it.');
   }
   return val;
+};
+// SCREEN BY THE ACT OF QUOTING. Every disclosure of this class has had the same shape: a
+// diagnostic interpolates an author value that the no-go walk never ran on — a missing file,
+// an unresolved path, an unusable timestamp. Fixing them one at a time does not converge,
+// and a static scanner cannot help, because it cannot see an upstream screen and so reports
+// every safe site as a violation (MEASURED: 7 of 7 such sites in this file are safe).
+//
+// So the screen moves into the formatting. `quoted(v, where)` is the only sanctioned way to
+// put an author value inside a diagnostic: it screens and then quotes, which makes "I forgot
+// to screen this first" unrepresentable rather than merely discouraged.
+const quoted = (value, where) => {
+  const s = String(value ?? '');
+  assertNotDisclosing(s, where);
+  return JSON.stringify(s);
 };
 for (const [si, s] of (timing.segments || []).entries()) {
   // Labels are POSITIONAL. They previously embedded `s.id`, which put the very identifier
@@ -149,7 +204,17 @@ for (const [si, s] of (timing.segments || []).entries()) {
     // An explicit trigger target is an author-written reference to a DOM id. It is compared
     // against generated ids, quoted in a refusal at :665, and serialised into the shipped
     // trigger data.
-    (s.triggers || []).forEach((t, i) => { if (t && t.target != null) assertNotDisclosing(t.target, `segments[${si}].triggers[${i}].target`); });
+    // A TARGET MUST BE A STRING, not merely screenable as one. An object target stringifies
+    // to `[object Object]` for the check — which discloses nothing and so passes — while its
+    // PROPERTIES are serialised unchanged into `elementTriggers` and ship. Screening a
+    // coercion is not screening the value; this is the `[123]` coercion defect once more, in
+    // the one place left that still trusted `String()`.
+    (s.triggers || []).forEach((t, i) => {
+      if (!t || t.target == null) return;
+      const where = `segments[${si}].triggers[${i}].target`;
+      if (typeof t.target !== 'string') throw new CliError(`${where} must be a string naming a DOM element id. It is named by position and deliberately not quoted.`);
+      assertNotDisclosing(t.target, where);
+    });
   });
 }
 // Every slide switch, hold and trigger time is computed from startMs/endMs, and this stage does not
@@ -158,17 +223,32 @@ for (const [si, s] of (timing.segments || []).entries()) {
 // A numeric string is no safer, since trigger times add to it ("2000" + 500). Only a finite JSON
 // number places a segment. Ordering and overlap stay validate-timing's job.
 guard(() => {
-  const describeMs = v => v === undefined ? 'missing' : typeof v === 'number' ? String(v) : typeof v === 'string' ? `the string ${JSON.stringify(v.slice(0, 40))}` : v === null ? 'null' : `a ${Array.isArray(v) ? 'list' : typeof v}`;
+  const describeMs = (v, where) => v === undefined ? 'missing' : typeof v === 'number' ? String(v) : typeof v === 'string' ? `the string ${quoted(v.slice(0, 40), `${where} value`)}` : v === null ? 'null' : `a ${Array.isArray(v) ? 'list' : typeof v}`;
   const unusable = [];
   (timing.segments || []).forEach((s, i) => {
     for (const k of ['startMs', 'endMs']) {
       const v = s?.[k];
-      if (typeof v !== 'number' || !Number.isFinite(v)) unusable.push(`segments[${i}] ${JSON.stringify(s?.id ?? null)}: ${k} is ${describeMs(v)}`);
+      // The segment id IS quoted here, and that is safe: the identifier gate above runs
+      // first and has already screened it. What was NOT screened is the offending VALUE,
+      // which `describeMs` now formats through `quoted()`. Removing the id as well broke the
+      // contract these tests pin by name — a message that names the segment.
+      if (typeof v !== 'number' || !Number.isFinite(v)) unusable.push(`segments[${i}] ${JSON.stringify(s?.id ?? null)}: ${k} is ${describeMs(v, `segments[${i}].${k}`)}`);
     }
   });
   if (unusable.length) throw new CliError(`cannot place ${unusable.length === 1 ? 'a segment' : 'segments'} on the timeline; startMs and endMs must be finite numbers of milliseconds (fix timing.json and re-run validate-timing):\n  ${unusable.join('\n  ')}`);
 });
-const w = timing.project?.width || 3840, h = timing.project?.height || 2160;
+// DIMENSIONS ARE INTERPOLATED INTO CSS AND INTO A `content=` ATTRIBUTE, so a non-numeric
+// value is markup injection as well as an unscreened author string. `|| 3840` accepts any
+// truthy value, including a string — the same "truthy is not valid" shape as the no-go list
+// accepting `[123]`. A frame size is a finite positive number or the project is unbuildable.
+const dim = (raw, fallback, where) => {
+  if (raw == null) return fallback;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1 || raw > 16384) {
+    throw new CliError(`${where} must be a whole number of pixels between 1 and 16384. It is named by position and deliberately not quoted.`);
+  }
+  return raw;
+};
+const w = guard(() => dim(timing.project?.width, 3840, 'project.width')), h = guard(() => dim(timing.project?.height, 2160, 'project.height'));
 // Repair the classic "UTF-8 bytes read back as Latin-1/CP1252" mojibake (e.g. "Â·" -> "·", "â€™" -> "'")
 // that upstream tools can bake into titles/labels/watermarks on Windows. Guarded: it only re-decodes when
 // the string is EXACTLY the latin1 view of a valid UTF-8 byte sequence (no U+FFFD and perfectly
@@ -178,7 +258,44 @@ const demojibake = s => {
   try { const r = Buffer.from(s, 'latin1').toString('utf8'); if (!r.includes('\uFFFD') && Buffer.from(r, 'utf8').toString('latin1') === s) return r; } catch {}
   return s;
 };
-const esc = s => demojibake(String(s ?? '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s, where) => {
+  const out = demojibake(String(s ?? ''));
+  // SCREEN AT THE POINT OF EMISSION. Everything that reaches the rendered HTML as author
+  // text passes through here, and — MEASURED — the engine's own scaffolding does not: the
+  // real project's `https?://` pattern matches the generated document 62 times, 61 of them
+  // the SVG `xmlns` declaration and one a w3.org reference, and BOTH live at :439 and :936
+  // as literal template text that is never interpolated. So this screen sees author content
+  // and structurally cannot see scaffolding. That is why it is here and not over the
+  // finished document, which was measured as refusing the only real project for nothing.
+  //
+  // An ENGINE FALLBACK is screened too, deliberately: `v.title || seg.title || 'Demo'`
+  // renders the engine's own word when the author supplies none, and if the author has said
+  // `Demo` must not reach a frame then it reaching the frame is a violation whoever wrote it.
+  //
+  // THE LINE IS NOT VISIBILITY — an earlier version of this comment said it was, and that was
+  // wrong by its own code: `data-path` is screened and is never visible to a viewer. The line
+  // is PROVENANCE PLUS SHIPPING. Everything that passes through here is author text, or
+  // engine text standing in for it, and all of it is written into the artefact. `xmlns` is
+  // neither: it is engine structure that no author input can influence, and it is literal
+  // template text that never reaches this function at all.
+  //
+  // A consequence, accepted rather than special-cased: a fallback inside a
+  // `visibility:hidden` element is screened too, because it still ships in the file.
+  if (where) assertNotDisclosing(out, where);
+  return out.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+};
+// THE DERIVED IDENTIFIER, SCREENED WHERE IT IS FORMED.
+//
+// `segments[0].id` of `scenario` does not match the pattern `scenario-label`; the engine
+// concatenates the suffix at render time, so the matching string exists NOWHERE in
+// timing.json and no input screen can ever see it. This is the only place it exists.
+//
+// Every generated element id in this stage goes through here, enforced by
+// `everyGeneratedElementId_goesThroughTheScreeningHelpers` in tests/guard-inputs.test.mjs.
+const elId = (value, where) => { const t = String(value ?? ''); assertNotDisclosing(t, where); return t; };
+// Provenance for a screening refusal, by POSITION. `seg.id` is itself screened, so it must
+// not appear in a message about screening.
+const segWhere = (seg, field) => `segments[${timing.segments.indexOf(seg)}].${field}`;
 // jsonScript() is the ONLY sanctioned way to embed timing-derived JSON inside a <script> block.
 // Valid JSON is NOT script-safe: a narration/title/payload string containing `</script><script>` would
 // terminate the block early and inject attacker markup, and U+2028/U+2029 are raw line terminators in
@@ -233,7 +350,7 @@ const safeEvidenceSrc = raw => {
 const srcErrors = [];
 const checkedSrc = (raw, segmentId, where) => {
   try { return safeEvidenceSrc(raw); }
-  catch { srcErrors.push(`segment "${segmentId}" ${where}: ${JSON.stringify(String(raw ?? ''))} is not a contained evidence-pack path`); return null; }
+  catch { srcErrors.push(`segment "${segmentId}" ${where}: a source is not a contained evidence-pack path (named by position and deliberately not quoted)`); return null; }
 };
 const assertNoSrcErrors = () => {
   if (srcErrors.length) throw new Error(`unsafe evidence src rejected — ${srcErrors.length} invalid source(s):\n  - ${srcErrors.join('\n  - ')}`);
@@ -267,7 +384,12 @@ const footageUsable = seg => footageApproved(footageClip(seg.visual?.footage?.cl
 // A segment renders as `footage` ONLY when its clip is approved + redaction-clear; otherwise it falls
 // back to a synthetic mode (explicit visual.mode, else inferred diagram/live/narrative) so the panel is
 // never blank and autoTriggers() still generates the reveal/diagram/live triggers (schema/docs promise).
-const mode = seg => { const v = seg.visual || {}; if ((v.mode === 'footage' || (!v.mode && v.footage)) && footageUsable(seg)) return 'footage'; if (v.mode && v.mode !== 'footage') return v.mode; return v.nodes ? 'diagram' : (v.shot || v.fields || v.hotspots) ? 'live' : 'narrative'; };
+// `v.mode` IS INTERPOLATED INTO `data-mode` AND A CLASS NAME, unescaped, so an unknown value
+// is both markup injection and an unscreened author string. `if (v.mode && v.mode !== 'footage') return v.mode`
+// returned whatever the author wrote. The supported set is closed — `body()` dispatches on
+// exactly these — so anything else is a refusal, not a silent passthrough.
+const MODES = new Set(['footage', 'code', 'diagram', 'live', 'narrative', 'statement', 'endcard']);
+const mode = seg => { const v = seg.visual || {}; if ((v.mode === 'footage' || (!v.mode && v.footage)) && footageUsable(seg)) return 'footage'; if (v.mode && v.mode !== 'footage') { if (!MODES.has(v.mode)) throw new CliError(`segments[${timing.segments.indexOf(seg)}].visual.mode is not one of ${[...MODES].join(', ')}. It is named by position and deliberately not quoted.`); return v.mode; } return v.nodes ? 'diagram' : (v.shot || v.fields || v.hotspots) ? 'live' : 'narrative'; };
 // Playback metadata is security-sensitive: frameCount changes where playback clamps, while fps changes
 // timestamp-to-frame mapping. Derive count from the exact independently enumerated frame set, bind fps
 // to storyboard-protected timing.project.fps, and require clips.json + manifest lineage to agree.
@@ -347,7 +469,7 @@ const verifyFootageLineage = () => {
   const projectionSha = crypto.createHash('sha256').update(Buffer.from(JSON.stringify(projection), 'utf8')).digest('hex');
   if (DERIVED_FOOTAGE.sha256 !== projectionSha) throw new Error('footage lineage mismatch: derived projection hash differs');
 };
-verifyFootageLineage();
+guard(() => verifyFootageLineage());   // seventh guard() site: it throws on invalid approved-clip lineage at module top level, which exited with a native stack rather than a clean refusal
 const footageMeta = id => {
   const meta = VERIFIED_FOOTAGE_META.get(safeClipId(id));
   if (!meta) throw new Error(`footage lineage mismatch: unverified playback metadata for ${String(id)}`);
@@ -368,18 +490,18 @@ const safeFrameDir = (raw, clipId) => {
     return base;
   }
 };
-const hasFootage = timing.segments.some(s => mode(s) === 'footage');  // mode()==='footage' already implies the clip is approved + redaction-clear
+const hasFootage = guard(() => timing.segments.some(s => mode(s) === 'footage'));  // mode() now refuses an unknown mode, and this is the FIRST call of it — at module top level, where an unguarded throw is a stack trace rather than a refusal. Sixth instance of that mistake in this file.e clip is approved + redaction-clear
 function footageLayer(seg) {
   const f = seg.visual?.footage || {}, clipId = safeClipId(f.clipId);
   const clip = footageClip(clipId);
   if (!footageApproved(clip)) {
     // Fail closed: never pull an unapproved / unredacted clip into the output. Emit an inert
     // placeholder (no frame source) so the segment falls back to synthetic content instead.
-    return `<div id="${seg.id}-footage" class="footage-layer footage-blocked" data-clip="${esc(clipId)}"></div>`;
+    return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, 'generated element id'))}" class="footage-layer footage-blocked" data-clip="${esc(clipId, segWhere(seg, 'visual.footage.clipId'))}"></div>`;
   }
   const fdir = safeFrameDir(f.frameDir, clipId);
   const fit = f.fit === 'cover' ? 'cover' : 'contain', meta = footageMeta(clipId);
-  return `<div id="${seg.id}-footage" class="footage-layer" data-clip="${esc(clipId)}" data-framedir="${esc(fdir)}" data-framecount="${meta.frameCount}" data-fps="${meta.fps}" data-startms="${Number(f.startAtMs || 0)}" data-segstart="${seg.startMs}" data-segend="${seg.endMs}" style="background-size:${fit}"></div>`;
+  return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, 'generated element id'))}" class="footage-layer" data-clip="${esc(clipId, segWhere(seg, 'visual.footage.clipId'))}" data-framedir="${esc(fdir, segWhere(seg, 'visual.footage.frameDir'))}" data-framecount="${meta.frameCount}" data-fps="${meta.fps}" data-startms="${Number(f.startAtMs || 0)}" data-segstart="${seg.startMs}" data-segend="${seg.endMs}" style="background-size:${fit}"></div>`;
 }
 
 // ---- background choice + Azure-multicolor components -----------------------
@@ -409,12 +531,12 @@ function narrative(seg) {
     const accent = multicolor ? ca(j) : null;
     const cstyle = accent ? ` style="--ca:${accent};border-top:4px solid ${accent}"` : '';
     const statCls = accent ? 'stat' : 'stat gradient-text';
-    return `<div id="${seg.id}-item-${j}" class="el card"${cstyle}><div class="kicker">${esc(it.label || 'Point ' + (j + 1))}</div>${it.value ? `<div class="${statCls}">${esc(it.value)}</div>` : ''}<div class="body">${esc(it.text || it.title || '')}</div></div>`;
+    return `<div id="${elId(`${seg.id}-item-${j}`, segWhere(seg, 'generated element id'))}" class="el card"${cstyle}><div class="kicker">${esc(it.label || 'Point ' + (j + 1), segWhere(seg, `visual.items[${j}].label`))}</div>${it.value ? `<div class="${statCls}">${esc(it.value, segWhere(seg, `visual.items[${j}].value`))}</div>` : ''}<div class="body">${esc(it.text || it.title || '', segWhere(seg, `visual.items[${j}].text`))}</div></div>`;
   }).join('');
   const shots = (v.shots || (v.image ? [{ src: v.image, label: v.imageLabel }] : [])).slice(0, 4).map((s, j) => {
     const src = checkedSrc(s.src, seg.id, 'visual.shots[].src');   // aggregates via safeEvidenceSrc(s.src); null => reported below, nothing emitted
     if (!src) return '';
-    return `<figure id="${seg.id}-shot-${j}" class="el shot"><img src="${esc(src)}" alt="${esc(s.label || '')}" loading="eager"/>${s.label ? `<figcaption>${esc(s.label)}</figcaption>` : ''}</figure>`;
+    return `<figure id="${elId(`${seg.id}-shot-${j}`, segWhere(seg, 'generated element id'))}" class="el shot"><img src="${esc(src, segWhere(seg, `visual.shots[${j}].src`))}" alt="${esc(s.label || '', segWhere(seg, `visual.shots[${j}].label`))}" loading="eager"/>${s.label ? `<figcaption>${esc(s.label, segWhere(seg, `visual.shots[${j}].label`))}</figcaption>` : ''}</figure>`;
   }).join('');
   return `${cards ? `<div class="grid">${cards}</div>` : ''}${shots ? `<div class="shots">${shots}</div>` : ''}`;
 }
@@ -436,14 +558,14 @@ function diagram(seg) {
     const st = multicolor ? ` style="--ca:${ca(j)}"` : '';
     // Node label uses a wrapping HTML block (foreignObject) instead of a single SVG <text> line so long
     // labels wrap + fit INSIDE the box (no overflow past the rounded rect). See `.nodelabel` CSS.
-    return `<g id="${seg.id}-node-${n.id}" class="el dnode"${st}><rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="14"/><foreignObject x="${x}" y="${y}" width="${nw}" height="${nh}"><div xmlns="http://www.w3.org/1999/xhtml" class="nodelabel">${esc(n.label || n.id || '')}</div></foreignObject></g>`;
+    return `<g id="${elId(`${seg.id}-node-${n.id}`, segWhere(seg, 'generated element id'))}" class="el dnode"${st}><rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="14"/><foreignObject x="${x}" y="${y}" width="${nw}" height="${nh}"><div xmlns="http://www.w3.org/1999/xhtml" class="nodelabel">${esc(n.label || n.id || '', segWhere(seg, `visual.nodes[${j}].label`))}</div></foreignObject></g>`;
   }).join('');
   const edgeSvg = edges.map((e, j) => {
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
     const st = multicolor ? ` style="--ce:${ca(j)}"` : '';
     const marker = multicolor ? `${seg.id}-arr-${e.id || j}` : 'arrow';
-    return `<path id="${seg.id}-edge-${e.id || j}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
+    return `<path id="${elId(`${seg.id}-edge-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
   }).join('');
   // Edge labels are emitted AFTER the nodes so they paint on TOP (never hidden behind a box or an
   // arrowhead) and carry a stroke halo (see `.delabel` CSS) so the text stays legible over any line.
@@ -453,7 +575,7 @@ function diagram(seg) {
     if (!e.label) return '';
     const a = nodeAt(e.from), b = nodeAt(e.to);
     const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
-    return `<text id="${seg.id}-edgelabel-${e.id || j}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label)}</text>`;
+    return `<text id="${elId(`${seg.id}-edgelabel-${e.id || j}`, segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
   }).join('');
   // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
   // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
@@ -464,18 +586,18 @@ function diagram(seg) {
 const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
   const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
   const multiMarkers = multicolor ? edges.map((e, j) =>
-    `<marker id="${seg.id}-arr-${e.id || j}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
-  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900')}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
+    `<marker id="${elId(`${seg.id}-arr-${e.id || j}`, segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
+  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || '0 0 1600 900', segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
 }
 
 function live(seg) {
   const v = seg.visual || {}, url = v.url || 'app.localhost', shot = v.shot || v.image;
   const shotSrc = shot ? (checkedSrc(shot, seg.id, 'visual.shot') || '') : '';   // aggregates via safeEvidenceSrc(shot)
   const fields = (v.fields || []).map((f, j) =>
-    `<div id="${seg.id}-field-${f.id || j}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '')}</span><span class="liveinput" data-text="${esc(f.text || '')}"></span></div>`).join('');
+    `<div id="${elId(`${seg.id}-field-${f.id || j}`, segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
   const hotspots = (v.hotspots || []).map((hp, j) =>
-    `<div id="${seg.id}-hotspot-${hp.id || j}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '')}</div>`).join('');
-  return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url)}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc)}" alt=""/>` : ''}${fields}${hotspots}<div id="${seg.id}-cursor" class="cursor"></div></div></div>`;
+    `<div id="${elId(`${seg.id}-hotspot-${hp.id || j}`, segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
+  return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url, segWhere(seg, 'visual.url'))}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc, segWhere(seg, 'visual.shot'))}" alt=""/>` : ''}${fields}${hotspots}<div id="${elId(`${seg.id}-cursor`, segWhere(seg, 'generated element id'))}" class="cursor"></div></div></div>`;
 }
 
 // ---- code mode: a real JSON object on screen, addressable field by field ----
@@ -491,7 +613,7 @@ function jsonHtml(value, segId, at, depth, paths) {
   const pad = n => '  '.repeat(n);
   const entry = (p, inner, block) => {
     paths.push(p);
-    return `<span class="j-entry${block ? ' j-block' : ''}" id="${codePathId(segId, p)}" data-path="${esc(p)}">${inner}</span>`;
+    return `<span class="j-entry${block ? ' j-block' : ''}" id="${elId(codePathId(segId, p), `code JSON path id for ${at || '(root)'}`)}" data-path="${esc(p, `code JSON path ${at || '(root)'}`)}">${inner}</span>`;
   };
 
   if (Array.isArray(value)) {
@@ -514,7 +636,7 @@ function jsonHtml(value, segId, at, depth, paths) {
     const items = keys
       .map((k, i) => {
         const p = at ? `${at}.${k}` : k;
-        const inner = `<span class="j-key">"${esc(k)}"</span><span class="j-punc">: </span>` +
+        const inner = `<span class="j-key">"${esc(k, `code JSON key under ${at || '(root)'}`)}"</span><span class="j-punc">: </span>` +
           jsonHtml(value[k], segId, p, depth + 1, paths) +
           (i < keys.length - 1 ? '<span class="j-punc">,</span>' : '');
         return `${pad(depth + 1)}${entry(p, inner, value[k] !== null && typeof value[k] === 'object')}`;
@@ -522,10 +644,10 @@ function jsonHtml(value, segId, at, depth, paths) {
       .join('\n');
     return `<span class="j-punc">{</span>\n${items}\n${pad(depth)}<span class="j-punc">}</span>`;
   }
-  if (typeof value === 'string') return `<span class="j-str">"${esc(value)}"</span>`;
-  if (typeof value === 'number') return `<span class="j-num">${esc(value)}</span>`;
-  if (typeof value === 'boolean') return `<span class="j-bool">${esc(value)}</span>`;
-  return '<span class="j-null">null</span>';
+  if (typeof value === 'string') return `<span class="j-str">"${esc(value, `code JSON value at ${at || '(root)'}`)}"</span>`;
+  if (typeof value === 'number') return `<span class="j-num">${esc(value, `code JSON value at ${at || '(root)'}`)}</span>`;
+  if (typeof value === 'boolean') return `<span class="j-bool">${esc(value, `code JSON value at ${at || '(root)'}`)}</span>`;
+  return `<span class="j-null">${esc('null', `code JSON value at ${at || '(root)'}`)}</span>`;
 }
 
 function codeBlock(seg) {
@@ -548,6 +670,14 @@ function codeBlock(seg) {
     //
     // No-go patterns cannot cover this: they match content you predicted, and a link
     // redirect changes WHICH FILE you read.
+    // SCREEN BEFORE THE DIAGNOSTICS THAT QUOTE THEM. Every refusal below names `v.jsonFile`,
+    // and the `pick` refusal names `v.pick` and the component it stopped at. None of those
+    // values is part of the walked JSON — a missing file and an unresolved path are
+    // precisely the cases where the no-go scan never runs — so without this they are quoted
+    // unscreened. Screened here, a disclosing value refuses by position and the quotes below
+    // are only reachable for a safe one.
+    assertNotDisclosing(String(v.jsonFile ?? ''), segWhere(seg, 'visual.jsonFile'));
+    if (v.pick != null) assertNotDisclosing(String(v.pick), segWhere(seg, 'visual.pick'));
     const abs = resolveWithinRoot(dir, v.jsonFile, `segment "${seg.id}" visual.jsonFile`);
     if (!fs.existsSync(abs)) throw new CliError(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
     try { data = JSON.parse(fs.readFileSync(abs, 'utf8')); }
@@ -651,17 +781,17 @@ function codeBlock(seg) {
       // Walk values rather than the serialised blob, so a hit can be reported by path.
       //
       // IT DOES NOT DETECT:
-      //   1. Booleans or null. The walk tests strings and numbers only, so a pattern that
-      //      matches the literal `true`, `false` or `null` does not refuse and those tokens
-      //      reach the frame. MEASURED, with a positive control: pattern `plain` against a
-      //      string value refuses; pattern `true` against `{enabled: true}` builds. This is
-      //      deliberate rather than pending — those three tokens are the entire set a
-      //      boolean or null can render as, so none of them can carry author content, and
-      //      refusing on them would add noise without withholding anything.
-      //   2. Authored copy — titles, labels, subtitles, voiceover. Only `visual.json` source
-      //      data is scanned, because copy is human-reviewed and source data is not.
-      //   3. Anything outside this segment's rendered object. Identifiers are screened
-      //      separately at the top of this stage, where they are read.
+      //   1. Authored copy — titles, labels, subtitles, voiceover. Only `visual.json` source
+      //      data is walked, because copy is human-reviewed and source data is not. Those
+      //      strings are screened where they are EMITTED instead, by `esc(value, where)`.
+      //   2. Anything outside this segment's rendered object. Identifiers are screened at the
+      //      top of this stage, and derived identifiers by `elId()` where they are formed.
+      //
+      // IT NO LONGER FAILS TO DETECT booleans or null. The walk still tests strings and
+      // numbers only, so a pattern matching the literal `true`, `false` or `null` does not
+      // refuse HERE — but `jsonHtml` renders every scalar through `esc(value, …)`, which
+      // screens what is actually about to appear on screen whatever its type. The gap closed
+      // without this walk changing, which is the point of screening at emission.
       //
       // The walk carries TWO paths. `at` is what gets PRINTED, with disclosing components
       // already substituted. `real` is the path as `jsonHtml` will emit it in `data-path`
@@ -716,8 +846,12 @@ function codeBlock(seg) {
     const best = paths.filter(c => c.toLowerCase().includes(want.split(/[.[]/)[0])).slice(0, 6);
     return best.length ? `\n  did you mean: ${best.join(', ')}` : `\n  available: ${paths.slice(0, 12).join(', ')}${paths.length > 12 ? ', …' : ''}`;
   };
-  for (const h of v.highlights || []) {
+  for (const [hi, h] of (v.highlights || []).entries()) {
     if (!emitted.has(h.path)) {
+      // SCREEN BEFORE QUOTING. A highlight path that does NOT exist was never walked, so
+      // the no-go scan has not seen it — and this diagnostic quotes it. Screening it here is
+      // what makes the quote below safe: a disclosing path refuses first, by position.
+      assertNotDisclosing(String(h.path ?? ''), segWhere(seg, `visual.highlights[${hi}].path`));
       throw new CliError(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
     }
   }
@@ -729,8 +863,8 @@ function codeBlock(seg) {
     }
   }
 
-  const cap = v.caption ? `<figcaption class="codecap">${esc(v.caption)}</figcaption>` : '';
-  return `<figure class="codewrap el" id="${seg.id}-code"><pre class="codeblock" data-seg="${esc(seg.id)}">${html}</pre>${cap}</figure>`;
+  const cap = v.caption ? `<figcaption class="codecap">${esc(v.caption, segWhere(seg, 'visual.caption'))}</figcaption>` : '';
+  return `<figure class="codewrap el" id="${elId(`${seg.id}-code`, segWhere(seg, 'generated element id'))}"><pre class="codeblock" data-seg="${esc(seg.id, segWhere(seg, 'id'))}">${html}</pre>${cap}</figure>`;
 }
 
 function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'code' ? codeBlock(seg) : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
@@ -740,12 +874,12 @@ function slide(seg, i) {
   if (m === 'footage') {
     const f = v.footage || {}, ov = f.overlays || ['lowerThird', 'brandBug'];
     const lt = ov.includes('lowerThird')
-      ? `<div class="safe safe-footage"><div id="${seg.id}-lt" class="el lower-third"><div id="${seg.id}-label" class="kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo')}</div><h1 id="${seg.id}-title" class="title lt-title">${esc(v.title || seg.title || '')}</h1>${v.subtitle ? `<p id="${seg.id}-subtitle" class="subtitle lt-sub">${esc(v.subtitle)}</p>` : ''}</div></div>`
-      : `<div class="safe safe-footage"><div id="${seg.id}-label" class="el kicker" style="visibility:hidden">${esc(v.title || seg.title || 'Demo')}</div></div>`;
-    const bug = ov.includes('brandBug') ? `<div class="brand-bug">${esc(timing.project?.title || 'SizzleCraft')}</div>` : '';
+      ? `<div class="safe safe-footage"><div id="${elId(`${seg.id}-lt`, segWhere(seg, 'generated element id'))}" class="el lower-third"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo', segWhere(seg, 'visual.kicker'))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, 'generated element id'))}" class="title lt-title">${esc(v.title || seg.title || '', segWhere(seg, 'visual.title'))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, 'generated element id'))}" class="subtitle lt-sub">${esc(v.subtitle, segWhere(seg, 'visual.subtitle'))}</p>` : ''}</div></div>`
+      : `<div class="safe safe-footage"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="el kicker" style="visibility:hidden">${esc(v.title || seg.title || 'Demo', segWhere(seg, 'visual.title'))}</div></div>`;
+    const bug = ov.includes('brandBug') ? `<div class="brand-bug">${esc(timing.project?.title || 'SizzleCraft', 'project.title')}</div>` : '';
     return `<section id="seg-${i}" class="sl ${i === 0 ? 'on' : ''}" data-mode="footage"><div class="footage-fullbleed">${footageLayer(seg)}</div>${bug}${lt}</section>`;
   }
-  return `<section id="seg-${i}" class="sl ${i === 0 ? 'on' : ''}" data-mode="${m}"><div class="safe" style="--fit:1"><div id="${seg.id}-label" class="el kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo')}</div><h1 id="${seg.id}-title" class="el title">${esc(v.title || seg.title || '')}</h1>${v.subtitle ? `<p id="${seg.id}-subtitle" class="el subtitle">${esc(v.subtitle)}</p>` : ''}<div class="stage-body ${m}">${body(seg)}</div></div></section>`;
+  return `<section id="seg-${i}" class="sl ${i === 0 ? 'on' : ''}" data-mode="${m}"><div class="safe" style="--fit:1"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="el kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo', segWhere(seg, 'visual.kicker'))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, 'generated element id'))}" class="el title">${esc(v.title || seg.title || '', segWhere(seg, 'visual.title'))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, 'generated element id'))}" class="el subtitle">${esc(v.subtitle, segWhere(seg, 'visual.subtitle'))}</p>` : ''}<div class="stage-body ${m}">${body(seg)}</div></div></section>`;
 }
 
 // ---- triggers (segment-relative atMs -> absolute seconds) -----------------
@@ -813,11 +947,77 @@ function autoTriggers(seg) {
 }
 
 const segs = timing.segments.map((s, i) => ({ slide: i + 1, id: s.id, audioStart: s.startMs / 1000, audioEnd: s.endMs / 1000 }));
-const trs = timing.segments.flatMap((s, i) => {
-  const explicit = (s.triggers || []).filter(t => t.target).map(t => ({ atMs: Number(t.atMs || 0), target: t.target, action: t.action || 'rise', withSegment: !!(t.withSegment || t.withSlide), payload: t.payload || null }));
-  return [...autoTriggers(s), ...explicit].map(t => ({ t: (s.startMs + Number(t.atMs || 0)) / 1000, s: i + 1, a: t.target, kind: t.action || 'rise', withSegment: !!t.withSegment, payload: t.payload || null }));
+const trs = guard(() => timing.segments.flatMap((s, i) => {
+  // AN EXPLICIT TRIGGER PAYLOAD IS AUTHOR TEXT THAT REACHES A FRAME. It is serialised into
+  // `elementTriggers` and the runtime paints `payload.label`/`payload.text` into callouts,
+  // rollover tips and step badges. `jsonScript` makes that embedding script-SAFE; it does
+  // nothing about whether the text should be on screen, which is a different question and
+  // the one this guard exists to answer.
+  const screenPayload = (p, where) => {
+    // EVERY SERIALISED SCALAR, NOT A LIST OF FIELD NAMES. The whole payload is serialised
+    // into `elementTriggers` and ships, so `{extra: "…"}` or `{chain: ["…"]}` reached the
+    // artefact while a six-name list looked thorough. A hand-maintained field list is the
+    // same rot that has already bitten this task twice in the completeness guard's
+    // allowlist — so it is gone, replaced by a walk over what actually gets serialised.
+    //
+    // The runtime stringifies whatever it paints: MEASURED, `String(['protected-value'])` is
+    // `'protected-value'`, so arrays disclose their contents and a `typeof === 'string'`
+    // test would miss them — the same coercion bug as `[123]` becoming `/123/i`.
+    const walk = (v, at) => {
+      if (v == null) return;
+      if (Array.isArray(v)) { v.forEach((x, k) => walk(x, `${at}[${k}]`)); return; }
+      if (typeof v === 'object') {
+        // KEYS SHIP TOO. `{"cortex-supportgraph": "safe"}` serialises the key verbatim into
+        // `elementTriggers`, so walking only the values repeats, in the payload, exactly the
+        // matching-key defect already fixed in the code-block walk: a key that matches IS the
+        // disclosed string.
+        //
+        // AND THE LOCATION LABEL MUST NOT DISCLOSE EITHER. Building `at` from the keys it
+        // walks meant a nested value's refusal printed the assembled key path — with pattern
+        // `foo.bar` and payload `{foo:{bar:"…"}}` the message announcing the match contained
+        // it. That is the defect this whole task began with, reproduced inside the screen.
+        //
+        // A key is therefore named only when naming it discloses nothing, and replaced by its
+        // ordinal when it would — the same rule, and the same wording, as `shownKey` in the
+        // code-block walk. Replacing every key with an ordinal would have been safe too, and
+        // would have made every payload refusal unreadable for the sake of the rare one.
+        Object.keys(v).forEach((k, ki) => {
+          assertNotDisclosing(k, `${at} key #${ki}`);
+          const safe = !noGoScreen || !noGoScreen(`${at}.${k}`);
+          walk(v[k], safe ? `${at}.${k}` : `${at}.key #${ki}`);
+        });
+        return;
+      }
+      assertNotDisclosing(String(v), at);
+    };
+    walk(p, where);
+    return p ?? null;
+  };
+  const explicit = (s.triggers || []).filter(t => t.target).map((t, ti) => {
+    // `action` is serialised as `kind` into `elementTriggers` and ships in the artefact, so
+    // it is author text like any other — the payload is not the only part of a trigger that
+    // leaves the build.
+    // SHAPE, NOT A COERCION — the same rule already applied to `target`. An object `action`
+    // screens as `[object Object]`, which discloses nothing, and then ships unchanged as
+    // `kind` with its keys intact. Screening a coercion is not screening the value.
+    if (t.action != null) {
+      if (typeof t.action !== 'string') throw new CliError(`segments[${i}].triggers[${ti}].action must be a string. It is named by position and deliberately not quoted.`);
+      assertNotDisclosing(t.action, `segments[${i}].triggers[${ti}].action`);
+    }
+    return { atMs: Number(t.atMs || 0), target: t.target, action: t.action || 'rise', withSegment: !!(t.withSegment || t.withSlide), payload: screenPayload(t.payload, `segments[${i}].triggers[${ti}].payload`) };
+  });
+  // EVERY SERIALISED TARGET, NOT ONLY THE ONES THAT BECOME ELEMENTS. `autoTriggers` derives
+  // targets like `${seg.id}-title` and `${seg.id}-cursor` and they ship in `elementTriggers`
+  // whether or not a matching element is ever rendered — a footage slide without `lowerThird`
+  // emits no title element but still emits the trigger. Screening at `elId()` therefore
+  // covers only the subset that reaches the DOM. This is the chokepoint where ALL of them,
+  // author-written and engine-derived alike, are about to leave the build.
+  return [...autoTriggers(s), ...explicit].map(t => {
+    assertNotDisclosing(String(t.target ?? ''), `segments[${i}] trigger target`);
+    return { t: (s.startMs + Number(t.atMs || 0)) / 1000, s: i + 1, a: t.target, kind: t.action || 'rise', withSegment: !!t.withSegment, payload: screenPayload(t.payload, `segments[${i}] trigger payload`) };
+  });
 }).map((t, i) => ({ ...t, _i: i }))  // stable source-order index (autoTriggers then explicit, per segment) — the canonical tiebreaker below
-  .sort((a, b) => (a.t - b.t) || (a.s - b.s) || (a._i - b._i));  // strict TOTAL order: triggers that clamp/collapse to the same (t, slide) keep a single deterministic order so non-commutative effects (pulsePath clears, overlays) converge to one final state under parallel-worker seeks
+  .sort((a, b) => (a.t - b.t) || (a.s - b.s) || (a._i - b._i)));  // strict TOTAL order: triggers that clamp/collapse to the same (t, slide) keep a single deterministic order so non-commutative effects (pulsePath clears, overlays) converge to one final state under parallel-worker seeks
 
 // ---- background themes (user-selectable preset) ---------------------------
 const THEMES = {
@@ -846,7 +1046,7 @@ const endCardText = endCardOn ? `${String(timing.endCard.tagline || 'Created by 
 // No `.el` on the children, so they are visible whenever the slide is `.on` (deterministic — no trigger
 // needed). Reuses `.title` (AA-contrast: --color-text-primary adapts to the background mode) + `.safe`
 // (safe-area + fitLayout), so visual-qc/a11y pass on any theme/background.
-const endCardSlide = endCardOn ? `<section id="seg-${endCardIndex}" class="sl" data-mode="endcard"><div class="safe" style="--fit:1"><h1 id="endcard-title" class="title">${esc(endCardText)}</h1></div></section>` : '';
+const endCardSlide = guard(() => endCardOn ? `<section id="seg-${endCardIndex}" class="sl" data-mode="endcard"><div class="safe" style="--fit:1"><h1 id="endcard-title" class="title">${esc(endCardText, 'endCard.tagline')}</h1></div></section>` : '');
 
 // ---- styles + runtime -----------------------------------------------------
 // The opacity of a code field dimmed around the focused one. The CSS rule and the
