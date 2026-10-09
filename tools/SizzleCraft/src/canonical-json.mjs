@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
 import { parseCli, runCli } from './cli-support.mjs';
+import { isEntryPoint } from './entry-point.mjs';
 
 export const FIXED = 'fixed-key-order-json-utf8-v1';
 export const DECLARED = 'declared-field-order-json-utf8-v1';
@@ -96,7 +96,7 @@ Exit codes: 0 success · 1 the input is not canonicalisable · 2 bad usage`.trim
 
 // Argument parsing comes first. This block used to read stdin before looking at argv, so
 // `--help` with no piped input died on `SyntaxError: Unexpected end of JSON input`.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   await runCli(() => {
     const { positionals } = parseCli({ usage: USAGE, allowPositionals: true });
     const mode = positionals[0] ?? FIXED;

@@ -3211,6 +3211,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
     ['diagram-defaults.mjs', 'DIAGRAM_VIEWBOX'],
     ['diagram-defaults.mjs', 'NODE_DEFAULTS'],
     ['silent-segment.mjs', 'narrationCueProblems'],
+    ['entry-point.mjs', 'isEntryPoint'],
   ]) {
     test(`${symbol}_theConsumersNamedInItsDocComment_areExactlyTheModulesThatImportIt`, () => {
       const srcDir = new URL('../src/', import.meta.url);

@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveWithinRoot, resolveEngineOutput, planFooter } from './cli-support.mjs';
+import { isEntryPoint } from './entry-point.mjs';
 
 const USAGE = `
 coach-rulings — present a coach report with the project's prior rulings collapsed against
@@ -196,9 +197,7 @@ export function parseReport(text) {
 // rules the whole design rests on — the normalisation and the sentence rule — so that they
 // can be tested against real text rather than only through the CLI. Without this guard,
 // importing them to test them would execute the CLI with the test runner's argv.
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (invokedDirectly) {
+if (isEntryPoint(import.meta.url)) {
   await runCli(async () => {
   const { values, projectDir, apply } = parseCli({
     usage: USAGE,

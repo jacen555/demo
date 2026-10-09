@@ -73,7 +73,7 @@ const UNKNOWN_FLAG = '--sizzlecraft-no-such-flag';
  * work on import. There is no observation of the guarded behaviour that establishes
  * membership independently of it, so membership is declared and then checked.
  *
- * These nine are side-effect-free modules: imported, never invoked. Giving them a CLI
+ * These are side-effect-free modules: imported, never invoked. Giving them a CLI
  * would manufacture uniformity over a real distinction.
  */
 const SIDE_EFFECT_FREE_MODULES = new Set([
@@ -81,6 +81,8 @@ const SIDE_EFFECT_FREE_MODULES = new Set([
   'brand-palette.mjs',
   'cli-support.mjs',
   'diagram-defaults.mjs',
+  // The shared entry-point check: imported by the dual-purpose CLIs, no CLI of its own.
+  'entry-point.mjs',
   'end-card.mjs',
   'envelope-ducking.mjs',
   'gain-pin.mjs',
