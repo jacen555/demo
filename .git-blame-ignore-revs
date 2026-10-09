@@ -1,0 +1,7 @@
+# SizzleCraft Prettier adoption.
+#
+# These commits contain formatter output only. Use:
+#   git blame --ignore-revs-file .git-blame-ignore-revs <path>
+031089d64d81e1d50489daefb4cdcbdd3557dbdf
+7d12b4ce31d962d9ccbcfba95cc36a2d19beb5bf
+13df97127e4d51e809dc8e641ba6dbb9f541f600
