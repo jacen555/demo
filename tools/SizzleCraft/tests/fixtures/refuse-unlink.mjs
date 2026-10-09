@@ -20,25 +20,34 @@
 // staged rather than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from 'node:fs';
-import path from 'node:path';
-import { requireTestOwnedDir } from './suite-owned-path.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import { requireTestOwnedDir } from "./suite-owned-path.mjs";
 
 const params = new URL(import.meta.url).searchParams;
-const fragment = params.get('fragment');
-if (!params.get('dir') || !fragment) throw new Error('refuse-unlink: its --import URL must carry dir and fragment');
-const dir = requireTestOwnedDir(params.get('dir'), 'refuse-unlink');
+const fragment = params.get("fragment");
+if (!params.get("dir") || !fragment)
+  throw new Error(
+    "refuse-unlink: its --import URL must carry dir and fragment",
+  );
+const dir = requireTestOwnedDir(params.get("dir"), "refuse-unlink");
 
 const unlinkSync = fs.unlinkSync;
 fs.unlinkSync = (candidate, ...rest) => {
   const name = String(candidate);
-  if (path.basename(name).includes(fragment) && fs.realpathSync.native(path.dirname(name)) === dir) {
+  if (
+    path.basename(name).includes(fragment) &&
+    fs.realpathSync.native(path.dirname(name)) === dir
+  ) {
     process.stderr.write(`refuse-unlink: refused ${name}\n`);
-    throw Object.assign(new Error(`EPERM: operation not permitted, unlink '${name}'`), {
-      code: 'EPERM',
-      syscall: 'unlink',
-      path: name,
-    });
+    throw Object.assign(
+      new Error(`EPERM: operation not permitted, unlink '${name}'`),
+      {
+        code: "EPERM",
+        syscall: "unlink",
+        path: name,
+      },
+    );
   }
   return unlinkSync(candidate, ...rest);
 };

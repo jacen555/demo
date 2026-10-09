@@ -5,12 +5,12 @@
 const WRAPPER = new URL("./fail-probe-backend.mjs", import.meta.url).href;
 
 export async function resolve(specifier, context, nextResolve) {
-    if (
-        specifier === "music-metadata" &&
-        (process.env.FAIL_PROBE_AFTER !== undefined ||
-            process.env.FAIL_PROBE_ONLY !== undefined)
-    ) {
-        return { url: WRAPPER, format: "module", shortCircuit: true };
-    }
-    return nextResolve(specifier, context);
+  if (
+    specifier === "music-metadata" &&
+    (process.env.FAIL_PROBE_AFTER !== undefined ||
+      process.env.FAIL_PROBE_ONLY !== undefined)
+  ) {
+    return { url: WRAPPER, format: "module", shortCircuit: true };
+  }
+  return nextResolve(specifier, context);
 }

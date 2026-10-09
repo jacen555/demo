@@ -23,14 +23,14 @@ Reads nothing and writes nothing; it only resolves and prints.
 Exit codes: 0 success · 2 bad usage, or the asset is missing`.trim();
 
 guard(() => {
-    const { projectDir } = parseCli({ usage: USAGE });
-    const silencePath = path.join(projectDir, "silence.mp3");
+  const { projectDir } = parseCli({ usage: USAGE });
+  const silencePath = path.join(projectDir, "silence.mp3");
 
-    if (!fs.existsSync(silencePath)) {
-        throw new CliError(
-            `missing ${silencePath}; copy the shipped mono 24 kHz silence.mp3 asset into the project dir`,
-        );
-    }
+  if (!fs.existsSync(silencePath)) {
+    throw new CliError(
+      `missing ${silencePath}; copy the shipped mono 24 kHz silence.mp3 asset into the project dir`,
+    );
+  }
 
-    console.log(silencePath);
+  console.log(silencePath);
 });

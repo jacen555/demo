@@ -42,13 +42,15 @@
 // decisions — the verdict, the pin — are what this is for.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import { register } from 'node:module';
+import { register } from "node:module";
 
 const params = new URL(import.meta.url).searchParams;
-if (!params.get('dir') || !params.get('ffmpeg')) {
-  throw new Error('fake-ffmpeg: its --import URL must carry dir and ffmpeg');
+if (!params.get("dir") || !params.get("ffmpeg")) {
+  throw new Error("fake-ffmpeg: its --import URL must carry dir and ffmpeg");
 }
 
-const backend = new URL('./fake-ffmpeg-backend.mjs', import.meta.url);
+const backend = new URL("./fake-ffmpeg-backend.mjs", import.meta.url);
 backend.search = params.toString();
-register('./child-process-hooks.mjs', import.meta.url, { data: { backend: backend.href } });
+register("./child-process-hooks.mjs", import.meta.url, {
+  data: { backend: backend.href },
+});

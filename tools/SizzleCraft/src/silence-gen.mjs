@@ -14,10 +14,10 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { EXIT, CliError, runCli, resolveOutput } from "./cli-support.mjs";
 import {
-    SILENCE_FRAME_BYTES,
-    SILENCE_FRAME_MS,
-    silentFrameCount,
-    silentMp3,
+  SILENCE_FRAME_BYTES,
+  SILENCE_FRAME_MS,
+  silentFrameCount,
+  silentMp3,
 } from "./silent-segment.mjs";
 
 // Imported, not redeclared. concat-audio.mjs generates silence for declared silent
@@ -52,73 +52,73 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
  * `Number(argv[3])` accepted values like "1e9", which is a 288 GB allocation.
  */
 function parseDurationMs(raw) {
-    const text = String(raw ?? "").trim();
-    if (!/^(?:\d+|\d*\.\d+)$/.test(text)) {
-        throw new CliError(
-            `--ms must be a plain number of milliseconds — got "${raw}"`,
-        );
-    }
-    const value = Number(text);
-    if (!Number.isFinite(value) || value <= 0 || value > 3_600_000) {
-        throw new CliError(`--ms must be between 1 and 3600000 — got ${text}`);
-    }
-    return value;
+  const text = String(raw ?? "").trim();
+  if (!/^(?:\d+|\d*\.\d+)$/.test(text)) {
+    throw new CliError(
+      `--ms must be a plain number of milliseconds — got "${raw}"`,
+    );
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0 || value > 3_600_000) {
+    throw new CliError(`--ms must be between 1 and 3600000 — got ${text}`);
+  }
+  return value;
 }
 
 await runCli(() => {
-    let values;
-    let positionals;
-    try {
-        ({ values, positionals } = parseArgs({
-            options: {
-                out: { type: "string" },
-                ms: { type: "string" },
-                project: { type: "string" },
-                apply: { type: "boolean", default: false },
-                replace: { type: "boolean", default: false },
-                help: { type: "boolean", short: "h", default: false },
-            },
-            allowPositionals: true,
-            strict: true,
-        }));
-    } catch (err) {
-        throw new CliError(`${err.message}\n\n${USAGE}`);
-    }
+  let values;
+  let positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      options: {
+        out: { type: "string" },
+        ms: { type: "string" },
+        project: { type: "string" },
+        apply: { type: "boolean", default: false },
+        replace: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      allowPositionals: true,
+      strict: true,
+    }));
+  } catch (err) {
+    throw new CliError(`${err.message}\n\n${USAGE}`);
+  }
 
-    if (values.help) {
-        console.log(USAGE);
-        return EXIT.OK;
-    }
-
-    const projectDir = path.resolve(values.project ?? process.cwd());
-    const outArg = values.out ?? positionals[0] ?? "silence.mp3";
-    const msArg = values.ms ?? positionals[1] ?? "3500";
-
-    // Validated before anything touches the filesystem: `ms` drives an allocation size
-    // and `out` is a caller-supplied write target.
-    const targetMs = parseDurationMs(msArg);
-    const frames = silentFrameCount(targetMs);
-    const bytes = FRAME_BYTES * frames;
-    const outPath = resolveOutput(projectDir, outArg, {
-        apply: values.apply === true,
-        replace: values.replace === true,
-        label: "output",
-    });
-
-    if (!values.apply) {
-        console.log(
-            `plan: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${bytes} bytes`,
-        );
-        console.log(`  output ${outPath}`);
-        console.log("");
-        console.log("nothing was written. Re-run with --apply to write.");
-        return EXIT.OK;
-    }
-
-    const buf = silentMp3(targetMs);
-    fs.writeFileSync(outPath, buf);
-    console.log(
-        `${outPath}: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${buf.length} bytes`,
-    );
+  if (values.help) {
+    console.log(USAGE);
     return EXIT.OK;
+  }
+
+  const projectDir = path.resolve(values.project ?? process.cwd());
+  const outArg = values.out ?? positionals[0] ?? "silence.mp3";
+  const msArg = values.ms ?? positionals[1] ?? "3500";
+
+  // Validated before anything touches the filesystem: `ms` drives an allocation size
+  // and `out` is a caller-supplied write target.
+  const targetMs = parseDurationMs(msArg);
+  const frames = silentFrameCount(targetMs);
+  const bytes = FRAME_BYTES * frames;
+  const outPath = resolveOutput(projectDir, outArg, {
+    apply: values.apply === true,
+    replace: values.replace === true,
+    label: "output",
+  });
+
+  if (!values.apply) {
+    console.log(
+      `plan: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${bytes} bytes`,
+    );
+    console.log(`  output ${outPath}`);
+    console.log("");
+    console.log("nothing was written. Re-run with --apply to write.");
+    return EXIT.OK;
+  }
+
+  const buf = silentMp3(targetMs);
+  fs.writeFileSync(outPath, buf);
+  console.log(
+    `${outPath}: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${buf.length} bytes`,
+  );
+  return EXIT.OK;
 });

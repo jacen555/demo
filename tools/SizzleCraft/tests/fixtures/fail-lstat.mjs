@@ -23,22 +23,28 @@
 // the failure was staged rather than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from 'node:fs';
-import path from 'node:path';
-import { requireTestOwnedDir } from './suite-owned-path.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import { requireTestOwnedDir } from "./suite-owned-path.mjs";
 
 const params = new URL(import.meta.url).searchParams;
-const names = params.getAll('name');
-if (!params.get('dir') || names.length === 0 || names.some((n) => n === '' || n !== path.basename(n))) {
-  throw new Error('fail-lstat: its --import URL must carry dir and at least one name, each a bare entry name');
+const names = params.getAll("name");
+if (
+  !params.get("dir") ||
+  names.length === 0 ||
+  names.some((n) => n === "" || n !== path.basename(n))
+) {
+  throw new Error(
+    "fail-lstat: its --import URL must carry dir and at least one name, each a bare entry name",
+  );
 }
-const dir = requireTestOwnedDir(params.get('dir'), 'fail-lstat');
+const dir = requireTestOwnedDir(params.get("dir"), "fail-lstat");
 
 // Whether `candidate` is one of the named entries of the directory. Its parent is resolved,
 // not the path itself, so the entry is matched whatever it is. Asked for every lstat, so it
 // must not throw.
 const refused = (candidate) => {
-  if (typeof candidate !== 'string' || candidate === '') return false;
+  if (typeof candidate !== "string" || candidate === "") return false;
   const abs = path.resolve(candidate);
   if (!names.includes(path.basename(abs))) return false;
   try {
@@ -52,13 +58,18 @@ const lstatSync = fs.lstatSync;
 fs.lstatSync = (candidate, ...rest) => {
   if (refused(candidate)) {
     process.stderr.write(`fail-lstat: refused ${candidate}\n`);
-    throw Object.assign(new Error(`EPERM: operation not permitted, lstat '${candidate}'`), {
-      code: 'EPERM',
-      syscall: 'lstat',
-      path: candidate,
-    });
+    throw Object.assign(
+      new Error(`EPERM: operation not permitted, lstat '${candidate}'`),
+      {
+        code: "EPERM",
+        syscall: "lstat",
+        path: candidate,
+      },
+    );
   }
   return lstatSync(candidate, ...rest);
 };
 
-process.stderr.write(`fail-lstat: armed — lstat fails for ${names.join(', ')} inside ${dir}\n`);
+process.stderr.write(
+  `fail-lstat: armed — lstat fails for ${names.join(", ")} inside ${dir}\n`,
+);

@@ -5,10 +5,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
-    makeProject,
-    tryMakeFileLink,
-    zeroFileIds,
-    ZERO_FILE_IDS_ARMED,
+  makeProject,
+  tryMakeFileLink,
+  zeroFileIds,
+  ZERO_FILE_IDS_ARMED,
 } from "./_helpers.mjs";
 
 // fixtures/zero-file-ids.mjs is what every no-file-ID test stands on: each one is only as
@@ -61,165 +61,165 @@ process.stdout.write(JSON.stringify(out));
 `;
 
 describe("zero-file-ids fixture", () => {
-    // A file inside the armed directory, one outside it, and the outside file's real inode,
-    // read here where nothing is armed. Where the volume gives no file IDs, or gives the two
-    // files one, no case below could tell a withheld inode from a real one.
-    const twoFiles = (t) => {
-        const dir = makeProject(t, { "inside.bin": "in" });
-        const inside = path.join(dir, "inside.bin");
-        const outside = path.join(
-            makeProject(t, { "outside.bin": "out" }),
-            "outside.bin",
-        );
-        const realIn = fs.statSync(inside, { bigint: true }).ino;
-        const realOut = fs.statSync(outside, { bigint: true }).ino;
-        if (realIn === 0n || realOut === 0n || realIn === realOut) {
-            t.skip(
-                `this volume gives no distinct file IDs (inside ${realIn}, outside ${realOut})`,
-            );
-            return null;
-        }
-        return {
-            dir,
-            inside,
-            outside,
-            real: { big: String(realOut), num: Number(realOut) },
-        };
+  // A file inside the armed directory, one outside it, and the outside file's real inode,
+  // read here where nothing is armed. Where the volume gives no file IDs, or gives the two
+  // files one, no case below could tell a withheld inode from a real one.
+  const twoFiles = (t) => {
+    const dir = makeProject(t, { "inside.bin": "in" });
+    const inside = path.join(dir, "inside.bin");
+    const outside = path.join(
+      makeProject(t, { "outside.bin": "out" }),
+      "outside.bin",
+    );
+    const realIn = fs.statSync(inside, { bigint: true }).ino;
+    const realOut = fs.statSync(outside, { bigint: true }).ino;
+    if (realIn === 0n || realOut === 0n || realIn === realOut) {
+      t.skip(
+        `this volume gives no distinct file IDs (inside ${realIn}, outside ${realOut})`,
+      );
+      return null;
+    }
+    return {
+      dir,
+      inside,
+      outside,
+      real: { big: String(realOut), num: Number(realOut) },
     };
+  };
 
-    // Runs one case with the fixture armed for `dir`, and returns what the child measured.
-    const measure = (dir, which, ...paths) => {
-        const r = spawnSync(
-            process.execPath,
-            [
-                "--import",
-                zeroFileIds({ dir }),
-                "--input-type=module",
-                "-e",
-                CHILD,
-                "--",
-                which,
-                ...paths,
-            ],
-            { encoding: "utf8" },
-        );
-        assert.equal(
-            r.status,
-            0,
-            `the ${which} case must run\n${r.stdout}\n${r.stderr}`,
-        );
-        assert.match(
-            r.stderr,
-            ZERO_FILE_IDS_ARMED,
-            `the fixture must be armed for ${dir}\n${r.stderr}`,
-        );
-        return JSON.parse(r.stdout);
-    };
-    const ZERO = { big: "0", num: 0 };
+  // Runs one case with the fixture armed for `dir`, and returns what the child measured.
+  const measure = (dir, which, ...paths) => {
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        zeroFileIds({ dir }),
+        "--input-type=module",
+        "-e",
+        CHILD,
+        "--",
+        which,
+        ...paths,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(
+      r.status,
+      0,
+      `the ${which} case must run\n${r.stdout}\n${r.stderr}`,
+    );
+    assert.match(
+      r.stderr,
+      ZERO_FILE_IDS_ARMED,
+      `the fixture must be armed for ${dir}\n${r.stderr}`,
+    );
+    return JSON.parse(r.stdout);
+  };
+  const ZERO = { big: "0", num: 0 };
 
-    test("zeroFileIds_statByPath_reportsInodeZeroInsideAndTheRealInodeOutside", (t) => {
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside, real } = files;
+  test("zeroFileIds_statByPath_reportsInodeZeroInsideAndTheRealInodeOutside", (t) => {
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside, real } = files;
 
-        const m = measure(dir, "paths", inside, outside);
+    const m = measure(dir, "paths", inside, outside);
 
-        assert.deepEqual(
-            m.inside,
-            { lstat: ZERO, stat: ZERO },
-            "by path: a file inside must report inode 0",
-        );
-        assert.deepEqual(
-            m.outside,
-            { lstat: real, stat: real },
-            "by path: a file outside must report its real inode",
-        );
-    });
+    assert.deepEqual(
+      m.inside,
+      { lstat: ZERO, stat: ZERO },
+      "by path: a file inside must report inode 0",
+    );
+    assert.deepEqual(
+      m.outside,
+      { lstat: real, stat: real },
+      "by path: a file outside must report its real inode",
+    );
+  });
 
-    test("zeroFileIds_statThroughALinkInsideToAFileOutside_reportsInodeZero", (t) => {
-        // The name asked about is inside, wherever it points.
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside, real } = files;
-        const link = path.join(dir, "link.bin");
-        if (!tryMakeFileLink(link, outside))
-            return t.skip("platform refused to create a file link");
-        assert.equal(
-            String(fs.statSync(link, { bigint: true }).ino),
-            real.big,
-            "unarmed, the link must lead to the file outside",
-        );
+  test("zeroFileIds_statThroughALinkInsideToAFileOutside_reportsInodeZero", (t) => {
+    // The name asked about is inside, wherever it points.
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside, real } = files;
+    const link = path.join(dir, "link.bin");
+    if (!tryMakeFileLink(link, outside))
+      return t.skip("platform refused to create a file link");
+    assert.equal(
+      String(fs.statSync(link, { bigint: true }).ino),
+      real.big,
+      "unarmed, the link must lead to the file outside",
+    );
 
-        const m = measure(dir, "link", inside, outside, link);
+    const m = measure(dir, "link", inside, outside, link);
 
-        assert.deepEqual(
-            m,
-            ZERO,
-            "by path: stat through a link inside must report inode 0, though the file it leads to is outside",
-        );
-    });
+    assert.deepEqual(
+      m,
+      ZERO,
+      "by path: stat through a link inside must report inode 0, though the file it leads to is outside",
+    );
+  });
 
-    test("zeroFileIds_fstatOfADescriptorOpenSyncOpenedInside_reportsInodeZero", (t) => {
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside } = files;
+  test("zeroFileIds_fstatOfADescriptorOpenSyncOpenedInside_reportsInodeZero", (t) => {
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside } = files;
 
-        const m = measure(dir, "c1", inside, outside);
+    const m = measure(dir, "c1", inside, outside);
 
-        assert.deepEqual(
-            m,
-            ZERO,
-            "c1: fstatSync of a descriptor fs.openSync opened inside must report inode 0",
-        );
-    });
+    assert.deepEqual(
+      m,
+      ZERO,
+      "c1: fstatSync of a descriptor fs.openSync opened inside must report inode 0",
+    );
+  });
 
-    test("zeroFileIds_fstatOfADescriptorOpenSyncOpenedOutside_reportsTheRealInode", (t) => {
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside, real } = files;
+  test("zeroFileIds_fstatOfADescriptorOpenSyncOpenedOutside_reportsTheRealInode", (t) => {
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside, real } = files;
 
-        const m = measure(dir, "c2", inside, outside);
+    const m = measure(dir, "c2", inside, outside);
 
-        assert.deepEqual(
-            m,
-            real,
-            "c2: fstatSync of a descriptor fs.openSync opened outside must report its real inode",
-        );
-    });
+    assert.deepEqual(
+      m,
+      real,
+      "c2: fstatSync of a descriptor fs.openSync opened outside must report its real inode",
+    );
+  });
 
-    test("zeroFileIds_fstatOfANumberCloseSyncClosedInsideThenAsyncOpenReopenedOutside_reportsTheRealInode", (t) => {
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside, real } = files;
+  test("zeroFileIds_fstatOfANumberCloseSyncClosedInsideThenAsyncOpenReopenedOutside_reportsTheRealInode", (t) => {
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside, real } = files;
 
-        const { closed, reopened, ...m } = measure(dir, "c3", inside, outside);
-        if (reopened !== closed)
-            return t.skip(
-                `descriptor ${closed} was not reused (reopened as ${reopened})`,
-            );
+    const { closed, reopened, ...m } = measure(dir, "c3", inside, outside);
+    if (reopened !== closed)
+      return t.skip(
+        `descriptor ${closed} was not reused (reopened as ${reopened})`,
+      );
 
-        assert.deepEqual(
-            m,
-            real,
-            "c3: fs.closeSync must drop the entry for the number it closes, so a file outside reopened under that number reports its real inode",
-        );
-    });
+    assert.deepEqual(
+      m,
+      real,
+      "c3: fs.closeSync must drop the entry for the number it closes, so a file outside reopened under that number reports its real inode",
+    );
+  });
 
-    test("zeroFileIds_fstatOfANumberAsyncCloseClosedInsideThenOpenSyncReopenedOutside_reportsTheRealInode", (t) => {
-        const files = twoFiles(t);
-        if (files === null) return;
-        const { dir, inside, outside, real } = files;
+  test("zeroFileIds_fstatOfANumberAsyncCloseClosedInsideThenOpenSyncReopenedOutside_reportsTheRealInode", (t) => {
+    const files = twoFiles(t);
+    if (files === null) return;
+    const { dir, inside, outside, real } = files;
 
-        const { closed, reopened, ...m } = measure(dir, "c4", inside, outside);
-        if (reopened !== closed)
-            return t.skip(
-                `descriptor ${closed} was not reused (reopened as ${reopened})`,
-            );
+    const { closed, reopened, ...m } = measure(dir, "c4", inside, outside);
+    if (reopened !== closed)
+      return t.skip(
+        `descriptor ${closed} was not reused (reopened as ${reopened})`,
+      );
 
-        assert.deepEqual(
-            m,
-            real,
-            "c4: fs.openSync must drop the entry for a number it returns for a path outside, so that file reports its real inode",
-        );
-    });
+    assert.deepEqual(
+      m,
+      real,
+      "c4: fs.openSync must drop the entry for a number it returns for a path outside, so that file reports its real inode",
+    );
+  });
 });

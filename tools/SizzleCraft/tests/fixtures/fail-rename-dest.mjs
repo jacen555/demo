@@ -25,13 +25,13 @@ import path from "node:path";
 
 const target = process.env.FAIL_RENAME_DEST;
 if (target) {
-    const real = fs.renameSync.bind(fs);
-    fs.renameSync = (from, to) => {
-        if (path.basename(String(to)) === target) {
-            const err = new Error(`fail-rename: refusing to publish ${target}`);
-            err.code = "EPERM";
-            throw err;
-        }
-        return real(from, to);
-    };
+  const real = fs.renameSync.bind(fs);
+  fs.renameSync = (from, to) => {
+    if (path.basename(String(to)) === target) {
+      const err = new Error(`fail-rename: refusing to publish ${target}`);
+      err.code = "EPERM";
+      throw err;
+    }
+    return real(from, to);
+  };
 }

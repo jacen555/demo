@@ -1,23 +1,23 @@
 // Storyboard preview — derived from timing.json so it can never drift from the approved timeline.
 import fs from "node:fs";
 import {
-    EXIT,
-    CliError,
-    guard,
-    parseCli,
-    requireExistingFile,
-    resolveOutput,
-    describeWrite,
-    planFooter,
-    describeJsonValue,
+  EXIT,
+  CliError,
+  guard,
+  parseCli,
+  requireExistingFile,
+  resolveOutput,
+  describeWrite,
+  planFooter,
+  describeJsonValue,
 } from "./cli-support.mjs";
 import {
-    isSilentSegment,
-    silentCaption,
-    silentSegmentProblems,
-    wordsInSegment,
-    segmentEntryBlocker,
-    segmentLabel,
+  isSilentSegment,
+  silentCaption,
+  silentSegmentProblems,
+  wordsInSegment,
+  segmentEntryBlocker,
+  segmentLabel,
 } from "./silent-segment.mjs";
 import { BRAND_PALETTE } from "./brand-palette.mjs";
 import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from "./diagram-defaults.mjs";
@@ -40,28 +40,28 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage, a refused overwrite
 `.trimStart();
 
 const { values, projectDir, apply, replace } = guard(() =>
-    parseCli({ usage: USAGE, options: { out: { type: "string" } } }),
+  parseCli({ usage: USAGE, options: { out: { type: "string" } } }),
 );
 // Refused, not crashed. This was a bare JSON.parse wrapped only around the path resolve:
 // an unparseable timing.json escaped as an uncaught SyntaxError with a stack and exit 1.
 // Unreadable input is the caller's fault — EXIT.USAGE by cli-support's definition, a
 // missing prerequisite — and CliError defaults to it. Same wording as frame-capture.
 const t = guard(() => {
-    const timingPath = requireExistingFile(
-        projectDir,
-        "timing.json",
-        "timing file",
+  const timingPath = requireExistingFile(
+    projectDir,
+    "timing.json",
+    "timing file",
+  );
+  const text = fs.readFileSync(timingPath, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Reported by size, never by contents — see remix.mjs and write-chapters.mjs:197. V8's
+    // parse message quotes the opening bytes of the file back at the caller.
+    throw new CliError(
+      `${timingPath} is not valid JSON (${text.length} characters)`,
     );
-    const text = fs.readFileSync(timingPath, "utf8");
-    try {
-        return JSON.parse(text);
-    } catch {
-        // Reported by size, never by contents — see remix.mjs and write-chapters.mjs:197. V8's
-        // parse message quotes the opening bytes of the file back at the caller.
-        throw new CliError(
-            `${timingPath} is not valid JSON (${text.length} characters)`,
-        );
-    }
+  }
 });
 // SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
 // `panel` and throw an uncaught TypeError on `s.visual` — a crash with a stack, not a
@@ -72,23 +72,23 @@ const t = guard(() => {
 // THE ENTRY RULE ONLY: segmentEntryBlocker returns null for a non-array and says nothing
 // about ids, so this stage's handling of an empty or id-less list is unchanged.
 guard(() => {
-    // THE LIST ITSELF, FIRST. `(t.segments || [])` guards ABSENCE and not TYPE — a non-empty
-    // string is truthy — so `segments: "two of them"` threw `.filter is not a function`, and
-    // an absent or null list threw on `.length`. A list that is PRESENT and is not a list
-    // cannot be read and is refused; absent and null are read as empty, which is what the
-    // plan line below already intended with `segments.length` over `t.segments?.length ?? 0`.
-    if (
-        t.segments !== undefined &&
-        t.segments !== null &&
-        !Array.isArray(t.segments)
-    ) {
-        throw new CliError(
-            `timing.segments is not a list of segments — it is ${describeJsonValue(t.segments)}. ` +
-                "Every stage reads it as a list; one that is not a list cannot be read at all.",
-        );
-    }
-    const bad = segmentEntryBlocker(t.segments);
-    if (bad) throw new CliError(bad.fact);
+  // THE LIST ITSELF, FIRST. `(t.segments || [])` guards ABSENCE and not TYPE — a non-empty
+  // string is truthy — so `segments: "two of them"` threw `.filter is not a function`, and
+  // an absent or null list threw on `.length`. A list that is PRESENT and is not a list
+  // cannot be read and is refused; absent and null are read as empty, which is what the
+  // plan line below already intended with `segments.length` over `t.segments?.length ?? 0`.
+  if (
+    t.segments !== undefined &&
+    t.segments !== null &&
+    !Array.isArray(t.segments)
+  ) {
+    throw new CliError(
+      `timing.segments is not a list of segments — it is ${describeJsonValue(t.segments)}. ` +
+        "Every stage reads it as a list; one that is not a list cannot be read at all.",
+    );
+  }
+  const bad = segmentEntryBlocker(t.segments);
+  if (bad) throw new CliError(bad.fact);
 });
 
 // READ ONCE, HERE, AND NOWHERE ELSE. Every site below used its own idiom for the same
@@ -109,77 +109,77 @@ const intake = t.intake ?? {};
 // reviews it. A blank caption rendered as an empty cue under the SILENT label and exited 0.
 // Refuse the declarations validate-timing, voice and write-subtitles refuse, before planning.
 guard(() => {
-    // THE INDEX IS KEPT. `.filter().flatMap()` discarded it before the label needed it, so
-    // silentSegmentProblems fell back to its default `segment "${seg?.id}"` and an id-less
-    // segment became `segment "undefined"`. The label comes from the shared symbol, as every
-    // other one in this change does.
-    const problems = segments.flatMap((s, i) =>
-        isSilentSegment(s) ? silentSegmentProblems(s, segmentLabel(s, i)) : [],
-    );
-    if (problems.length) throw new CliError(problems.join("\n"));
+  // THE INDEX IS KEPT. `.filter().flatMap()` discarded it before the label needed it, so
+  // silentSegmentProblems fell back to its default `segment "${seg?.id}"` and an id-less
+  // segment became `segment "undefined"`. The label comes from the shared symbol, as every
+  // other one in this change does.
+  const problems = segments.flatMap((s, i) =>
+    isSilentSegment(s) ? silentSegmentProblems(s, segmentLabel(s, i)) : [],
+  );
+  if (problems.length) throw new CliError(problems.join("\n"));
 });
 const esc = (s) =>
-    String(s ?? "").replace(
-        /[&<>"']/g,
-        (c) =>
-            ({
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                '"': "&quot;",
-                "'": "&#39;",
-            })[c],
-    );
+  String(s ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  );
 const PAL = BRAND_PALETTE;
 const clock = (ms) =>
-    `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+  `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
 
 const panel = (s, i) => {
-    const v = s.visual || {},
-        ca = PAL[i % PAL.length];
-    const win = ((s.endMs - s.startMs) / 1000).toFixed(1);
-    // `''.split(/\s+/)` is `['']` — length 1 — so a segment with no narration reported ONE
-    // word. A number that looks measured and is not is worse than no number, because the
-    // storyboard is what an author reviews the pacing against.
-    const words = wordsInSegment(s);
-    const silent = isSilentSegment(s);
+  const v = s.visual || {},
+    ca = PAL[i % PAL.length];
+  const win = ((s.endMs - s.startMs) / 1000).toFixed(1);
+  // `''.split(/\s+/)` is `['']` — length 1 — so a segment with no narration reported ONE
+  // word. A number that looks measured and is not is worse than no number, because the
+  // storyboard is what an author reviews the pacing against.
+  const words = wordsInSegment(s);
+  const silent = isSilentSegment(s);
 
-    const cards = (v.items || [])
-        .map(
-            (it, j) => `
+  const cards = (v.items || [])
+    .map(
+      (it, j) => `
     <div class="card" style="border-top:4px solid ${PAL[j % PAL.length]}">
       <div class="k">${esc(it.label || "")}</div>
       ${it.value ? `<div class="v" style="color:${PAL[j % PAL.length]}">${esc(it.value)}</div>` : ""}
       <div class="b">${esc(it.text || "")}</div>
     </div>`,
-        )
-        .join("");
+    )
+    .join("");
 
-    const shots = (v.shots || [])
-        .map(
-            (s) => `
+  const shots = (v.shots || [])
+    .map(
+      (s) => `
     <figure class="shot"><img src="${esc(s.src)}" alt="${esc(s.label || "")}"/>
     ${s.label ? `<figcaption>${esc(s.label)}</figcaption>` : ""}</figure>`,
-        )
-        .join("");
+    )
+    .join("");
 
-    const diagram = v.nodes
-        ? `
+  const diagram = v.nodes
+    ? `
     <svg viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX)}" class="dg">
       ${(v.edges || [])
-          .map((e, j) => {
-              const a = (v.nodes || []).find((n) => n.id === e.from) || {},
-                  b = (v.nodes || []).find((n) => n.id === e.to) || {};
-              const ax = (+a.x || 0) + (+a.w || 240) / 2,
-                  ay = (+a.y || 0) + (+a.h || 96) / 2;
-              const bx = (+b.x || 0) + (+b.w || 240) / 2,
-                  by = (+b.y || 0) + (+b.h || 96) / 2;
-              return `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="${PAL[j % PAL.length]}" stroke-width="5" opacity=".75"/>`;
-          })
-          .join("")}
+        .map((e, j) => {
+          const a = (v.nodes || []).find((n) => n.id === e.from) || {},
+            b = (v.nodes || []).find((n) => n.id === e.to) || {};
+          const ax = (+a.x || 0) + (+a.w || 240) / 2,
+            ay = (+a.y || 0) + (+a.h || 96) / 2;
+          const bx = (+b.x || 0) + (+b.w || 240) / 2,
+            by = (+b.y || 0) + (+b.h || 96) / 2;
+          return `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="${PAL[j % PAL.length]}" stroke-width="5" opacity=".75"/>`;
+        })
+        .join("")}
       ${(v.nodes || [])
-          .map(
-              (n, j) => `
+        .map(
+          (n, j) => `
         <g>
           <rect x="${+n.x || ND.x}" y="${+n.y || ND.y}" width="${+n.w || ND.w}" height="${+n.h || ND.h}" rx="14"
                 fill="#fff" stroke="${PAL[j % PAL.length]}" stroke-width="4"/>
@@ -189,19 +189,19 @@ const panel = (s, i) => {
           <circle cx="${(+n.x || ND.x) + 22}" cy="${(+n.y || ND.y) + 22}" r="20" fill="${PAL[j % PAL.length]}"/>
           <text x="${(+n.x || ND.x) + 22}" y="${(+n.y || ND.y) + 30}" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">${j + 1}</text>
         </g>`,
-          )
-          .join("")}
-    </svg>`
-        : "";
-
-    const claims = (s.claims || [])
-        .map(
-            (c) =>
-                `<span class="claim ${esc(c.type)}">${esc(c.claimId)} · ${esc(c.type)} · ${esc(c.provenanceIds.join(", "))}</span>`,
         )
-        .join("");
+        .join("")}
+    </svg>`
+    : "";
 
-    return `
+  const claims = (s.claims || [])
+    .map(
+      (c) =>
+        `<span class="claim ${esc(c.type)}">${esc(c.claimId)} · ${esc(c.type)} · ${esc(c.provenanceIds.join(", "))}</span>`,
+    )
+    .join("");
+
+  return `
   <section class="seg">
     <header style="--ca:${ca}">
       <span class="num">${String(i + 1).padStart(2, "0")}</span>
@@ -273,20 +273,20 @@ ${segments.map(panel).join("")}
 </div></body></html>`;
 
 const outPath = guard(() =>
-    resolveOutput(projectDir, values.out ?? "storyboard.html", {
-        apply,
-        replace,
-        label: "output",
-    }),
+  resolveOutput(projectDir, values.out ?? "storyboard.html", {
+    apply,
+    replace,
+    label: "output",
+  }),
 );
 if (!apply) {
-    console.log(`plan: render a storyboard for ${segments.length} segment(s)`);
-    console.log(`  source ${projectDir}/timing.json`);
-    console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
-    planFooter();
-    process.exit(EXIT.OK);
+  console.log(`plan: render a storyboard for ${segments.length} segment(s)`);
+  console.log(`  source ${projectDir}/timing.json`);
+  console.log(`  output ${outPath} — ${describeWrite(outPath, replace)}`);
+  planFooter();
+  process.exit(EXIT.OK);
 }
 fs.writeFileSync(outPath, html);
 console.log(
-    `wrote ${outPath} (${segments.length} segments, ${clock(t.durationMs)})`,
+  `wrote ${outPath} (${segments.length} segments, ${clock(t.durationMs)})`,
 );

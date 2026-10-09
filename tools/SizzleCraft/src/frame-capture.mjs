@@ -5,24 +5,24 @@ import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
-    EXIT,
-    CliError,
-    guard,
-    requireExistingFile,
-    resolveWipeTarget,
-    resolveInternalArtifact,
-    requirePositiveNumber,
-    requireFiniteNumber,
-    readLockOwner,
-    planFooter,
-    resolveKnob,
-    resolveBooleanKnob,
-    describeJsonValue,
+  EXIT,
+  CliError,
+  guard,
+  requireExistingFile,
+  resolveWipeTarget,
+  resolveInternalArtifact,
+  requirePositiveNumber,
+  requireFiniteNumber,
+  readLockOwner,
+  planFooter,
+  resolveKnob,
+  resolveBooleanKnob,
+  describeJsonValue,
 } from "./cli-support.mjs";
 import {
-    isSilentSegment,
-    silentSegmentProblems,
-    segmentEntryBlocker,
+  isSilentSegment,
+  silentSegmentProblems,
+  segmentEntryBlocker,
 } from "./silent-segment.mjs";
 
 // --- Argument parsing. Capture is DESTRUCTIVE: it replaces the project's frames/
@@ -48,57 +48,57 @@ Exit codes: 0 success/plan · 1 capture failed · 2 bad usage · 3 skipped (anot
 
 let cliArgs;
 try {
-    ({ values: cliArgs } = parseArgs({
-        options: {
-            project: { type: "string" },
-            apply: { type: "boolean", default: false },
-            resume: { type: "boolean", default: false },
-            help: { type: "boolean", short: "h", default: false },
-        },
-        strict: true,
-    }));
+  ({ values: cliArgs } = parseArgs({
+    options: {
+      project: { type: "string" },
+      apply: { type: "boolean", default: false },
+      resume: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+  }));
 } catch (err) {
-    console.error(`error: ${err.message}\n\n${USAGE}`);
-    process.exit(EXIT.USAGE);
+  console.error(`error: ${err.message}\n\n${USAGE}`);
+  process.exit(EXIT.USAGE);
 }
 if (cliArgs.help) {
-    console.log(USAGE);
-    process.exit(EXIT.OK);
+  console.log(USAGE);
+  process.exit(EXIT.OK);
 }
 
 const projectDir = path.resolve(cliArgs.project ?? process.cwd());
 if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
-    console.error(
-        `error: --project "${projectDir}" is not an existing directory`,
-    );
-    process.exit(EXIT.USAGE);
+  console.error(
+    `error: --project "${projectDir}" is not an existing directory`,
+  );
+  process.exit(EXIT.USAGE);
 }
 const apply = cliArgs.apply === true;
 
 const timing = guard(() => {
-    const timingPath = requireExistingFile(
-        projectDir,
-        "timing.json",
-        "timing file",
+  const timingPath = requireExistingFile(
+    projectDir,
+    "timing.json",
+    "timing file",
+  );
+  const text = fs.readFileSync(timingPath, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch {
+    // The parser's message is NOT forwarded. V8 quotes about 17 bytes of the input back —
+    // `Unexpected token 'L', "LEAK7f3a: 1" is not valid JSON` — so passing err.message
+    // through copies the file into stdout and from there into CI logs. MEASURED over six
+    // malformed shapes: two trigger that form, four do not, which is why this survived
+    // being read several times and was caught only by a sentinel.
+    //
+    // Reported by SIZE instead, the form write-chapters.mjs settled on after a link at
+    // timing.json made a parse error quote the bytes it led to, and the one
+    // path-boundary.test.mjs already pins for the sibling stages. This stage was the model
+    // the other three copied, so its wording was propagated before it was corrected.
+    throw new CliError(
+      `${timingPath} is not valid JSON (${text.length} characters)`,
     );
-    const text = fs.readFileSync(timingPath, "utf8");
-    try {
-        return JSON.parse(text);
-    } catch {
-        // The parser's message is NOT forwarded. V8 quotes about 17 bytes of the input back —
-        // `Unexpected token 'L', "LEAK7f3a: 1" is not valid JSON` — so passing err.message
-        // through copies the file into stdout and from there into CI logs. MEASURED over six
-        // malformed shapes: two trigger that form, four do not, which is why this survived
-        // being read several times and was caught only by a sentinel.
-        //
-        // Reported by SIZE instead, the form write-chapters.mjs settled on after a link at
-        // timing.json made a parse error quote the bytes it led to, and the one
-        // path-boundary.test.mjs already pins for the sibling stages. This stage was the model
-        // the other three copied, so its wording was propagated before it was corrected.
-        throw new CliError(
-            `${timingPath} is not valid JSON (${text.length} characters)`,
-        );
-    }
+  }
 });
 
 // SHAPE FIRST. A null, an array or a string where a segment object belongs used to reach
@@ -111,23 +111,23 @@ const timing = guard(() => {
 // on purpose, and an absent or empty list is still tolerated: segmentEntryBlocker returns
 // null for a non-array and has no opinion about ids.
 guard(() => {
-    // THE LIST ITSELF, FIRST. `(timing.segments || [])` below guards ABSENCE and not TYPE —
-    // a non-empty string is truthy, so `segments: "two of them"` sailed past every `||` and
-    // threw `.map is not a function` with a stack. Absent and null keep meaning "no segments"
-    // because that is what `|| []` already made them mean; a list that is PRESENT and is not
-    // a list is refused, because nothing here can read it.
-    if (
-        timing.segments !== undefined &&
-        timing.segments !== null &&
-        !Array.isArray(timing.segments)
-    ) {
-        throw new CliError(
-            `timing.segments is not a list of segments — it is ${describeJsonValue(timing.segments)}. ` +
-                "Every stage reads it as a list; one that is not a list cannot be read at all.",
-        );
-    }
-    const bad = segmentEntryBlocker(timing.segments);
-    if (bad) throw new CliError(bad.fact);
+  // THE LIST ITSELF, FIRST. `(timing.segments || [])` below guards ABSENCE and not TYPE —
+  // a non-empty string is truthy, so `segments: "two of them"` sailed past every `||` and
+  // threw `.map is not a function` with a stack. Absent and null keep meaning "no segments"
+  // because that is what `|| []` already made them mean; a list that is PRESENT and is not
+  // a list is refused, because nothing here can read it.
+  if (
+    timing.segments !== undefined &&
+    timing.segments !== null &&
+    !Array.isArray(timing.segments)
+  ) {
+    throw new CliError(
+      `timing.segments is not a list of segments — it is ${describeJsonValue(timing.segments)}. ` +
+        "Every stage reads it as a list; one that is not a list cannot be read at all.",
+    );
+  }
+  const bad = segmentEntryBlocker(timing.segments);
+  if (bad) throw new CliError(bad.fact);
 });
 
 // Capture parameters are validated up front, before anything is deleted. An unvalidated
@@ -138,28 +138,28 @@ guard(() => {
 // code path, so the guard belongs here rather than at the point of use.
 let fps, width, height;
 try {
-    // Precedence is the shared rule — argv > env > config > default. See resolveKnob.
-    const fpsKnob = resolveKnob("FPS", {
-        config: timing.project?.fps,
-        fallback: 30,
-    });
-    fps = requirePositiveNumber(fpsKnob.value, {
-        name: `fps (${fpsKnob.variable} / timing.project.fps)`,
-        max: 240,
-    });
-    width = requirePositiveNumber(timing.project?.width ?? 3840, {
-        name: "timing.project.width",
-        max: 16384,
-        integer: true,
-    });
-    height = requirePositiveNumber(timing.project?.height ?? 2160, {
-        name: "timing.project.height",
-        max: 16384,
-        integer: true,
-    });
+  // Precedence is the shared rule — argv > env > config > default. See resolveKnob.
+  const fpsKnob = resolveKnob("FPS", {
+    config: timing.project?.fps,
+    fallback: 30,
+  });
+  fps = requirePositiveNumber(fpsKnob.value, {
+    name: `fps (${fpsKnob.variable} / timing.project.fps)`,
+    max: 240,
+  });
+  width = requirePositiveNumber(timing.project?.width ?? 3840, {
+    name: "timing.project.width",
+    max: 16384,
+    integer: true,
+  });
+  height = requirePositiveNumber(timing.project?.height ?? 2160, {
+    name: "timing.project.height",
+    max: 16384,
+    integer: true,
+  });
 } catch (err) {
-    console.error(`error: ${err.message}`);
-    process.exit(EXIT.USAGE);
+  console.error(`error: ${err.message}`);
+  process.exit(EXIT.USAGE);
 }
 // Derive the total duration with nullish-coalescing (not `||`) so a present-but-invalid value like
 // timing.durationMs=0 is NOT silently replaced by a segment-derived fallback, and an empty/missing
@@ -180,70 +180,70 @@ try {
 // by the same function, before anything is planned or written. A silent segment that passes
 // has a finite endMs, which the map below takes as it is.
 for (const [i, s] of (Array.isArray(timing.segments)
-    ? timing.segments
-    : []
+  ? timing.segments
+  : []
 ).entries()) {
-    if (!isSilentSegment(s)) continue;
-    // A segment is named by the id the schema requires — a non-empty string — and by its
-    // position when it has no such id. `segment "1"` states an id, and another segment in
-    // this very timeline may really carry the id "1", so an index dressed as an id sends the
-    // author to the wrong line of the file. `timing.segments[1]` is the form the shape check
-    // and the other stages' labels already use for a segment with no id to be named by.
-    const where =
-        typeof s.id === "string" && s.id !== ""
-            ? `segment "${s.id}"`
-            : `timing.segments[${i}]`;
-    const [problem] = silentSegmentProblems(s, where);
-    if (problem) {
-        console.error(`error: ${problem}`);
-        process.exit(EXIT.USAGE);
-    }
+  if (!isSilentSegment(s)) continue;
+  // A segment is named by the id the schema requires — a non-empty string — and by its
+  // position when it has no such id. `segment "1"` states an id, and another segment in
+  // this very timeline may really carry the id "1", so an index dressed as an id sends the
+  // author to the wrong line of the file. `timing.segments[1]` is the form the shape check
+  // and the other stages' labels already use for a segment with no id to be named by.
+  const where =
+    typeof s.id === "string" && s.id !== ""
+      ? `segment "${s.id}"`
+      : `timing.segments[${i}]`;
+  const [problem] = silentSegmentProblems(s, where);
+  if (problem) {
+    console.error(`error: ${problem}`);
+    process.exit(EXIT.USAGE);
+  }
 }
 const unplaceable = [];
 // Number(null) and Number('') are 0, so a null or blank timestamp read as the start of the
 // video. A null endMs ended its segment at 0 ms, and a null startMs placed it there, both
 // swallowed by the Math.max below. Only a number, or a numeric string, is a timestamp.
 const msOf = (v) =>
-    typeof v === "number" || (typeof v === "string" && v.trim() !== "")
-        ? Number(v)
-        : NaN;
+  typeof v === "number" || (typeof v === "string" && v.trim() !== "")
+    ? Number(v)
+    : NaN;
 const segEndMs = (timing.segments || []).map((s, i) => {
-    if (Number.isFinite(msOf(s.endMs))) return msOf(s.endMs);
-    const start = msOf(s.startMs),
-        dur = msOf(s.audio?.durationMs);
-    if (Number.isFinite(start) && Number.isFinite(dur)) return start + dur;
-    unplaceable.push(`segments[${i}]${s?.id ? ` ("${s.id}")` : ""}`);
-    return 0;
+  if (Number.isFinite(msOf(s.endMs))) return msOf(s.endMs);
+  const start = msOf(s.startMs),
+    dur = msOf(s.audio?.durationMs);
+  if (Number.isFinite(start) && Number.isFinite(dur)) return start + dur;
+  unplaceable.push(`segments[${i}]${s?.id ? ` ("${s.id}")` : ""}`);
+  return 0;
 });
 if (unplaceable.length) {
-    console.error(
-        `error: ${unplaceable.join(", ")} ${unplaceable.length === 1 ? "has" : "have"} neither a finite endMs nor ` +
-            "a startMs + audio.durationMs to derive one from, so the capture cannot know how long to render. " +
-            "Set endMs, or run voice.mjs (S3) to measure the clip.",
-    );
-    process.exit(EXIT.USAGE);
+  console.error(
+    `error: ${unplaceable.join(", ")} ${unplaceable.length === 1 ? "has" : "have"} neither a finite endMs nor ` +
+      "a startMs + audio.durationMs to derive one from, so the capture cannot know how long to render. " +
+      "Set endMs, or run voice.mjs (S3) to measure the clip.",
+  );
+  process.exit(EXIT.USAGE);
 }
 const segMaxEndMs = segEndMs.length ? Math.max(...segEndMs) : 0;
 const durationMs = Number(
-    timing.durationMs ?? timing.totalDurationMs ?? segMaxEndMs,
+  timing.durationMs ?? timing.totalDurationMs ?? segMaxEndMs,
 );
 if (!Number.isFinite(durationMs) || durationMs <= 0) {
-    throw new Error(
-        `invalid timing duration (${durationMs}) — set a positive timing.durationMs / totalDurationMs, or provide segments with a positive endMs`,
-    );
+  throw new Error(
+    `invalid timing duration (${durationMs}) — set a positive timing.durationMs / totalDurationMs, or provide segments with a positive endMs`,
+  );
 }
 const totalFrames = Math.ceil(((durationMs + 1000) / 1000) * fps);
 if (!Number.isSafeInteger(totalFrames) || totalFrames <= 0) {
-    console.error(
-        `error: derived frame count is ${totalFrames} — a capture that would produce no frames must not delete the existing ones. Check timing.durationMs and timing.project.fps.`,
-    );
-    process.exit(EXIT.USAGE);
+  console.error(
+    `error: derived frame count is ${totalFrames} — a capture that would produce no frames must not delete the existing ones. Check timing.durationMs and timing.project.fps.`,
+  );
+  process.exit(EXIT.USAGE);
 }
 // frames/ is the directory this script DELETES RECURSIVELY, so containment alone is not
 // the right question — resolveWipeTarget additionally refuses a link at that name, and
 // requires the target to be the real directory strictly below the root.
 const frameDir = guard(() =>
-    resolveWipeTarget(projectDir, "frames", "frames directory"),
+  resolveWipeTarget(projectDir, "frames", "frames directory"),
 );
 
 // Mode-aware frame format: draft=jpeg (fast/small), live=png (fidelity). Env overrides.
@@ -251,27 +251,27 @@ const frameDir = guard(() =>
 // see references/ffmpeg-free-encoder.md) — validate up front so an unexpected value fails fast here
 // instead of as a confusing per-frame screenshot error deep in the capture loop.
 const fmtRaw = String(
-    resolveKnob("FRAME_FORMAT", {
-        config: timing.project?.frameFormat,
-        fallback: "png",
-    }).value,
+  resolveKnob("FRAME_FORMAT", {
+    config: timing.project?.frameFormat,
+    fallback: "png",
+  }).value,
 ).toLowerCase();
 const frameFormat = fmtRaw === "jpg" ? "jpeg" : fmtRaw;
 if (frameFormat !== "jpeg" && frameFormat !== "png") {
-    throw new Error(
-        `unsupported frame format "${fmtRaw}" — only "jpeg" (or "jpg") and "png" are supported (see references/ffmpeg-free-encoder.md)`,
-    );
+  throw new Error(
+    `unsupported frame format "${fmtRaw}" — only "jpeg" (or "jpg") and "png" are supported (see references/ffmpeg-free-encoder.md)`,
+  );
 }
 const jpegQualityKnob = resolveKnob("JPEG_QUALITY", {
-    config: timing.project?.jpegQuality,
-    fallback: 88,
+  config: timing.project?.jpegQuality,
+  fallback: 88,
 });
 const jpegQuality = guard(() =>
-    requireFiniteNumber(jpegQualityKnob.value, {
-        name: `jpeg quality (${jpegQualityKnob.variable} / timing.project.jpegQuality)`,
-        min: 1,
-        max: 100,
-    }),
+  requireFiniteNumber(jpegQualityKnob.value, {
+    name: `jpeg quality (${jpegQualityKnob.variable} / timing.project.jpegQuality)`,
+    min: 1,
+    max: 100,
+  }),
 );
 const ext = frameFormat === "jpeg" ? "jpg" : frameFormat;
 // Performance / reliability knobs (env override config.yaml render.capture.*).
@@ -283,21 +283,21 @@ const ext = frameFormat === "jpeg" ? "jpg" : frameFormat;
 const cpuCount = (os.availableParallelism?.() ?? os.cpus().length) || 4;
 const heavyFrames = width * height > 1920 * 1080;
 const autoWorkers = Math.max(
-    1,
-    Math.min(cpuCount - 1, heavyFrames ? 6 : cpuCount),
+  1,
+  Math.min(cpuCount - 1, heavyFrames ? 6 : cpuCount),
 );
 const workersEnv = Number(
-    resolveKnob("WORKERS", { fallback: autoWorkers }).value,
+  resolveKnob("WORKERS", { fallback: autoWorkers }).value,
 );
 const workers = Math.max(
-    1,
-    Number.isFinite(workersEnv) && workersEnv > 0 ? workersEnv : autoWorkers,
+  1,
+  Number.isFinite(workersEnv) && workersEnv > 0 ? workersEnv : autoWorkers,
 );
 const resume = guard(
-    () =>
-        resolveBooleanKnob("RESUME", {
-            argv: cliArgs.resume === true ? true : undefined,
-        }).value,
+  () =>
+    resolveBooleanKnob("RESUME", {
+      argv: cliArgs.resume === true ? true : undefined,
+    }).value,
 );
 // dedupHolds (render.capture.dedupHolds, default on): during capture, a fully-settled frame whose
 // deterministic visual signature (window.__frameSig) equals the previous captured frame is not
@@ -307,14 +307,14 @@ const resume = guard(
 // __frameSig). SIZZLECRAFT_NO_DEDUP=1 forces a full capture (equivalence mode) — the decoded frame
 // stream MUST be identical to a dedup-on run. dedupHolds is intra-slice only (state resets per worker).
 const dedupHolds =
-    !guard(() => resolveBooleanKnob("NO_DEDUP").value) &&
-    guard(() => resolveBooleanKnob("DEDUP_HOLDS", { fallback: true }).value);
+  !guard(() => resolveBooleanKnob("NO_DEDUP").value) &&
+  guard(() => resolveBooleanKnob("DEDUP_HOLDS", { fallback: true }).value);
 // Sparse layout audit runs only at frame 0 + each segment start (not every frame).
 const auditFrames = new Set([0]);
 let _acc = 0;
 for (const s of timing.segments || []) {
-    auditFrames.add(Math.round(((s.startMs ?? _acc) / 1000) * fps));
-    _acc = s.endMs ?? _acc;
+  auditFrames.add(Math.round(((s.startMs ?? _acc) / 1000) * fps));
+  _acc = s.endMs ?? _acc;
 }
 const frameName = (n) => `frame_${String(n).padStart(5, "0")}.${ext}`;
 
@@ -327,44 +327,44 @@ const frameName = (n) => `frame_${String(n).padStart(5, "0")}.${ext}`;
 // HTML, fps, resolution, format or quality changed), kept frames would be stale — so we wipe and do a
 // full capture. This closes the "resume trusts a frame produced by a different input" determinism hole.
 const metaPath = guard(() =>
-    resolveInternalArtifact(
-        projectDir,
-        path.join("frames", ".capture-meta.json"),
-        "capture metadata",
-    ),
+  resolveInternalArtifact(
+    projectDir,
+    path.join("frames", ".capture-meta.json"),
+    "capture metadata",
+  ),
 );
 const dedupStatsPath = guard(() =>
-    resolveInternalArtifact(
-        projectDir,
-        path.join("frames", ".dedup-stats.json"),
-        "dedup stats",
-    ),
+  resolveInternalArtifact(
+    projectDir,
+    path.join("frames", ".dedup-stats.json"),
+    "dedup stats",
+  ),
 );
 const htmlPath = path.join(projectDir, "video-auto.html");
 // video-auto.html is a hard prerequisite for capture — without it every frame's page.goto fails.
 // Fail fast here with an actionable message instead of writing a fingerprint with an empty htmlHash
 // (which could never be a valid resume basis) and surfacing a confusing goto error deep in the loop.
 if (!fs.existsSync(htmlPath)) {
-    console.error(
-        `error: video-auto.html not found in ${projectDir} — run the build-html step before frame capture`,
-    );
-    process.exit(EXIT.USAGE);
+  console.error(
+    `error: video-auto.html not found in ${projectDir} — run the build-html step before frame capture`,
+  );
+  process.exit(EXIT.USAGE);
 }
 function captureFingerprint() {
-    const htmlHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(htmlPath))
-        .digest("hex");
-    return {
-        htmlHash,
-        fps,
-        width,
-        height,
-        frameFormat,
-        jpegQuality,
-        totalFrames,
-        v: 1,
-    };
+  const htmlHash = crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(htmlPath))
+    .digest("hex");
+  return {
+    htmlHash,
+    fps,
+    width,
+    height,
+    frameFormat,
+    jpegQuality,
+    totalFrames,
+    v: 1,
+  };
 }
 const fingerprint = captureFingerprint();
 
@@ -382,24 +382,24 @@ const fingerprint = captureFingerprint();
  * but unreadable proves nothing about what is in it.
  */
 function existingFrameEntries() {
-    let entries;
-    try {
-        entries = fs.readdirSync(frameDir, {
-            recursive: true,
-            withFileTypes: true,
-        });
-    } catch (err) {
-        if (err.code === "ENOENT") return { total: 0, frames: 0, other: [] };
-        throw new CliError(
-            `cannot inspect ${frameDir} (${err.code}) — refusing to plan a capture whose deletion scope is unknown`,
-        );
-    }
-    const isFrame = (e) => !e.isDirectory() && /^frame_\d+\./i.test(e.name);
-    const frames = entries.filter(isFrame);
-    const other = entries
-        .filter((e) => !isFrame(e))
-        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
-    return { total: entries.length, frames: frames.length, other };
+  let entries;
+  try {
+    entries = fs.readdirSync(frameDir, {
+      recursive: true,
+      withFileTypes: true,
+    });
+  } catch (err) {
+    if (err.code === "ENOENT") return { total: 0, frames: 0, other: [] };
+    throw new CliError(
+      `cannot inspect ${frameDir} (${err.code}) — refusing to plan a capture whose deletion scope is unknown`,
+    );
+  }
+  const isFrame = (e) => !e.isDirectory() && /^frame_\d+\./i.test(e.name);
+  const frames = entries.filter(isFrame);
+  const other = entries
+    .filter((e) => !isFrame(e))
+    .map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
+  return { total: entries.length, frames: frames.length, other };
 }
 /**
  * True when frames/.capture-meta.json matches the current inputs, so --resume can reuse
@@ -408,61 +408,61 @@ function existingFrameEntries() {
  * resume from.
  */
 function fingerprintMatches() {
-    let raw;
-    try {
-        raw = fs.readFileSync(metaPath, "utf8");
-    } catch (err) {
-        if (err.code === "ENOENT") return false;
-        throw new CliError(
-            `cannot read ${metaPath} (${err.code}) — refusing to discard the existing frames on an unverifiable fingerprint`,
-        );
-    }
-    try {
-        return JSON.stringify(JSON.parse(raw)) === JSON.stringify(fingerprint);
-    } catch {
-        return false; // present but not the fingerprint we wrote: a genuine mismatch
-    }
+  let raw;
+  try {
+    raw = fs.readFileSync(metaPath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw new CliError(
+      `cannot read ${metaPath} (${err.code}) — refusing to discard the existing frames on an unverifiable fingerprint`,
+    );
+  }
+  try {
+    return JSON.stringify(JSON.parse(raw)) === JSON.stringify(fingerprint);
+  } catch {
+    return false; // present but not the fingerprint we wrote: a genuine mismatch
+  }
 }
 
 // --- The safe default. Planning is the default because a capture REPLACES frames/, and
 // a frame sequence can represent hours of render time. Nothing below this point has
 // written or deleted anything, so a plan run is side-effect free.
 if (!apply) {
-    let existing;
-    try {
-        existing = existingFrameEntries();
-    } catch (err) {
-        console.error(`error: ${err.message}`);
-        process.exit(EXIT.USAGE);
-    }
-    const reusable = resume && guard(fingerprintMatches);
-    console.log(`plan: frame capture for ${projectDir}`);
-    console.log(`  source          ${path.basename(htmlPath)}`);
-    console.log(`  output          ${frameDir}`);
+  let existing;
+  try {
+    existing = existingFrameEntries();
+  } catch (err) {
+    console.error(`error: ${err.message}`);
+    process.exit(EXIT.USAGE);
+  }
+  const reusable = resume && guard(fingerprintMatches);
+  console.log(`plan: frame capture for ${projectDir}`);
+  console.log(`  source          ${path.basename(htmlPath)}`);
+  console.log(`  output          ${frameDir}`);
+  console.log(
+    `  frames          ${totalFrames} at ${fps} fps, ${width}x${height}, ${frameFormat}`,
+  );
+  console.log(`  workers         ${workers}`);
+  if (existing.total === 0) {
+    console.log(`  existing        none`);
+  } else if (reusable) {
     console.log(
-        `  frames          ${totalFrames} at ${fps} fps, ${width}x${height}, ${frameFormat}`,
+      `  existing        ${existing.total} entr${existing.total === 1 ? "y" : "ies"} — would be KEPT (--resume, fingerprint matches)`,
     );
-    console.log(`  workers         ${workers}`);
-    if (existing.total === 0) {
-        console.log(`  existing        none`);
-    } else if (reusable) {
-        console.log(
-            `  existing        ${existing.total} entr${existing.total === 1 ? "y" : "ies"} — would be KEPT (--resume, fingerprint matches)`,
-        );
-    } else {
-        // --apply removes frameDir recursively, so every entry is in scope, not just frame_*.
-        console.log(
-            `  existing        ${existing.total} entr${existing.total === 1 ? "y" : "ies"} — would be DELETED${resume ? " (--resume requested but capture inputs changed)" : ""}`,
-        );
-        console.log(
-            `                  ${existing.frames} frame file(s)${existing.other.length ? `, plus ${existing.other.length} other: ${existing.other.slice(0, 5).join(", ")}${existing.other.length > 5 ? ", …" : ""}` : ""}`,
-        );
-    }
+  } else {
+    // --apply removes frameDir recursively, so every entry is in scope, not just frame_*.
     console.log(
-        `  metadata        ${path.basename(metaPath)} and ${path.basename(dedupStatsPath)} are rewritten on every --apply, including --resume`,
+      `  existing        ${existing.total} entr${existing.total === 1 ? "y" : "ies"} — would be DELETED${resume ? " (--resume requested but capture inputs changed)" : ""}`,
     );
-    planFooter();
-    process.exit(EXIT.OK);
+    console.log(
+      `                  ${existing.frames} frame file(s)${existing.other.length ? `, plus ${existing.other.length} other: ${existing.other.slice(0, 5).join(", ")}${existing.other.length > 5 ? ", …" : ""}` : ""}`,
+    );
+  }
+  console.log(
+    `  metadata        ${path.basename(metaPath)} and ${path.basename(dedupStatsPath)} are rewritten on every --apply, including --resume`,
+  );
+  planFooter();
+  process.exit(EXIT.OK);
 }
 
 // --- Single-writer capture lock. Two concurrent captures racing on the same
@@ -473,74 +473,74 @@ if (!apply) {
 // stage believing a fresh frame sequence exists.
 const lockPath = path.join(projectDir, "frames.lock");
 function pidAlive(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (e) {
-        return e.code === "EPERM";
-    }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
 }
 (function acquireLock() {
-    while (true) {
-        try {
-            fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
-            return;
-        } catch (err) {
-            if (err.code !== "EEXIST") throw err;
-            const owner = readLockOwner(lockPath);
-            if (owner.state === "vanished") continue; // released between our write and our read
-            if (owner.state === "unreadable") {
-                // We cannot show that nobody else is capturing, and the next step deletes the
-                // frame sequence. Refusing costs a re-run; guessing costs the render.
-                console.error(
-                    `frames.lock could not be read (${owner.detail}) — refusing to assume no capture is running`,
-                );
-                process.exit(EXIT.SKIPPED);
-            }
-            if (!pidAlive(owner.pid)) {
-                fs.rmSync(lockPath, { force: true });
-                continue;
-            }
-            console.error(
-                `capture already running (pid ${owner.pid}); skipped without capturing`,
-            );
-            process.exit(EXIT.SKIPPED);
-        }
+  while (true) {
+    try {
+      fs.writeFileSync(lockPath, String(process.pid), { flag: "wx" });
+      return;
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      const owner = readLockOwner(lockPath);
+      if (owner.state === "vanished") continue; // released between our write and our read
+      if (owner.state === "unreadable") {
+        // We cannot show that nobody else is capturing, and the next step deletes the
+        // frame sequence. Refusing costs a re-run; guessing costs the render.
+        console.error(
+          `frames.lock could not be read (${owner.detail}) — refusing to assume no capture is running`,
+        );
+        process.exit(EXIT.SKIPPED);
+      }
+      if (!pidAlive(owner.pid)) {
+        fs.rmSync(lockPath, { force: true });
+        continue;
+      }
+      console.error(
+        `capture already running (pid ${owner.pid}); skipped without capturing`,
+      );
+      process.exit(EXIT.SKIPPED);
     }
+  }
 })();
 process.on("exit", () => {
-    try {
-        fs.rmSync(lockPath, { force: true });
-    } catch {}
+  try {
+    fs.rmSync(lockPath, { force: true });
+  } catch {}
 });
 
 // Load Playwright before the wipe, not at module scope: a missing browser dependency must
 // fail while the existing frames are still on disk, never after they have been deleted.
 let chromium;
 try {
-    ({ chromium } = await import("playwright"));
+  ({ chromium } = await import("playwright"));
 } catch (err) {
-    console.error(
-        `error: playwright is required for capture but could not be loaded — run \`npm install\` in the engine directory.\n  ${err.message}`,
-    );
-    process.exit(EXIT.USAGE);
+  console.error(
+    `error: playwright is required for capture but could not be loaded — run \`npm install\` in the engine directory.\n  ${err.message}`,
+  );
+  process.exit(EXIT.USAGE);
 }
 
 // --- Everything below this line mutates the project. Reached only via --apply.
 let effectiveResume = resume;
 if (resume) {
-    fs.mkdirSync(frameDir, { recursive: true });
-    if (!guard(fingerprintMatches)) {
-        console.error(
-            "resume requested but capture inputs changed (or no fingerprint) — discarding stale frames and capturing fresh",
-        );
-        fs.rmSync(frameDir, { recursive: true, force: true });
-        fs.mkdirSync(frameDir, { recursive: true });
-        effectiveResume = false;
-    }
-} else {
+  fs.mkdirSync(frameDir, { recursive: true });
+  if (!guard(fingerprintMatches)) {
+    console.error(
+      "resume requested but capture inputs changed (or no fingerprint) — discarding stale frames and capturing fresh",
+    );
     fs.rmSync(frameDir, { recursive: true, force: true });
     fs.mkdirSync(frameDir, { recursive: true });
+    effectiveResume = false;
+  }
+} else {
+  fs.rmSync(frameDir, { recursive: true, force: true });
+  fs.mkdirSync(frameDir, { recursive: true });
 }
 fs.writeFileSync(metaPath, JSON.stringify(fingerprint));
 
@@ -550,13 +550,13 @@ fs.writeFileSync(metaPath, JSON.stringify(fingerprint));
 // write in place over an existing (possibly hardlinked, shared-inode) path — rename replaces the dir
 // entry without mutating the shared inode, so held frames can never be corrupted.
 function linkOrCopy(src, dest) {
-    const tmp = `${dest}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-    try {
-        fs.linkSync(src, tmp);
-    } catch {
-        fs.copyFileSync(src, tmp);
-    }
-    fs.renameSync(tmp, dest);
+  const tmp = `${dest}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.linkSync(src, tmp);
+  } catch {
+    fs.copyFileSync(src, tmp);
+  }
+  fs.renameSync(tmp, dest);
 }
 
 // One-time in-page setup: cache the set of elements that ever carry a CSS animation, so per-frame
@@ -574,55 +574,55 @@ window.__sizzleAnim.scan();
 `;
 
 const browser = await chromium.launch({
-    headless: true,
-    args: [
-        "--disable-dev-shm-usage",
-        "--autoplay-policy=no-user-gesture-required",
-        // Perf/determinism launch flags. The page is driven entirely by explicit seek() calls (no
-        // wall-clock), so disabling background throttling only removes latency, never changes pixels;
-        // hiding scrollbars removes any residual gutter. NOTE: font-hinting/lcd-text flags are
-        // deliberately NOT set here — they change text rasterization and would require re-approving a
-        // storyboard frame.
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--hide-scrollbars",
-    ],
+  headless: true,
+  args: [
+    "--disable-dev-shm-usage",
+    "--autoplay-policy=no-user-gesture-required",
+    // Perf/determinism launch flags. The page is driven entirely by explicit seek() calls (no
+    // wall-clock), so disabling background throttling only removes latency, never changes pixels;
+    // hiding scrollbars removes any residual gutter. NOTE: font-hinting/lcd-text flags are
+    // deliberately NOT set here — they change text rasterization and would require re-approving a
+    // storyboard frame.
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--hide-scrollbars",
+  ],
 });
 
 async function makePage() {
-    const page = await browser.newPage({
-        viewport: { width, height },
-        deviceScaleFactor: 1,
-    });
-    await page.goto(
-        pathToFileURL(path.join(projectDir, "video-auto.html")).toString(),
-        { waitUntil: "load" },
+  const page = await browser.newPage({
+    viewport: { width, height },
+    deviceScaleFactor: 1,
+  });
+  await page.goto(
+    pathToFileURL(path.join(projectDir, "video-auto.html")).toString(),
+    { waitUntil: "load" },
+  );
+  await page.evaluate(() => document.fonts?.ready);
+  await page.evaluate(() => window.fitLayout?.());
+  // Stage-vs-viewport guard: #stage MUST match the capture viewport. A mismatch
+  // (e.g. an HTML built at 4K captured in a 1080p viewport) silently centers
+  // content off-frame and clips it — auditLayout() can't catch it because the
+  // safe area still fits the oversized stage. Fail fast, never ship a cut render.
+  const stageFit = await page.evaluate(() => {
+    const s = document.getElementById("stage");
+    if (!s) return { ok: true };
+    return {
+      ok:
+        Math.abs(s.clientWidth - window.innerWidth) <= 2 &&
+        Math.abs(s.clientHeight - window.innerHeight) <= 2,
+      stageW: s.clientWidth,
+      stageH: s.clientHeight,
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
+  if (!stageFit.ok)
+    throw new Error(
+      `stage/viewport mismatch — #stage is ${stageFit.stageW}x${stageFit.stageH} but viewport is ${stageFit.vw}x${stageFit.vh}; rebuild video-auto.html so timing.project width/height match the capture resolution`,
     );
-    await page.evaluate(() => document.fonts?.ready);
-    await page.evaluate(() => window.fitLayout?.());
-    // Stage-vs-viewport guard: #stage MUST match the capture viewport. A mismatch
-    // (e.g. an HTML built at 4K captured in a 1080p viewport) silently centers
-    // content off-frame and clips it — auditLayout() can't catch it because the
-    // safe area still fits the oversized stage. Fail fast, never ship a cut render.
-    const stageFit = await page.evaluate(() => {
-        const s = document.getElementById("stage");
-        if (!s) return { ok: true };
-        return {
-            ok:
-                Math.abs(s.clientWidth - window.innerWidth) <= 2 &&
-                Math.abs(s.clientHeight - window.innerHeight) <= 2,
-            stageW: s.clientWidth,
-            stageH: s.clientHeight,
-            vw: window.innerWidth,
-            vh: window.innerHeight,
-        };
-    });
-    if (!stageFit.ok)
-        throw new Error(
-            `stage/viewport mismatch — #stage is ${stageFit.stageW}x${stageFit.stageH} but viewport is ${stageFit.vw}x${stageFit.vh}; rebuild video-auto.html so timing.project width/height match the capture resolution`,
-        );
-    await page.evaluate(PAGE_INIT);
-    return page;
+  await page.evaluate(PAGE_INIT);
+  return page;
 }
 
 let done = 0;
@@ -632,32 +632,32 @@ let done = 0;
 const captureStart = Date.now();
 const isTTY = !!process.stdout.isTTY;
 let _lastDraw = 0,
-    _lastBucket = -1;
+  _lastBucket = -1;
 const fmtDur = (ms) => {
-    const s = Math.max(0, Math.round(ms / 1000));
-    const m = Math.floor(s / 60);
-    return m > 0 ? `${m}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
 };
 function reportProgress(n, total) {
-    const frac = total > 0 ? n / total : 1,
-        pct = Math.round(frac * 100);
-    const elapsed = Date.now() - captureStart,
-        eta = n > 0 ? (elapsed * (total - n)) / n : 0;
-    const w = 24,
-        filled = Math.round(frac * w);
-    const line = `capture [${"\u2588".repeat(filled)}${"\u2591".repeat(w - filled)}] ${pct}% ${n}/${total} ETA ${fmtDur(eta)} elapsed ${fmtDur(elapsed)}`;
-    if (isTTY) {
-        const now = Date.now();
-        if (now - _lastDraw < 140 && n !== total) return;
-        _lastDraw = now;
-        process.stdout.write("\r" + line + (n === total ? "\n" : ""));
-    } else {
-        const b = Math.floor(pct / 10);
-        if (b > _lastBucket || n === total) {
-            _lastBucket = b;
-            console.log(line);
-        }
+  const frac = total > 0 ? n / total : 1,
+    pct = Math.round(frac * 100);
+  const elapsed = Date.now() - captureStart,
+    eta = n > 0 ? (elapsed * (total - n)) / n : 0;
+  const w = 24,
+    filled = Math.round(frac * w);
+  const line = `capture [${"\u2588".repeat(filled)}${"\u2591".repeat(w - filled)}] ${pct}% ${n}/${total} ETA ${fmtDur(eta)} elapsed ${fmtDur(elapsed)}`;
+  if (isTTY) {
+    const now = Date.now();
+    if (now - _lastDraw < 140 && n !== total) return;
+    _lastDraw = now;
+    process.stdout.write("\r" + line + (n === total ? "\n" : ""));
+  } else {
+    const b = Math.floor(pct / 10);
+    if (b > _lastBucket || n === total) {
+      _lastBucket = b;
+      console.log(line);
     }
+  }
 }
 let held = 0;
 // Returns the deterministic visual signature of the frame. Always runs seek + footage + (on audit
@@ -665,191 +665,181 @@ let held = 0;
 // resumed frame already exists on disk) it audits without touching the file. Otherwise it either
 // hardlinks a settled unchanged frame (dedupHolds) or screenshots it, updating the per-slice `state`.
 async function captureFrame(page, frameNo, state, skipWrite = false) {
-    const t = frameNo / fps;
-    const isAudit = auditFrames.has(frameNo);
-    const { sig } = await page.evaluate(
-        ([seconds, rescan, fno]) => {
-            if (window.masterTimeline) {
-                window.masterTimeline.seek(seconds).pause();
-            }
-            window.fireTriggersUpTo?.(seconds);
-            if (rescan) window.__sizzleAnim.scan(); // sparse re-scan catches trigger-added animations
-            for (const el of window.__sizzleAnim.els()) {
-                const st = getComputedStyle(el);
-                if (st.animationName && st.animationName !== "none") {
-                    // Cache each element's ORIGINAL animation-delay once (before we override it) so per-element
-                    // phase offsets survive — e.g. flowEdge staggers its `.flow-dot` particles via negative delays;
-                    // freezing at `baseDelay - seconds` keeps that stagger instead of collapsing them to one phase.
-                    if (el.__baseDelay === undefined)
-                        el.__baseDelay = parseFloat(st.animationDelay) || 0;
-                    el.style.animationPlayState = "paused";
-                    el.style.animationDelay = el.__baseDelay - seconds + "s";
-                }
-            }
-            // NOTE: GSAP flourishes are driven deterministically by video time — fireTriggersUpTo() calls
-            // window.__syncTweens(seconds), which sets every registered (paused) tween's progress to
-            // (seconds - triggerStart)/duration. A cold worker-slice start therefore converges to the exact same
-            // state as a warm 0→t progression with no extra work — no wall-clock settling hack is needed.
-            // Compute the visual signature on the SAME round-trip, AFTER seek+trigger+freeze, so it reflects the
-            // exact pixels about to be captured (no extra page.evaluate).
-            return {
-                sig: window.__frameSig ? window.__frameSig(fno) : "f" + fno,
-            };
-        },
-        [t, isAudit, frameNo],
+  const t = frameNo / fps;
+  const isAudit = auditFrames.has(frameNo);
+  const { sig } = await page.evaluate(
+    ([seconds, rescan, fno]) => {
+      if (window.masterTimeline) {
+        window.masterTimeline.seek(seconds).pause();
+      }
+      window.fireTriggersUpTo?.(seconds);
+      if (rescan) window.__sizzleAnim.scan(); // sparse re-scan catches trigger-added animations
+      for (const el of window.__sizzleAnim.els()) {
+        const st = getComputedStyle(el);
+        if (st.animationName && st.animationName !== "none") {
+          // Cache each element's ORIGINAL animation-delay once (before we override it) so per-element
+          // phase offsets survive — e.g. flowEdge staggers its `.flow-dot` particles via negative delays;
+          // freezing at `baseDelay - seconds` keeps that stagger instead of collapsing them to one phase.
+          if (el.__baseDelay === undefined)
+            el.__baseDelay = parseFloat(st.animationDelay) || 0;
+          el.style.animationPlayState = "paused";
+          el.style.animationDelay = el.__baseDelay - seconds + "s";
+        }
+      }
+      // NOTE: GSAP flourishes are driven deterministically by video time — fireTriggersUpTo() calls
+      // window.__syncTweens(seconds), which sets every registered (paused) tween's progress to
+      // (seconds - triggerStart)/duration. A cold worker-slice start therefore converges to the exact same
+      // state as a warm 0→t progression with no extra work — no wall-clock settling hack is needed.
+      // Compute the visual signature on the SAME round-trip, AFTER seek+trigger+freeze, so it reflects the
+      // exact pixels about to be captured (no extra page.evaluate).
+      return {
+        sig: window.__frameSig ? window.__frameSig(fno) : "f" + fno,
+      };
+    },
+    [t, isAudit, frameNo],
+  );
+
+  // Real footage segments: swap the full-bleed background to the extracted clip frame matching this
+  // timestamp and AWAIT its decode before screenshotting. fireTriggersUpTo() also fires this, but does
+  // not await; awaiting here keeps capture deterministic (no half-loaded frame). No-op on synthetic runs.
+  // FAIL FAST on a bad evidence pack: __setFootageFrame resolves per-layer load booleans; if any awaited
+  // load reports false (missing/corrupt extracted frame) the layer would silently keep the PREVIOUS
+  // background (or blank) and dedup/encode would produce a wrong-but-plausible render. Abort instead so
+  // bad footage is caught deterministically rather than shipped.
+  const footageLoads = await page.evaluate(
+    (seconds) =>
+      window.__footage && window.__setFootageFrame
+        ? window.__setFootageFrame(seconds * 1000)
+        : null,
+    t,
+  );
+  if (Array.isArray(footageLoads) && footageLoads.some((ok) => ok === false)) {
+    const bad = footageLoads.filter((ok) => ok === false).length;
+    throw new Error(
+      `footage frame load failed at ${t.toFixed(3)}s — ${bad} layer(s) reported a missing/corrupt extracted frame; aborting to avoid a wrong-but-plausible render.`,
     );
+  }
 
-    // Real footage segments: swap the full-bleed background to the extracted clip frame matching this
-    // timestamp and AWAIT its decode before screenshotting. fireTriggersUpTo() also fires this, but does
-    // not await; awaiting here keeps capture deterministic (no half-loaded frame). No-op on synthetic runs.
-    // FAIL FAST on a bad evidence pack: __setFootageFrame resolves per-layer load booleans; if any awaited
-    // load reports false (missing/corrupt extracted frame) the layer would silently keep the PREVIOUS
-    // background (or blank) and dedup/encode would produce a wrong-but-plausible render. Abort instead so
-    // bad footage is caught deterministically rather than shipped.
-    const footageLoads = await page.evaluate(
-        (seconds) =>
-            window.__footage && window.__setFootageFrame
-                ? window.__setFootageFrame(seconds * 1000)
-                : null,
-        t,
-    );
-    if (
-        Array.isArray(footageLoads) &&
-        footageLoads.some((ok) => ok === false)
-    ) {
-        const bad = footageLoads.filter((ok) => ok === false).length;
-        throw new Error(
-            `footage frame load failed at ${t.toFixed(3)}s — ${bad} layer(s) reported a missing/corrupt extracted frame; aborting to avoid a wrong-but-plausible render.`,
-        );
-    }
+  // Audit ALWAYS runs (after seek+footage) BEFORE any dedup/skip decision, so the layout/legibility
+  // gate is never bypassed — including on resume (skipWrite) and for held frames.
+  if (isAudit) {
+    const issues = await page.evaluate(() => window.auditLayout?.() || []);
+    if (issues.length)
+      throw new Error(
+        `layout audit failed at ${t}s: ${JSON.stringify(issues)}`,
+      );
+    const legib = await page.evaluate(() => window.auditLegibility?.() || []);
+    if (legib.length)
+      console.log(
+        `[legibility] advisories at ${t.toFixed(1)}s: ${JSON.stringify(legib)}`,
+      );
+  }
 
-    // Audit ALWAYS runs (after seek+footage) BEFORE any dedup/skip decision, so the layout/legibility
-    // gate is never bypassed — including on resume (skipWrite) and for held frames.
-    if (isAudit) {
-        const issues = await page.evaluate(() => window.auditLayout?.() || []);
-        if (issues.length)
-            throw new Error(
-                `layout audit failed at ${t}s: ${JSON.stringify(issues)}`,
-            );
-        const legib = await page.evaluate(
-            () => window.auditLegibility?.() || [],
-        );
-        if (legib.length)
-            console.log(
-                `[legibility] advisories at ${t.toFixed(1)}s: ${JSON.stringify(legib)}`,
-            );
-    }
+  if (skipWrite) return sig; // resumed frame already on disk — audited, not rewritten
 
-    if (skipWrite) return sig; // resumed frame already on disk — audited, not rewritten
-
-    const outFile = path.join(frameDir, frameName(frameNo));
-    // dedupHolds: a settled, non-audit frame whose signature equals the previous CAPTURED frame is
-    // identical by construction — reuse that frame (hardlink/copy) instead of re-screenshotting. Audit
-    // frames (segment starts) are never held. Motion-guarded frames get a frame-unique sig so they never
-    // match. state.prevFile always points to a real screenshot (never advanced on a hold), so a run of
-    // held frames all link to the one captured source.
-    if (dedupHolds && !isAudit && state.prevFile && sig === state.prevSig) {
-        linkOrCopy(state.prevFile, outFile);
-        held++;
-    } else {
-        // Atomic write: screenshot to a unique temp then rename (see linkOrCopy rationale).
-        const tmp = `${outFile}.tmp-${process.pid}-${frameNo}`;
-        const opts = { path: tmp, type: frameFormat };
-        if (frameFormat === "jpeg") opts.quality = jpegQuality;
-        await page.screenshot(opts);
-        fs.renameSync(tmp, outFile);
-        state.prevSig = sig;
-        state.prevFile = outFile;
-    }
-    return sig;
+  const outFile = path.join(frameDir, frameName(frameNo));
+  // dedupHolds: a settled, non-audit frame whose signature equals the previous CAPTURED frame is
+  // identical by construction — reuse that frame (hardlink/copy) instead of re-screenshotting. Audit
+  // frames (segment starts) are never held. Motion-guarded frames get a frame-unique sig so they never
+  // match. state.prevFile always points to a real screenshot (never advanced on a hold), so a run of
+  // held frames all link to the one captured source.
+  if (dedupHolds && !isAudit && state.prevFile && sig === state.prevSig) {
+    linkOrCopy(state.prevFile, outFile);
+    held++;
+  } else {
+    // Atomic write: screenshot to a unique temp then rename (see linkOrCopy rationale).
+    const tmp = `${outFile}.tmp-${process.pid}-${frameNo}`;
+    const opts = { path: tmp, type: frameFormat };
+    if (frameFormat === "jpeg") opts.quality = jpegQuality;
+    await page.screenshot(opts);
+    fs.renameSync(tmp, outFile);
+    state.prevSig = sig;
+    state.prevFile = outFile;
+  }
+  return sig;
 }
 
 // Frames within a slice progress sequentially on one page. Every frame is a pure seek — GSAP tweens
 // are re-positioned by video time via __syncTweens — so any frame (cold slice start or warm) is
 // deterministic. We still snap worker-slice boundaries to segment starts for clean audit boundaries.
 try {
-    // Snap each worker's cut to the nearest segment-start frame so every slice begins at a stable
-    // segment boundary (auditLayout runs there). Fewer usable cut points than workers just means fewer
-    // (still-correct) slices — we favour clean boundaries over max parallelism.
-    const segStarts = [
-        ...new Set(
-            (timing.segments || [])
-                .map((s) => Math.round(((s.startMs || 0) / 1000) * fps))
-                .filter((f) => f > 0 && f < totalFrames),
-        ),
-    ].sort((a, b) => a - b);
-    const cuts = [];
-    for (let w = 1; w < workers && segStarts.length; w++) {
-        const ideal = Math.round((w * totalFrames) / workers);
-        let best = segStarts[0];
-        for (const f of segStarts)
-            if (Math.abs(f - ideal) < Math.abs(best - ideal)) best = f;
-        if (!cuts.includes(best)) cuts.push(best);
-    }
-    const bounds = [0, ...cuts.sort((a, b) => a - b), totalFrames];
-    const ranges = [];
-    for (let i = 0; i < bounds.length - 1; i++)
-        if (bounds[i] < bounds[i + 1]) ranges.push([bounds[i], bounds[i + 1]]);
-    console.log(
-        `capturing ${totalFrames} frames @ ${fps}fps ${width}x${height} ${frameFormat}${frameFormat === "jpeg" ? " q" + jpegQuality : ""} across ${ranges.length} worker(s)${resume ? " [resume]" : ""}`,
-    );
-    await Promise.all(
-        ranges.map(async ([start, end]) => {
-            const page = await makePage();
-            const state = { prevSig: null, prevFile: null }; // per-slice dedup state — holds are intra-slice only
-            try {
-                for (let f = start; f < end; f++) {
-                    const outFile = path.join(frameDir, frameName(f));
-                    if (effectiveResume && fs.existsSync(outFile)) {
-                        // Resumed frame already on disk. Segment-start frames still re-run seek+audit (never bypass
-                        // the gate); other frames are kept as-is. Reset dedup state so the next captured frame is
-                        // screenshotted fresh (we don't know a kept non-audit frame's signature without re-seeking).
-                        if (auditFrames.has(f)) {
-                            const sig = await captureFrame(
-                                page,
-                                f,
-                                state,
-                                true,
-                            );
-                            state.prevSig = sig;
-                            state.prevFile = outFile;
-                        } else {
-                            state.prevSig = null;
-                            state.prevFile = null;
-                        }
-                        reportProgress(++done, totalFrames);
-                        continue;
-                    }
-                    await captureFrame(page, f, state);
-                    reportProgress(++done, totalFrames);
-                }
-            } finally {
-                await page.close();
+  // Snap each worker's cut to the nearest segment-start frame so every slice begins at a stable
+  // segment boundary (auditLayout runs there). Fewer usable cut points than workers just means fewer
+  // (still-correct) slices — we favour clean boundaries over max parallelism.
+  const segStarts = [
+    ...new Set(
+      (timing.segments || [])
+        .map((s) => Math.round(((s.startMs || 0) / 1000) * fps))
+        .filter((f) => f > 0 && f < totalFrames),
+    ),
+  ].sort((a, b) => a - b);
+  const cuts = [];
+  for (let w = 1; w < workers && segStarts.length; w++) {
+    const ideal = Math.round((w * totalFrames) / workers);
+    let best = segStarts[0];
+    for (const f of segStarts)
+      if (Math.abs(f - ideal) < Math.abs(best - ideal)) best = f;
+    if (!cuts.includes(best)) cuts.push(best);
+  }
+  const bounds = [0, ...cuts.sort((a, b) => a - b), totalFrames];
+  const ranges = [];
+  for (let i = 0; i < bounds.length - 1; i++)
+    if (bounds[i] < bounds[i + 1]) ranges.push([bounds[i], bounds[i + 1]]);
+  console.log(
+    `capturing ${totalFrames} frames @ ${fps}fps ${width}x${height} ${frameFormat}${frameFormat === "jpeg" ? " q" + jpegQuality : ""} across ${ranges.length} worker(s)${resume ? " [resume]" : ""}`,
+  );
+  await Promise.all(
+    ranges.map(async ([start, end]) => {
+      const page = await makePage();
+      const state = { prevSig: null, prevFile: null }; // per-slice dedup state — holds are intra-slice only
+      try {
+        for (let f = start; f < end; f++) {
+          const outFile = path.join(frameDir, frameName(f));
+          if (effectiveResume && fs.existsSync(outFile)) {
+            // Resumed frame already on disk. Segment-start frames still re-run seek+audit (never bypass
+            // the gate); other frames are kept as-is. Reset dedup state so the next captured frame is
+            // screenshotted fresh (we don't know a kept non-audit frame's signature without re-seeking).
+            if (auditFrames.has(f)) {
+              const sig = await captureFrame(page, f, state, true);
+              state.prevSig = sig;
+              state.prevFile = outFile;
+            } else {
+              state.prevSig = null;
+              state.prevFile = null;
             }
-        }),
-    );
-    reportProgress(totalFrames, totalFrames); // guarantee a clean 100% close (e.g. full-resume runs)
+            reportProgress(++done, totalFrames);
+            continue;
+          }
+          await captureFrame(page, f, state);
+          reportProgress(++done, totalFrames);
+        }
+      } finally {
+        await page.close();
+      }
+    }),
+  );
+  reportProgress(totalFrames, totalFrames); // guarantee a clean 100% close (e.g. full-resume runs)
 } finally {
-    await browser.close();
+  await browser.close();
 }
 
 const captured = totalFrames - held;
 console.log(
-    `wrote ${totalFrames} frames to ${frameDir}` +
-        (dedupHolds
-            ? ` (${captured} captured, ${held} held/${totalFrames} = ${Math.round((held / Math.max(1, totalFrames)) * 100)}% deduped)`
-            : " (dedup off)"),
+  `wrote ${totalFrames} frames to ${frameDir}` +
+    (dedupHolds
+      ? ` (${captured} captured, ${held} held/${totalFrames} = ${Math.round((held / Math.max(1, totalFrames)) * 100)}% deduped)`
+      : " (dedup off)"),
 );
 // Record dedup stats for the manifest/auditability.
 try {
-    fs.writeFileSync(
-        dedupStatsPath,
-        JSON.stringify({ total: totalFrames, captured, held, dedupHolds }),
-    );
+  fs.writeFileSync(
+    dedupStatsPath,
+    JSON.stringify({ total: totalFrames, captured, held, dedupHolds }),
+  );
 } catch (err) {
-    // Not fatal to the render, but never silent: a swallowed failure here is how the
-    // engine stops being able to explain what it did.
-    console.error(
-        `warning: could not write ${dedupStatsPath} (${err.code ?? err.message})`,
-    );
+  // Not fatal to the render, but never silent: a swallowed failure here is how the
+  // engine stops being able to explain what it did.
+  console.error(
+    `warning: could not write ${dedupStatsPath} (${err.code ?? err.message})`,
+  );
 }

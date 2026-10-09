@@ -38,23 +38,23 @@ const MAX_LINK_DEPTH = 40;
  * Documented in README.md — callers check them, so they are a public API.
  */
 export const EXIT = Object.freeze({
-    /** The work was asked for and completed — or a plan was produced successfully. */
-    OK: 0,
-    /** The work ran and the result is bad: a check failed, a hash mismatched, output is wrong. */
-    FAILED: 1,
-    /** The caller's fault: bad arguments, a path outside the project root, a missing prerequisite. */
-    USAGE: 2,
-    /** The work deliberately did NOT happen (another process holds the lock). Never report this as success. */
-    SKIPPED: 3,
+  /** The work was asked for and completed — or a plan was produced successfully. */
+  OK: 0,
+  /** The work ran and the result is bad: a check failed, a hash mismatched, output is wrong. */
+  FAILED: 1,
+  /** The caller's fault: bad arguments, a path outside the project root, a missing prerequisite. */
+  USAGE: 2,
+  /** The work deliberately did NOT happen (another process holds the lock). Never report this as success. */
+  SKIPPED: 3,
 });
 
 /** An error that knows which exit code it should produce. */
 export class CliError extends Error {
-    constructor(message, exitCode = EXIT.USAGE) {
-        super(message);
-        this.name = "CliError";
-        this.exitCode = exitCode;
-    }
+  constructor(message, exitCode = EXIT.USAGE) {
+    super(message);
+    this.name = "CliError";
+    this.exitCode = exitCode;
+  }
 }
 
 /**
@@ -66,24 +66,24 @@ export class CliError extends Error {
  * structurally impossible for --help to reach any I/O.
  */
 export class HelpRequested extends Error {
-    constructor(usage) {
-        super("help requested");
-        this.name = "HelpRequested";
-        this.usage = usage;
-    }
+  constructor(usage) {
+    super("help requested");
+    this.name = "HelpRequested";
+    this.usage = usage;
+  }
 }
 
 /** Strips a trailing separator so `C:\a\` and `C:\a` compare equal, keeping filesystem roots intact. */
 function trimTrailingSep(p) {
-    if (p.length > 1 && p.endsWith(path.sep) && path.parse(p).root !== p) {
-        return p.slice(0, -1);
-    }
-    return p;
+  if (p.length > 1 && p.endsWith(path.sep) && path.parse(p).root !== p) {
+    return p.slice(0, -1);
+  }
+  return p;
 }
 
 /** Case-insensitive on Windows, exact elsewhere — matching how the filesystem compares. */
 function samePath(a, b) {
-    return IS_WINDOWS ? a.toLowerCase() === b.toLowerCase() : a === b;
+  return IS_WINDOWS ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 /**
@@ -93,13 +93,13 @@ function samePath(a, b) {
  * sibling whose name merely starts the same way — `C:\proj-backup` is not inside `C:\proj`.
  */
 function contains(root, candidate) {
-    const r = trimTrailingSep(root);
-    const c = trimTrailingSep(candidate);
-    if (samePath(r, c)) return true;
-    const prefix = r.endsWith(path.sep) ? r : r + path.sep;
-    return IS_WINDOWS
-        ? c.toLowerCase().startsWith(prefix.toLowerCase())
-        : c.startsWith(prefix);
+  const r = trimTrailingSep(root);
+  const c = trimTrailingSep(candidate);
+  if (samePath(r, c)) return true;
+  const prefix = r.endsWith(path.sep) ? r : r + path.sep;
+  return IS_WINDOWS
+    ? c.toLowerCase().startsWith(prefix.toLowerCase())
+    : c.startsWith(prefix);
 }
 
 /**
@@ -121,67 +121,67 @@ function contains(root, candidate) {
  *      ordinary not-found follows. A segment that could not be inspected proves nothing.
  */
 function realPathWithinBoundary(root, absPath, label) {
-    let current = root;
-    let segments = path
-        .relative(root, absPath)
-        .split(path.sep)
-        .filter((s) => s && s !== ".");
-    let depth = 0;
-    let i = 0;
+  let current = root;
+  let segments = path
+    .relative(root, absPath)
+    .split(path.sep)
+    .filter((s) => s && s !== ".");
+  let depth = 0;
+  let i = 0;
 
-    while (i < segments.length) {
-        const next = path.join(current, segments[i]);
+  while (i < segments.length) {
+    const next = path.join(current, segments[i]);
 
-        let st;
-        try {
-            // Rule 3: `throwIfNoEntry: false` distinguishes a confirmed-absent entry (undefined)
-            // from one that exists but could not be inspected (throws). On Windows these are
-            // otherwise easy to conflate, and conflating them is what lets an unverified
-            // segment through.
-            st = fs.lstatSync(next, { throwIfNoEntry: false });
-        } catch (err) {
-            throw new CliError(
-                `${label}: could not inspect "${next}" (${err.code ?? err.message}) — refusing rather than assuming it stays inside the project root`,
-            );
-        }
-
-        if (st === undefined) {
-            // Confirmed absent: nothing further along can be a link.
-            return path.join(next, ...segments.slice(i + 1));
-        }
-
-        if (st.isSymbolicLink()) {
-            if (++depth > MAX_LINK_DEPTH) {
-                throw new CliError(
-                    `${label}: "${absPath}" exceeds the maximum link depth (${MAX_LINK_DEPTH})`,
-                );
-            }
-            const targetAbs = trimTrailingSep(
-                path.resolve(path.dirname(next), fs.readlinkSync(next)),
-            );
-
-            // Rule 2: judge the target as text, before inspecting it.
-            if (!contains(root, targetAbs)) {
-                throw new CliError(
-                    `${label}: "${absPath}" passes through a link at "${next}" pointing outside the project root — refusing`,
-                );
-            }
-
-            const rest = segments.slice(i + 1);
-            segments = path
-                .relative(root, targetAbs)
-                .split(path.sep)
-                .filter((s) => s && s !== ".")
-                .concat(rest);
-            current = root;
-            i = 0;
-            continue;
-        }
-
-        current = next;
-        i++;
+    let st;
+    try {
+      // Rule 3: `throwIfNoEntry: false` distinguishes a confirmed-absent entry (undefined)
+      // from one that exists but could not be inspected (throws). On Windows these are
+      // otherwise easy to conflate, and conflating them is what lets an unverified
+      // segment through.
+      st = fs.lstatSync(next, { throwIfNoEntry: false });
+    } catch (err) {
+      throw new CliError(
+        `${label}: could not inspect "${next}" (${err.code ?? err.message}) — refusing rather than assuming it stays inside the project root`,
+      );
     }
-    return current;
+
+    if (st === undefined) {
+      // Confirmed absent: nothing further along can be a link.
+      return path.join(next, ...segments.slice(i + 1));
+    }
+
+    if (st.isSymbolicLink()) {
+      if (++depth > MAX_LINK_DEPTH) {
+        throw new CliError(
+          `${label}: "${absPath}" exceeds the maximum link depth (${MAX_LINK_DEPTH})`,
+        );
+      }
+      const targetAbs = trimTrailingSep(
+        path.resolve(path.dirname(next), fs.readlinkSync(next)),
+      );
+
+      // Rule 2: judge the target as text, before inspecting it.
+      if (!contains(root, targetAbs)) {
+        throw new CliError(
+          `${label}: "${absPath}" passes through a link at "${next}" pointing outside the project root — refusing`,
+        );
+      }
+
+      const rest = segments.slice(i + 1);
+      segments = path
+        .relative(root, targetAbs)
+        .split(path.sep)
+        .filter((s) => s && s !== ".")
+        .concat(rest);
+      current = root;
+      i = 0;
+      continue;
+    }
+
+    current = next;
+    i++;
+  }
+  return current;
 }
 
 /**
@@ -191,56 +191,56 @@ function realPathWithinBoundary(root, absPath, label) {
  * process chose, not one it was handed.
  */
 export function createBoundary(rootDirectory) {
-    const lexicalRoot = trimTrailingSep(path.resolve(rootDirectory));
+  const lexicalRoot = trimTrailingSep(path.resolve(rootDirectory));
 
-    let entry;
-    try {
-        entry = fs.lstatSync(lexicalRoot, { throwIfNoEntry: false });
-    } catch (err) {
-        throw new CliError(
-            `project root "${lexicalRoot}" could not be inspected (${err.code ?? err.message}) — refusing rather than assuming a boundary`,
-        );
-    }
+  let entry;
+  try {
+    entry = fs.lstatSync(lexicalRoot, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(
+      `project root "${lexicalRoot}" could not be inspected (${err.code ?? err.message}) — refusing rather than assuming a boundary`,
+    );
+  }
 
-    // An absent root is permitted: nothing can be inside it yet, so lexical containment is
-    // the whole truth. Anything else must be established, not assumed — rule 3 applies to
-    // the root as much as to the paths measured against it.
-    if (entry === undefined) {
-        return {
-            root: lexicalRoot,
-            resolve: (c, l = "path") => resolveAgainst(lexicalRoot, c, l),
-        };
-    }
-
-    let root;
-    try {
-        root = trimTrailingSep(fs.realpathSync.native(lexicalRoot));
-    } catch (err) {
-        throw new CliError(
-            `project root "${lexicalRoot}" exists but could not be resolved (${err.code ?? err.message}) — ` +
-                `refusing to fall back to a lexical boundary, which would not be containment`,
-        );
-    }
-
-    let rootStat;
-    try {
-        rootStat = fs.statSync(root);
-    } catch (err) {
-        throw new CliError(
-            `project root "${root}" could not be inspected (${err.code ?? err.message}) — refusing`,
-        );
-    }
-    if (!rootStat.isDirectory()) {
-        throw new CliError(
-            `project root "${lexicalRoot}" is not a directory — refusing`,
-        );
-    }
-
+  // An absent root is permitted: nothing can be inside it yet, so lexical containment is
+  // the whole truth. Anything else must be established, not assumed — rule 3 applies to
+  // the root as much as to the paths measured against it.
+  if (entry === undefined) {
     return {
-        root,
-        resolve: (candidate, label = "path") =>
-            resolveAgainst(root, candidate, label),
+      root: lexicalRoot,
+      resolve: (c, l = "path") => resolveAgainst(lexicalRoot, c, l),
     };
+  }
+
+  let root;
+  try {
+    root = trimTrailingSep(fs.realpathSync.native(lexicalRoot));
+  } catch (err) {
+    throw new CliError(
+      `project root "${lexicalRoot}" exists but could not be resolved (${err.code ?? err.message}) — ` +
+        `refusing to fall back to a lexical boundary, which would not be containment`,
+    );
+  }
+
+  let rootStat;
+  try {
+    rootStat = fs.statSync(root);
+  } catch (err) {
+    throw new CliError(
+      `project root "${root}" could not be inspected (${err.code ?? err.message}) — refusing`,
+    );
+  }
+  if (!rootStat.isDirectory()) {
+    throw new CliError(
+      `project root "${lexicalRoot}" is not a directory — refusing`,
+    );
+  }
+
+  return {
+    root,
+    resolve: (candidate, label = "path") =>
+      resolveAgainst(root, candidate, label),
+  };
 }
 
 /**
@@ -254,35 +254,35 @@ export function createBoundary(rootDirectory) {
  * caller never named.
  */
 function resolveUnlinkedPath(boundary, candidate, label, action = "write") {
-    const lexical = trimTrailingSep(path.resolve(boundary.root, candidate));
-    if (!contains(boundary.root, lexical)) {
-        throw new CliError(
-            `${label} "${candidate}" resolves outside the project root (${boundary.root}) — refusing`,
-        );
-    }
+  const lexical = trimTrailingSep(path.resolve(boundary.root, candidate));
+  if (!contains(boundary.root, lexical)) {
+    throw new CliError(
+      `${label} "${candidate}" resolves outside the project root (${boundary.root}) — refusing`,
+    );
+  }
 
-    let st;
-    try {
-        st = fs.lstatSync(lexical, { throwIfNoEntry: false });
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not inspect "${lexical}" (${err.code ?? err.message}) — refusing`,
-        );
-    }
-    if (st?.isSymbolicLink()) {
-        throw new CliError(
-            `${label} "${candidate}" is a link (${lexical}) — refusing to ${action} through it. ` +
-                `Being inside the project root is not the same as being the file that was named.`,
-        );
-    }
+  let st;
+  try {
+    st = fs.lstatSync(lexical, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not inspect "${lexical}" (${err.code ?? err.message}) — refusing`,
+    );
+  }
+  if (st?.isSymbolicLink()) {
+    throw new CliError(
+      `${label} "${candidate}" is a link (${lexical}) — refusing to ${action} through it. ` +
+        `Being inside the project root is not the same as being the file that was named.`,
+    );
+  }
 
-    const resolved = boundary.resolve(candidate, label);
-    if (!samePath(resolved, lexical)) {
-        throw new CliError(
-            `${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to ${action} through a link`,
-        );
-    }
-    return { lexical, stat: st };
+  const resolved = boundary.resolve(candidate, label);
+  if (!samePath(resolved, lexical)) {
+    throw new CliError(
+      `${label} "${candidate}" resolves to ${resolved} rather than ${lexical} — refusing to ${action} through a link`,
+    );
+  }
+  return { lexical, stat: st };
 }
 
 /**
@@ -294,13 +294,13 @@ function resolveUnlinkedPath(boundary, candidate, label, action = "write") {
  * for the wrong thing.
  */
 export function resolveInternalArtifact(
-    root,
-    candidate,
-    label = "engine metadata",
-    action = "write",
+  root,
+  candidate,
+  label = "engine metadata",
+  action = "write",
 ) {
-    return resolveUnlinkedPath(createBoundary(root), candidate, label, action)
-        .lexical;
+  return resolveUnlinkedPath(createBoundary(root), candidate, label, action)
+    .lexical;
 }
 
 /**
@@ -312,55 +312,55 @@ export function resolveInternalArtifact(
  * at the project root is perfectly contained, and deleting through it destroys everything.
  */
 export function resolveWipeTarget(root, name, label = "directory") {
-    const boundary = createBoundary(root);
-    const lexical = trimTrailingSep(path.resolve(boundary.root, name));
+  const boundary = createBoundary(root);
+  const lexical = trimTrailingSep(path.resolve(boundary.root, name));
 
-    if (samePath(lexical, boundary.root)) {
-        throw new CliError(
-            `${label} "${name}" must be a directory strictly below the project root (${boundary.root}) — refusing`,
-        );
-    }
-
-    const { lexical: resolved, stat } = resolveUnlinkedPath(
-        boundary,
-        name,
-        label,
+  if (samePath(lexical, boundary.root)) {
+    throw new CliError(
+      `${label} "${name}" must be a directory strictly below the project root (${boundary.root}) — refusing`,
     );
-    if (stat !== undefined && !stat.isDirectory()) {
-        throw new CliError(
-            `${label} "${name}" exists and is not a directory (${resolved}) — refusing`,
-        );
-    }
-    return resolved;
+  }
+
+  const { lexical: resolved, stat } = resolveUnlinkedPath(
+    boundary,
+    name,
+    label,
+  );
+  if (stat !== undefined && !stat.isDirectory()) {
+    throw new CliError(
+      `${label} "${name}" exists and is not a directory (${resolved}) — refusing`,
+    );
+  }
+  return resolved;
 }
 
 function resolveAgainst(root, candidate, label) {
-    if (typeof candidate !== "string" || candidate.trim() === "") {
-        throw new CliError(`${label} must be a non-empty path`);
-    }
-    if (candidate.includes("\u0000")) {
-        throw new CliError(`${label} contains a NUL byte — refusing`);
-    }
+  if (typeof candidate !== "string" || candidate.trim() === "") {
+    throw new CliError(`${label} must be a non-empty path`);
+  }
+  if (candidate.includes("\u0000")) {
+    throw new CliError(`${label} contains a NUL byte — refusing`);
+  }
 
-    // Rule 1, first half: on the text, before the filesystem hears about this at all.
-    const lexical = trimTrailingSep(path.resolve(root, candidate));
-    if (!contains(root, lexical)) {
-        throw new CliError(
-            `${label} "${candidate}" resolves outside the project root (${root}) — refusing. ` +
-                `Pass a path inside the project, or point --project at the directory you meant.`,
-        );
-    }
+  // Rule 1, first half: on the text, before the filesystem hears about this at all.
+  const lexical = trimTrailingSep(path.resolve(root, candidate));
+  if (!contains(root, lexical)) {
+    throw new CliError(
+      `${label} "${candidate}" resolves outside the project root (${root}) — refusing. ` +
+        `Pass a path inside the project, or point --project at the directory you meant.`,
+    );
+  }
 
-    const resolved = realPathWithinBoundary(root, lexical, label);
+  const resolved = realPathWithinBoundary(root, lexical, label);
 
-    // Rule 1, second half: the lexical check cannot see a link that stayed inside the root
-    // as text while pointing out of it.
-    if (!contains(root, resolved)) {
-        throw new CliError(
-            `${label} "${candidate}" resolves outside the project root (${root}) once links are followed — refusing`,
-        );
-    }
-    return resolved;
+  // Rule 1, second half: the lexical check cannot see a link that stayed inside the root
+  // as text while pointing out of it.
+  if (!contains(root, resolved)) {
+    throw new CliError(
+      `${label} "${candidate}" resolves outside the project root (${root}) once links are followed — refusing`,
+    );
+  }
+  return resolved;
 }
 
 /**
@@ -368,7 +368,7 @@ function resolveAgainst(root, candidate, label) {
  * Convenience wrapper around createBoundary for a one-off resolution.
  */
 export function resolveWithinRoot(root, candidate, label = "path") {
-    return createBoundary(root).resolve(candidate, label);
+  return createBoundary(root).resolve(candidate, label);
 }
 
 /**
@@ -376,13 +376,13 @@ export function resolveWithinRoot(root, candidate, label = "path") {
  * argv or from timing.json and is interpolated into an output path.
  */
 export function requireSafeFilename(name, label = "name") {
-    const text = String(name ?? "");
-    if (!/^[A-Za-z0-9._-]+$/.test(text) || text === "." || text === "..") {
-        throw new CliError(
-            `${label} "${text}" is not a plain filename — only letters, digits, dot, underscore and hyphen are accepted`,
-        );
-    }
-    return text;
+  const text = String(name ?? "");
+  if (!/^[A-Za-z0-9._-]+$/.test(text) || text === "." || text === "..") {
+    throw new CliError(
+      `${label} "${text}" is not a plain filename — only letters, digits, dot, underscore and hyphen are accepted`,
+    );
+  }
+  return text;
 }
 
 /**
@@ -395,23 +395,23 @@ export function requireSafeFilename(name, label = "name") {
  * all refused too, because none of them is a level.
  */
 export function parseBoundedNumber(raw, { name, min, max }) {
-    const text = String(raw ?? "");
-    if (!/^(?:\d+|\d*\.\d+)$/.test(text)) {
-        throw new CliError(
-            `${name} must be a plain decimal number such as 1.14 — got "${text}". ` +
-                `Levels are interpolated into an ffmpeg filter graph, so nothing else is accepted.`,
-        );
-    }
-    const value = Number(text);
-    if (!Number.isFinite(value)) {
-        throw new CliError(`${name} must be a finite number — got "${text}"`);
-    }
-    if (value < min || value > max) {
-        throw new CliError(
-            `${name} must be between ${min} and ${max} — got ${value}`,
-        );
-    }
-    return value;
+  const text = String(raw ?? "");
+  if (!/^(?:\d+|\d*\.\d+)$/.test(text)) {
+    throw new CliError(
+      `${name} must be a plain decimal number such as 1.14 — got "${text}". ` +
+        `Levels are interpolated into an ffmpeg filter graph, so nothing else is accepted.`,
+    );
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value)) {
+    throw new CliError(`${name} must be a finite number — got "${text}"`);
+  }
+  if (value < min || value > max) {
+    throw new CliError(
+      `${name} must be between ${min} and ${max} — got ${value}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -422,22 +422,22 @@ export function parseBoundedNumber(raw, { name, min, max }) {
  * directory, iterates zero ranges, prints a completion line and exits 0.
  */
 export function requirePositiveNumber(
-    raw,
-    { name, max = Number.MAX_SAFE_INTEGER, integer = false },
+  raw,
+  { name, max = Number.MAX_SAFE_INTEGER, integer = false },
 ) {
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value <= 0) {
-        throw new CliError(
-            `${name} must be a finite positive number — got ${JSON.stringify(raw)}`,
-        );
-    }
-    if (integer && !Number.isSafeInteger(value)) {
-        throw new CliError(`${name} must be a whole number — got ${value}`);
-    }
-    if (value > max) {
-        throw new CliError(`${name} must be at most ${max} — got ${value}`);
-    }
-    return value;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new CliError(
+      `${name} must be a finite positive number — got ${JSON.stringify(raw)}`,
+    );
+  }
+  if (integer && !Number.isSafeInteger(value)) {
+    throw new CliError(`${name} must be a whole number — got ${value}`);
+  }
+  if (value > max) {
+    throw new CliError(`${name} must be at most ${max} — got ${value}`);
+  }
+  return value;
 }
 
 /**
@@ -449,29 +449,27 @@ export function requirePositiveNumber(
  * success. Every calibration value, tolerance and budget input goes through here.
  */
 export function requireFiniteNumber(
-    raw,
-    { name, min = -Infinity, max = Infinity },
+  raw,
+  { name, min = -Infinity, max = Infinity },
 ) {
-    if (typeof raw !== "number" && typeof raw !== "string") {
-        throw new CliError(
-            `${name} must be a number — got ${JSON.stringify(raw)}`,
-        );
-    }
-    if (typeof raw === "string" && raw.trim() === "") {
-        throw new CliError(`${name} must be a number — got an empty string`);
-    }
-    const value = Number(raw);
-    if (!Number.isFinite(value)) {
-        throw new CliError(
-            `${name} must be a finite number — got ${JSON.stringify(raw)}`,
-        );
-    }
-    if (value < min || value > max) {
-        throw new CliError(
-            `${name} must be between ${min} and ${max} — got ${value}`,
-        );
-    }
-    return value;
+  if (typeof raw !== "number" && typeof raw !== "string") {
+    throw new CliError(`${name} must be a number — got ${JSON.stringify(raw)}`);
+  }
+  if (typeof raw === "string" && raw.trim() === "") {
+    throw new CliError(`${name} must be a number — got an empty string`);
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new CliError(
+      `${name} must be a finite number — got ${JSON.stringify(raw)}`,
+    );
+  }
+  if (value < min || value > max) {
+    throw new CliError(
+      `${name} must be between ${min} and ${max} — got ${value}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -500,10 +498,10 @@ export const KNOB_PREFIX = "SIZZLECRAFT_";
  * CONSUMERS(narrationFingerprint): silent-segment.mjs, validate-timing.mjs
  */
 export function narrationFingerprint(text) {
-    return crypto
-        .createHash("sha256")
-        .update(String(text ?? ""), "utf8")
-        .digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(String(text ?? ""), "utf8")
+    .digest("hex");
 }
 
 /**
@@ -523,27 +521,27 @@ export function narrationFingerprint(text) {
  * Non-mutating, so a caller may verify a timeline it must not change.
  */
 export function timingSeal(timing) {
-    const { timingHash: _recordedSeal, ...sealed } = timing;
-    return crypto
-        .createHash("sha256")
-        .update(canonicalBytes(sealed))
-        .digest("hex");
+  const { timingHash: _recordedSeal, ...sealed } = timing;
+  return crypto
+    .createHash("sha256")
+    .update(canonicalBytes(sealed))
+    .digest("hex");
 }
 
 const TRUTHY_KNOB = Object.freeze(["1", "true", "yes", "on"]);
 const FALSY_KNOB = Object.freeze(["0", "false", "no", "off"]);
 
 function knobVariable(knob) {
-    if (typeof knob !== "string" || knob.trim() === "") {
-        throw new CliError("a knob needs a name — got " + JSON.stringify(knob));
-    }
-    if (knob.startsWith(KNOB_PREFIX)) {
-        throw new CliError(
-            `knob "${knob}" must be named WITHOUT the ${KNOB_PREFIX} prefix — the resolver adds it, ` +
-                `so passing the full name would read ${KNOB_PREFIX}${knob}, which nothing sets.`,
-        );
-    }
-    return `${KNOB_PREFIX}${knob}`;
+  if (typeof knob !== "string" || knob.trim() === "") {
+    throw new CliError("a knob needs a name — got " + JSON.stringify(knob));
+  }
+  if (knob.startsWith(KNOB_PREFIX)) {
+    throw new CliError(
+      `knob "${knob}" must be named WITHOUT the ${KNOB_PREFIX} prefix — the resolver adds it, ` +
+        `so passing the full name would read ${KNOB_PREFIX}${knob}, which nothing sets.`,
+    );
+  }
+  return `${KNOB_PREFIX}${knob}`;
 }
 
 /**
@@ -583,24 +581,24 @@ function knobVariable(knob) {
  * @returns {{value: unknown, source: 'argument'|'environment'|'config'|'default', variable: string}}
  */
 export function resolveKnob(
-    knob,
-    { argv, config, fallback, legacy = [], env = process.env } = {},
+  knob,
+  { argv, config, fallback, legacy = [], env = process.env } = {},
 ) {
-    const variable = knobVariable(knob);
-    if (argv !== undefined && argv !== null)
-        return { value: argv, source: "argument", variable };
-    // `legacy` carries fully-qualified names predating the `SIZZLECRAFT_` convention, so an
-    // existing caller's exported variable keeps working while the canonical name takes over.
-    // They are consulted AFTER the canonical name, never before.
-    for (const name of [variable, ...legacy]) {
-        const raw = env[name];
-        if (raw !== undefined && raw !== null && String(raw) !== "") {
-            return { value: raw, source: "environment", variable: name };
-        }
+  const variable = knobVariable(knob);
+  if (argv !== undefined && argv !== null)
+    return { value: argv, source: "argument", variable };
+  // `legacy` carries fully-qualified names predating the `SIZZLECRAFT_` convention, so an
+  // existing caller's exported variable keeps working while the canonical name takes over.
+  // They are consulted AFTER the canonical name, never before.
+  for (const name of [variable, ...legacy]) {
+    const raw = env[name];
+    if (raw !== undefined && raw !== null && String(raw) !== "") {
+      return { value: raw, source: "environment", variable: name };
     }
-    if (config !== undefined && config !== null)
-        return { value: config, source: "config", variable };
-    return { value: fallback, source: "default", variable };
+  }
+  if (config !== undefined && config !== null)
+    return { value: config, source: "config", variable };
+  return { value: fallback, source: "default", variable };
 }
 
 /**
@@ -616,27 +614,27 @@ export function resolveKnob(
  * @returns {{value: boolean, source: 'argument'|'environment'|'config'|'default', variable: string}}
  */
 export function resolveBooleanKnob(
-    knob,
-    { argv, config, fallback = false, env = process.env } = {},
+  knob,
+  { argv, config, fallback = false, env = process.env } = {},
 ) {
-    const variable = knobVariable(knob);
-    if (typeof argv === "boolean")
-        return { value: argv, source: "argument", variable };
-    const raw = env[variable];
-    if (raw !== undefined && raw !== null && String(raw) !== "") {
-        const text = String(raw).trim().toLowerCase();
-        if (TRUTHY_KNOB.includes(text))
-            return { value: true, source: "environment", variable };
-        if (FALSY_KNOB.includes(text))
-            return { value: false, source: "environment", variable };
-        throw new CliError(
-            `${variable} must be one of ${[...TRUTHY_KNOB, ...FALSY_KNOB].join(", ")} — got ${JSON.stringify(String(raw))}. ` +
-                `An unrecognised value is refused rather than read as "off", so a typo cannot silently disable the flag you asked for.`,
-        );
-    }
-    if (typeof config === "boolean")
-        return { value: config, source: "config", variable };
-    return { value: fallback, source: "default", variable };
+  const variable = knobVariable(knob);
+  if (typeof argv === "boolean")
+    return { value: argv, source: "argument", variable };
+  const raw = env[variable];
+  if (raw !== undefined && raw !== null && String(raw) !== "") {
+    const text = String(raw).trim().toLowerCase();
+    if (TRUTHY_KNOB.includes(text))
+      return { value: true, source: "environment", variable };
+    if (FALSY_KNOB.includes(text))
+      return { value: false, source: "environment", variable };
+    throw new CliError(
+      `${variable} must be one of ${[...TRUTHY_KNOB, ...FALSY_KNOB].join(", ")} — got ${JSON.stringify(String(raw))}. ` +
+        `An unrecognised value is refused rather than read as "off", so a typo cannot silently disable the flag you asked for.`,
+    );
+  }
+  if (typeof config === "boolean")
+    return { value: config, source: "config", variable };
+  return { value: fallback, source: "default", variable };
 }
 
 /**
@@ -649,17 +647,17 @@ export function resolveBooleanKnob(
  * @param {Array<{key: string, path: string}>} destinations
  */
 export function assertDistinctDestinations(destinations, label = "output") {
-    const seen = new Map();
-    for (const { key, path: dest } of destinations) {
-        const normalised = IS_WINDOWS ? dest.toLowerCase() : dest;
-        if (seen.has(normalised)) {
-            throw new CliError(
-                `${label}: "${key}" and "${seen.get(normalised)}" both resolve to ${dest} — ` +
-                    `refusing, because one would silently overwrite the other`,
-            );
-        }
-        seen.set(normalised, key);
+  const seen = new Map();
+  for (const { key, path: dest } of destinations) {
+    const normalised = IS_WINDOWS ? dest.toLowerCase() : dest;
+    if (seen.has(normalised)) {
+      throw new CliError(
+        `${label}: "${key}" and "${seen.get(normalised)}" both resolve to ${dest} — ` +
+          `refusing, because one would silently overwrite the other`,
+      );
     }
+    seen.set(normalised, key);
+  }
 }
 
 /**
@@ -670,13 +668,13 @@ export function assertDistinctDestinations(destinations, label = "output") {
  * through the value the guard reads rather than the path it protects.
  */
 export function pathExists(abs, label = "path") {
-    try {
-        return fs.statSync(abs, { throwIfNoEntry: false }) !== undefined;
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`,
-        );
-    }
+  try {
+    return fs.statSync(abs, { throwIfNoEntry: false }) !== undefined;
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`,
+    );
+  }
 }
 
 /**
@@ -698,58 +696,58 @@ export function pathExists(abs, label = "path") {
  * @returns {{state: 'vanished'} | {state: 'unreadable', detail: string} | {state: 'owned', pid: number}}
  */
 export function readLockOwner(lockPath) {
-    let st;
-    try {
-        st = fs.lstatSync(lockPath, { throwIfNoEntry: false });
-    } catch (err) {
-        return {
-            state: "unreadable",
-            detail: `could not be inspected (${err.code ?? err.message})`,
-        };
-    }
-    if (st === undefined) return { state: "vanished" };
-    if (st.isSymbolicLink()) {
-        // Never opened. Reading a path the caller redirected is an action taken on their
-        // behalf, and this one has no legitimate reason to be a link.
-        return {
-            state: "unreadable",
-            detail: "is a link rather than a lock file — refusing to read through it",
-        };
-    }
-    if (!st.isFile()) {
-        return { state: "unreadable", detail: "is not a regular file" };
-    }
+  let st;
+  try {
+    st = fs.lstatSync(lockPath, { throwIfNoEntry: false });
+  } catch (err) {
+    return {
+      state: "unreadable",
+      detail: `could not be inspected (${err.code ?? err.message})`,
+    };
+  }
+  if (st === undefined) return { state: "vanished" };
+  if (st.isSymbolicLink()) {
+    // Never opened. Reading a path the caller redirected is an action taken on their
+    // behalf, and this one has no legitimate reason to be a link.
+    return {
+      state: "unreadable",
+      detail: "is a link rather than a lock file — refusing to read through it",
+    };
+  }
+  if (!st.isFile()) {
+    return { state: "unreadable", detail: "is not a regular file" };
+  }
 
-    let raw;
-    try {
-        raw = fs.readFileSync(lockPath, "utf8");
-    } catch (err) {
-        if (err.code === "ENOENT") return { state: "vanished" };
-        return {
-            state: "unreadable",
-            detail: `could not be read (${err.code ?? err.message})`,
-        };
-    }
+  let raw;
+  try {
+    raw = fs.readFileSync(lockPath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return { state: "vanished" };
+    return {
+      state: "unreadable",
+      detail: `could not be read (${err.code ?? err.message})`,
+    };
+  }
 
-    const text = raw.trim();
-    const pid = Number(text);
-    if (!Number.isSafeInteger(pid) || pid <= 0) {
-        // Length only. The contents are untrusted and must not be echoed.
-        return {
-            state: "unreadable",
-            detail: `contents are not a PID (${text.length} bytes)`,
-        };
-    }
-    return { state: "owned", pid };
+  const text = raw.trim();
+  const pid = Number(text);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    // Length only. The contents are untrusted and must not be echoed.
+    return {
+      state: "unreadable",
+      detail: `contents are not a PID (${text.length} bytes)`,
+    };
+  }
+  return { state: "owned", pid };
 }
 
 /** Resolves and verifies an input file that must already exist, inside the project root. */
 export function requireExistingFile(root, candidate, label) {
-    const abs = resolveWithinRoot(root, candidate, label);
-    if (!pathExists(abs, label)) {
-        throw new CliError(`${label} not found: ${abs}`);
-    }
-    return abs;
+  const abs = resolveWithinRoot(root, candidate, label);
+  if (!pathExists(abs, label)) {
+    throw new CliError(`${label} not found: ${abs}`);
+  }
+  return abs;
 }
 
 /**
@@ -766,25 +764,25 @@ export function requireExistingFile(root, candidate, label) {
  */
 /** Shared write guards, applied after the path has been resolved by the right policy. */
 function applyWriteGuards(abs, candidate, { apply, replace, label }) {
-    let st;
-    try {
-        st = fs.statSync(abs, { throwIfNoEntry: false });
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not inspect ${abs} (${err.code ?? err.message})`,
-        );
-    }
-    if (st?.isDirectory()) {
-        throw new CliError(
-            `${label} "${candidate}" is a directory (${abs}) — refusing to write over it`,
-        );
-    }
-    if (apply && st && !replace) {
-        throw new CliError(
-            `${label} already exists: ${abs}. Pass --replace to overwrite it, or choose another path.`,
-        );
-    }
-    return abs;
+  let st;
+  try {
+    st = fs.statSync(abs, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not inspect ${abs} (${err.code ?? err.message})`,
+    );
+  }
+  if (st?.isDirectory()) {
+    throw new CliError(
+      `${label} "${candidate}" is a directory (${abs}) — refusing to write over it`,
+    );
+  }
+  if (apply && st && !replace) {
+    throw new CliError(
+      `${label} already exists: ${abs}. Pass --replace to overwrite it, or choose another path.`,
+    );
+  }
+  return abs;
 }
 
 /**
@@ -798,15 +796,15 @@ function applyWriteGuards(abs, candidate, { apply, replace, label }) {
  * link inside their own project is what they asked for.
  */
 export function resolveOutput(
-    root,
-    candidate,
-    { apply, replace, label = "output" },
+  root,
+  candidate,
+  { apply, replace, label = "output" },
 ) {
-    return applyWriteGuards(
-        resolveWithinRoot(root, candidate, label),
-        candidate,
-        { apply, replace, label },
-    );
+  return applyWriteGuards(
+    resolveWithinRoot(root, candidate, label),
+    candidate,
+    { apply, replace, label },
+  );
 }
 
 /**
@@ -819,15 +817,15 @@ export function resolveOutput(
  * did not.
  */
 export function resolveEngineOutput(
-    root,
-    candidate,
-    { apply, replace, label = "output" },
+  root,
+  candidate,
+  { apply, replace, label = "output" },
 ) {
-    return applyWriteGuards(
-        resolveInternalArtifact(root, candidate, label),
-        candidate,
-        { apply, replace, label },
-    );
+  return applyWriteGuards(
+    resolveInternalArtifact(root, candidate, label),
+    candidate,
+    { apply, replace, label },
+  );
 }
 
 /**
@@ -852,54 +850,54 @@ export function resolveEngineOutput(
  * @returns {{fd: number, path: string, cleanup: () => void}}
  */
 export function openExclusiveEngineFile(root, candidate, label = "temp file") {
-    const abs = resolveInternalArtifact(root, candidate, label);
+  const abs = resolveInternalArtifact(root, candidate, label);
 
-    let fd;
-    try {
-        fd = fs.openSync(abs, "wx+");
-    } catch (err) {
-        if (err.code === "EEXIST") {
-            throw new CliError(
-                `${label} already exists: ${abs} — refusing to write through an entry this run did not create. ` +
-                    `It has been left untouched; delete it and re-run.`,
-            );
-        }
-        throw new CliError(
-            `${label}: could not create ${abs} (${err.code ?? err.message})`,
-        );
+  let fd;
+  try {
+    fd = fs.openSync(abs, "wx+");
+  } catch (err) {
+    if (err.code === "EEXIST") {
+      throw new CliError(
+        `${label} already exists: ${abs} — refusing to write through an entry this run did not create. ` +
+          `It has been left untouched; delete it and re-run.`,
+      );
     }
+    throw new CliError(
+      `${label}: could not create ${abs} (${err.code ?? err.message})`,
+    );
+  }
 
-    let done = false;
-    let outcome = null;
-    return {
-        fd,
-        path: abs,
-        /**
-         * Closes and removes the file this handle created. Idempotent.
-         *
-         * @returns {null|{path: string, code: string|null, message: string}} null when the
-         *   file is gone, otherwise the artifact left behind. Swallowing a failed removal
-         *   reported the "no partial is left behind" guarantee as honoured whether or not it
-         *   was, so a failed encode could strand an unreported `.part-*` file.
-         */
-        cleanup() {
-            if (done) return outcome;
-            done = true;
-            try {
-                fs.closeSync(fd);
-            } catch {}
-            try {
-                fs.rmSync(abs, { force: true });
-            } catch (err) {
-                outcome = {
-                    path: abs,
-                    code: err.code ?? null,
-                    message: `${label} ${abs} could not be removed (${err.code ?? err.message}) — delete it by hand`,
-                };
-            }
-            return outcome;
-        },
-    };
+  let done = false;
+  let outcome = null;
+  return {
+    fd,
+    path: abs,
+    /**
+     * Closes and removes the file this handle created. Idempotent.
+     *
+     * @returns {null|{path: string, code: string|null, message: string}} null when the
+     *   file is gone, otherwise the artifact left behind. Swallowing a failed removal
+     *   reported the "no partial is left behind" guarantee as honoured whether or not it
+     *   was, so a failed encode could strand an unreported `.part-*` file.
+     */
+    cleanup() {
+      if (done) return outcome;
+      done = true;
+      try {
+        fs.closeSync(fd);
+      } catch {}
+      try {
+        fs.rmSync(abs, { force: true });
+      } catch (err) {
+        outcome = {
+          path: abs,
+          code: err.code ?? null,
+          message: `${label} ${abs} could not be removed (${err.code ?? err.message}) — delete it by hand`,
+        };
+      }
+      return outcome;
+    },
+  };
 }
 
 /**
@@ -918,9 +916,9 @@ export function openExclusiveEngineFile(root, candidate, label = "temp file") {
  * copy has to be a deliberate act rather than an accident of not knowing.
  */
 export function describeJsonValue(value) {
-    if (value === null) return "null";
-    if (Array.isArray(value)) return "an array";
-    return `a ${typeof value}`;
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
 }
 
 /**
@@ -965,21 +963,21 @@ const MAX_NO_GO_PATTERN_LENGTH = 512;
  * both directions, so a third private copy has to be a deliberate act.
  */
 export function noGoPatternsProblem(value, where) {
-    if (!Array.isArray(value)) {
-        return `${where} must be an array of regular-expression strings, not ${describeJsonValue(value)}`;
+  if (!Array.isArray(value)) {
+    return `${where} must be an array of regular-expression strings, not ${describeJsonValue(value)}`;
+  }
+  if (value.length > MAX_NO_GO_PATTERNS) {
+    return `${where} declares ${value.length} patterns, above the bound of ${MAX_NO_GO_PATTERNS}`;
+  }
+  for (const [index, source] of value.entries()) {
+    if (typeof source !== "string") {
+      return `${where}[${index}] is ${describeJsonValue(source)}, not a regular-expression string`;
     }
-    if (value.length > MAX_NO_GO_PATTERNS) {
-        return `${where} declares ${value.length} patterns, above the bound of ${MAX_NO_GO_PATTERNS}`;
+    if (source.length > MAX_NO_GO_PATTERN_LENGTH) {
+      return `${where}[${index}] is ${source.length} characters, above the bound of ${MAX_NO_GO_PATTERN_LENGTH}`;
     }
-    for (const [index, source] of value.entries()) {
-        if (typeof source !== "string") {
-            return `${where}[${index}] is ${describeJsonValue(source)}, not a regular-expression string`;
-        }
-        if (source.length > MAX_NO_GO_PATTERN_LENGTH) {
-            return `${where}[${index}] is ${source.length} characters, above the bound of ${MAX_NO_GO_PATTERN_LENGTH}`;
-        }
-    }
-    return null;
+  }
+  return null;
 }
 
 /**
@@ -1003,11 +1001,11 @@ export function noGoPatternsProblem(value, where) {
  * not knowing it exists.
  */
 export function fingerprintBuffer(bytes, displayName) {
-    return {
-        file: displayName,
-        bytes: bytes.length,
-        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
-    };
+  return {
+    file: displayName,
+    bytes: bytes.length,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 /**
@@ -1030,55 +1028,47 @@ export function fingerprintBuffer(bytes, displayName) {
  * @throws {CliError} when the path is unsafe, unreadable, malformed, or the wrong shape
  */
 export function readOptionalEngineJson(root, candidate, label, expect = {}) {
-    const abs = resolveInternalArtifact(root, candidate, label, "read");
+  const abs = resolveInternalArtifact(root, candidate, label, "read");
 
-    let raw;
-    try {
-        raw = fs.readFileSync(abs, "utf8");
-    } catch (err) {
-        if (err.code === "ENOENT") return null; // the only state that means "absent"
-        throw new CliError(
-            `${label}: could not read ${abs} (${err.code ?? err.message}) — refusing to treat an unreadable file as an absent one`,
-        );
+  let raw;
+  try {
+    raw = fs.readFileSync(abs, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return null; // the only state that means "absent"
+    throw new CliError(
+      `${label}: could not read ${abs} (${err.code ?? err.message}) — refusing to treat an unreadable file as an absent one`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`${label}: ${abs} is not valid JSON — ${err.message}`);
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CliError(
+      `${label}: ${abs} must contain a JSON object — got ${describeJsonValue(parsed)}. ` +
+        `A file that is present with nothing in it is not the same as no file; delete it if there is nothing to declare.`,
+    );
+  }
+
+  for (const [key, kind] of Object.entries(expect)) {
+    if (!Object.hasOwn(parsed, key)) continue; // an absent optional property is fine
+    const value = parsed[key];
+    const ok =
+      kind === "array"
+        ? Array.isArray(value)
+        : value !== null && typeof value === "object" && !Array.isArray(value);
+    if (!ok) {
+      throw new CliError(
+        `${label}: ${abs} property "${key}" must be ${kind === "array" ? "an array" : "an object"} — got ${describeJsonValue(value)}`,
+      );
     }
+  }
 
-    let parsed;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (err) {
-        throw new CliError(
-            `${label}: ${abs} is not valid JSON — ${err.message}`,
-        );
-    }
-
-    if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-    ) {
-        throw new CliError(
-            `${label}: ${abs} must contain a JSON object — got ${describeJsonValue(parsed)}. ` +
-                `A file that is present with nothing in it is not the same as no file; delete it if there is nothing to declare.`,
-        );
-    }
-
-    for (const [key, kind] of Object.entries(expect)) {
-        if (!Object.hasOwn(parsed, key)) continue; // an absent optional property is fine
-        const value = parsed[key];
-        const ok =
-            kind === "array"
-                ? Array.isArray(value)
-                : value !== null &&
-                  typeof value === "object" &&
-                  !Array.isArray(value);
-        if (!ok) {
-            throw new CliError(
-                `${label}: ${abs} property "${key}" must be ${kind === "array" ? "an array" : "an object"} — got ${describeJsonValue(value)}`,
-            );
-        }
-    }
-
-    return parsed;
+  return parsed;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1106,7 +1096,7 @@ export function readOptionalEngineJson(root, candidate, label, expect = {}) {
  * CONSUMERS(isMs): write-chapters.mjs, write-subtitles.mjs
  */
 export function isMs(v) {
-    return typeof v === "number" && Number.isFinite(v) && v >= 0;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0;
 }
 
 /**
@@ -1121,11 +1111,11 @@ export function isMs(v) {
  * CONSUMERS(timelineSegmentLabel): write-chapters.mjs, write-subtitles.mjs
  */
 export function timelineSegmentLabel(s, i) {
-    const id =
-        s !== null && typeof s === "object" && typeof s.id === "string"
-            ? ` ("${s.id}")`
-            : "";
-    return `timing.segments[${i}]${id}`;
+  const id =
+    s !== null && typeof s === "object" && typeof s.id === "string"
+      ? ` ("${s.id}")`
+      : "";
+  return `timing.segments[${i}]${id}`;
 }
 
 /**
@@ -1140,12 +1130,12 @@ export function timelineSegmentLabel(s, i) {
  * CONSUMERS(describeValue): write-chapters.mjs, write-subtitles.mjs
  */
 export function describeValue(v) {
-    if (v === undefined) return "missing";
-    if (v === null) return "null";
-    if (Array.isArray(v)) return "an array";
-    if (typeof v === "number") return String(v);
-    if (typeof v === "string") return `a string (${v.length} characters)`;
-    return typeof v === "object" ? "an object" : `a ${typeof v}`;
+  if (v === undefined) return "missing";
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "an array";
+  if (typeof v === "number") return String(v);
+  if (typeof v === "string") return `a string (${v.length} characters)`;
+  return typeof v === "object" ? "an object" : `a ${typeof v}`;
 }
 
 /**
@@ -1154,14 +1144,14 @@ export function describeValue(v) {
  * CONSUMERS(summarise): write-chapters.mjs, write-subtitles.mjs
  */
 export function summarise(problems) {
-    if (problems.length === 1) return problems[0];
-    const shown = problems
-        .slice(0, 5)
-        .map((p) => `\n  - ${p}`)
-        .join("");
-    const more =
-        problems.length > 5 ? `\n  … and ${problems.length - 5} more` : "";
-    return `timing.json has ${problems.length} problems:${shown}${more}`;
+  if (problems.length === 1) return problems[0];
+  const shown = problems
+    .slice(0, 5)
+    .map((p) => `\n  - ${p}`)
+    .join("");
+  const more =
+    problems.length > 5 ? `\n  … and ${problems.length - 5} more` : "";
+  return `timing.json has ${problems.length} problems:${shown}${more}`;
 }
 
 /**
@@ -1177,27 +1167,27 @@ export function summarise(problems) {
  * @returns {{file: string, text: string|null}} `text` is null only when nothing is there
  */
 export function readEngineFile(root, name, label) {
-    const file = resolveInternalArtifact(root, name, label, "read");
-    let st;
-    try {
-        st = fs.statSync(file, { throwIfNoEntry: false });
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`,
-        );
-    }
-    if (st === undefined) return { file, text: null };
-    if (!st.isFile())
-        throw new CliError(
-            `${label} ${file} is not a regular file — refusing to read it`,
-        );
-    try {
-        return { file, text: fs.readFileSync(file, "utf8") };
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not read ${file} (${err.code ?? err.message}) — refusing`,
-        );
-    }
+  const file = resolveInternalArtifact(root, name, label, "read");
+  let st;
+  try {
+    st = fs.statSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not inspect ${file} (${err.code ?? err.message}) — refusing`,
+    );
+  }
+  if (st === undefined) return { file, text: null };
+  if (!st.isFile())
+    throw new CliError(
+      `${label} ${file} is not a regular file — refusing to read it`,
+    );
+  try {
+    return { file, text: fs.readFileSync(file, "utf8") };
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not read ${file} (${err.code ?? err.message}) — refusing`,
+    );
+  }
 }
 
 /**
@@ -1208,20 +1198,19 @@ export function readEngineFile(root, name, label) {
  * CONSUMERS(requireRegularFile): write-chapters.mjs, write-subtitles.mjs
  */
 export function requireRegularFile(abs, label, hint) {
-    let st;
-    try {
-        st = fs.statSync(abs, { throwIfNoEntry: false });
-    } catch (err) {
-        throw new CliError(
-            `${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`,
-        );
-    }
-    if (st === undefined)
-        throw new CliError(`${label} not found: ${abs} — ${hint}`);
-    if (st.isDirectory())
-        throw new CliError(`${label} ${abs} is a directory, not a video file`);
-    if (!st.isFile())
-        throw new CliError(`${label} ${abs} is not a regular file`);
+  let st;
+  try {
+    st = fs.statSync(abs, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new CliError(
+      `${label}: could not inspect ${abs} (${err.code ?? err.message}) — refusing`,
+    );
+  }
+  if (st === undefined)
+    throw new CliError(`${label} not found: ${abs} — ${hint}`);
+  if (st.isDirectory())
+    throw new CliError(`${label} ${abs} is a directory, not a video file`);
+  if (!st.isFile()) throw new CliError(`${label} ${abs} is not a regular file`);
 }
 
 /**
@@ -1240,14 +1229,14 @@ export function requireRegularFile(abs, label, hint) {
  * CONSUMERS(resolveFfmpegPointer): write-chapters.mjs, write-subtitles.mjs
  */
 export function resolveFfmpegPointer(root) {
-    const { text } = readEngineFile(root, "ffmpeg-path.txt", "ffmpeg pointer");
-    if (text === null)
-        throw new CliError(
-            `ffmpeg-path.txt not found in ${root} — create it containing the path to ffmpeg`,
-        );
-    const ff = text.trim();
-    if (!ff) throw new CliError(`ffmpeg-path.txt in ${root} is empty`);
-    return ff;
+  const { text } = readEngineFile(root, "ffmpeg-path.txt", "ffmpeg pointer");
+  if (text === null)
+    throw new CliError(
+      `ffmpeg-path.txt not found in ${root} — create it containing the path to ffmpeg`,
+    );
+  const ff = text.trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${root} is empty`);
+  return ff;
 }
 
 /**
@@ -1271,21 +1260,21 @@ export function resolveFfmpegPointer(root) {
  * CONSUMERS(mp3AudioStart): remix.mjs, voice.mjs
  */
 export function mp3AudioStart(buffer) {
-    if (
-        buffer.length >= 10 &&
-        buffer[0] === 0x49 &&
-        buffer[1] === 0x44 &&
-        buffer[2] === 0x33
-    ) {
-        return (
-            10 +
-            (((buffer[6] & 0x7f) << 21) |
-                ((buffer[7] & 0x7f) << 14) |
-                ((buffer[8] & 0x7f) << 7) |
-                (buffer[9] & 0x7f))
-        );
-    }
-    return 0;
+  if (
+    buffer.length >= 10 &&
+    buffer[0] === 0x49 &&
+    buffer[1] === 0x44 &&
+    buffer[2] === 0x33
+  ) {
+    return (
+      10 +
+      (((buffer[6] & 0x7f) << 21) |
+        ((buffer[7] & 0x7f) << 14) |
+        ((buffer[8] & 0x7f) << 7) |
+        (buffer[9] & 0x7f))
+    );
+  }
+  return 0;
 }
 
 /**
@@ -1306,16 +1295,16 @@ export function mp3AudioStart(buffer) {
  * CONSUMERS(resolveFfmpegOrOverride): check-levels.mjs, remux-music.mjs
  */
 export function resolveFfmpegOrOverride(projectDir, override) {
-    if (override) return override;
-    const pointer = path.join(projectDir, "ffmpeg-path.txt");
-    if (!fs.existsSync(pointer)) {
-        throw new CliError(
-            `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
-        );
-    }
-    const ff = fs.readFileSync(pointer, "utf8").trim();
-    if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
-    return ff;
+  if (override) return override;
+  const pointer = path.join(projectDir, "ffmpeg-path.txt");
+  if (!fs.existsSync(pointer)) {
+    throw new CliError(
+      `ffmpeg-path.txt not found in ${projectDir} — create it containing the path to ffmpeg, or pass --ffmpeg <path>`,
+    );
+  }
+  const ff = fs.readFileSync(pointer, "utf8").trim();
+  if (!ff) throw new CliError(`ffmpeg-path.txt in ${projectDir} is empty`);
+  return ff;
 }
 
 /**
@@ -1323,11 +1312,11 @@ export function resolveFfmpegOrOverride(projectDir, override) {
  * already exists and the caller did not explicitly ask to replace it.
  */
 export function resolveWriteTarget(
-    root,
-    candidate,
-    { replace, label = "output" },
+  root,
+  candidate,
+  { replace, label = "output" },
 ) {
-    return resolveOutput(root, candidate, { apply: true, replace, label });
+  return resolveOutput(root, candidate, { apply: true, replace, label });
 }
 
 /**
@@ -1335,10 +1324,10 @@ export function resolveWriteTarget(
  * @returns {string} e.g. "would CREATE" / "would REPLACE (needs --replace)"
  */
 export function describeWrite(absPath, replace) {
-    if (!pathExists(absPath, "output")) return "would CREATE";
-    return replace
-        ? "would REPLACE (existing content lost)"
-        : "EXISTS — would need --replace";
+  if (!pathExists(absPath, "output")) return "would CREATE";
+  return replace
+    ? "would REPLACE (existing content lost)"
+    : "EXISTS — would need --replace";
 }
 
 /**
@@ -1349,41 +1338,41 @@ export function describeWrite(absPath, replace) {
  * --project, --apply, --replace and --help; pass `options` for the rest.
  */
 export function parseCli({ usage, options = {}, allowPositionals = false }) {
-    let parsed;
-    try {
-        parsed = parseArgs({
-            options: {
-                project: { type: "string" },
-                apply: { type: "boolean", default: false },
-                replace: { type: "boolean", default: false },
-                help: { type: "boolean", short: "h", default: false },
-                ...options,
-            },
-            allowPositionals,
-            strict: true,
-        });
-    } catch (err) {
-        throw new CliError(`${err.message}\n\n${usage}`);
-    }
+  let parsed;
+  try {
+    parsed = parseArgs({
+      options: {
+        project: { type: "string" },
+        apply: { type: "boolean", default: false },
+        replace: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+        ...options,
+      },
+      allowPositionals,
+      strict: true,
+    });
+  } catch (err) {
+    throw new CliError(`${err.message}\n\n${usage}`);
+  }
 
-    // Before anything else. Nothing may be reordered above this line.
-    if (parsed.values.help) throw new HelpRequested(usage);
+  // Before anything else. Nothing may be reordered above this line.
+  if (parsed.values.help) throw new HelpRequested(usage);
 
-    const projectDir = path.resolve(parsed.values.project ?? process.cwd());
-    if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
-        throw new CliError(
-            `--project "${projectDir}" is not an existing directory`,
-        );
-    }
+  const projectDir = path.resolve(parsed.values.project ?? process.cwd());
+  if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+    throw new CliError(
+      `--project "${projectDir}" is not an existing directory`,
+    );
+  }
 
-    return {
-        values: parsed.values,
-        positionals: parsed.positionals ?? [],
-        projectDir,
-        boundary: createBoundary(projectDir),
-        apply: parsed.values.apply === true,
-        replace: parsed.values.replace === true,
-    };
+  return {
+    values: parsed.values,
+    positionals: parsed.positionals ?? [],
+    projectDir,
+    boundary: createBoundary(projectDir),
+    apply: parsed.values.apply === true,
+    replace: parsed.values.replace === true,
+  };
 }
 
 /**
@@ -1395,19 +1384,19 @@ export function parseCli({ usage, options = {}, allowPositionals = false }) {
  * what happened.
  */
 export function guard(fn) {
-    try {
-        return fn();
-    } catch (err) {
-        if (err instanceof HelpRequested) {
-            console.log(err.usage);
-            process.exit(EXIT.OK);
-        }
-        if (err instanceof CliError) {
-            console.error(`error: ${err.message}`);
-            process.exit(err.exitCode);
-        }
-        throw err;
+  try {
+    return fn();
+  } catch (err) {
+    if (err instanceof HelpRequested) {
+      console.log(err.usage);
+      process.exit(EXIT.OK);
     }
+    if (err instanceof CliError) {
+      console.error(`error: ${err.message}`);
+      process.exit(err.exitCode);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -1425,11 +1414,11 @@ export function guard(fn) {
  * know for the same reason it printed the disclosure.
  */
 export function planFooter(verb = "apply", { blocked = false } = {}) {
-    console.log(
-        blocked
-            ? `\nnothing was written or deleted. --${verb} would refuse this run as it stands, for the reason above.`
-            : `\nnothing was written or deleted. Re-run with --${verb} to proceed.`,
-    );
+  console.log(
+    blocked
+      ? `\nnothing was written or deleted. --${verb} would refuse this run as it stands, for the reason above.`
+      : `\nnothing was written or deleted. Re-run with --${verb} to proceed.`,
+  );
 }
 
 /**
@@ -1440,19 +1429,19 @@ export function planFooter(verb = "apply", { blocked = false } = {}) {
  * flushed before the process ends.
  */
 export async function runCli(main) {
-    try {
-        const code = await main();
-        process.exitCode = code ?? EXIT.OK;
-    } catch (err) {
-        if (err instanceof HelpRequested) {
-            console.log(err.usage);
-            process.exitCode = EXIT.OK;
-        } else if (err instanceof CliError) {
-            console.error(`error: ${err.message}`);
-            process.exitCode = err.exitCode;
-        } else {
-            console.error(err?.stack ?? String(err));
-            process.exitCode = EXIT.FAILED;
-        }
+  try {
+    const code = await main();
+    process.exitCode = code ?? EXIT.OK;
+  } catch (err) {
+    if (err instanceof HelpRequested) {
+      console.log(err.usage);
+      process.exitCode = EXIT.OK;
+    } else if (err instanceof CliError) {
+      console.error(`error: ${err.message}`);
+      process.exitCode = err.exitCode;
+    } else {
+      console.error(err?.stack ?? String(err));
+      process.exitCode = EXIT.FAILED;
     }
+  }
 }

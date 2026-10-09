@@ -19,41 +19,41 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
-    EXIT,
-    CliError,
-    guard,
-    parseCli,
-    parseBoundedNumber,
-    resolveWithinRoot,
-    resolveInternalArtifact,
-    resolveEngineOutput,
-    assertDistinctDestinations,
-    describeWrite,
-    planFooter,
-    isMs,
-    timelineSegmentLabel as segmentLabel,
-    describeValue,
-    summarise,
-    readEngineFile,
-    requireRegularFile,
-    resolveFfmpegPointer as resolveFfmpeg,
+  EXIT,
+  CliError,
+  guard,
+  parseCli,
+  parseBoundedNumber,
+  resolveWithinRoot,
+  resolveInternalArtifact,
+  resolveEngineOutput,
+  assertDistinctDestinations,
+  describeWrite,
+  planFooter,
+  isMs,
+  timelineSegmentLabel as segmentLabel,
+  describeValue,
+  summarise,
+  readEngineFile,
+  requireRegularFile,
+  resolveFfmpegPointer as resolveFfmpeg,
 } from "./cli-support.mjs";
 import {
-    isSilentSegment,
-    silentSegmentProblems,
-    silentCaption,
-    durationShortfallRemedy,
-    durationMeasureRemedy,
-    silentWindowFieldProblem,
-    narratedWindowFieldRemedy,
-    voiceBlocker,
-    remixBlocker,
-    gatedRemedy,
-    declareSilentRemedy,
-    narrationCueProblems,
-    CUE_ARROW,
-    CUE_NEL,
-    CUE_HARM,
+  isSilentSegment,
+  silentSegmentProblems,
+  silentCaption,
+  durationShortfallRemedy,
+  durationMeasureRemedy,
+  silentWindowFieldProblem,
+  narratedWindowFieldRemedy,
+  voiceBlocker,
+  remixBlocker,
+  gatedRemedy,
+  declareSilentRemedy,
+  narrationCueProblems,
+  CUE_ARROW,
+  CUE_NEL,
+  CUE_HARM,
 } from "./silent-segment.mjs";
 
 const USAGE = `
@@ -89,16 +89,16 @@ a missing or refused path, or a refused overwrite
 // STRICT PARSING. A hand-rolled parser ignored --help (so `--help --apply` wrote both
 // sidecars), ignored typos, and quietly turned a --hold with no value into the default.
 const { values, projectDir, apply, replace } = guard(() =>
-    parseCli({
-        usage: USAGE,
-        options: {
-            "max-line": { type: "string" },
-            "max-cps": { type: "string" },
-            "min-cue": { type: "string" },
-            hold: { type: "string" },
-            embed: { type: "boolean", default: false },
-        },
-    }),
+  parseCli({
+    usage: USAGE,
+    options: {
+      "max-line": { type: "string" },
+      "max-cps": { type: "string" },
+      "min-cue": { type: "string" },
+      hold: { type: "string" },
+      embed: { type: "boolean", default: false },
+    },
+  }),
 );
 
 // VALIDATE, DO NOT COERCE. `Number('abc')` is NaN, and every comparison against NaN is
@@ -110,17 +110,17 @@ const { values, projectDir, apply, replace } = guard(() =>
 // the grammar with ffmpeg filter graphs, which is true of remux-music's gains and false of
 // every caption knob here.
 const num = (name, dflt, min, max) =>
-    guard(() => {
-        const raw = values[name] ?? String(dflt);
-        try {
-            return parseBoundedNumber(raw, { name: `--${name}`, min, max });
-        } catch (err) {
-            if (!(err instanceof CliError)) throw err;
-            throw new CliError(
-                `--${name} must be a plain number between ${min} and ${max} — got "${raw}"`,
-            );
-        }
-    });
+  guard(() => {
+    const raw = values[name] ?? String(dflt);
+    try {
+      return parseBoundedNumber(raw, { name: `--${name}`, min, max });
+    } catch (err) {
+      if (!(err instanceof CliError)) throw err;
+      throw new CliError(
+        `--${name} must be a plain number between ${min} and ${max} — got "${raw}"`,
+      );
+    }
+  });
 
 const MAX_LINE = num("max-line", 42, 10, 120);
 const MAX_LINES = 2;
@@ -134,11 +134,11 @@ const MIN_CUE_MS = num("min-cue", 900, 100, 10000);
 const HOLD_MS = num("hold", 1200, 0, 10000);
 
 const safeFileBase = (name, fallback) => {
-    const base = path
-        .basename(String(name ?? ""))
-        .replace(/[^A-Za-z0-9._-]+/g, "")
-        .replace(/^[-.]+|[-.]+$/g, "");
-    return base || fallback;
+  const base = path
+    .basename(String(name ?? ""))
+    .replace(/[^A-Za-z0-9._-]+/g, "")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return base || fallback;
 };
 // VALIDATED BEFORE A SINGLE CUE IS COMPUTED. Cue times are arithmetic on the timeline, and
 // arithmetic on a missing value does not fail: with no durationMs the last cue's hold
@@ -147,8 +147,8 @@ const safeFileBase = (name, fallback) => {
 // trace. readTimeline refuses all of them, so everything below may take the shape as given.
 const timing = guard(() => readTimeline(projectDir));
 const projectName = safeFileBase(
-    timing.project?.name,
-    safeFileBase(path.basename(projectDir), "video"),
+  timing.project?.name,
+  safeFileBase(path.basename(projectDir), "video"),
 );
 
 // ---- collect words (readTimeline has already refused a timeline never synthesised) ----
@@ -157,55 +157,55 @@ const projectName = safeFileBase(
 // the segment's own voiceoverText in parallel and emit the SOURCE token (with its
 // punctuation) against the measured timing of the metadata token.
 function restorePunctuation(sourceText, metaWords) {
-    const src = sourceText.trim().split(/\s+/);
-    const bare = (s) => s.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
-    const out = [];
-    let si = 0;
-    for (const mw of metaWords) {
-        const target = bare(mw.word);
-        let hit = -1;
-        // Look ahead a short way: TTS occasionally splits or merges a token.
-        for (let k = si; k < Math.min(si + 4, src.length); k++) {
-            if (
-                bare(src[k]) === target ||
-                (target && bare(src[k]).startsWith(target))
-            ) {
-                hit = k;
-                break;
-            }
-        }
-        if (hit === -1) {
-            out.push({ ...mw, text: mw.word });
-            continue;
-        }
-        // Any tokens skipped over belong to this cue too — attach them rather than dropping.
-        const text = src.slice(si, hit + 1).join(" ");
-        si = hit + 1;
-        out.push({ ...mw, text });
+  const src = sourceText.trim().split(/\s+/);
+  const bare = (s) => s.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  const out = [];
+  let si = 0;
+  for (const mw of metaWords) {
+    const target = bare(mw.word);
+    let hit = -1;
+    // Look ahead a short way: TTS occasionally splits or merges a token.
+    for (let k = si; k < Math.min(si + 4, src.length); k++) {
+      if (
+        bare(src[k]) === target ||
+        (target && bare(src[k]).startsWith(target))
+      ) {
+        hit = k;
+        break;
+      }
     }
-    if (si < src.length && out.length)
-        out.at(-1).text += " " + src.slice(si).join(" ");
-    return out;
+    if (hit === -1) {
+      out.push({ ...mw, text: mw.word });
+      continue;
+    }
+    // Any tokens skipped over belong to this cue too — attach them rather than dropping.
+    const text = src.slice(si, hit + 1).join(" ");
+    si = hit + 1;
+    out.push({ ...mw, text });
+  }
+  if (si < src.length && out.length)
+    out.at(-1).text += " " + src.slice(si).join(" ");
+  return out;
 }
 
 const words = [];
 const silentCues = [];
 for (const seg of timing.segments) {
-    // There are no measured word boundaries to caption a deliberately silent segment from,
-    // so its cue text is AUTHORED on the segment and spans its whole window. That is the
-    // accessibility contract: a viewer reading captions is told "[music]" rather than being
-    // shown nothing at all and left to wonder whether the captions broke.
-    if (isSilentSegment(seg)) {
-        silentCues.push({
-            startMs: seg.startMs,
-            endMs: seg.endMs,
-            text: silentCaption(seg),
-            silent: true,
-        });
-        continue;
-    }
-    for (const x of restorePunctuation(seg.voiceoverText, seg.audio.words))
-        words.push({ ...x, seg: seg.id });
+  // There are no measured word boundaries to caption a deliberately silent segment from,
+  // so its cue text is AUTHORED on the segment and spans its whole window. That is the
+  // accessibility contract: a viewer reading captions is told "[music]" rather than being
+  // shown nothing at all and left to wonder whether the captions broke.
+  if (isSilentSegment(seg)) {
+    silentCues.push({
+      startMs: seg.startMs,
+      endMs: seg.endMs,
+      text: silentCaption(seg),
+      silent: true,
+    });
+    continue;
+  }
+  for (const x of restorePunctuation(seg.voiceoverText, seg.audio.words))
+    words.push({ ...x, seg: seg.id });
 }
 words.sort((a, b) => a.startMs - b.startMs);
 
@@ -219,67 +219,67 @@ const ENDS_CLAUSE = /[,;:—–]["')\]]?$/;
 const cues = [];
 let cur = [];
 const cueText = (ws) =>
-    ws
-        .map((w) => w.text)
-        .join(" ")
-        .replace(/\s+([,.;:!?])/g, "$1")
-        .trim();
+  ws
+    .map((w) => w.text)
+    .join(" ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
 const flush = () => {
-    if (!cur.length) return;
-    cues.push({
-        startMs: cur[0].startMs,
-        endMs: cur.at(-1).endMs,
-        text: cueText(cur),
-    });
-    cur = [];
+  if (!cur.length) return;
+  cues.push({
+    startMs: cur[0].startMs,
+    endMs: cur.at(-1).endMs,
+    text: cueText(cur),
+  });
+  cur = [];
 };
 
 for (let i = 0; i < words.length; i++) {
-    const w = words[i],
-        next = words[i + 1];
-    cur.push(w);
-    const text = cueText(cur);
-    const spanMs = Math.max(w.endMs - cur[0].startMs, 1);
-    const cps = text.length / (spanMs / 1000);
+  const w = words[i],
+    next = words[i + 1];
+  cur.push(w);
+  const text = cueText(cur);
+  const spanMs = Math.max(w.endMs - cur[0].startMs, 1);
+  const cps = text.length / (spanMs / 1000);
 
-    const segmentBreak = next && next.seg !== w.seg;
-    const sentence = ENDS_SENTENCE.test(w.text);
-    // Break early enough that the NEXT word will not push the cue over either ceiling.
-    const projected = next ? text.length + 1 + next.text.length : text.length;
-    const projectedCps = next
-        ? projected / (Math.max(next.endMs - cur[0].startMs, 1) / 1000)
-        : cps;
-    const wouldOverflow = projected > MAX_LINE * MAX_LINES;
-    // WRAPPABILITY, NOT JUST LENGTH. A cue is allowed up to MAX_LINE * MAX_LINES on the
-    // assumption it wraps to two legal lines — but that assumption fails when a long word
-    // sits near the midpoint and no split lands inside the window. Measured case: an
-    // 82-character cue whose only candidate splits were 35 and 44, with nothing in 39..42.
-    // Checking the raw length accepts it; checking whether it can actually wrap rejects it
-    // one word earlier and produces two clean cues instead of one over-wide line.
-    const wouldNotWrap =
-        next &&
-        projected > MAX_LINE &&
-        wrap(`${text} ${next.text}`)
-            .split("\n")
-            .some((l) => l.length > MAX_LINE);
-    // Only split on reading speed once the cue is already substantial — splitting a short
-    // cue does not help, because display time shrinks with it and cps barely moves.
-    const wouldOutrun = projectedCps > MAX_CPS && text.length > MAX_LINE * 1.4;
-    // Clause breaks only once the cue is long enough that the break buys readability.
-    // Firing at every comma fragments dense narration into many short cues, each of which
-    // then gets less display time — which makes reading speed WORSE, not better.
-    const clause = ENDS_CLAUSE.test(w.text) && text.length > MAX_LINE * 1.2;
+  const segmentBreak = next && next.seg !== w.seg;
+  const sentence = ENDS_SENTENCE.test(w.text);
+  // Break early enough that the NEXT word will not push the cue over either ceiling.
+  const projected = next ? text.length + 1 + next.text.length : text.length;
+  const projectedCps = next
+    ? projected / (Math.max(next.endMs - cur[0].startMs, 1) / 1000)
+    : cps;
+  const wouldOverflow = projected > MAX_LINE * MAX_LINES;
+  // WRAPPABILITY, NOT JUST LENGTH. A cue is allowed up to MAX_LINE * MAX_LINES on the
+  // assumption it wraps to two legal lines — but that assumption fails when a long word
+  // sits near the midpoint and no split lands inside the window. Measured case: an
+  // 82-character cue whose only candidate splits were 35 and 44, with nothing in 39..42.
+  // Checking the raw length accepts it; checking whether it can actually wrap rejects it
+  // one word earlier and produces two clean cues instead of one over-wide line.
+  const wouldNotWrap =
+    next &&
+    projected > MAX_LINE &&
+    wrap(`${text} ${next.text}`)
+      .split("\n")
+      .some((l) => l.length > MAX_LINE);
+  // Only split on reading speed once the cue is already substantial — splitting a short
+  // cue does not help, because display time shrinks with it and cps barely moves.
+  const wouldOutrun = projectedCps > MAX_CPS && text.length > MAX_LINE * 1.4;
+  // Clause breaks only once the cue is long enough that the break buys readability.
+  // Firing at every comma fragments dense narration into many short cues, each of which
+  // then gets less display time — which makes reading speed WORSE, not better.
+  const clause = ENDS_CLAUSE.test(w.text) && text.length > MAX_LINE * 1.2;
 
-    if (
-        !next ||
-        segmentBreak ||
-        sentence ||
-        clause ||
-        wouldOverflow ||
-        wouldNotWrap ||
-        wouldOutrun
-    )
-        flush();
+  if (
+    !next ||
+    segmentBreak ||
+    sentence ||
+    clause ||
+    wouldOverflow ||
+    wouldNotWrap ||
+    wouldOutrun
+  )
+    flush();
 }
 flush();
 
@@ -307,23 +307,23 @@ cues.sort((a, b) => a.startMs - b.startMs);
 // been refused by timelineProblems, because no cue can show it without overlapping one
 // that is authored. A spoken neighbour keeps exactly the rule it always had.
 for (let i = 0; i < cues.length; i++) {
-    if (cues[i].silent) continue;
-    const next = cues[i + 1];
-    const spokenEndMs = cues[i].endMs;
-    const ceiling = !next
-        ? timing.durationMs
-        : next.silent
-          ? Math.max(next.startMs - 40, Math.min(spokenEndMs, next.startMs))
-          : next.startMs - 40;
-    cues[i].endMs = Math.min(
-        Math.max(cues[i].endMs + HOLD_MS, cues[i].startMs + MIN_CUE_MS),
-        ceiling,
-    );
-    if (cues[i].endMs <= cues[i].startMs) {
-        cues[i].endMs = next?.silent
-            ? Math.min(cues[i].startMs + 200, next.startMs)
-            : cues[i].startMs + 200;
-    }
+  if (cues[i].silent) continue;
+  const next = cues[i + 1];
+  const spokenEndMs = cues[i].endMs;
+  const ceiling = !next
+    ? timing.durationMs
+    : next.silent
+      ? Math.max(next.startMs - 40, Math.min(spokenEndMs, next.startMs))
+      : next.startMs - 40;
+  cues[i].endMs = Math.min(
+    Math.max(cues[i].endMs + HOLD_MS, cues[i].startMs + MIN_CUE_MS),
+    ceiling,
+  );
+  if (cues[i].endMs <= cues[i].startMs) {
+    cues[i].endMs = next?.silent
+      ? Math.min(cues[i].startMs + 200, next.startMs)
+      : cues[i].startMs + 200;
+  }
 }
 
 // ---- wrap to <=2 balanced lines -------------------------------------------------------
@@ -340,53 +340,53 @@ for (let i = 0; i < cues.length; i++) {
 // LONGEST line, and let the caller report that the ceiling was missed. Two lines of 35/45
 // read far better than one of 82, and an honest report beats a silent overrun.
 function wrap(text) {
-    if (text.length <= MAX_LINE) return text;
-    const parts = text.split(" ");
-    let legal = null,
-        fallback = null;
-    for (let i = 1; i < parts.length; i++) {
-        const a = parts.slice(0, i).join(" "),
-            b = parts.slice(i).join(" ");
-        const longest = Math.max(a.length, b.length);
-        const balance = Math.abs(a.length - b.length);
-        if (a.length <= MAX_LINE && b.length <= MAX_LINE) {
-            if (!legal || balance < legal.balance) legal = { a, b, balance };
-        }
-        if (
-            !fallback ||
-            longest < fallback.longest ||
-            (longest === fallback.longest && balance < fallback.balance)
-        ) {
-            fallback = { a, b, longest, balance };
-        }
+  if (text.length <= MAX_LINE) return text;
+  const parts = text.split(" ");
+  let legal = null,
+    fallback = null;
+  for (let i = 1; i < parts.length; i++) {
+    const a = parts.slice(0, i).join(" "),
+      b = parts.slice(i).join(" ");
+    const longest = Math.max(a.length, b.length);
+    const balance = Math.abs(a.length - b.length);
+    if (a.length <= MAX_LINE && b.length <= MAX_LINE) {
+      if (!legal || balance < legal.balance) legal = { a, b, balance };
     }
-    const pick = legal ?? fallback;
-    return pick ? `${pick.a}\n${pick.b}` : text;
+    if (
+      !fallback ||
+      longest < fallback.longest ||
+      (longest === fallback.longest && balance < fallback.balance)
+    ) {
+      fallback = { a, b, longest, balance };
+    }
+  }
+  const pick = legal ?? fallback;
+  return pick ? `${pick.a}\n${pick.b}` : text;
 }
 
 const pad = (n, w = 2) => String(n).padStart(w, "0");
 const stamp = (ms, sep) => {
-    const h = Math.floor(ms / 3600000),
-        m = Math.floor((ms % 3600000) / 60000);
-    const s = Math.floor((ms % 60000) / 1000),
-        f = Math.floor(ms % 1000);
-    return `${pad(h)}:${pad(m)}:${pad(s)}${sep}${pad(f, 3)}`;
+  const h = Math.floor(ms / 3600000),
+    m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000),
+    f = Math.floor(ms % 1000);
+  return `${pad(h)}:${pad(m)}:${pad(s)}${sep}${pad(f, 3)}`;
 };
 
 const vtt =
-    "WEBVTT\n\n" +
-    cues
-        .map(
-            (c, i) =>
-                `${i + 1}\n${stamp(c.startMs, ".")} --> ${stamp(c.endMs, ".")}\n${wrap(c.text)}\n`,
-        )
-        .join("\n");
-const srt = cues
+  "WEBVTT\n\n" +
+  cues
     .map(
-        (c, i) =>
-            `${i + 1}\n${stamp(c.startMs, ",")} --> ${stamp(c.endMs, ",")}\n${wrap(c.text)}\n`,
+      (c, i) =>
+        `${i + 1}\n${stamp(c.startMs, ".")} --> ${stamp(c.endMs, ".")}\n${wrap(c.text)}\n`,
     )
     .join("\n");
+const srt = cues
+  .map(
+    (c, i) =>
+      `${i + 1}\n${stamp(c.startMs, ",")} --> ${stamp(c.endMs, ",")}\n${wrap(c.text)}\n`,
+  )
+  .join("\n");
 
 // PLAN BY DEFAULT, like every other writing stage in this engine. A bare run used to
 // overwrite both sidecars, which is how a good pair was silently replaced by output from
@@ -399,54 +399,54 @@ const srt = cues
 // sidecars had been written, so a refused run had still changed the project. Every name
 // written here is chosen by the engine, not the caller, so a link at any of them is refused.
 const { vttPath, srtPath, embed } = guard(() => {
-    const sidecars = {
-        vttPath: resolveEngineOutput(projectDir, `${projectName}.vtt`, {
-            apply,
-            replace,
-            label: "WebVTT sidecar",
-        }),
-        srtPath: resolveEngineOutput(projectDir, `${projectName}.srt`, {
-            apply,
-            replace,
-            label: "SRT sidecar",
-        }),
-    };
-    if (!values.embed) return { ...sidecars, embed: null };
+  const sidecars = {
+    vttPath: resolveEngineOutput(projectDir, `${projectName}.vtt`, {
+      apply,
+      replace,
+      label: "WebVTT sidecar",
+    }),
+    srtPath: resolveEngineOutput(projectDir, `${projectName}.srt`, {
+      apply,
+      replace,
+      label: "SRT sidecar",
+    }),
+  };
+  if (!values.embed) return { ...sidecars, embed: null };
 
-    const source = resolveWithinRoot(
-        projectDir,
-        `${projectName}-with-music.mp4`,
-        "embed source",
-    );
-    requireRegularFile(source, "embed source", "run S9 (remux-music) first");
-    const out = resolveEngineOutput(
-        projectDir,
-        `${projectName}-with-music-subtitled.mp4`,
-        {
-            apply,
-            replace,
-            label: "subtitled video",
-        },
-    );
-    // ffmpeg reading and writing one file destroys it; an in-root link can make them one.
-    assertDistinctDestinations(
-        [
-            { key: "WebVTT sidecar", path: sidecars.vttPath },
-            { key: "SRT sidecar", path: sidecars.srtPath },
-            { key: "embed source", path: source },
-            { key: "subtitled video", path: out },
-        ],
-        "write-subtitles --embed",
-    );
-    return {
-        ...sidecars,
-        embed: { source, out, ff: resolveFfmpeg(projectDir) },
-    };
+  const source = resolveWithinRoot(
+    projectDir,
+    `${projectName}-with-music.mp4`,
+    "embed source",
+  );
+  requireRegularFile(source, "embed source", "run S9 (remux-music) first");
+  const out = resolveEngineOutput(
+    projectDir,
+    `${projectName}-with-music-subtitled.mp4`,
+    {
+      apply,
+      replace,
+      label: "subtitled video",
+    },
+  );
+  // ffmpeg reading and writing one file destroys it; an in-root link can make them one.
+  assertDistinctDestinations(
+    [
+      { key: "WebVTT sidecar", path: sidecars.vttPath },
+      { key: "SRT sidecar", path: sidecars.srtPath },
+      { key: "embed source", path: source },
+      { key: "subtitled video", path: out },
+    ],
+    "write-subtitles --embed",
+  );
+  return {
+    ...sidecars,
+    embed: { source, out, ff: resolveFfmpeg(projectDir) },
+  };
 });
 
 if (apply) {
-    fs.writeFileSync(vttPath, vtt);
-    fs.writeFileSync(srtPath, srt);
+  fs.writeFileSync(vttPath, vtt);
+  fs.writeFileSync(srtPath, srt);
 }
 
 // Reading speed is reported against DISPLAY duration, which is what a viewer actually has.
@@ -464,13 +464,13 @@ const cpsOf = (c) => c.text.length / ((c.endMs - c.startMs) / 1000);
 const spokenCues = cues.filter((c) => !c.silent);
 const silentCueCount = cues.length - spokenCues.length;
 const linesOf = (c) =>
-    wrap(c.text)
-        .split("\n")
-        .map((l) => l.length);
+  wrap(c.text)
+    .split("\n")
+    .map((l) => l.length);
 const over = spokenCues.filter((c) => cpsOf(c) > MAX_CPS);
 const longest = spokenCues.length
-    ? Math.max(...spokenCues.map((c) => c.text.length))
-    : 0;
+  ? Math.max(...spokenCues.map((c) => c.text.length))
+  : 0;
 // Report the longest rendered LINE, not the longest cue. A cue is allowed to be twice
 // MAX_LINE because it wraps to two; measuring the cue therefore cannot see a line that
 // failed to wrap, which is exactly how an 82-character line shipped under a "longest cue
@@ -480,22 +480,22 @@ const longest = spokenCues.length
 // cue is just as unreadable as an over-wide spoken one.
 const longestLine = cues.length ? Math.max(...cues.flatMap(linesOf)) : 0;
 const wideLines = cues.filter((c) =>
-    linesOf(c).some((l) => l > MAX_LINE),
+  linesOf(c).some((l) => l > MAX_LINE),
 ).length;
 const cpsSorted = spokenCues.map(cpsOf).sort((a, b) => a - b);
 const median = cpsSorted.length
-    ? cpsSorted[Math.floor(cpsSorted.length / 2)]
-    : null;
+  ? cpsSorted[Math.floor(cpsSorted.length / 2)]
+  : null;
 const medianText =
-    median === null ? "n/a (no spoken cues)" : `${median.toFixed(1)} cps`;
+  median === null ? "n/a (no spoken cues)" : `${median.toFixed(1)} cps`;
 const silentNote = silentCueCount
-    ? ` + ${silentCueCount} silent-segment cue(s)`
-    : "";
+  ? ` + ${silentCueCount} silent-segment cue(s)`
+  : "";
 console.log(
-    `${apply ? "wrote" : "plan:"} ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries${silentNote}`,
+  `${apply ? "wrote" : "plan:"} ${projectName}.vtt and ${projectName}.srt — ${cues.length} cues from ${words.length} measured word boundaries${silentNote}`,
 );
 console.log(
-    `  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ", all within"}) · longest cue ${longest} chars · median ${medianText} · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`,
+  `  longest line ${longestLine} chars (limit ${MAX_LINE}${wideLines ? `, ${wideLines} cue(s) over` : ", all within"}) · longest cue ${longest} chars · median ${medianText} · ceiling ${MAX_CPS} cps · ${over.length} cue(s) over`,
 );
 
 // Narration rate sets a FLOOR on caption reading speed, and no amount of re-splitting
@@ -507,102 +507,100 @@ console.log(
 // empty list is undefined — so the floor is skipped and said to be skipped, rather than
 // printed as a number derived from nothing.
 if (words.length) {
-    const speechChars = words.reduce((n, w) => n + w.text.length + 1, 0);
-    const speechMs = words.at(-1).endMs - words[0].startMs;
-    const floorCps = speechMs > 0 ? speechChars / (speechMs / 1000) : null;
-    if (floorCps === null) {
-        console.log(
-            "  narration floor: not computed — the measured words span no time.",
-        );
-    } else {
-        console.log(
-            `  narration delivers ~${floorCps.toFixed(1)} cps of text — that is the FLOOR for verbatim cues.`,
-        );
-        if (floorCps > MAX_CPS * 0.9) {
-            console.log(
-                `  At this pace verbatim captions cannot sit far below ${MAX_CPS} cps. Slower narration or`,
-            );
-            console.log(
-                `  condensed (non-verbatim) cues are the only levers; re-splitting will not help.`,
-            );
-        }
-    }
-} else {
+  const speechChars = words.reduce((n, w) => n + w.text.length + 1, 0);
+  const speechMs = words.at(-1).endMs - words[0].startMs;
+  const floorCps = speechMs > 0 ? speechChars / (speechMs / 1000) : null;
+  if (floorCps === null) {
     console.log(
-        "  narration floor: none — every segment is declared silent, so there is no speech rate to report.",
+      "  narration floor: not computed — the measured words span no time.",
     );
+  } else {
+    console.log(
+      `  narration delivers ~${floorCps.toFixed(1)} cps of text — that is the FLOOR for verbatim cues.`,
+    );
+    if (floorCps > MAX_CPS * 0.9) {
+      console.log(
+        `  At this pace verbatim captions cannot sit far below ${MAX_CPS} cps. Slower narration or`,
+      );
+      console.log(
+        `  condensed (non-verbatim) cues are the only levers; re-splitting will not help.`,
+      );
+    }
+  }
+} else {
+  console.log(
+    "  narration floor: none — every segment is declared silent, so there is no speech rate to report.",
+  );
 }
 if (over.length)
-    for (const c of over.slice(0, 5)) {
-        console.log(
-            `    ${stamp(c.startMs, ".")} ${cpsOf(c).toFixed(1)} cps — ${c.text.slice(0, 60)}${c.text.length > 60 ? "…" : ""}`,
-        );
-    }
+  for (const c of over.slice(0, 5)) {
+    console.log(
+      `    ${stamp(c.startMs, ".")} ${cpsOf(c).toFixed(1)} cps — ${c.text.slice(0, 60)}${c.text.length > 60 ? "…" : ""}`,
+    );
+  }
 if (!apply) {
-    console.log(`  output ${vttPath} — ${describeWrite(vttPath, replace)}`);
-    console.log(`  output ${srtPath} — ${describeWrite(srtPath, replace)}`);
+  console.log(`  output ${vttPath} — ${describeWrite(vttPath, replace)}`);
+  console.log(`  output ${srtPath} — ${describeWrite(srtPath, replace)}`);
 }
 
 // ---- optional: embed as a soft mov_text track ----------------------------------------
 // Everything it touches was resolved and refused-or-permitted above, before the sidecars
 // were written; this block only describes or performs the mux.
 if (embed) {
-    // -n, not -y: the overwrite decision belongs to --replace, checked above, not to a
-    // flag that makes ffmpeg clobber whatever it finds.
-    const ffArgs = [
-        replace ? "-y" : "-n",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        embed.source,
-        "-i",
-        srtPath,
-        "-map",
-        "0",
-        "-map",
-        "1",
-        "-c",
-        "copy",
-        "-c:s",
-        "mov_text",
-        "-metadata:s:s:0",
-        "language=eng",
-        embed.out,
-    ];
-    if (!apply) {
-        console.log(
-            `\nplan: embed ${path.basename(srtPath)} into ${path.basename(embed.source)} as a soft mov_text track`,
-        );
-        console.log(
-            `  output ${embed.out} — ${describeWrite(embed.out, replace)}`,
-        );
-        console.log(`\nwould run:\n  ${embed.ff} ${ffArgs.join(" ")}`);
-    } else {
-        let failure = null;
-        try {
-            execFileSync(embed.ff, ffArgs, { stdio: "inherit" });
-        } catch (err) {
-            failure = err;
-        }
-        if (failure) {
-            // Reported, not thrown: an uncaught throw here printed a stack trace for what is an
-            // ordinary, expected failure. exitCode rather than exit() so stdout is flushed.
-            console.error(
-                `error: ffmpeg failed while embedding subtitles (${failure.message}) — ` +
-                    `${embed.out} may be missing or incomplete. The sidecars were written.`,
-            );
-            process.exitCode = EXIT.FAILED;
-        } else {
-            console.log(
-                `wrote ${embed.out} — soft mov_text track, video and audio copied untouched`,
-            );
-            console.log(
-                "  soft subtitles can be turned OFF by the viewer. Burned-in hardsubs cannot,",
-            );
-            console.log("  so they are deliberately not the default.");
-        }
+  // -n, not -y: the overwrite decision belongs to --replace, checked above, not to a
+  // flag that makes ffmpeg clobber whatever it finds.
+  const ffArgs = [
+    replace ? "-y" : "-n",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    embed.source,
+    "-i",
+    srtPath,
+    "-map",
+    "0",
+    "-map",
+    "1",
+    "-c",
+    "copy",
+    "-c:s",
+    "mov_text",
+    "-metadata:s:s:0",
+    "language=eng",
+    embed.out,
+  ];
+  if (!apply) {
+    console.log(
+      `\nplan: embed ${path.basename(srtPath)} into ${path.basename(embed.source)} as a soft mov_text track`,
+    );
+    console.log(`  output ${embed.out} — ${describeWrite(embed.out, replace)}`);
+    console.log(`\nwould run:\n  ${embed.ff} ${ffArgs.join(" ")}`);
+  } else {
+    let failure = null;
+    try {
+      execFileSync(embed.ff, ffArgs, { stdio: "inherit" });
+    } catch (err) {
+      failure = err;
     }
+    if (failure) {
+      // Reported, not thrown: an uncaught throw here printed a stack trace for what is an
+      // ordinary, expected failure. exitCode rather than exit() so stdout is flushed.
+      console.error(
+        `error: ffmpeg failed while embedding subtitles (${failure.message}) — ` +
+          `${embed.out} may be missing or incomplete. The sidecars were written.`,
+      );
+      process.exitCode = EXIT.FAILED;
+    } else {
+      console.log(
+        `wrote ${embed.out} — soft mov_text track, video and audio copied untouched`,
+      );
+      console.log(
+        "  soft subtitles can be turned OFF by the viewer. Burned-in hardsubs cannot,",
+      );
+      console.log("  so they are deliberately not the default.");
+    }
+  }
 }
 
 if (!apply) planFooter();
@@ -617,30 +615,26 @@ if (!apply) planFooter();
  * quoted.
  */
 function readTimeline(root) {
-    const { file, text } = readEngineFile(root, "timing.json", "timing file");
-    if (text === null) throw new CliError(`timing file not found: ${file}`);
-    let parsed;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
-        throw new CliError(
-            `${file} is not valid JSON (${text.length} characters) — refusing to caption from it`,
-            EXIT.FAILED,
-        );
-    }
-    if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-    ) {
-        throw new CliError(
-            `timing.json holds ${describeValue(parsed)}, not a timeline object`,
-            EXIT.FAILED,
-        );
-    }
-    const problems = timelineProblems(parsed, root);
-    if (problems.length) throw new CliError(summarise(problems), EXIT.FAILED);
-    return parsed;
+  const { file, text } = readEngineFile(root, "timing.json", "timing file");
+  if (text === null) throw new CliError(`timing file not found: ${file}`);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new CliError(
+      `${file} is not valid JSON (${text.length} characters) — refusing to caption from it`,
+      EXIT.FAILED,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CliError(
+      `timing.json holds ${describeValue(parsed)}, not a timeline object`,
+      EXIT.FAILED,
+    );
+  }
+  const problems = timelineProblems(parsed, root);
+  if (problems.length) throw new CliError(summarise(problems), EXIT.FAILED);
+  return parsed;
 }
 
 /**
@@ -653,107 +647,100 @@ function readTimeline(root) {
  * only if a remedy needs it.
  */
 function timelineProblems(t, root) {
-    const segs = t.segments;
-    if (!Array.isArray(segs) || !segs.length) {
-        return [
-            `timing.segments is ${Array.isArray(segs) ? "empty" : describeValue(segs)} — there is nothing to caption`,
-        ];
+  const segs = t.segments;
+  if (!Array.isArray(segs) || !segs.length) {
+    return [
+      `timing.segments is ${Array.isArray(segs) ? "empty" : describeValue(segs)} — there is nothing to caption`,
+    ];
+  }
+  const gate = {};
+  const gates = {
+    voice: () =>
+      gate.voice !== undefined
+        ? gate.voice
+        : (gate.voice = voiceBlocker(root, t, segmentLabel)),
+    remix: () =>
+      gate.remix !== undefined
+        ? gate.remix
+        : (gate.remix = remixBlocker(root, t, segmentLabel)),
+  };
+  const problems = [];
+  let prev = null;
+  let lastEndMs = null;
+  let lastIndex = null; // the segment that ends last: what it holds decides which stage re-measures the duration
+  segs.forEach((s, i) => {
+    const where = segmentLabel(s, i);
+    if (s === null || typeof s !== "object" || Array.isArray(s)) {
+      problems.push(`${where} is ${describeValue(s)}, not a segment object`);
+      return;
     }
-    const gate = {};
-    const gates = {
-        voice: () =>
-            gate.voice !== undefined
-                ? gate.voice
-                : (gate.voice = voiceBlocker(root, t, segmentLabel)),
-        remix: () =>
-            gate.remix !== undefined
-                ? gate.remix
-                : (gate.remix = remixBlocker(root, t, segmentLabel)),
-    };
-    const problems = [];
-    let prev = null;
-    let lastEndMs = null;
-    let lastIndex = null; // the segment that ends last: what it holds decides which stage re-measures the duration
-    segs.forEach((s, i) => {
-        const where = segmentLabel(s, i);
-        if (s === null || typeof s !== "object" || Array.isArray(s)) {
-            problems.push(
-                `${where} is ${describeValue(s)}, not a segment object`,
-            );
-            return;
-        }
-        const unmeasured = ["startMs", "endMs"].filter((k) => !isMs(s[k]));
-        for (const k of unmeasured) {
-            // A declared silent window is authored, not measured: it is corrected by hand, and
-            // re-voicing is never its repair.
-            problems.push(
-                isSilentSegment(s)
-                    ? silentWindowFieldProblem({
-                          dir: root,
-                          timing: t,
-                          index: i,
-                          field: k,
-                          fields: unmeasured,
-                          shown: describeValue(s[k]),
-                          labelOf: segmentLabel,
-                      })
-                    : `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
-                          narratedWindowFieldRemedy(root, t, segmentLabel),
-            );
-        }
-        if (unmeasured.length) return;
-        if (s.endMs <= s.startMs) {
-            problems.push(
-                `${where}: window is ${s.endMs - s.startMs}ms (${s.startMs} -> ${s.endMs}) — it must be positive`,
-            );
-            return;
-        }
-        if (prev && s.startMs < prev.endMs) {
-            problems.push(
-                `${where} starts at ${s.startMs} ms, before ${prev.where} ends at ${prev.endMs} ms — ` +
-                    "segments must be in time order and must not overlap",
-            );
-        }
-        prev = { where, endMs: s.endMs };
-        if (lastEndMs === null || s.endMs >= lastEndMs) lastIndex = i;
-        lastEndMs = Math.max(lastEndMs ?? 0, s.endMs);
-        problems.push(
-            ...(isSilentSegment(s)
-                ? silentSegmentProblems(s, where)
-                : wordProblems(s, where, gates)),
-        );
-    });
-    problems.push(...spokenWordsInSilentWindows(segs, gates));
+    const unmeasured = ["startMs", "endMs"].filter((k) => !isMs(s[k]));
+    for (const k of unmeasured) {
+      // A declared silent window is authored, not measured: it is corrected by hand, and
+      // re-voicing is never its repair.
+      problems.push(
+        isSilentSegment(s)
+          ? silentWindowFieldProblem({
+              dir: root,
+              timing: t,
+              index: i,
+              field: k,
+              fields: unmeasured,
+              shown: describeValue(s[k]),
+              labelOf: segmentLabel,
+            })
+          : `${where}: ${k} is ${describeValue(s[k])} — it must be a finite number of milliseconds, >= 0. ` +
+              narratedWindowFieldRemedy(root, t, segmentLabel),
+      );
+    }
+    if (unmeasured.length) return;
+    if (s.endMs <= s.startMs) {
+      problems.push(
+        `${where}: window is ${s.endMs - s.startMs}ms (${s.startMs} -> ${s.endMs}) — it must be positive`,
+      );
+      return;
+    }
+    if (prev && s.startMs < prev.endMs) {
+      problems.push(
+        `${where} starts at ${s.startMs} ms, before ${prev.where} ends at ${prev.endMs} ms — ` +
+          "segments must be in time order and must not overlap",
+      );
+    }
+    prev = { where, endMs: s.endMs };
+    if (lastEndMs === null || s.endMs >= lastEndMs) lastIndex = i;
+    lastEndMs = Math.max(lastEndMs ?? 0, s.endMs);
+    problems.push(
+      ...(isSilentSegment(s)
+        ? silentSegmentProblems(s, where)
+        : wordProblems(s, where, gates)),
+    );
+  });
+  problems.push(...spokenWordsInSilentWindows(segs, gates));
 
-    const d = t.durationMs;
-    if (!isMs(d) || (lastEndMs !== null && d < lastEndMs)) {
-        const floor =
-            lastEndMs === null
-                ? ""
-                : `, no shorter than the last segment (which ends at ${lastEndMs} ms)`;
-        // A measured duration short of the last window means some window changed after the
-        // audio was measured. silent-segment.mjs decides which stage re-measures it — remix
-        // for a silence edit, voice otherwise, each only where it would run — for
-        // write-chapters too, so the two agree.
-        const remedy = !isMs(d)
-            ? durationMeasureRemedy(
-                  "It bounds the last cue",
-                  root,
-                  t,
-                  segmentLabel,
-              )
-            : durationShortfallRemedy(
-                  "It bounds the last cue",
-                  root,
-                  t,
-                  lastIndex,
-                  segmentLabel,
-              );
-        problems.push(
-            `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ${remedy}`,
+  const d = t.durationMs;
+  if (!isMs(d) || (lastEndMs !== null && d < lastEndMs)) {
+    const floor =
+      lastEndMs === null
+        ? ""
+        : `, no shorter than the last segment (which ends at ${lastEndMs} ms)`;
+    // A measured duration short of the last window means some window changed after the
+    // audio was measured. silent-segment.mjs decides which stage re-measures it — remix
+    // for a silence edit, voice otherwise, each only where it would run — for
+    // write-chapters too, so the two agree.
+    const remedy = !isMs(d)
+      ? durationMeasureRemedy("It bounds the last cue", root, t, segmentLabel)
+      : durationShortfallRemedy(
+          "It bounds the last cue",
+          root,
+          t,
+          lastIndex,
+          segmentLabel,
         );
-    }
-    return problems;
+    problems.push(
+      `timing.durationMs is ${describeValue(d)} — it must be a finite number of milliseconds${floor}. ${remedy}`,
+    );
+  }
+  return problems;
 }
 
 /**
@@ -813,150 +800,148 @@ function timelineProblems(t, root) {
  * message says "can reach" rather than claiming it is written.
  */
 function wordProblems(seg, where, gates) {
-    // Declared here, not at module scope: this module calls readTimeline at the top level,
-    // above these lines, so a module-scope const would be in its temporal dead zone.
-    // THE RULE IS narrationCueProblems', CALLED RATHER THAN RESTATED, so this gate and the
-    // pre-TTS one in voiceTimelineBlocker cannot drift about what narration may not carry.
-    // The harm strings come with it for the same reason — two gates describing one defect
-    // differently is how an author ends up acting on the wrong explanation.
-    //
-    // THIS GATE REACHES FURTHER THAN THE EARLY ONE, DELIBERATELY. voice.mjs refuses the same
-    // narration before synthesising, but only narration; the measured-word rules below cannot
-    // move there, because measured words do not exist until voice.mjs has run. And this one
-    // is still reachable on its own: narration can be edited AFTER voice ran, and this stage
-    // does not re-run that gate.
-    const ARROW = CUE_ARROW;
-    const NEL = CUE_NEL;
-    const ARROW_HARM = CUE_HARM.arrow;
-    const NEL_HARM = CUE_HARM.nel;
-    // The six that only a MEASURED WORD can carry, and the only harm that is theirs alone.
-    //
-    // "A LINE BREAK ADDS A LINE" WAS TRUE OF ONE CHARACTER, NOT OF SEVEN. Measured against
-    // `.srt` afterwards: U+000A breaks the line in both SRT parsers as well as in `.vtt`, but
-    // U+000D breaks only in ffmpeg and is dropped by srt-parser-2, and U+000B, U+000C, U+2028
-    // and U+2029 broke no line in either SRT parser — and were never measured in Chromium at
-    // all. The gate still refuses all seven, on the ground that was always true of all seven:
-    // they reach cue text unexamined at exit 0. The string now says that rather than claiming
-    // a line count for characters nobody has seen produce one.
-    const BREAKS = /[\n\v\f\r\u0085\u2028\u2029]/;
-    const codePoint = (c) =>
-        `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`;
-    const BREAK_HARM =
-        "a cue is wrapped to at most 2 lines and a line break in its text can add another: MEASURED, a raw U+000A " +
-        "produced a three-line cue at exit 0 with the run reporting none over the limit, and U+000A breaks the line " +
-        "in both SRT parsers too. The others differ — U+000D breaks in ffmpeg and is dropped by srt-parser-2, while " +
-        "U+000B, U+000C, U+2028 and U+2029 broke no line in either SRT parser and were not measured in Chromium — " +
-        "so those are refused for reaching cue text unexamined, not for a line count anyone has seen";
-    // The consequence only. Each source supplies its own lead, because only the narration is
-    // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
-    // message says what is being prevented rather than asserting an outcome. It now lives in
-    // silent-segment.mjs beside the rule, so the pre-TTS gate words it identically.
-    const w = seg.audio?.words;
-    if (!Array.isArray(w) || !w.length) {
-        const voice = gates.voice();
-        return [
-            `${where} has no audio.words — ${
-                voice === null
-                    ? "run voice.mjs (S3) first"
-                    : gatedRemedy(
-                          voice,
-                          { stem: "voice.mjs (S3) measures them" },
-                          { factOnly: true },
-                      )
-            }. ` +
-                "Subtitles are generated from measured word boundaries, not from the script. " +
-                // No trailing "instead": when the voice gate returns a malformed-declaration blocker,
-                // gatedRemedy's fact already ends "...is reported here instead: ...", and the two
-                // composed into one line saying it twice. Each half was correct alone, which is why
-                // neither author would have caught it — it is only visible in the rendered line.
-                // "rather than narrating it" carries the same contrast without the collision.
-                `(If this segment is meant to be silent, ${declareSilentRemedy(seg)} rather than narrating it.)`,
-        ];
+  // Declared here, not at module scope: this module calls readTimeline at the top level,
+  // above these lines, so a module-scope const would be in its temporal dead zone.
+  // THE RULE IS narrationCueProblems', CALLED RATHER THAN RESTATED, so this gate and the
+  // pre-TTS one in voiceTimelineBlocker cannot drift about what narration may not carry.
+  // The harm strings come with it for the same reason — two gates describing one defect
+  // differently is how an author ends up acting on the wrong explanation.
+  //
+  // THIS GATE REACHES FURTHER THAN THE EARLY ONE, DELIBERATELY. voice.mjs refuses the same
+  // narration before synthesising, but only narration; the measured-word rules below cannot
+  // move there, because measured words do not exist until voice.mjs has run. And this one
+  // is still reachable on its own: narration can be edited AFTER voice ran, and this stage
+  // does not re-run that gate.
+  const ARROW = CUE_ARROW;
+  const NEL = CUE_NEL;
+  const ARROW_HARM = CUE_HARM.arrow;
+  const NEL_HARM = CUE_HARM.nel;
+  // The six that only a MEASURED WORD can carry, and the only harm that is theirs alone.
+  //
+  // "A LINE BREAK ADDS A LINE" WAS TRUE OF ONE CHARACTER, NOT OF SEVEN. Measured against
+  // `.srt` afterwards: U+000A breaks the line in both SRT parsers as well as in `.vtt`, but
+  // U+000D breaks only in ffmpeg and is dropped by srt-parser-2, and U+000B, U+000C, U+2028
+  // and U+2029 broke no line in either SRT parser — and were never measured in Chromium at
+  // all. The gate still refuses all seven, on the ground that was always true of all seven:
+  // they reach cue text unexamined at exit 0. The string now says that rather than claiming
+  // a line count for characters nobody has seen produce one.
+  const BREAKS = /[\n\v\f\r\u0085\u2028\u2029]/;
+  const codePoint = (c) =>
+    `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`;
+  const BREAK_HARM =
+    "a cue is wrapped to at most 2 lines and a line break in its text can add another: MEASURED, a raw U+000A " +
+    "produced a three-line cue at exit 0 with the run reporting none over the limit, and U+000A breaks the line " +
+    "in both SRT parsers too. The others differ — U+000D breaks in ffmpeg and is dropped by srt-parser-2, while " +
+    "U+000B, U+000C, U+2028 and U+2029 broke no line in either SRT parser and were not measured in Chromium — " +
+    "so those are refused for reaching cue text unexamined, not for a line count anyone has seen";
+  // The consequence only. Each source supplies its own lead, because only the narration is
+  // certain to reach a cue — the measured-word path may be absorbed by alignment, so its
+  // message says what is being prevented rather than asserting an outcome. It now lives in
+  // silent-segment.mjs beside the rule, so the pre-TTS gate words it identically.
+  const w = seg.audio?.words;
+  if (!Array.isArray(w) || !w.length) {
+    const voice = gates.voice();
+    return [
+      `${where} has no audio.words — ${
+        voice === null
+          ? "run voice.mjs (S3) first"
+          : gatedRemedy(
+              voice,
+              { stem: "voice.mjs (S3) measures them" },
+              { factOnly: true },
+            )
+      }. ` +
+        "Subtitles are generated from measured word boundaries, not from the script. " +
+        // No trailing "instead": when the voice gate returns a malformed-declaration blocker,
+        // gatedRemedy's fact already ends "...is reported here instead: ...", and the two
+        // composed into one line saying it twice. Each half was correct alone, which is why
+        // neither author would have caught it — it is only visible in the rendered line.
+        // "rather than narrating it" carries the same contrast without the collision.
+        `(If this segment is meant to be silent, ${declareSilentRemedy(seg)} rather than narrating it.)`,
+    ];
+  }
+  const problems = [];
+  if (typeof seg.voiceoverText !== "string") {
+    problems.push(
+      `${where} has measured words but its voiceoverText is ${describeValue(seg.voiceoverText)} — ` +
+        "the captions restore their punctuation from it",
+    );
+  }
+  // The author edits ONE thing. Where the narration carries the arrow its measured words
+  // repeat it, so reporting both turns a single edit into a list to work through: the
+  // narration is reported alone, and a measured word only where the narration is clean —
+  // which is the alignment-fallback case, and the only way this reaches a cue unseen.
+  const narration = narrationCueProblems(seg.voiceoverText);
+  const arrowInNarration = narration.includes("arrow");
+  if (arrowInNarration) {
+    problems.push(
+      `${where}: voiceoverText contains "${ARROW}" — it is written into both subtitle sidecars as cue text, ` +
+        `where ${ARROW_HARM}. ` +
+        `Write the narration without "${ARROW}" (and re-run voice.mjs (S3) if its words are already measured).`,
+    );
+  }
+  // Same shape, same reason: the author edits ONE thing. Only U+0085 can be here.
+  const breakInNarration = narration.includes("nel");
+  if (breakInNarration) {
+    problems.push(
+      `${where}: voiceoverText contains a line break (${codePoint(NEL)}) — it survives /\\s+/ and is written ` +
+        `into both subtitle sidecars as cue text, where ${NEL_HARM}. Write the narration without it ` +
+        "(and re-run voice.mjs (S3) if its words are already measured).",
+    );
+  }
+  w.forEach((x, j) => {
+    const at = `${where}: audio.words[${j}]`;
+    if (x === null || typeof x !== "object" || Array.isArray(x)) {
+      problems.push(`${at} is ${describeValue(x)}, not a measured word`);
+      return;
     }
-    const problems = [];
-    if (typeof seg.voiceoverText !== "string") {
-        problems.push(
-            `${where} has measured words but its voiceoverText is ${describeValue(seg.voiceoverText)} — ` +
-                "the captions restore their punctuation from it",
-        );
+    if (typeof x.word !== "string")
+      problems.push(`${at}.word is ${describeValue(x.word)} — it must be text`);
+    else if (!arrowInNarration && x.word.includes(ARROW)) {
+      problems.push(
+        `${at}.word contains "${ARROW}" — it can reach cue text verbatim, and in a sidecar ${ARROW_HARM}. ` +
+          "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.",
+      );
     }
-    // The author edits ONE thing. Where the narration carries the arrow its measured words
-    // repeat it, so reporting both turns a single edit into a list to work through: the
-    // narration is reported alone, and a measured word only where the narration is clean —
-    // which is the alignment-fallback case, and the only way this reaches a cue unseen.
-    const narration = narrationCueProblems(seg.voiceoverText);
-    const arrowInNarration = narration.includes("arrow");
-    if (arrowInNarration) {
-        problems.push(
-            `${where}: voiceoverText contains "${ARROW}" — it is written into both subtitle sidecars as cue text, ` +
-                `where ${ARROW_HARM}. ` +
-                `Write the narration without "${ARROW}" (and re-run voice.mjs (S3) if its words are already measured).`,
-        );
+    // Reported only where the narration lacks U+0085 — NOT "where the narration is clean",
+    // which is what the arrow's version of this says and is wrong here: narration can hold
+    // one of the other six and this branch still runs, because only U+0085 guards it. It is
+    // also the ONLY way the other six reach a cue at all, through the raw-word fallback.
+    else if (!breakInNarration && BREAKS.test(x.word)) {
+      const found = x.word.match(BREAKS)[0];
+      // THE REMEDY IS CONDITIONAL ON THE CHARACTER THAT WAS ACTUALLY FOUND. The guard above
+      // only tracks U+0085, because that is the only one narration can deliver to a cue —
+      // but narration can still CONTAIN one of the other six (/\s+/ splits it out before a
+      // cue, it does not forbid it). Saying "the narration does not hold it" on the strength
+      // of a U+0085 check would state something this code never tested.
+      const narrationHolds =
+        typeof seg.voiceoverText === "string" &&
+        seg.voiceoverText.includes(found);
+      // The harm follows the CHARACTER, not the category. U+0085 does not add a line, so
+      // the same message for all seven would over-claim for exactly the one this gate was
+      // opened for.
+      problems.push(
+        `${at}.word contains a line break (${codePoint(found)}) — it can reach cue text ` +
+          `verbatim, and in a sidecar ${found === NEL ? NEL_HARM : BREAK_HARM}. ` +
+          (narrationHolds
+            ? "The narration holds it too, so write the narration without it and re-run voice.mjs (S3) to " +
+              "re-measure this segment's words."
+            : "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words."),
+      );
     }
-    // Same shape, same reason: the author edits ONE thing. Only U+0085 can be here.
-    const breakInNarration = narration.includes("nel");
-    if (breakInNarration) {
-        problems.push(
-            `${where}: voiceoverText contains a line break (${codePoint(NEL)}) — it survives /\\s+/ and is written ` +
-                `into both subtitle sidecars as cue text, where ${NEL_HARM}. Write the narration without it ` +
-                "(and re-run voice.mjs (S3) if its words are already measured).",
-        );
+    const unmeasured = ["startMs", "endMs"].filter((k) => !isMs(x[k]));
+    for (const k of unmeasured) {
+      problems.push(
+        `${at}.${k} is ${describeValue(x[k])} — it must be a finite number of milliseconds, >= 0`,
+      );
     }
-    w.forEach((x, j) => {
-        const at = `${where}: audio.words[${j}]`;
-        if (x === null || typeof x !== "object" || Array.isArray(x)) {
-            problems.push(`${at} is ${describeValue(x)}, not a measured word`);
-            return;
-        }
-        if (typeof x.word !== "string")
-            problems.push(
-                `${at}.word is ${describeValue(x.word)} — it must be text`,
-            );
-        else if (!arrowInNarration && x.word.includes(ARROW)) {
-            problems.push(
-                `${at}.word contains "${ARROW}" — it can reach cue text verbatim, and in a sidecar ${ARROW_HARM}. ` +
-                    "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words.",
-            );
-        }
-        // Reported only where the narration lacks U+0085 — NOT "where the narration is clean",
-        // which is what the arrow's version of this says and is wrong here: narration can hold
-        // one of the other six and this branch still runs, because only U+0085 guards it. It is
-        // also the ONLY way the other six reach a cue at all, through the raw-word fallback.
-        else if (!breakInNarration && BREAKS.test(x.word)) {
-            const found = x.word.match(BREAKS)[0];
-            // THE REMEDY IS CONDITIONAL ON THE CHARACTER THAT WAS ACTUALLY FOUND. The guard above
-            // only tracks U+0085, because that is the only one narration can deliver to a cue —
-            // but narration can still CONTAIN one of the other six (/\s+/ splits it out before a
-            // cue, it does not forbid it). Saying "the narration does not hold it" on the strength
-            // of a U+0085 check would state something this code never tested.
-            const narrationHolds =
-                typeof seg.voiceoverText === "string" &&
-                seg.voiceoverText.includes(found);
-            // The harm follows the CHARACTER, not the category. U+0085 does not add a line, so
-            // the same message for all seven would over-claim for exactly the one this gate was
-            // opened for.
-            problems.push(
-                `${at}.word contains a line break (${codePoint(found)}) — it can reach cue text ` +
-                    `verbatim, and in a sidecar ${found === NEL ? NEL_HARM : BREAK_HARM}. ` +
-                    (narrationHolds
-                        ? "The narration holds it too, so write the narration without it and re-run voice.mjs (S3) to " +
-                          "re-measure this segment's words."
-                        : "The narration does not hold it, so re-run voice.mjs (S3) to re-measure this segment's words."),
-            );
-        }
-        const unmeasured = ["startMs", "endMs"].filter((k) => !isMs(x[k]));
-        for (const k of unmeasured) {
-            problems.push(
-                `${at}.${k} is ${describeValue(x[k])} — it must be a finite number of milliseconds, >= 0`,
-            );
-        }
-        if (!unmeasured.length && x.endMs < x.startMs) {
-            problems.push(
-                `${at} ends before it starts (${x.startMs} -> ${x.endMs} ms)`,
-            );
-        }
-    });
-    return problems;
+    if (!unmeasured.length && x.endMs < x.startMs) {
+      problems.push(
+        `${at} ends before it starts (${x.startMs} -> ${x.endMs} ms)`,
+      );
+    }
+  });
+  return problems;
 }
 
 /**
@@ -970,60 +955,60 @@ function wordProblems(seg, where, gates) {
  * Each stage it names is named as the step only where it would run.
  */
 function spokenWordsInSilentWindows(segs, gates) {
-    const windows = segs.flatMap((q, k) =>
-        isSilentSegment(q) &&
-        isMs(q.startMs) &&
-        isMs(q.endMs) &&
-        q.endMs > q.startMs
-            ? [{ q, k }]
-            : [],
-    );
-    if (!windows.length) return [];
-    const problems = [];
-    segs.forEach((s, i) => {
-        if (
-            s === null ||
-            typeof s !== "object" ||
-            isSilentSegment(s) ||
-            !Array.isArray(s.audio?.words)
-        )
-            return;
-        s.audio.words.forEach((w, j) => {
-            if (
-                w === null ||
-                typeof w !== "object" ||
-                !isMs(w.startMs) ||
-                !isMs(w.endMs) ||
-                w.endMs < w.startMs
-            )
-                return;
-            const hit = windows.find(
-                ({ q }) =>
-                    w.startMs < q.endMs &&
-                    (w.endMs > q.startMs || w.startMs >= q.startMs),
-            );
-            if (!hit) return;
-            problems.push(
-                `${segmentLabel(s, i)}: audio.words[${j}] (${w.startMs} -> ${w.endMs} ms) runs into ` +
-                    `${segmentLabel(hit.q, hit.k)}, which is declared silent from ${hit.q.startMs} to ${hit.q.endMs} ms — ` +
-                    "a spoken word cannot be captioned inside an authored silent window. If the silent window was edited, " +
-                    `${gatedRemedy(
-                        gates.remix(),
-                        {
-                            open: "run remix.mjs (S4) to reflow the timeline around it",
-                            stem: "remix.mjs (S4) reflows the timeline around it",
-                        },
-                        { factOnly: true },
-                    )}; if the narration changed, ${gatedRemedy(
-                        gates.voice(),
-                        {
-                            open: "run voice.mjs (S3)",
-                            stem: "voice.mjs (S3) re-measures it",
-                        },
-                        { factOnly: true },
-                    )}`,
-            );
-        });
+  const windows = segs.flatMap((q, k) =>
+    isSilentSegment(q) &&
+    isMs(q.startMs) &&
+    isMs(q.endMs) &&
+    q.endMs > q.startMs
+      ? [{ q, k }]
+      : [],
+  );
+  if (!windows.length) return [];
+  const problems = [];
+  segs.forEach((s, i) => {
+    if (
+      s === null ||
+      typeof s !== "object" ||
+      isSilentSegment(s) ||
+      !Array.isArray(s.audio?.words)
+    )
+      return;
+    s.audio.words.forEach((w, j) => {
+      if (
+        w === null ||
+        typeof w !== "object" ||
+        !isMs(w.startMs) ||
+        !isMs(w.endMs) ||
+        w.endMs < w.startMs
+      )
+        return;
+      const hit = windows.find(
+        ({ q }) =>
+          w.startMs < q.endMs &&
+          (w.endMs > q.startMs || w.startMs >= q.startMs),
+      );
+      if (!hit) return;
+      problems.push(
+        `${segmentLabel(s, i)}: audio.words[${j}] (${w.startMs} -> ${w.endMs} ms) runs into ` +
+          `${segmentLabel(hit.q, hit.k)}, which is declared silent from ${hit.q.startMs} to ${hit.q.endMs} ms — ` +
+          "a spoken word cannot be captioned inside an authored silent window. If the silent window was edited, " +
+          `${gatedRemedy(
+            gates.remix(),
+            {
+              open: "run remix.mjs (S4) to reflow the timeline around it",
+              stem: "remix.mjs (S4) reflows the timeline around it",
+            },
+            { factOnly: true },
+          )}; if the narration changed, ${gatedRemedy(
+            gates.voice(),
+            {
+              open: "run voice.mjs (S3)",
+              stem: "voice.mjs (S3) re-measures it",
+            },
+            { factOnly: true },
+          )}`,
+      );
     });
-    return problems;
+  });
+  return problems;
 }

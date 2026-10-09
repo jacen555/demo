@@ -8,11 +8,11 @@ export function initialize(data) {
   backend = data.backend;
 }
 
-const CHILD_PROCESS = new Set(['node:child_process', 'child_process']);
+const CHILD_PROCESS = new Set(["node:child_process", "child_process"]);
 
 export async function resolve(specifier, context, nextResolve) {
   if (CHILD_PROCESS.has(specifier) && context.parentURL !== backend) {
-    return { url: backend, format: 'module', shortCircuit: true };
+    return { url: backend, format: "module", shortCircuit: true };
   }
   return nextResolve(specifier, context);
 }

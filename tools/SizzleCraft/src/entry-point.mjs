@@ -1,5 +1,5 @@
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /**
  * Was the module at `importMetaUrl` the file Node was asked to execute, as opposed to one

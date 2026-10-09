@@ -47,21 +47,21 @@
  * different window than the one asked for.
  */
 function lastToken(output, key) {
-    const matches = [
-        ...String(output ?? "").matchAll(new RegExp(`${key}:\\s*(\\S+)`, "g")),
-    ];
-    return matches.length ? matches[matches.length - 1][1] : null;
+  const matches = [
+    ...String(output ?? "").matchAll(new RegExp(`${key}:\\s*(\\S+)`, "g")),
+  ];
+  return matches.length ? matches[matches.length - 1][1] : null;
 }
 
 /** A level token is a number, digital silence, or unreadable. Nothing else. */
 function readLevel(token) {
-    if (token === null) return { kind: "absent" };
-    if (/^-(?:inf|infinity)$/i.test(token))
-        return { kind: "silent", db: -Infinity };
-    const db = Number(token);
-    return Number.isFinite(db)
-        ? { kind: "level", db }
-        : { kind: "unreadable", token };
+  if (token === null) return { kind: "absent" };
+  if (/^-(?:inf|infinity)$/i.test(token))
+    return { kind: "silent", db: -Infinity };
+  const db = Number(token);
+  return Number.isFinite(db)
+    ? { kind: "level", db }
+    : { kind: "unreadable", token };
 }
 
 /**
@@ -75,34 +75,32 @@ function readLevel(token) {
  *          | {state: 'unmeasurable', detail: string}}
  */
 export function readAstatsLevels(output) {
-    const fields = [
-        ["RMS level dB", readLevel(lastToken(output, "RMS level dB"))],
-        ["Peak level dB", readLevel(lastToken(output, "Peak level dB"))],
-    ];
+  const fields = [
+    ["RMS level dB", readLevel(lastToken(output, "RMS level dB"))],
+    ["Peak level dB", readLevel(lastToken(output, "Peak level dB"))],
+  ];
 
-    const absent = fields
-        .filter(([, v]) => v.kind === "absent")
-        .map(([k]) => k);
-    if (absent.length > 0) {
-        return {
-            state: "unmeasurable",
-            detail: `astats printed no "${absent.join('" line and no "')}" line`,
-        };
-    }
-    const unreadable = fields.find(([, v]) => v.kind === "unreadable");
-    if (unreadable) {
-        return {
-            state: "unmeasurable",
-            detail: `astats reported "${unreadable[0]}" as ${JSON.stringify(unreadable[1].token)}, which is not a level`,
-        };
-    }
+  const absent = fields.filter(([, v]) => v.kind === "absent").map(([k]) => k);
+  if (absent.length > 0) {
+    return {
+      state: "unmeasurable",
+      detail: `astats printed no "${absent.join('" line and no "')}" line`,
+    };
+  }
+  const unreadable = fields.find(([, v]) => v.kind === "unreadable");
+  if (unreadable) {
+    return {
+      state: "unmeasurable",
+      detail: `astats reported "${unreadable[0]}" as ${JSON.stringify(unreadable[1].token)}, which is not a level`,
+    };
+  }
 
-    const [[, rms], [, peak]] = fields;
-    // Both rails at -inf is digital silence. A mixed reading is still a reading — `-inf` is
-    // a real level — so it is reported as measured rather than promoted to a failure.
-    const state =
-        rms.kind === "silent" && peak.kind === "silent" ? "silent" : "measured";
-    return { state, rms: rms.db, peak: peak.db };
+  const [[, rms], [, peak]] = fields;
+  // Both rails at -inf is digital silence. A mixed reading is still a reading — `-inf` is
+  // a real level — so it is reported as measured rather than promoted to a failure.
+  const state =
+    rms.kind === "silent" && peak.kind === "silent" ? "silent" : "measured";
+  return { state, rms: rms.db, peak: peak.db };
 }
 
 /**
@@ -204,26 +202,26 @@ export function readAstatsLevels(output) {
  * @returns {string|null} the refusal detail, or null when the window is acceptable
  */
 export function judgeDeliveredLevels(
-    levels,
-    { label, wholeFile = false, audioExpected = true } = {},
+  levels,
+  { label, wholeFile = false, audioExpected = true } = {},
 ) {
-    // Silence is the measurement this whole module exists to keep as a measurement. A window
-    // of it is CORRECT — the lead-in is silent by design — so only the whole file is judged,
-    // and only for being silent all the way through.
-    if (levels?.state !== "silent" || !wholeFile) return null;
-    // ...and only when audio was expected at all. README "concat-audio (S4)" documents a
-    // timeline where EVERY segment is deliberately silent: no clip is matched to anything
-    // and each window is generated. A render of that project is correctly silent end to end,
-    // and refusing it would be this gate making the same mistake the lead-in fix made, one
-    // level up. The caller declares that case; it is not guessed from the audio.
-    if (!audioExpected) return null;
+  // Silence is the measurement this whole module exists to keep as a measurement. A window
+  // of it is CORRECT — the lead-in is silent by design — so only the whole file is judged,
+  // and only for being silent all the way through.
+  if (levels?.state !== "silent" || !wholeFile) return null;
+  // ...and only when audio was expected at all. README "concat-audio (S4)" documents a
+  // timeline where EVERY segment is deliberately silent: no clip is matched to anything
+  // and each window is generated. A render of that project is correctly silent end to end,
+  // and refusing it would be this gate making the same mistake the lead-in fix made, one
+  // level up. The caller declares that case; it is not guessed from the audio.
+  if (!audioExpected) return null;
 
-    return (
-        `${label}: digital silence — the whole file measures -inf, so it carries NO AUDIO at ` +
-        `all. A silent lead-in is correct; a silent render is not. Check that the mix reached ` +
-        `the output stream (-map, the codec, the filter graph's final link) before delivering. ` +
-        `If this project's timeline really is silent in every segment, say so with --allow-silent.`
-    );
+  return (
+    `${label}: digital silence — the whole file measures -inf, so it carries NO AUDIO at ` +
+    `all. A silent lead-in is correct; a silent render is not. Check that the mix reached ` +
+    `the output stream (-map, the codec, the filter graph's final link) before delivering. ` +
+    `If this project's timeline really is silent in every segment, say so with --allow-silent.`
+  );
 }
 
 /**
@@ -235,17 +233,17 @@ export function judgeDeliveredLevels(
  * inferring the track from a missing number, with a different input.
  */
 export function findStreamDeclarations(output) {
-    return [
-        ...String(output ?? "").matchAll(/^[ \t]*(Stream #\d+:\d+[^\n]*)$/gm),
-    ].map((m) => m[1].trim());
+  return [
+    ...String(output ?? "").matchAll(/^[ \t]*(Stream #\d+:\d+[^\n]*)$/gm),
+  ].map((m) => m[1].trim());
 }
 
 /** The audio stream ffmpeg declared for this input, or null when it declared none. */
 export function findAudioStream(output) {
-    const audio = findStreamDeclarations(output).find((s) =>
-        /:\s*Audio:\s/.test(s),
-    );
-    return audio ? audio.slice(0, 160) : null;
+  const audio = findStreamDeclarations(output).find((s) =>
+    /:\s*Audio:\s/.test(s),
+  );
+  return audio ? audio.slice(0, 160) : null;
 }
 
 /**
@@ -257,16 +255,16 @@ export function findAudioStream(output) {
  * would be a poor result to reintroduce it in the formatter.
  */
 export function formatLevels(levels) {
-    const db = (v) =>
-        v === -Infinity
-            ? "-inf"
-            : Number.isFinite(v)
-              ? v.toFixed(1)
-              : `unreadable(${v})`;
-    const line = `RMS ${db(levels.rms)} dB   peak ${db(levels.peak)} dBFS`;
-    return levels.state === "silent"
-        ? `${line}   — digital silence (expected in the lead-in)`
-        : line;
+  const db = (v) =>
+    v === -Infinity
+      ? "-inf"
+      : Number.isFinite(v)
+        ? v.toFixed(1)
+        : `unreadable(${v})`;
+  const line = `RMS ${db(levels.rms)} dB   peak ${db(levels.peak)} dBFS`;
+  return levels.state === "silent"
+    ? `${line}   — digital silence (expected in the lead-in)`
+    : line;
 }
 
 /**
@@ -284,28 +282,28 @@ export function formatLevels(levels) {
  * @param {{detail?: string}} levels the unmeasurable result from readAstatsLevels
  */
 export function describeUnusableLevels(file, output, levels) {
-    const streams = findStreamDeclarations(output);
-    const audio = streams.find((s) => /:\s*Audio:\s/.test(s));
-    const why = levels?.detail ?? "astats produced no levels";
-    const head = `ffmpeg produced no usable astats levels for ${file}`;
+  const streams = findStreamDeclarations(output);
+  const audio = streams.find((s) => /:\s*Audio:\s/.test(s));
+  const why = levels?.detail ?? "astats produced no levels";
+  const head = `ffmpeg produced no usable astats levels for ${file}`;
 
-    if (audio) {
-        return (
-            `${head}, but the file DOES have an audio track (${audio.slice(0, 160)}) — so this is a ` +
-            `probe failure, not a missing track. ${why}. ` +
-            `Re-run that ffmpeg command by hand to see what the filter reported.`
-        );
-    }
-    if (streams.length === 0) {
-        return (
-            `${head}, and no stream declarations could be read from its input dump — so whether this file ` +
-            `has an audio track has NOT been established. ${why}. ` +
-            `Re-run that ffmpeg command by hand and check the Input #0 block.`
-        );
-    }
+  if (audio) {
     return (
-        `${head}, and its input dump declares ${streams.length} stream(s), none of them audio — ` +
-        `the file has no audio track. ${why}. ` +
-        `Check the input, or remux an audio track in before measuring.`
+      `${head}, but the file DOES have an audio track (${audio.slice(0, 160)}) — so this is a ` +
+      `probe failure, not a missing track. ${why}. ` +
+      `Re-run that ffmpeg command by hand to see what the filter reported.`
     );
+  }
+  if (streams.length === 0) {
+    return (
+      `${head}, and no stream declarations could be read from its input dump — so whether this file ` +
+      `has an audio track has NOT been established. ${why}. ` +
+      `Re-run that ffmpeg command by hand and check the Input #0 block.`
+    );
+  }
+  return (
+    `${head}, and its input dump declares ${streams.length} stream(s), none of them audio — ` +
+    `the file has no audio track. ${why}. ` +
+    `Check the input, or remux an audio track in before measuring.`
+  );
 }

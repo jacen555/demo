@@ -20,77 +20,76 @@ import { narrationFingerprint } from "../src/cli-support.mjs";
  * @param {{leadInMs?: number, gapsMs?: number[]}} [opts]
  */
 export function measuredProject(specs, { leadInMs = 2016, gapsMs = [] } = {}) {
-    let cursor = leadInMs;
-    const segments = [];
-    const calSegs = [];
+  let cursor = leadInMs;
+  const segments = [];
+  const calSegs = [];
 
-    specs.forEach((spec, i) => {
-        const headMs = spec.headMs ?? 240;
-        const tailMs = spec.tailMs ?? 264;
-        const text = Array.from(
-            { length: spec.words },
-            (_, w) => `word${w}`,
-        ).join(" ");
-        const startMs = cursor;
-        const endMs = cursor + spec.clipMs;
+  specs.forEach((spec, i) => {
+    const headMs = spec.headMs ?? 240;
+    const tailMs = spec.tailMs ?? 264;
+    const text = Array.from({ length: spec.words }, (_, w) => `word${w}`).join(
+      " ",
+    );
+    const startMs = cursor;
+    const endMs = cursor + spec.clipMs;
 
-        segments.push({
-            id: spec.id,
-            startMs,
-            endMs,
-            voiceoverText: text,
-            // voice.mjs writes plannedDurationMs alongside the measured window.
-            plannedDurationMs: spec.clipMs,
-            audio: {
-                file: `segment_0${i + 1}.mp3`,
-                durationMs: spec.clipMs,
-                headMs,
-                tailMs,
-                words: [],
-            },
-        });
-
-        const speechMs = spec.clipMs - headMs - tailMs;
-        calSegs.push({
-            id: spec.id,
-            words: spec.words,
-            chars: text.length,
-            clipMs: spec.clipMs,
-            speechMs,
-            effWps: +(spec.words / (speechMs / 1000)).toFixed(3),
-            textHash: narrationFingerprint(text),
-        });
-
-        cursor = endMs + (i < specs.length - 1 ? (gapsMs[i] ?? 1416) : 0);
+    segments.push({
+      id: spec.id,
+      startMs,
+      endMs,
+      voiceoverText: text,
+      // voice.mjs writes plannedDurationMs alongside the measured window.
+      plannedDurationMs: spec.clipMs,
+      audio: {
+        file: `segment_0${i + 1}.mp3`,
+        durationMs: spec.clipMs,
+        headMs,
+        tailMs,
+        words: [],
+      },
     });
 
-    const totW = calSegs.reduce((a, c) => a + c.words, 0);
-    const totMs = calSegs.reduce((a, c) => a + c.speechMs, 0);
-    const obsEff = totW / (totMs / 1000);
-    const roundedSpeed = 1.2;
+    const speechMs = spec.clipMs - headMs - tailMs;
+    calSegs.push({
+      id: spec.id,
+      words: spec.words,
+      chars: text.length,
+      clipMs: spec.clipMs,
+      speechMs,
+      effWps: +(spec.words / (speechMs / 1000)).toFixed(3),
+      textHash: narrationFingerprint(text),
+    });
 
-    const contentMs = segments.at(-1).endMs;
+    cursor = endMs + (i < specs.length - 1 ? (gapsMs[i] ?? 1416) : 0);
+  });
 
-    return {
+  const totW = calSegs.reduce((a, c) => a + c.words, 0);
+  const totMs = calSegs.reduce((a, c) => a + c.speechMs, 0);
+  const obsEff = totW / (totMs / 1000);
+  const roundedSpeed = 1.2;
+
+  const contentMs = segments.at(-1).endMs;
+
+  return {
+    observedEffWps: +obsEff.toFixed(3),
+    timing: {
+      project: { name: "demo", fps: 30, width: 1280, height: 720 },
+      durationMs: contentMs,
+      contentMs,
+      leadInMs,
+      segments,
+    },
+    // Byte-for-byte the object literal voice.mjs passes to JSON.stringify.
+    calibration: {
+      voiceId: "en-US-AvaNeural",
+      roundedSpeed,
+      aggregate: {
+        words: totW,
+        speechMs: totMs,
         observedEffWps: +obsEff.toFixed(3),
-        timing: {
-            project: { name: "demo", fps: 30, width: 1280, height: 720 },
-            durationMs: contentMs,
-            contentMs,
-            leadInMs,
-            segments,
-        },
-        // Byte-for-byte the object literal voice.mjs passes to JSON.stringify.
-        calibration: {
-            voiceId: "en-US-AvaNeural",
-            roundedSpeed,
-            aggregate: {
-                words: totW,
-                speechMs: totMs,
-                observedEffWps: +obsEff.toFixed(3),
-                observedSafeWps: +(obsEff / roundedSpeed).toFixed(3),
-            },
-            segments: calSegs,
-        },
-    };
+        observedSafeWps: +(obsEff / roundedSpeed).toFixed(3),
+      },
+      segments: calSegs,
+    },
+  };
 }

@@ -27,35 +27,35 @@ import { requireTestOwnedPath } from "./suite-owned-path.mjs";
 const params = new URL(import.meta.url).searchParams;
 const marker = params.get("marker");
 if (!marker || !params.get("target") || !params.get("victim")) {
-    throw new Error(
-        "plant-link-on-marker: its --import URL must carry marker, target and victim",
-    );
+  throw new Error(
+    "plant-link-on-marker: its --import URL must carry marker, target and victim",
+  );
 }
 const target = requireTestOwnedPath(
-    params.get("target"),
-    "plant-link-on-marker target",
-    { mayBeAbsent: true },
+  params.get("target"),
+  "plant-link-on-marker target",
+  { mayBeAbsent: true },
 );
 const victim = requireTestOwnedPath(
-    params.get("victim"),
-    "plant-link-on-marker victim",
+  params.get("victim"),
+  "plant-link-on-marker victim",
 );
 
 const log = console.log;
 let planted = false;
 console.log = (...args) => {
-    log(...args);
-    if (planted || !args.map(String).join(" ").includes(marker)) return;
-    planted = true;
-    try {
-        fs.symlinkSync(victim, target, "file");
-    } catch (err) {
-        // Announced, never swallowed: a test that asserts the plant landed must be able to
-        // tell "the platform refused to make a link" from "the engine refused to follow one".
-        log(
-            `plant-link-on-marker: could not plant ${target} (${err.code ?? err.message})`,
-        );
-        return;
-    }
-    log(`plant-link-on-marker: planted ${target} -> ${victim}`);
+  log(...args);
+  if (planted || !args.map(String).join(" ").includes(marker)) return;
+  planted = true;
+  try {
+    fs.symlinkSync(victim, target, "file");
+  } catch (err) {
+    // Announced, never swallowed: a test that asserts the plant landed must be able to
+    // tell "the platform refused to make a link" from "the engine refused to follow one".
+    log(
+      `plant-link-on-marker: could not plant ${target} (${err.code ?? err.message})`,
+    );
+    return;
+  }
+  log(`plant-link-on-marker: planted ${target} -> ${victim}`);
 };

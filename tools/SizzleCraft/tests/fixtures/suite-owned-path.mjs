@@ -19,8 +19,13 @@ export const TEST_DIR_PREFIX = "sizzlecraft-test-";
 export function requireTestOwnedDir(candidate, label) {
   const dir = fs.realpathSync.native(candidate);
   const tmp = fs.realpathSync.native(os.tmpdir());
-  if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
-    throw new Error(`${label}: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
+  if (
+    path.dirname(dir) !== tmp ||
+    !path.basename(dir).startsWith(TEST_DIR_PREFIX)
+  ) {
+    throw new Error(
+      `${label}: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
+    );
   }
   return dir;
 }
@@ -32,51 +37,51 @@ export function requireTestOwnedDir(candidate, label) {
  * silently would let the test it serves pass on a run where it never acted.
  */
 export function requireTestOwnedPath(
-    candidate,
-    label,
-    { mayBeAbsent = false } = {},
+  candidate,
+  label,
+  { mayBeAbsent = false } = {},
 ) {
-    const refuse = (why) => {
-        throw new Error(
-            `${label}: ${JSON.stringify(candidate)} ${why} — refusing to touch it`,
-        );
-    };
-    if (typeof candidate !== "string" || !path.isAbsolute(candidate))
-        refuse("is not an absolute path");
+  const refuse = (why) => {
+    throw new Error(
+      `${label}: ${JSON.stringify(candidate)} ${why} — refusing to touch it`,
+    );
+  };
+  if (typeof candidate !== "string" || !path.isAbsolute(candidate))
+    refuse("is not an absolute path");
 
-    const st = fs.lstatSync(candidate, { throwIfNoEntry: false });
-    if (st === undefined) {
-        if (!mayBeAbsent) refuse("does not exist");
-    } else if (st.isSymbolicLink()) {
-        refuse("is a link");
-    } else if (!st.isFile()) {
-        refuse("is not a regular file");
-    }
+  const st = fs.lstatSync(candidate, { throwIfNoEntry: false });
+  if (st === undefined) {
+    if (!mayBeAbsent) refuse("does not exist");
+  } else if (st.isSymbolicLink()) {
+    refuse("is a link");
+  } else if (!st.isFile()) {
+    refuse("is not a regular file");
+  }
 
-    let real;
-    try {
-        real =
-            st === undefined
-                ? path.join(
-                      fs.realpathSync.native(path.dirname(candidate)),
-                      path.basename(candidate),
-                  )
-                : fs.realpathSync.native(candidate);
-    } catch (err) {
-        refuse(`could not be resolved (${err.code ?? err.message})`);
-    }
+  let real;
+  try {
+    real =
+      st === undefined
+        ? path.join(
+            fs.realpathSync.native(path.dirname(candidate)),
+            path.basename(candidate),
+          )
+        : fs.realpathSync.native(candidate);
+  } catch (err) {
+    refuse(`could not be resolved (${err.code ?? err.message})`);
+  }
 
-    const tmp = fs.realpathSync.native(os.tmpdir());
-    const relative = path.relative(tmp, real);
-    const [owner, ...rest] = relative.split(path.sep);
-    if (
-        path.isAbsolute(relative) ||
-        !owner.startsWith(TEST_DIR_PREFIX) ||
-        rest.length === 0
-    ) {
-        refuse(
-            `is not inside a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
-        );
-    }
-    return real;
+  const tmp = fs.realpathSync.native(os.tmpdir());
+  const relative = path.relative(tmp, real);
+  const [owner, ...rest] = relative.split(path.sep);
+  if (
+    path.isAbsolute(relative) ||
+    !owner.startsWith(TEST_DIR_PREFIX) ||
+    rest.length === 0
+  ) {
+    refuse(
+      `is not inside a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
+    );
+  }
+  return real;
 }
