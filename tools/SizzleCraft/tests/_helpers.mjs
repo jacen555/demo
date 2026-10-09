@@ -135,19 +135,26 @@ export function runScript(script, args, cwd, { env = {}, nodeArgs = [] } = {}) {
   };
 }
 
+/**
+ * The --import URL of tests/fixtures/<name>, its settings (if any) in the query string. Every
+ * preload is armed only by that string, so building it in one place keeps the encoding the same.
+ * `params` is anything URLSearchParams accepts; a repeated key needs the array-of-pairs form.
+ */
+export function fixtureUrl(name, params = {}) {
+  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', name));
+  url.search = new URLSearchParams(params).toString();
+  return url.href;
+}
+
 /** The loader that makes `import('playwright')` fail for one child process. */
-export const BLOCK_PLAYWRIGHT = pathToFileURL(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'block-playwright.mjs'),
-).href;
+export const BLOCK_PLAYWRIGHT = fixtureUrl('block-playwright.mjs');
 
 /**
  * The loader that swaps `msedge-tts` and `playwright` for deterministic fakes in one child
  * process, so the voice/remix --apply paths run with no network and no browser. Pass it as
  * `nodeArgs: ['--import', FAKE_AUDIO]`. See tests/fixtures/fake-audio.mjs.
  */
-export const FAKE_AUDIO = pathToFileURL(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-audio.mjs'),
-).href;
+export const FAKE_AUDIO = fixtureUrl('fake-audio.mjs');
 
 /**
  * The --import URL of a preload that creates `target` (holding `body`) inside the child's
@@ -157,9 +164,7 @@ export const FAKE_AUDIO = pathToFileURL(
  * See tests/fixtures/plant-on-marker.mjs.
  */
 export function plantOnMarker({ marker, target, body }) {
-  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plant-on-marker.mjs'));
-  url.search = new URLSearchParams({ marker, target, body }).toString();
-  return url.href;
+  return fixtureUrl('plant-on-marker.mjs', { marker, target, body });
 }
 
 /**
@@ -168,9 +173,7 @@ export function plantOnMarker({ marker, target, body }) {
  * makeProject/makeOutsideDir directory. See tests/fixtures/refuse-unlink.mjs.
  */
 export function refuseUnlink({ dir, fragment }) {
-  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'refuse-unlink.mjs'));
-  url.search = new URLSearchParams({ dir, fragment }).toString();
-  return url.href;
+  return fixtureUrl('refuse-unlink.mjs', { dir, fragment });
 }
 
 /**
@@ -180,9 +183,7 @@ export function refuseUnlink({ dir, fragment }) {
  * directory. See tests/fixtures/fail-close.mjs.
  */
 export function failClose({ dir, fragment }) {
-  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-close.mjs'));
-  url.search = new URLSearchParams({ dir, fragment }).toString();
-  return url.href;
+  return fixtureUrl('fail-close.mjs', { dir, fragment });
 }
 
 /**
@@ -191,9 +192,7 @@ export function failClose({ dir, fragment }) {
  * `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/zero-file-ids.mjs.
  */
 export function zeroFileIds({ dir }) {
-  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'zero-file-ids.mjs'));
-  url.search = new URLSearchParams({ dir }).toString();
-  return url.href;
+  return fixtureUrl('zero-file-ids.mjs', { dir });
 }
 
 /** The line zero-file-ids.mjs writes once armed, which a test asserts so the IDs were really withheld. */
@@ -205,9 +204,7 @@ export const ZERO_FILE_IDS_ARMED = /^zero-file-ids: armed — inode 0 for every 
  * stderr. `dir` must be a makeProject/makeOutsideDir directory. See tests/fixtures/fail-lstat.mjs.
  */
 export function failLstat({ dir, names }) {
-  const url = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fail-lstat.mjs'));
-  url.search = new URLSearchParams([['dir', dir], ...names.map((name) => ['name', name])]).toString();
-  return url.href;
+  return fixtureUrl('fail-lstat.mjs', [['dir', dir], ...names.map((name) => ['name', name])]);
 }
 
 /** The line fail-lstat.mjs writes once armed, which a test asserts so the failure was really staged. */

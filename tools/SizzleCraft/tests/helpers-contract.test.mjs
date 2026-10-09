@@ -8,7 +8,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { assertCleanExit } from './_helpers.mjs';
+import { fileURLToPath } from 'node:url';
+
+import { assertCleanExit, fixtureUrl } from './_helpers.mjs';
 
 const ran = (code, all) => ({ code, all });
 
@@ -69,5 +71,26 @@ describe('assertCleanExit sees every stack frame shape, not only parenthesised o
   // check cannot quietly become the only thing the helper tests.
   test('assertCleanExit_theWrongExitCodeWithCleanOutput_isStillRefused', () => {
     assert.throws(() => assertCleanExit(ran(1, 'error: refused\n'), 2), /expected exit 2, got 1/);
+  });
+});
+
+// Every preload is armed by the query string of this URL alone, so its shape is the contract.
+describe('fixtureUrl builds the --import URL a preload is armed by', () => {
+  test('fixtureUrl_givenOnlyAName_isTheBareFileUrlOfThatFixture', () => {
+    const url = new URL(fixtureUrl('fake-audio.mjs'));
+    assert.equal(url.search, '', 'a preload with no settings must not carry a "?"');
+    assert.match(fileURLToPath(url), /[\\/]tests[\\/]fixtures[\\/]fake-audio\.mjs$/);
+  });
+
+  test('fixtureUrl_givenSettingsWithReservedCharacters_roundTripsThemThroughTheQueryString', () => {
+    const settings = { dir: 'C:\\a b\\c&d=e', fragment: 'x?y#z' };
+    const params = new URL(fixtureUrl('fail-close.mjs', settings)).searchParams;
+    assert.deepEqual(Object.fromEntries(params), settings);
+  });
+
+  test('fixtureUrl_givenARepeatedKeyAsPairs_keepsEveryValueInOrder', () => {
+    const params = new URL(fixtureUrl('fail-lstat.mjs', [['dir', 'd'], ['name', 'a'], ['name', 'b']])).searchParams;
+    assert.deepEqual(params.getAll('name'), ['a', 'b']);
+    assert.equal(params.get('dir'), 'd');
   });
 });
