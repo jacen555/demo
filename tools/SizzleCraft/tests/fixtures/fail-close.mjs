@@ -22,36 +22,22 @@
 // prove the failure was staged rather than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { TEST_DIR_PREFIX } from "./suite-owned-path.mjs";
+import fs from 'node:fs';
+import path from 'node:path';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
-const fragment = params.get("fragment");
-if (!params.get("dir") || !fragment)
-    throw new Error("fail-close: its --import URL must carry dir and fragment");
-const dir = fs.realpathSync.native(params.get("dir"));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (
-    path.dirname(dir) !== tmp ||
-    !path.basename(dir).startsWith(TEST_DIR_PREFIX)
-) {
-    throw new Error(
-        `fail-close: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
-    );
-}
+const fragment = params.get('fragment');
+if (!params.get('dir') || !fragment) throw new Error('fail-close: its --import URL must carry dir and fragment');
+const dir = requireTestOwnedDir(params.get('dir'), 'fail-close');
 
 // Checked after the open has succeeded, so it must not throw: that would leak the descriptor.
 const staged = (name) => {
-    try {
-        return (
-            path.basename(name).includes(fragment) &&
-            fs.realpathSync.native(path.dirname(name)) === dir
-        );
-    } catch {
-        return false;
-    }
+  try {
+    return path.basename(name).includes(fragment) && fs.realpathSync.native(path.dirname(name)) === dir;
+  } catch {
+    return false;
+  }
 };
 
 // A descriptor number open has just returned is not open under any other name, so an entry
@@ -59,22 +45,19 @@ const staged = (name) => {
 const opened = new Map();
 const openSync = fs.openSync;
 fs.openSync = (candidate, ...rest) => {
-    const fd = openSync(candidate, ...rest);
-    const name = String(candidate);
-    if (staged(name)) opened.set(fd, name);
-    else opened.delete(fd);
-    return fd;
+  const fd = openSync(candidate, ...rest);
+  const name = String(candidate);
+  if (staged(name)) opened.set(fd, name);
+  else opened.delete(fd);
+  return fd;
 };
 
 const closeSync = fs.closeSync;
 fs.closeSync = (fd, ...rest) => {
-    const name = opened.get(fd);
-    if (name === undefined) return closeSync(fd, ...rest);
-    opened.delete(fd);
-    closeSync(fd, ...rest);
-    process.stderr.write(`fail-close: failed the close of ${name}\n`);
-    throw Object.assign(new Error(`EIO: i/o error, close '${name}'`), {
-        code: "EIO",
-        syscall: "close",
-    });
+  const name = opened.get(fd);
+  if (name === undefined) return closeSync(fd, ...rest);
+  opened.delete(fd);
+  closeSync(fd, ...rest);
+  process.stderr.write(`fail-close: failed the close of ${name}\n`);
+  throw Object.assign(new Error(`EIO: i/o error, close '${name}'`), { code: 'EIO', syscall: 'close' });
 };

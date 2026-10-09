@@ -387,7 +387,11 @@ elseif ($Language -eq 'node') {
   },
   "scripts": {
     "test": "node --test",
-    "format": "npx prettier --write ."
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.9"
   }
 }
 "@

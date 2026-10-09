@@ -18,46 +18,28 @@
 // FAIL_RENAME_DEST environment variable. This one matches the SOURCE against a fragment and
 // is bounded to a suite-owned directory. Two streams independently created a fixture called
 // fail-rename.mjs and collided on merge; the names now say which end each one matches.
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { TEST_DIR_PREFIX } from "./suite-owned-path.mjs";
+import fs from 'node:fs';
+import path from 'node:path';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
-const fragment = params.get("fragment");
-if (!params.get("dir") || !fragment) {
-    throw new Error(
-        "fail-rename: its --import URL must carry dir and fragment",
-    );
+const fragment = params.get('fragment');
+if (!params.get('dir') || !fragment) {
+  throw new Error('fail-rename: its --import URL must carry dir and fragment');
 }
-const dir = fs.realpathSync.native(params.get("dir"));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (
-    path.dirname(dir) !== tmp ||
-    !path.basename(dir).startsWith(TEST_DIR_PREFIX)
-) {
-    throw new Error(
-        `fail-rename: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
-    );
-}
+const dir = requireTestOwnedDir(params.get('dir'), 'fail-rename');
 
 let failed = false;
 const renameSync = fs.renameSync;
 fs.renameSync = (from, ...rest) => {
-    const targeted =
-        typeof from === "string" &&
-        from.includes(fragment) &&
-        path.dirname(path.resolve(from)) === dir;
-    if (failed || !targeted) return renameSync(from, ...rest);
-    failed = true;
-    process.stderr.write(
-        `fail-rename: failed the rename of ${path.resolve(from)}\n`,
-    );
-    const err = new Error(`EPERM: operation not permitted, rename '${from}'`);
-    err.code = "EPERM";
-    throw err;
+  const targeted =
+    typeof from === 'string' && from.includes(fragment) && path.dirname(path.resolve(from)) === dir;
+  if (failed || !targeted) return renameSync(from, ...rest);
+  failed = true;
+  process.stderr.write(`fail-rename: failed the rename of ${path.resolve(from)}\n`);
+  const err = new Error(`EPERM: operation not permitted, rename '${from}'`);
+  err.code = 'EPERM';
+  throw err;
 };
 
-process.stderr.write(
-    `fail-rename: armed — the first rename of ${fragment}* inside ${dir} fails\n`,
-);
+process.stderr.write(`fail-rename: armed — the first rename of ${fragment}* inside ${dir} fails\n`);

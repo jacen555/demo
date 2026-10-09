@@ -30,7 +30,8 @@ languages:
     constitution: "IV / PowerShell"
   node:
     test: node --test
-    format: npx prettier --write .
+    format: npm run format
+    format_check: npm run format:check
     constitution: "IV / JavaScript / Node.js"
     rationale: >
       Permitted where the ecosystem is the reason for the work — headless browser
@@ -278,4 +279,3 @@ domains:
       RETAINED, not retired: it is the provenance for every rubric rule and for the
       backtest figures the OBJ-07 tolerance rests on, and rubric rules cite it by commit.
       Excluded from Forge.sln; nothing outside spike/ depends on it.
-

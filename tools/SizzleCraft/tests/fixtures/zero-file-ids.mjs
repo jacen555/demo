@@ -31,63 +31,43 @@
 // rather than passing because they never were.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { TEST_DIR_PREFIX } from "./suite-owned-path.mjs";
+import fs from 'node:fs';
+import path from 'node:path';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
-if (!params.get("dir"))
-    throw new Error("zero-file-ids: its --import URL must carry dir");
-const dir = fs.realpathSync.native(params.get("dir"));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (
-    path.dirname(dir) !== tmp ||
-    !path.basename(dir).startsWith(TEST_DIR_PREFIX)
-) {
-    throw new Error(
-        `zero-file-ids: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
-    );
-}
+if (!params.get('dir')) throw new Error('zero-file-ids: its --import URL must carry dir');
+const dir = requireTestOwnedDir(params.get('dir'), 'zero-file-ids');
 
 // Whether `candidate` names something strictly inside the directory. Its parent is
 // resolved, not the path itself, so a link inside the directory counts wherever it points:
 // it is the name the caller asked about. Asked for every stat, so it must not throw.
 const inside = (candidate) => {
-    if (typeof candidate !== "string" || candidate === "") return false;
-    const abs = path.resolve(candidate);
-    let parent;
-    try {
-        parent = fs.realpathSync.native(path.dirname(abs));
-    } catch {
-        return false;
-    }
-    const relative = path.relative(dir, path.join(parent, path.basename(abs)));
-    return (
-        relative !== "" &&
-        !relative.startsWith("..") &&
-        !path.isAbsolute(relative)
-    );
+  if (typeof candidate !== 'string' || candidate === '') return false;
+  const abs = path.resolve(candidate);
+  let parent;
+  try {
+    parent = fs.realpathSync.native(path.dirname(abs));
+  } catch {
+    return false;
+  }
+  const relative = path.relative(dir, path.join(parent, path.basename(abs)));
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
 
 const withoutId = (st) => {
-    if (
-        st !== undefined &&
-        st !== null &&
-        typeof st === "object" &&
-        "ino" in st
-    ) {
-        st.ino = typeof st.ino === "bigint" ? 0n : 0;
-    }
-    return st;
+  if (st !== undefined && st !== null && typeof st === 'object' && 'ino' in st) {
+    st.ino = typeof st.ino === 'bigint' ? 0n : 0;
+  }
+  return st;
 };
 
-for (const name of ["lstatSync", "statSync"]) {
-    const real = fs[name];
-    fs[name] = (candidate, ...rest) => {
-        const st = real(candidate, ...rest);
-        return inside(candidate) ? withoutId(st) : st;
-    };
+for (const name of ['lstatSync', 'statSync']) {
+  const real = fs[name];
+  fs[name] = (candidate, ...rest) => {
+    const st = real(candidate, ...rest);
+    return inside(candidate) ? withoutId(st) : st;
+  };
 }
 
 // A number fs.openSync has just returned is open under no other name, so an entry still
@@ -97,22 +77,20 @@ for (const name of ["lstatSync", "statSync"]) {
 const opened = new Set();
 const openSync = fs.openSync;
 fs.openSync = (candidate, ...rest) => {
-    const fd = openSync(candidate, ...rest);
-    if (inside(candidate)) opened.add(fd);
-    else opened.delete(fd);
-    return fd;
+  const fd = openSync(candidate, ...rest);
+  if (inside(candidate)) opened.add(fd);
+  else opened.delete(fd);
+  return fd;
 };
 const closeSync = fs.closeSync;
 fs.closeSync = (fd, ...rest) => {
-    opened.delete(fd);
-    return closeSync(fd, ...rest);
+  opened.delete(fd);
+  return closeSync(fd, ...rest);
 };
 const fstatSync = fs.fstatSync;
 fs.fstatSync = (fd, ...rest) => {
-    const st = fstatSync(fd, ...rest);
-    return opened.has(fd) ? withoutId(st) : st;
+  const st = fstatSync(fd, ...rest);
+  return opened.has(fd) ? withoutId(st) : st;
 };
 
-process.stderr.write(
-    `zero-file-ids: armed — inode 0 for every path inside ${dir}\n`,
-);
+process.stderr.write(`zero-file-ids: armed — inode 0 for every path inside ${dir}\n`);
