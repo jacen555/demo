@@ -875,6 +875,132 @@ measurement" — tidier, and false.** A future reader would have learned *the or
 specs badly* instead of *this ceiling is invisible until you measure a derived string*.
 Self-criticism is a claim about the record and has to be as accurate as any other.
 
+## "I was fixing citations, not the claim" — 2026-10-08
+
+A stream fixing the `D1_SCAN_TIMEOUT_MS` misdiagnosis took **eleven review rounds, six of
+them FAIL**, to remove one false claim. Its own count of that claim's instances: **twelve.**
+Three it wrote inside the fix; **nine the reviewer found after it had "fixed" it.**
+
+The claim propagated through: the refusal message → the branch condition → a capitalised
+headline two lines under the sentence that qualified it → **its own hedges** → a file header
+→ a doc comment → assertion messages → **a test name** → the statement of the contract in the
+suite header.
+
+> **Every round I fixed the line the reviewer cited and left the same claim standing in the
+> prose around it. I was fixing citations, not the claim.**
+
+Three rules fall out of it:
+
+- **A hedge can be a closed set.** Its qualifiers — *"in that pattern, or past it"*, *"the two
+  causes"* — read as caution and silently excluded cases (stopping *between* matches;
+  startup, compilation, writing output). **A qualifier that enumerates is an assertion
+  wearing a hedge's clothes.**
+- **A PASS does not make a true finding stop being true.** Round 11 passed *with* two Medium
+  findings. It fixed them anyway. Those were instances eleven and twelve.
+- **When you fix a mechanism, sweep the prose around it.** Nothing in this repo catches a
+  claim restated in a comment, a header or a test name — the CONSUMERS audit does it for
+  symbols only. That gap is now named twice in two days.
+
+### A timeout bounds cost; it cannot establish cause
+
+The orchestrator set the bar: the fix must call out a genuinely catastrophic pattern **and**
+not accuse an innocent one under load. The stream measured, and refused the bar:
+
+```
+A  (zz+)+$ against 'z'*50+'q', budget 5000 ms  -> EXIT 2, "...last index reported reaching was [0]"
+B  literal 'SAP path',         budget    1 ms  -> EXIT 2, "...stopped before it reported reaching any pattern"
+```
+
+**Byte-identical apart from the budget and the marker.** At the instant of a timeout,
+catastrophic backtracking and a busy machine are indistinguishable from outside. Calling A
+*catastrophic* would be the original defect with a better reputation.
+
+What shipped instead is a **discriminating procedure handed to the author**, measured in both
+directions: raise the budget to 60 s — the pathological pattern still fails at the same index
+after 60.3 s; the innocent one passes in 0.2 s. **The bar was incoherent and the orchestrator
+withdrew it.**
+
+### An entry-point guard that compares path strings
+
+`path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)` compares **strings**.
+Through a directory junction Node resolves `import.meta.url` through the link and leaves the
+junction spelling in `argv[1]`, so the guard fails to match and **the validator exits 0 having
+checked nothing**, with a planted `https://` entirely unreported. The worst failure a
+validator has. It was **removed**, not hardened — a guard whose only job is to let a test
+import one function is not worth that failure mode.
+
+**Its first regression test was a control that could not fail**: a case-flipped path keeps its
+spelling in *both* `argv[1]` and `import.meta.url`, so it matched and passed against the live
+defect. Only a junction reproduces it — found by running the neuter, not by reading.
+
+Three more remain live in different spellings: `coach-rulings.mjs:199`, `audio-probe.mjs:43`
+(`endsWith`, the weakest — a suffix match), `canonical-json.mjs:99`.
+
+### The axis is KIND, not DEPTH — and it argues against the task that found it
+
+The orchestrator could not reproduce a stream's claim that `fs.rmSync`'s built-in retry covers
+the *inner* path, and reported that honestly as a failure to reproduce rather than a
+refutation. The stream re-measured on both candidate axes:
+
+| hold | result |
+|---|---|
+| directory, at tree root | **EBUSY after 1 ms** |
+| directory, one level in | **EBUSY after 1 ms** |
+| exclusive handle on a **file**, at root | REMOVED after 4514 ms |
+| exclusive handle on a **file**, three deep | REMOVED after 4530 ms |
+
+**`fs.rmSync` rides out an EBUSY on a FILE at any depth and refuses to wait once on a
+DIRECTORY at any depth.** The original sentence — "retries inside the tree, rethrows at the
+root" — described **a depth boundary that does not exist**. The 1553 ms reading was real; it
+was a *file*, and never supported the sentence attached to it. *(The orchestrator's own file
+probe used a shareable read handle, which never blocked at all — both probes were right about
+what they actually did.)*
+
+**The consequence runs against the stream's own task:** the captured production failure was
+`unlink encoder-page.html` — **a FILE**, which the built-in option *would* have covered. The
+hand-rolled loop is justified by the directory case, not by the instance that started the
+task, and it had been citing that instance as proof of the general need.
+
+> **A measurement correction that nobody receives is a measurement correction that did not
+> happen.**
+
+It surfaced only because a `+19` vs `+18` test-count discrepancy would not close.
+
+## Three model families, one scope — what the diversity actually bought — 2026-10-08
+
+The user asked for a consolidation pass across multiple model families. Run as three
+independent read-only passes over the same `src/`, each forbidden to see the others' lists.
+
+**Round 1 (15,400 lines):** all three had partial coverage, and the divergence between them
+was explained by **coverage** — each found things in files the others had not read. Useful,
+but it means *"only one family saw it"* conflates **unique insight** with **only one looked**.
+
+**Round 2 (the three largest files, 3,360 lines, read end to end):** passes A and C produced
+findings with **zero overlap**. Same files, same brief, same bar — *different attention*. That
+is perception diversity, and it cannot be bought by running one family longer.
+
+**The single most valuable output was a REFUSAL that corrected another family's finding.**
+C reported the diagram defaults as restated across three files, collapsible to constants.
+B opened the same code and refused it: the coordinate expressions are not equivalent.
+Measured:
+
+```
+builder    Number(n.x || 0)          "abc" -> NaN
+validator  Number(n.x ?? 0) || 0     "abc" -> 0        diverged on 1 of 12 inputs
+```
+
+**Both were right.** The literals *are* duplicated; the expressions are *not* interchangeable.
+The safe scope — extract the constants, do not unify the expressions — exists only in the
+combination. One family alone gives a confident wrong answer or nothing.
+
+**Every pass stated its coverage honestly and unprompted when asked**, including "I searched
+rather than read" and "my silence on these nine files means I did not look hard enough to have
+an opinion — do not read it as clean." That honesty is what made the comparison usable at all.
+
+**Operational note:** all five sessions went idle *without sending their reports*. Finishing
+the work is not reporting it, and a report that is never sent is indistinguishable from a pass
+that found nothing.
+
 ## How a green suite lies — the 2026-10-05 measurement rules
 
 Eight rules, each earned by a defect that survived a green test. They belong together

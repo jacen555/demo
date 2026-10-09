@@ -818,10 +818,14 @@ function resolveWordRate(timing, projectDir, elsewhere = null) {
   // `??` treats a PRESENT null as missing, so `{"wpsSafetyMargin": null}` silently took
   // the default and the run could still pass. An absent property and a present invalid
   // one are different facts; only the first is safe to substitute a default for.
-  const margin = Object.hasOwn(intake, 'wpsSafetyMargin')
+  //
+  // Asked once and reused: the same `Object.hasOwn` decided both the value and the
+  // "was it configured" flag, written out twice. Two readings of one fact can only ever
+  // agree or be a bug.
+  const marginConfigured = Object.hasOwn(intake, 'wpsSafetyMargin');
+  const margin = marginConfigured
     ? requireFiniteNumber(intake.wpsSafetyMargin, { name: 'intake.wpsSafetyMargin', min: 0.01, max: 1 })
     : 0.95;
-  const marginConfigured = Object.hasOwn(intake, 'wpsSafetyMargin');
 
   if (observed !== null) {
     const aggregate = observed.aggregate;
