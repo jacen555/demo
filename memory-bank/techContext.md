@@ -88,7 +88,7 @@ Projects are added to the solution by the `scaffold-domain` skill, not by hand.
 | Item | Value |
 |---|---|
 | Builder, planner and researcher (§VIII) | The **highest-version Claude** available. Temporarily resolved as `claude-sonnet-5.5` on 2026-10-09 because Opus was unavailable; the user chose Sonnet 5.5 over Haiku 5.5. Re-resolve when Opus returns or a higher Claude version appears. |
-| Reviewer (§VIII) | The **highest-version GPT** available. Resolved as `gpt-6-sol` on 2026-09-28. The user chose it over `gpt-6-astra` and `gpt-6-luna`, which share version 6 |
+| Reviewer (§VIII) | The **highest-version GPT** available. Resolved as `gpt-6.1-sol` on 2026-10-09; it supersedes the prior `gpt-6-sol` choice because version 6.1 is unambiguously higher than 6.0. |
 | Resolution rule | Pin the family, not the version. Re-resolve when a higher version ships; when "highest" is ambiguous, ask the user and record the answer here with its date. Never cross families, which would collapse review independence. |
 | Exception | The video-coach backtest runs on `gpt-6-sol` because its protocol fixed that model before it ran (§VIII: a pre-registered experiment keeps its model) |
 
