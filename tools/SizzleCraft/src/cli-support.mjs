@@ -26,12 +26,64 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { canonicalBytes } from './canonical-json.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
 
 /** Links followed before a path is declared unresolvable. */
 const MAX_LINK_DEPTH = 40;
+
+/**
+ * Was this module the thing the user executed, rather than something imported?
+ *
+ * A module that both exports functions and runs as a CLI has to know. Three modules here
+ * each answered it with their own string comparison — `path.resolve` vs `fileURLToPath`,
+ * `endsWith`, and `pathToFileURL().href` — and all three were wrong the same way.
+ *
+ * NODE DOES NOT GIVE THE TWO SIDES THE SAME SPELLING. `process.argv[1]` keeps whatever the
+ * caller typed; `import.meta.url` is resolved through to the real file. So any path that
+ * reaches the same file by another spelling — a directory junction, a symlink, a mapped
+ * drive, a UNC path, an 8.3 short name — makes every such comparison false. The CLI block
+ * is then skipped and THE TOOL EXITS 0 HAVING DONE NOTHING, which for a validator or a
+ * hashing backbone is indistinguishable from a clean pass. Measured through a junction:
+ * all three printed nothing and exited 0 on `--help`.
+ *
+ * So do not compare spellings — ask the filesystem whether the two paths ARE the same
+ * file. Device + inode is the identity Windows and POSIX both expose, and it is immune to
+ * every spelling above because the resolution happens in the OS rather than in a regex.
+ *
+ * `endsWith` deserves its own note: it could also match a SUFFIX, so a differently-rooted
+ * path could satisfy it and run the CLI when it should not. It failed open as well as shut.
+ *
+ * WHAT THIS DOES NOT DO:
+ *   a. It does not use `import.meta.main`, which is undefined before Node 24. This engine
+ *      pins `node >=22`, where reading it yields `undefined` — falsy — so a CLI guarded by
+ *      it would silently never run. That is the same silent-success failure, so it is not
+ *      used until the floor moves.
+ *   b. It does not tell an executed module from one imported BY the executed module. It
+ *      answers only "is this file the entry point", which is the question the call sites
+ *      actually ask.
+ *   c. It makes two `stat` calls per load of a dual-purpose module. That is deliberate:
+ *      the cost is bounded and paid once, and the alternative was a wrong answer.
+ *
+ * @param {string} importMetaUrl the caller's own `import.meta.url`
+ * @returns {boolean} true only when the filesystem says both paths are the same file
+ */
+export function isEntryPoint(importMetaUrl) {
+  const entry = process.argv[1];
+  if (!entry) return false; // `node -e`, the REPL: there is no entry script to be.
+  const identity = (p) => {
+    try {
+      const s = fs.statSync(p, { bigint: true });
+      return `${s.dev}:${s.ino}`;
+    } catch {
+      return null;
+    }
+  };
+  const self = identity(fileURLToPath(importMetaUrl));
+  return self !== null && self === identity(entry);
+}
 
 /**
  * Exit-code contract. Every script in this engine uses these and nothing else.
