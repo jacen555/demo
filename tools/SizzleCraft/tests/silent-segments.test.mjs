@@ -3220,7 +3220,7 @@ describe('the entry rule has exactly one statement, and its consumers are enumer
       assert.ok(line, `${owner} must carry a "CONSUMERS(${symbol}):" line naming every module that imports it`);
       const declared = line[1].trim() === 'none' ? [] : line[1].split(',').map((s) => s.trim()).filter(Boolean);
 
-      const importFrom = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'\\./${owner.replace('.', '\\.')}'`, 's');
+      const importFrom = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"]\\./${owner.replace('.', '\\.')}['"]`, 's');
       const actual = fs
         .readdirSync(srcDir)
         .filter((f) => f.endsWith('.mjs') && f !== owner)
