@@ -12,46 +12,46 @@ ledger. **Read that skill before driving this engine.**
 ## What it was built to do
 
 Two narrated demos were produced with bespoke tooling kept under
-`~/SizzleCraft/<project>/`. The pipeline worked well; the *packaging* did not. Each
+`~/SizzleCraft/<project>/`. The pipeline worked well; the _packaging_ did not. Each
 project got its own copy of the engine, and they drifted:
 
-| | |
-|---|---|
-| Scripts in project A | 40 |
-| Scripts in project B | 15 |
-| Shared names | 14 |
+|                           |                 |
+| ------------------------- | --------------- |
+| Scripts in project A      | 40              |
+| Scripts in project B      | 15              |
+| Shared names              | 14              |
 | **Byte-identical copies** | **9 (~124 KB)** |
-| Diverged | 5 |
+| Diverged                  | 5               |
 
 This domain is those 9 identical scripts, extracted once so there is a single
 place to fix a bug.
 
 ## What's here
 
-| Script | Stage | Role |
-|---|---|---|
-| `canonical-json.mjs` | — | Deterministic JSON serialiser. **The hashing backbone** — `remix` and `voice` use it for cache keys, so changing its output silently invalidates every stored timing hash. |
-| `cli-support.mjs` | — | Shared exit-code contract, **link-following path confinement** (ported from `libs/EvalEngine`'s `PathBoundary`), a separate wipe-target rule for the one directory that gets recursively deleted, `--help`-before-I/O argument parsing, and the input validators every guard depends on. Side-effect free, so it is unit-tested directly. |
-| `remux-verify.mjs` | S8/S9 | The video-stream verdict for the cheap remux path. Parses ffmpeg's `MD5=` line rather than comparing raw strings — equal-but-unparsed output is not evidence either digest was computed. |
-| `write-storyboard.mjs` | S2 | Emits `storyboard.html`. Lede text comes from `project.lede`. |
-| `voice.mjs` | S3 | TTS synthesis via `msedge-tts` → per-segment MP3. |
-| `silence-gen.mjs`, `silence-asset.mjs` | S4 | Generate silence assets. `silence-gen` is the standalone generator for a file the caller names; `voice` and `remix` no longer spawn it — they write their lead-in, gap and outro silence in-process. All three take their bytes from `silent-segment.mjs`, so none can drift from the silence `concat-audio` generates. |
-| `silent-segment.mjs` | — | **What a deliberately silent segment is**, in one place: the `segments[].silence` declaration, its validation, its authored duration, the frame-aligned silence generator (and the pause-asset rules `voice` and `remix` share with `silence-gen`), the check that a narrated record holds measured words, and the calibration builder that keeps zero-word segments out of the word-rate maths. Side-effect free, so it is unit-tested directly. |
-| `silence-scan.mjs` | S4 | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5). |
-| `remix.mjs`, `concat-audio.mjs` | S4 | Solves perceived gaps and concatenates without re-synthesising. Narrated clips are reused as they are; a declared silent segment's audio is generated from its **current** authored window and never taken from a clip, so a silence edit needs no re-voice. Both refuse a narrated segment whose record names its clip but holds no measured words — arranging audio cannot create speech. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip, which is also why a project that names no clips in `audio.file` is refused once a segment is silent while another is narrated; where every segment is silent, each window is generated. |
-| `vo-envelope.mjs` | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one. |
-| `envelope-ducking.mjs` | — | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, the threshold solve, and the bed's ducking record (`<bed>.duck.json`). Side-effect free apart from `publishBedDuckRecord`, which writes that record; unit-tested directly. |
-| `write-build-html.mjs` | S5 | Builds the renderable scene. The big one — 65 KB. |
-| `validate-scene.mjs` | S5/S6 | Refuses an unrenderable scene **before** capture: trigger targets that resolve to nothing, declared elements nothing ever reveals, edges drawn to endpoints that do not exist yet, diagram geometry that letterboxes or overlaps, and content a project has declared it will not ship. Pure data over `timing.json` — no browser, no ffmpeg, no frames — so it trades a capture that costs minutes for a read that does not (an 8-segment project measured 227 ms; a no-go scan that does not finish is stopped at 5 s — raise `SIZZLECRAFT_SCAN_TIMEOUT_MS` on a loaded machine — so the ceiling is bounded rather than fast; being stopped records that the scan did not finish, and is deliberately **not** read as proof that any particular pattern is slow). Whether a trigger reveals its target depends on its **payload**, not its action name, so the rules are transcribed from `write-build-html`'s runtime branch by branch rather than inferred from the action list. |
-| `frame-capture.mjs` | S6 | Headless-browser frame capture with dedup. **The long pole.** |
-| `encode-mp4.mjs`, `append-outro.mjs` | S7 | Frames → MP4, plus end-card append. |
-| `make-music.mjs` | S8 | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). Ducks from the shared model in `envelope-ducking.mjs`, so the synthesised and in-graph ducks cannot drift apart. |
-| `remux-music.mjs` | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. Optional in-graph sidechain duck for a licensed bed (`--duck-db`). |
-| `preview.mjs`, `preview-seg.mjs` | — | Segment previews before committing to a full render. `preview.mjs` publishes a **binding record** last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256. |
-| `coach-pack.mjs` | — | Collects the exact input set the **video coach** may read and writes a hash manifest its report must cite. Pass 1 is the script; pass 2 adds timing, storyboard, stills and the audit transcript. Refuses a still whose binding record does not match — and refuses the **absence** of a record, because "no record" must never read as "nothing wrong". |
-| `coach-rulings.mjs` | — | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false-alarm and taste collapse. The key hashes the sentence a finding quotes, so **rewording that sentence re-opens the finding** rather than silencing it. |
-| `astats-levels.mjs` | — | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly. |
-| `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | — | Verification. |
+| Script                                                       | Stage | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canonical-json.mjs`                                         | —     | Deterministic JSON serialiser. **The hashing backbone** — `remix` and `voice` use it for cache keys, so changing its output silently invalidates every stored timing hash.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `cli-support.mjs`                                            | —     | Shared exit-code contract, **link-following path confinement** (ported from `libs/EvalEngine`'s `PathBoundary`), a separate wipe-target rule for the one directory that gets recursively deleted, `--help`-before-I/O argument parsing, and the input validators every guard depends on. Side-effect free, so it is unit-tested directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `remux-verify.mjs`                                           | S8/S9 | The video-stream verdict for the cheap remux path. Parses ffmpeg's `MD5=` line rather than comparing raw strings — equal-but-unparsed output is not evidence either digest was computed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `write-storyboard.mjs`                                       | S2    | Emits `storyboard.html`. Lede text comes from `project.lede`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `voice.mjs`                                                  | S3    | TTS synthesis via `msedge-tts` → per-segment MP3.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `silence-gen.mjs`, `silence-asset.mjs`                       | S4    | Generate silence assets. `silence-gen` is the standalone generator for a file the caller names; `voice` and `remix` no longer spawn it — they write their lead-in, gap and outro silence in-process. All three take their bytes from `silent-segment.mjs`, so none can drift from the silence `concat-audio` generates.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `silent-segment.mjs`                                         | —     | **What a deliberately silent segment is**, in one place: the `segments[].silence` declaration, its validation, its authored duration, the frame-aligned silence generator (and the pause-asset rules `voice` and `remix` share with `silence-gen`), the check that a narrated record holds measured words, and the calibration builder that keeps zero-word segments out of the word-rate maths. Side-effect free, so it is unit-tested directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `silence-scan.mjs`                                           | S4    | Measures head/tail silence by **decoding**, not from synthesis metadata (see bug ledger entry 5).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `remix.mjs`, `concat-audio.mjs`                              | S4    | Solves perceived gaps and concatenates without re-synthesising. Narrated clips are reused as they are; a declared silent segment's audio is generated from its **current** authored window and never taken from a clip, so a silence edit needs no re-voice. Both refuse a narrated segment whose record names its clip but holds no measured words — arranging audio cannot create speech. `concat-audio` reads `timing.json` as the authority — a directory glob cannot tell a deliberately silent segment from a missing clip, which is also why a project that names no clips in `audio.file` is refused once a segment is silent while another is narrated; where every segment is silent, each window is generated.                                                                                                                                                                                                                                                           |
+| `vo-envelope.mjs`                                            | S4/S8 | Narration amplitude envelope, used to drive sidechain ducking. Bound to the audio it measured; consumers refuse a stale one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `envelope-ducking.mjs`                                       | —     | **What an envelope is bound to, and what is ducked from it**, in one place: the input fingerprint and its four lineage states, the one-pole gain trajectory both ducking paths share, the threshold solve, and the bed's ducking record (`<bed>.duck.json`). Side-effect free apart from `publishBedDuckRecord`, which writes that record; unit-tested directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `write-build-html.mjs`                                       | S5    | Builds the renderable scene. The big one — 65 KB.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `validate-scene.mjs`                                         | S5/S6 | Refuses an unrenderable scene **before** capture: trigger targets that resolve to nothing, declared elements nothing ever reveals, edges drawn to endpoints that do not exist yet, diagram geometry that letterboxes or overlaps, and content a project has declared it will not ship. Pure data over `timing.json` — no browser, no ffmpeg, no frames — so it trades a capture that costs minutes for a read that does not (an 8-segment project measured 227 ms; a no-go scan that does not finish is stopped at 5 s — raise `SIZZLECRAFT_SCAN_TIMEOUT_MS` on a loaded machine — so the ceiling is bounded rather than fast; being stopped records that the scan did not finish, and is deliberately **not** read as proof that any particular pattern is slow). Whether a trigger reveals its target depends on its **payload**, not its action name, so the rules are transcribed from `write-build-html`'s runtime branch by branch rather than inferred from the action list. |
+| `frame-capture.mjs`                                          | S6    | Headless-browser frame capture with dedup. **The long pole.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `encode-mp4.mjs`, `append-outro.mjs`                         | S7    | Frames → MP4, plus end-card append.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `make-music.mjs`                                             | S8    | Generated ambient bed, nothing sampled. Named presets — `warm` (I-V-ii-IV in F) and `bright` (vi-IV-I-V in G). Ducks from the shared model in `envelope-ducking.mjs`, so the synthesised and in-graph ducks cannot drift apart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `remux-music.mjs`                                            | S8/S9 | **The cheap path.** Swaps the audio track and preserves the video stream byte-for-byte. Optional in-graph sidechain duck for a licensed bed (`--duck-db`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `preview.mjs`, `preview-seg.mjs`                             | —     | Segment previews before committing to a full render. `preview.mjs` publishes a **binding record** last, tying each still and its audit transcript to the `timing.json` and scene it shows by sha256.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `coach-pack.mjs`                                             | —     | Collects the exact input set the **video coach** may read and writes a hash manifest its report must cite. Pass 1 is the script; pass 2 adds timing, storyboard, stills and the audit transcript. Refuses a still whose binding record does not match — and refuses the **absence** of a record, because "no record" must never read as "nothing wrong".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `coach-rulings.mjs`                                          | —     | Matches a coach report against the project's committed `coach-rulings.json`. A finding ruled **valid stays open** as "ruled valid, still unfixed"; only waived, false-alarm and taste collapse. The key hashes the sentence a finding quotes, so **rewording that sentence re-opens the finding** rather than silencing it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `astats-levels.mjs`                                          | —     | Reads ffmpeg `astats` levels and classifies a window as **measured, silent, or unmeasurable**. Side-effect free, so it is unit-tested directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `check-levels.mjs`, `audio-probe.mjs`, `validate-timing.mjs` | —     | Verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Stage numbers refer to the pipeline contract in
 [`references/pipeline-contract.md`](../../.github/skills/demo-recording/references/pipeline-contract.md).
@@ -66,26 +66,26 @@ inferred:
 
 ```json
 {
-  "id": "intermission",
-  "startMs": 4000,
-  "endMs": 6000,
-  "voiceoverText": "",
-  "silence": { "caption": "[music]" }
+    "id": "intermission",
+    "startMs": 4000,
+    "endMs": 6000,
+    "voiceoverText": "",
+    "silence": { "caption": "[music]" }
 }
 ```
 
 **Why a declaration and not just empty text.** Before this existed, every duration in the
-engine was *produced by TTS*, so a segment with nothing to say had no clip and no
+engine was _produced by TTS_, so a segment with nothing to say had no clip and no
 duration — and looked exactly like a segment whose voice stage had not run yet. Both are
 "no `audio`". Those two states need opposite handling: a project that forgot to run the
 voice stage must fail, an intermission must render. The declaration separates them, and
 the old rule is untouched:
 
-| `silence` | `audio` | Meaning |
-|---|---|---|
-| present | present | A silent segment the voice stage has seen. Its clip is generated digital silence. `remix` (S4) regenerates its clip from the current window, and `concat-audio` (S4) generates the silence into the track from that window without using the clip, so a silence edit since then needs no re-voice. |
-| present | absent | A silent segment; the voice stage has not run. |
-| absent | absent | **The voice stage has not run. Still fails, exactly as before.** |
+| `silence` | `audio` | Meaning                                                                                                                                                                                                                                                                                            |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| present   | present | A silent segment the voice stage has seen. Its clip is generated digital silence. `remix` (S4) regenerates its clip from the current window, and `concat-audio` (S4) generates the silence into the track from that window without using the clip, so a silence edit since then needs no re-voice. |
+| present   | absent  | A silent segment; the voice stage has not run.                                                                                                                                                                                                                                                     |
+| absent    | absent  | **The voice stage has not run. Still fails, exactly as before.**                                                                                                                                                                                                                                   |
 
 **The duration is the window.** `endMs - startMs` is the authored duration and there is
 deliberately no `silence.durationMs` — two sources of truth for one number are free to
@@ -105,7 +105,7 @@ one in its own words first.
   fails four times with backoff). It generates the clip at the authored length, probes it,
   and reflows the timeline onto the probed value. No inter-segment gap is inserted at a
   seam touching a silent segment, and no lead-in before a leading one — the authored
-  silence *is* the pause.
+  silence _is_ the pause.
 - **concat-audio (S4)** fills the window with generated digital silence so the segment
   occupies its time in the voice track. This is the load-bearing one: omitting it moved
   every later segment earlier with no error. The silence is generated from the **current**
@@ -216,45 +216,46 @@ one in its own words first.
   player: that reading is Chromium's, and the `.srt` readings behind the refusal text
   come from two parsers that disagree with each other.
 
-  **What is refused depends on which source the cue text comes from**, because the three
-  sources do not carry the same risk. Measured by running the stage:
+    **What is refused depends on which source the cue text comes from**, because the three
+    sources do not carry the same risk. Measured by running the stage:
 
-  | Cue-text source | `-->` | U+0085 | the other six breaks |
-  |---|---|---|---|
-  | a silent segment's authored `caption` | refused | refused | refused |
-  | the raw measured `audio.words[].word` a cue falls back to where alignment fails | refused | refused | refused |
-  | `voiceoverText` (narration) | refused | refused | **not** refused |
+    | Cue-text source                                                                 | `-->`   | U+0085  | the other six breaks |
+    | ------------------------------------------------------------------------------- | ------- | ------- | -------------------- |
+    | a silent segment's authored `caption`                                           | refused | refused | refused              |
+    | the raw measured `audio.words[].word` a cue falls back to where alignment fails | refused | refused | refused              |
+    | `voiceoverText` (narration)                                                     | refused | refused | **not** refused      |
 
-  The narration row is narrower for a measured reason rather than an assumed one: six of
-  the seven — U+000A, U+000B, U+000C, U+000D, U+2028 and U+2029 — are split away as
-  whitespace before they reach a cue, while `U+0085` is not matched by JS `\s` at all and
-  does reach cue text, so it is refused. A measured word gets no such split, which is why
-  all seven are refused there. The refusal names whichever source carries it, the
-  narration alone where both do.
+    The narration row is narrower for a measured reason rather than an assumed one: six of
+    the seven — U+000A, U+000B, U+000C, U+000D, U+2028 and U+2029 — are split away as
+    whitespace before they reach a cue, while `U+0085` is not matched by JS `\s` at all and
+    does reach cue text, so it is refused. A measured word gets no such split, which is why
+    all seven are refused there. The refusal names whichever source carries it, the
+    narration alone where both do.
 
-  **The narration half runs twice, and the early one is the one that saves money.**
-  `voice.mjs` (S3) refuses narration holding `-->` or U+0085 **before it calls TTS at
-  all** — exit `2`, in the plan as well as under `--apply`, with no clip written — because
-  narration this engine will refuse to caption is narration nobody should pay to
-  synthesise. The S10 check stays and is still reachable, since `write-subtitles` also
-  runs against a committed timeline `voice` never saw; the same rule therefore exists at
-  two stages with two reaches, deliberately. The measured-word half cannot move earlier:
-  measured words do not exist until TTS has run. S10's refusal lands before either file is
-  written, so `.srt` is covered by the same gate. The spoken cue just
-  before it keeps its last word on screen until that word ends rather than stopping 40 ms
-  short, and never overlaps it; a measured word that runs into a silent window is refused,
-  naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter
-  than the last window names `remix` when the change is a silence edit — the last window is
-  a silent one, or an earlier silent window no longer holds the silence its record
-  describes — and when an earlier silent record names its clip but gives no usable length,
-  which `remix` rewrites. It names `voice` otherwise, including for a silent segment whose
-  record names no clip, which `remix` refuses — unless every segment is silent, when no
-  stage measures the timeline and it says to set `durationMs` by hand. A silent segment
-  whose `startMs` or `endMs` is not a number of milliseconds is an authored field to
-  correct by hand — never a re-voice. The message gives the bound that keeps the window
-  positive (`startMs` below `endMs`, `endMs` above `startMs`), names the other field as
-  well where no value of the bad one alone would do, and only after those edits, if they
-  change the window's length, names `remix` to reflow the timeline onto it.
+    **The narration half runs twice, and the early one is the one that saves money.**
+    `voice.mjs` (S3) refuses narration holding `-->` or U+0085 **before it calls TTS at
+    all** — exit `2`, in the plan as well as under `--apply`, with no clip written — because
+    narration this engine will refuse to caption is narration nobody should pay to
+    synthesise. The S10 check stays and is still reachable, since `write-subtitles` also
+    runs against a committed timeline `voice` never saw; the same rule therefore exists at
+    two stages with two reaches, deliberately. The measured-word half cannot move earlier:
+    measured words do not exist until TTS has run. S10's refusal lands before either file is
+    written, so `.srt` is covered by the same gate. The spoken cue just
+    before it keeps its last word on screen until that word ends rather than stopping 40 ms
+    short, and never overlaps it; a measured word that runs into a silent window is refused,
+    naming `remix` (the window moved) or `voice` (the narration did). A `durationMs` shorter
+    than the last window names `remix` when the change is a silence edit — the last window is
+    a silent one, or an earlier silent window no longer holds the silence its record
+    describes — and when an earlier silent record names its clip but gives no usable length,
+    which `remix` rewrites. It names `voice` otherwise, including for a silent segment whose
+    record names no clip, which `remix` refuses — unless every segment is silent, when no
+    stage measures the timeline and it says to set `durationMs` by hand. A silent segment
+    whose `startMs` or `endMs` is not a number of milliseconds is an authored field to
+    correct by hand — never a re-voice. The message gives the bound that keeps the window
+    positive (`startMs` below `endMs`, `endMs` above `startMs`), names the other field as
+    well where no value of the bad one alone would do, and only after those edits, if they
+    change the window's length, names `remix` to reflow the timeline onto it.
+
 - **write-chapters (S11)** gives it a chapter like any other segment, and routes a
   `durationMs` short of the last window, and a silent window field that is not a number,
   by the same rules, from `silent-segment.mjs`.
@@ -298,18 +299,18 @@ shell, which beats a value committed to `timing.json`, which beats what the engi
 when nobody said. A configured `0` is a **value**, not an absence — it survives to be
 validated and refused rather than being silently replaced by the default.
 
-| Knob | Config counterpart |
-|---|---|
-| `SIZZLECRAFT_FPS` | `timing.project.fps` |
-| `SIZZLECRAFT_MODE` | `timing.project.mode` (`draft` \| `live` \| `publish`) |
-| `SIZZLECRAFT_FRAME_FORMAT` | `timing.project.frameFormat` (`png` \| `jpeg`) |
-| `SIZZLECRAFT_JPEG_QUALITY` | `timing.project.jpegQuality` |
-| `SIZZLECRAFT_WORKERS` | — (auto-sized from core count) |
-| `SIZZLECRAFT_RESUME` | `--resume` |
-| `SIZZLECRAFT_NO_DEDUP` / `SIZZLECRAFT_DEDUP_HOLDS` | — |
-| `SIZZLECRAFT_OUTRO_MS` | `--ms` |
-| `SIZZLECRAFT_MUSIC_PRESET` | `--preset` (legacy `SIZZLE_MUSIC_PRESET` still read, canonical name wins) |
-| `SIZZLECRAFT_SCAN_TIMEOUT_MS` | — (default 5000; the `validate-scene` D1 no-go scan budget) |
+| Knob                                               | Config counterpart                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `SIZZLECRAFT_FPS`                                  | `timing.project.fps`                                                      |
+| `SIZZLECRAFT_MODE`                                 | `timing.project.mode` (`draft` \| `live` \| `publish`)                    |
+| `SIZZLECRAFT_FRAME_FORMAT`                         | `timing.project.frameFormat` (`png` \| `jpeg`)                            |
+| `SIZZLECRAFT_JPEG_QUALITY`                         | `timing.project.jpegQuality`                                              |
+| `SIZZLECRAFT_WORKERS`                              | — (auto-sized from core count)                                            |
+| `SIZZLECRAFT_RESUME`                               | `--resume`                                                                |
+| `SIZZLECRAFT_NO_DEDUP` / `SIZZLECRAFT_DEDUP_HOLDS` | —                                                                         |
+| `SIZZLECRAFT_OUTRO_MS`                             | `--ms`                                                                    |
+| `SIZZLECRAFT_MUSIC_PRESET`                         | `--preset` (legacy `SIZZLE_MUSIC_PRESET` still read, canonical name wins) |
+| `SIZZLECRAFT_SCAN_TIMEOUT_MS`                      | — (default 5000; the `validate-scene` D1 no-go scan budget)               |
 
 This is enforced, not merely documented:
 `envKnobs_everyDirectEnvironmentRead_goesThroughTheSharedResolver` in
@@ -321,7 +322,7 @@ file. It catches every **textual** form of the read: dotted (`process.env.X`), b
 (`process['env']['X']`), destructuring, aliasing that object (`const e = process.env`),
 an access split across lines, and any variable prefix — not just `SIZZLECRAFT_`.
 
-**What it does not catch, and why that is the right boundary.** Aliasing the *global*
+**What it does not catch, and why that is the right boundary.** Aliasing the _global_
 first — `const p = process; p.env.X` — defeats any purely textual rule, and closing that
 would need a real parser. This guard exists to stop a knob arriving by **copying a
 neighbour**, which is how all six of the current ones arrived; it is not a sandbox against
@@ -347,11 +348,12 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
 - `--replace` is additionally required to overwrite something that already exists.
 - **`--help` is handled before any work on every CLI in `src/`** — no file read, no
   process spawned, no browser launched. All of them route through `parseCli`, which
-  throws `HelpRequested` *before it returns*, so a script cannot fall through into its own
+  throws `HelpRequested` _before it returns_, so a script cannot fall through into its own
   I/O with help requested.
-  **26 of the 34 files are CLIs; the other 8 are side-effect-free modules** —
-  `astats-levels`, `cli-support`, `end-card`, `envelope-ducking`, `gain-pin`,
-  `mix-parameters`, `remux-verify`, `silent-segment` — which are imported rather than
+  **26 of the 38 files are CLIs; the other 12 are side-effect-free modules** —
+  `astats-levels`, `brand-palette`, `cli-support`, `diagram-defaults`,
+  `end-card`, `entry-point`, `envelope-ducking`, `gain-pin`, `mix-parameters`,
+  `remux-verify`, `scan-outcome`, `silent-segment` — which are imported rather than
   invoked and deliberately have no CLI. Giving them one would manufacture uniformity over
   a real distinction.
   This is swept rather than listed. `tests/cli-help-contract.test.mjs` enumerates `src/`
@@ -370,7 +372,7 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
   crashed parsing empty stdin, `silence-asset.mjs` threw at module scope, and
   `probe-render-capability.mjs` scanned argv with `indexOf` and so ignored the flag
   entirely. `silence-scan.mjs` needed a restructure rather than a guard: it launched a
-  headless Chromium at module scope *above* the argument read, so no parsing could precede
+  headless Chromium at module scope _above_ the argument read, so no parsing could precede
   it. Asking it for help cost a browser launch and then a stack trace; measured after the
   move, `--help` takes 3.3 s against 67.4 s for a real scan. A separate test proves no
   launch happens by making one impossible — `PLAYWRIGHT_BROWSERS_PATH` pointed at a
@@ -410,12 +412,12 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
 **Exit codes are an API.** Every script uses the same four, and a pipeline driver
 should check them — stage N+1 consuming stage N's output depends on it.
 
-| Code | Meaning |
-|---|---|
-| `0` | Success, or a plan produced successfully. The work was done. |
-| `1` | The work ran and the result is bad — a check failed, a hash mismatched, ffmpeg failed. |
-| `2` | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite, or, in the stages that classify it that way, a malformed timeline. |
-| `3` | **Skipped.** Another process holds the lock, so nothing was done. Not a success. |
+| Code | Meaning                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success, or a plan produced successfully. The work was done.                                                                                               |
+| `1`  | The work ran and the result is bad — a check failed, a hash mismatched, ffmpeg failed.                                                                     |
+| `2`  | Bad usage — invalid arguments, a path outside the project root, a missing prerequisite, or, in the stages that classify it that way, a malformed timeline. |
+| `3`  | **Skipped.** Another process holds the lock, so nothing was done. Not a success.                                                                           |
 
 `3` matters most. `frame-capture` and `encode-mp4` take a single-writer lock; when
 another run holds it they exit `3` rather than `0`, so a driver cannot mistake "someone
@@ -425,15 +427,15 @@ else is encoding" for "the encode is finished". A plan never takes the lock.
 Measured across seven stages, on two different bad files — one that will not parse, and one
 that parses but holds a `null` where a segment belongs:
 
-| stage | unparseable | `null` segment |
-|---|---|---|
-| `remix` | `2` | `2` |
-| `write-storyboard` | `2` | `2` |
-| `concat-audio` | `2` | `2` |
-| `frame-capture` | `2` | `2` |
-| `write-subtitles` | `1` | `1` |
-| `validate-timing` | `1` | `1` |
-| `write-chapters` | `1` | `1` |
+| stage              | unparseable | `null` segment |
+| ------------------ | ----------- | -------------- |
+| `remix`            | `2`         | `2`            |
+| `write-storyboard` | `2`         | `2`            |
+| `concat-audio`     | `2`         | `2`            |
+| `frame-capture`    | `2`         | `2`            |
+| `write-subtitles`  | `1`         | `1`            |
+| `validate-timing`  | `1`         | `1`            |
+| `write-chapters`   | `1`         | `1`            |
 
 **The split is not about the input — both columns are identical — so whatever decides it,
 it is not what is wrong with the file.** No rule is offered here for which stage lands
@@ -452,8 +454,8 @@ deliberately. `preview` treats a non-empty layout audit as a failure, matching
 `validate-scene` reads `knobs.json` from the project root when it is there; `--knobs`
 names one under a different name or subdirectory, still inside the project root. **No other
 stage defines or reads that file** — it is a convention of the projects, not an engine
-format — so those four checks are optional. A missing one is therefore *reported as NOT
-evaluated, rather than silently skipped*: the run prints
+format — so those four checks are optional. A missing one is therefore _reported as NOT
+evaluated, rather than silently skipped_: the run prints
 `knobs.json: ABSENT — 4 checks NOT evaluated` (naming whichever file you asked for) and keeps those four out of its evaluated count, because an absent
 manifest must never read as a clean bill of health. `calibration-observed.json` is treated
 the same way for the one check that needs measured audio. The stage also leaves the
@@ -466,8 +468,8 @@ entry is not one failed check; it makes the segment unreadable, so every check w
 report nonsense about it.
 
 **A silent window is a measurement, not a failure.** `check-levels` reports three states,
-not two: *measured*, *silent* (`-inf`, which is what astats correctly reports for this
-pipeline's deliberate ~2s lead-in), and *unmeasurable*. Only the third exits `1` for being
+not two: _measured_, _silent_ (`-inf`, which is what astats correctly reports for this
+pipeline's deliberate ~2s lead-in), and _unmeasurable_. Only the third exits `1` for being
 unreadable. Treating
 `-inf` as a failed probe made the last gate before delivery exit `1` on every correct
 narration-only render, and it named a cause — "the file may have no audio track" — that
@@ -480,7 +482,7 @@ all** was reported and passed. Each window is now judged after it is printed, an
 exits `1` when the **whole file is digital silence and audio was expected**. That is not a
 threshold: there is no number in it. A render with no sound anywhere in it has not
 delivered its narration, which is the wrong-`-map`/wrong-stream/dropped-audio class the mix
-registry's graph audit is blind to. A *window* of silence is still correct, and the lead-in
+registry's graph audit is blind to. A _window_ of silence is still correct, and the lead-in
 is checked for exactly that.
 
 The qualifier is load-bearing. `concat-audio` supports a timeline that is silent in **every**
@@ -495,16 +497,16 @@ remembers to arm is a check that does not run.
 
 **A peak bound was built, measured, and withdrawn — read this before adding one back.**
 The reasoning for it was sound-looking: `remux-music` limits every mix to `--ceiling` dB
-*below* full scale (`alimiter=limit=…:level=disabled`, `--ceiling` bounded 0.1..12), and a
+_below_ full scale (`alimiter=limit=…:level=disabled`, `--ceiling` bounded 0.1..12), and a
 correct `--ceiling 1.0` render measured **−0.23 dBFS** post-AAC, against **+2.01 dBFS** for
 the same material unlimited. Both of those readings were of one benign signal. Sweeping the
-*material* instead, with the limiter correctly in force (ffmpeg 9.0.2, AAC 192k):
+_material_ instead, with the limiter correctly in force (ffmpeg 9.0.2, AAC 192k):
 
 | material, limiter in force | `--ceiling 0.1` | `--ceiling 1.0` | `--ceiling 2.0` |
-|---|---|---|---|
-| sine + pink noise | −0.26 dBFS | −0.68 dBFS | −1.91 dBFS |
-| white noise | **+2.85 dBFS** | **+3.30 dBFS** | +1.23 dBFS |
-| square wave | **+4.49 dBFS** | | |
+| -------------------------- | --------------- | --------------- | --------------- |
+| sine + pink noise          | −0.26 dBFS      | −0.68 dBFS      | −1.91 dBFS      |
+| white noise                | **+2.85 dBFS**  | **+3.30 dBFS**  | +1.23 dBFS      |
+| square wave                | **+4.49 dBFS**  |                 |                 |
 
 A **correct** render at the **default** ceiling measured +3.30 dBFS. AAC reconstruction
 overshoots the sample peaks the limiter clamped, by an amount the material sets and the
@@ -518,7 +520,7 @@ bus.
 There is **no absolute RMS band** either, on bug-ledger 16's own argument: a gain of `1.50`
 is in range for a generated bed at −43.1 dB RMS and for a licensed master at −11.4 dB, and
 is right for one and 10 dB hot for the other — "range validation and calibration validation
-are different checks", and the ledger prescribes *comparison against a reference render*,
+are different checks", and the ledger prescribes _comparison against a reference render_,
 not a band. And there is **no general opt-out**: the single escape, `--allow-silent`,
 declares a supported timeline rather than disabling the check.
 
@@ -528,7 +530,7 @@ which is nearly all of them — a bed 10 dB hot, a duck on the wrong words, a sw
 at the same loudness, a wrong bitrate or sample rate. The bug-ledger 16 incident itself
 (whole-file RMS −9.8 dB) is not silent and would pass. Nor does it catch clipping, for the
 measured reason above; nor audio that drops out for part of the file, since the whole-file
-window is an average over its length; nor whether the levels it accepts are the *right*
+window is an average over its length; nor whether the levels it accepts are the _right_
 levels, since nothing here reads `knobs.json`; nor a `--allow-silent` passed where it was
 not true, which is trusted as the caller's declaration. The real answer to most of those is
 the reference-render comparison the ledger prescribes, and it does not exist yet.
@@ -543,11 +545,11 @@ the proof read like a check and was a rewrite.
 A `stamp-lineage` tool was built here to close that, and **withdrawn**. It is worth
 recording why, because the next person to want it will reach the same design:
 
-`textHash` is a fingerprint over the **exact narration bytes**. No *voice-stage-bound*
+`textHash` is a fingerprint over the **exact narration bytes**. No _voice-stage-bound_
 record of them survives. `voice` writes six things besides the silence it inserts — the
 segment clips, `voiceover.mp3`, `timing.json`, `calibration-observed.json`,
 `sync-mapping.md` and `heal-log.txt` — and the
-only record of what was *spoken* is `segments[].audio.words`, the TTS service's
+only record of what was _spoken_ is `segments[].audio.words`, the TTS service's
 tokenisation, which does not voice punctuation. Everything else is a summary: `chars` is a
 count. So an edit from `"… ready?"` to `"… ready!"` preserves word count, character count,
 clip duration **and** the word record, while changing the hash. `remix` then re-seals the
@@ -556,7 +558,7 @@ self-consistency, never provenance.
 
 **`storyboard.html` is the near-miss, and it is worth knowing why it does not count.**
 S2 embeds `voiceoverText` verbatim (`write-storyboard.mjs:83`), so the exact narration
-*does* exist on disk. But S2 renders it from whatever `timing.json` holds **at the time it
+_does_ exist on disk. But S2 renders it from whatever `timing.json` holds **at the time it
 runs**, before and independently of synthesis, and re-running it after an edit silently
 updates it. It follows the script rather than recording what was spoken — a copy, not a
 receipt. Nothing binds a given `storyboard.html` to a given voice run, so it cannot
@@ -564,14 +566,14 @@ witness one.
 
 Each candidate gate was real and one inferential step short of the claim:
 
-| Gate | Actually proves | Claim needed |
-|---|---|---|
-| `endMs - startMs === audio.durationMs` | the windows came from *some* audio | *this* audio |
-| `{words, chars, clipMs}` | a summary matches | the text is identical |
-| `timingHash` verifies | nobody edited the file after sealing | the voice stage produced it |
-| normalised word record matches | the service spoke *roughly* this | it spoke *exactly* this |
-| `sha256(--music)` unchanged | the track is the same file | the gain was ever calibrated for it |
-| the mix pin's values match | the knobs it *records* did not move | no knob that moves the mix moved |
+| Gate                                   | Actually proves                      | Claim needed                        |
+| -------------------------------------- | ------------------------------------ | ----------------------------------- |
+| `endMs - startMs === audio.durationMs` | the windows came from _some_ audio   | _this_ audio                        |
+| `{words, chars, clipMs}`               | a summary matches                    | the text is identical               |
+| `timingHash` verifies                  | nobody edited the file after sealing | the voice stage produced it         |
+| normalised word record matches         | the service spoke _roughly_ this     | it spoke _exactly_ this             |
+| `sha256(--music)` unchanged            | the track is the same file           | the gain was ever calibrated for it |
+| the mix pin's values match             | the knobs it _records_ did not move  | no knob that moves the mix moved    |
 
 **Evidence weaker than the claim cannot establish the claim.** The correct response to
 insufficient evidence is to not certify, so there is no tool — and leaving a calibration
@@ -582,13 +584,13 @@ than suppressed.
 
 `remux-music.mjs` pins the **delivered-mix parameters** to the music source (bug-ledger
 16: a generated bed at −43.1 dB RMS and a licensed master at −11.4 dB are 31.7 dB apart,
-both accept the same in-range gain, and the narration-gap checks measure *presence*, not
-*level*).
+both accept the same in-range gain, and the narration-gap checks measure _presence_, not
+_level_).
 
 The pin requires `--confirm-gain` on **first use**, whenever the source or **any pinned
 mix parameter** changes, whenever the existing pin **records no confirmation**, and once
 for any pin written before those parameters were registered. The earlier version asked
-only whether the source had *changed*, which is the last-but-one row of the table above: a
+only whether the source had _changed_, which is the last-but-one row of the table above: a
 changed input shows a calibration is stale, not that one ever happened. That left a first
 run pinning its own unconfirmed default, and left a lock carrying no confirmation being
 read as agreement when it only ever recorded the tool agreeing with itself.
@@ -598,7 +600,7 @@ say so about any particular file, because a lock's contents cannot establish wha
 it — it names the missing `evidence` marker and stops there.
 
 `--confirm-gain` records a **provisional acceptance**, and the order it implies is the
-only one that can actually be carried out — `check-levels.mjs` measures a *rendered file*,
+only one that can actually be carried out — `check-levels.mjs` measures a _rendered file_,
 so there is nothing to measure until the remux has run:
 
 1. `--confirm-gain`, on a person's answer, to accept the mix parameters and produce the mix;
@@ -638,9 +640,9 @@ nobody was asked for. Every project therefore needs **one** fresh `--confirm-gai
 cost was accepted deliberately.
 
 **A refusal names what is missing, not who wrote the file.** Five refusal states are kept
-apart: unreadable, *pre-registry* (no `mix` record **and** the complete old
+apart: unreadable, _pre-registry_ (no `mix` record **and** the complete old
 `{source, sha256, musicGain}` shape around it — the only evidence on disk that supports
-dating a lock), *no mix record* (no `mix` and not that shape either — refused, and
+dating a lock), _no mix record_ (no `mix` and not that shape either — refused, and
 described by what is absent, because nothing in it establishes when it was written), a
 `mix` record missing a registered member, and a member that moved. A pin that also turns
 out to be pinned to a **different digest** has that named as a second, independent
@@ -651,14 +653,14 @@ mechanism's previous versions each claimed more than they proved, most recently 
 claiming the row below that reads "any run carrying a digit" while the scan matched a
 single anticipated shape and read `volume=.5` as nothing at all:
 
-| Detected | Not detected |
-|---|---|
-| a name used through the registry that is not declared | anything reaching ffmpeg **outside** `-filter_complex` — `-b:a`, `-ar`, an added `-af`, a changed codec |
-| a number in the finished graph that no declared use or structural literal accounts for | a change carrying **no digit at all** outside the `asplit`/`amix` literals — swapping `alimiter` for `acompressor`, `level=disabled` → `enabled` |
-| a number duplicating a declared value (accounting is by value **and** use-count) | a value inside a `[link label]` (redacted before the scan) or shaped like a **filter identifier** (`c0`, `ml1` — digits in a name are skipped) |
-| **any run of characters carrying a digit** that is neither a plain decimal nor a filter identifier — `.5`, `5.`, `+1.5`, `-1.5`, `1e3`, `1.5E-2`, `6dB`, `128k` all stop the run rather than being skipped | **whether `pinned` is set correctly** — nothing mechanical can know a knob moves the level, and this has already been got wrong once (see below) |
-| a `pinned` parameter never declared, or declared and never applied | |
-| a **structural literal** — `atrim=0:`, `asplit=2`, the whole `amix` — appearing more or fewer times than the graph builder took it through `mix.structural()`, or anywhere but at a filter boundary. A second `asplit`/`amix` pair doubles a bus without adding a number; literals were once stripped wherever they appeared, so it passed as structure | |
+| Detected                                                                                                                                                                                                                                                                                                                                                | Not detected                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| a name used through the registry that is not declared                                                                                                                                                                                                                                                                                                   | anything reaching ffmpeg **outside** `-filter_complex` — `-b:a`, `-ar`, an added `-af`, a changed codec                                          |
+| a number in the finished graph that no declared use or structural literal accounts for                                                                                                                                                                                                                                                                  | a change carrying **no digit at all** outside the `asplit`/`amix` literals — swapping `alimiter` for `acompressor`, `level=disabled` → `enabled` |
+| a number duplicating a declared value (accounting is by value **and** use-count)                                                                                                                                                                                                                                                                        | a value inside a `[link label]` (redacted before the scan) or shaped like a **filter identifier** (`c0`, `ml1` — digits in a name are skipped)   |
+| **any run of characters carrying a digit** that is neither a plain decimal nor a filter identifier — `.5`, `5.`, `+1.5`, `-1.5`, `1e3`, `1.5E-2`, `6dB`, `128k` all stop the run rather than being skipped                                                                                                                                              | **whether `pinned` is set correctly** — nothing mechanical can know a knob moves the level, and this has already been got wrong once (see below) |
+| a `pinned` parameter never declared, or declared and never applied                                                                                                                                                                                                                                                                                      |                                                                                                                                                  |
+| a **structural literal** — `atrim=0:`, `asplit=2`, the whole `amix` — appearing more or fewer times than the graph builder took it through `mix.structural()`, or anywhere but at a filter boundary. A second `asplit`/`amix` pair doubles a bus without adding a number; literals were once stripped wherever they appeared, so it passed as structure |                                                                                                                                                  |
 
 The honest summary: a knob interpolated into the mix graph cannot reach ffmpeg **as a
 number** — in any numeric form ffmpeg accepts, not just the ones anticipated when the scan
@@ -666,13 +668,13 @@ was written — without either being declared or stopping the run. Four things a
 **not** covered, and are named rather than implied away: a value carrying no digit at all,
 a value shaped like a filter identifier (`c0`, `ml1` — digits in a name are skipped, which
 is what lets the real graph pass), a value inside a `[link label]`, and anything outside
-the graph. This guard defends against *forgetting*, which is how `--ceiling` escaped. It
+the graph. This guard defends against _forgetting_, which is how `--ceiling` escaped. It
 does not defend against being wrong.
 
 **`pinned` is a human judgement, and it was wrong about `--voice-gain`.** The voice gain
-was registered `pinned: false` on the reasoning that the pin asks whether the *bed* level
+was registered `pinned: false` on the reasoning that the pin asks whether the _bed_ level
 was agreed to. But the narration sets the other half of the balance the bed is judged
-against, and it is the signal fed into the limiter whose ceiling *is* pinned — so a
+against, and it is the signal fed into the limiter whose ceiling _is_ pinned — so a
 voice-only change moved the delivered mix while a settled pin went on reporting valid,
 which is exactly the defect `--ceiling` had. The incident behind this whole feature was a
 voice `1.40` / music `0.85` rebalance that shipped a bed 24 dB above target. It is now
@@ -755,12 +757,12 @@ cannot be confirmed: the run fails (exit `1`), the record is left at its name, a
 not written. Move the record aside, or re-run with `--replace` to overwrite it.
 `remux-music` reads the record on the plan and on `--apply`, with or without `--duck-db`:
 
-| The record says | `remux-music` |
-|---|---|
-| ducked, against the narration in play | uses the bed's own duck. **`--duck-db` is refused (exit `2`)**: it would duck the bed a second time. Drop it, or write a flat bed with `make-music` (no `--envelope`) and duck that in the graph |
-| ducked against other narration, fingerprints other bytes than the bed, or is malformed | refused (exit `1`), naming what differs or what is wrong with it |
-| not ducked | the bed plays flat, or `--duck-db` is its only duck |
-| *nothing — no record* (a licensed track, or a bed from before records existed) | **not read as flat**: the plan says whether `make-music` ducked it cannot be told, and with `--duck-db` that the in-graph duck lands on top of any duck baked into it |
+| The record says                                                                        | `remux-music`                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ducked, against the narration in play                                                  | uses the bed's own duck. **`--duck-db` is refused (exit `2`)**: it would duck the bed a second time. Drop it, or write a flat bed with `make-music` (no `--envelope`) and duck that in the graph |
+| ducked against other narration, fingerprints other bytes than the bed, or is malformed | refused (exit `1`), naming what differs or what is wrong with it                                                                                                                                 |
+| not ducked                                                                             | the bed plays flat, or `--duck-db` is its only duck                                                                                                                                              |
+| _nothing — no record_ (a licensed track, or a bed from before records existed)         | **not read as flat**: the plan says whether `make-music` ducked it cannot be told, and with `--duck-db` that the in-graph duck lands on top of any duck baked into it                            |
 
 A bed with no record gets no such check: `--duck-db` is not refused on a `make-music` bed from
 before records existed, and ducks it a second time if it was ducked. The plan warns; it does
@@ -771,11 +773,11 @@ not prevent it.
 
 **Why `sidechaincompress`, and what was rejected.**
 
-| Approach | Verdict |
-|---|---|
-| Piecewise `volume` expression driven by the envelope | **Rejected.** ~3,042 numeric literals in `-filter_complex` for a real envelope. The registry audit refuses undeclared numbers by design; the two cannot coexist. |
-| Pre-graph PCM ducking (decode, curve in JS, mix the ducked WAV) | **Rejected.** The duck parameters would never appear in `-filter_complex`, so audit rule 5 would stop a *correct* run. The remedy would be an exemption in a guard one day old. |
-| In-graph `sidechaincompress`, threshold solved from the envelope | **Shipped.** Constant graph footprint whatever the envelope says. |
+| Approach                                                         | Verdict                                                                                                                                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Piecewise `volume` expression driven by the envelope             | **Rejected.** ~3,042 numeric literals in `-filter_complex` for a real envelope. The registry audit refuses undeclared numbers by design; the two cannot coexist.                |
+| Pre-graph PCM ducking (decode, curve in JS, mix the ducked WAV)  | **Rejected.** The duck parameters would never appear in `-filter_complex`, so audit rule 5 would stop a _correct_ run. The remedy would be an exemption in a guard one day old. |
+| In-graph `sidechaincompress`, threshold solved from the envelope | **Shipped.** Constant graph footprint whatever the envelope says.                                                                                                               |
 
 **The threshold is solved, not guessed.** A compressor's depth is
 `(level − threshold) × (1 − 1/ratio)`, so a fixed threshold delivers whatever depth the
@@ -791,14 +793,14 @@ the pin records the depth that was asked for.
 A one-pole release closes on its target asymptotically and never arrives. At the defaults
 (`--duck-db 11`, `--duck-release 800`):
 
-| Gap | Bed is still short of the gaps level by |
-|---|---|
-| 0.50 s | 4.21 dB |
-| 1.00 s | 2.00 dB |
-| 1.51 s | 1.00 dB |
-| **1.83 s** (a measured inter-segment gap) | **0.66 dB** |
-| 3.31 s | 0.10 dB |
-| 4.00 s | 0.04 dB |
+| Gap                                       | Bed is still short of the gaps level by |
+| ----------------------------------------- | --------------------------------------- |
+| 0.50 s                                    | 4.21 dB                                 |
+| 1.00 s                                    | 2.00 dB                                 |
+| 1.51 s                                    | 1.00 dB                                 |
+| **1.83 s** (a measured inter-segment gap) | **0.66 dB**                             |
+| 3.31 s                                    | 0.10 dB                                 |
+| 4.00 s                                    | 0.04 dB                                 |
 
 So in the model a real inter-segment gap comes within about **0.7 dB** of `musicInGapsDb`
 (a modelled figure, not a bound: see the one measured render below), and a **silent
@@ -819,7 +821,7 @@ was measured below 800 ms, so release is **not** the coefficient to tune by this
 **Two further limits, stated rather than implied.**
 
 - The solve lands the depth on the **average** speech level. Speech is not constant-level,
-  so a syllable *N* dB louder ducks `N × (1 − 1/ratio)` dB deeper — 0.75·*N* at the default
+  so a syllable _N_ dB louder ducks `N × (1 − 1/ratio)` dB deeper — 0.75·_N_ at the default
   ratio 4. The depth is a **centre, not a clamp**; lower `--duck-ratio` narrows the spread.
 - **One render has been measured, and it did not track the model.** The figures above are
   computed from the one-pole model the tests pin. With an 11 dB duck across a 1.82 s median
@@ -836,11 +838,11 @@ was measured below 800 ms, so release is **not** the coefficient to tune by this
 A limiter ceiling is **dBFS**; a delivery target is usually **dBTP**, and true peak sits
 above the sample peaks a limiter clamps. Measured on real encoded output, post-AAC:
 
-| `--ceiling` | integrated | true peak |
-|---|---|---|
-| 1.0 (default) | −9.7 LUFS | −0.3 dBTP |
-| **2.0** | −10.0 LUFS | **−1.1 dBTP** |
-| 3.0 | −10.5 LUFS | −2.1 dBTP |
+| `--ceiling`   | integrated | true peak     |
+| ------------- | ---------- | ------------- |
+| 1.0 (default) | −9.7 LUFS  | −0.3 dBTP     |
+| **2.0**       | −10.0 LUFS | **−1.1 dBTP** |
+| 3.0           | −10.5 LUFS | −2.1 dBTP     |
 
 So `--ceiling 2.0` is a **measured starting point** for a −1.0 dBTP target, not a
 guarantee. This tool clamps sample peaks before the AAC encode and measures nothing after
@@ -852,7 +854,7 @@ earlier guidance of "about 2.5" was a guess and has been removed.
 tool cannot check — not that anyone measured the result. `music-gain.lock.json` carries
 `evidence: "operator-confirmed"` so the file cannot be misread as a calibration record. A
 measured pin is not buildable from what exists today: `check-levels.mjs` writes no
-artifact, measures a *rendered video* rather than the music source, has no way to bind a
+artifact, measures a _rendered video_ rather than the music source, has no way to bind a
 reading to the source hash, and the render it would measure does not exist until after
 the remux the pin guards. Closing it properly means `remux-music` taking its own astats
 reading of the source and recording `sourceRms + 20·log10(gain)` as the predicted bed
@@ -862,14 +864,14 @@ path cheap. It is named here rather than approximated in code.
 ### Re-running the voice stage — what it actually costs, and the recovery
 
 **TTS here is length-deterministic, not byte-deterministic.** Measured on a real
-8-segment project, re-running `voice` on *unchanged* narration produced:
+8-segment project, re-running `voice` on _unchanged_ narration produced:
 
-| | |
-|---|---|
-| `durationMs`, every segment `endMs` | identical to the millisecond |
-| every clip's byte **length** | identical to the byte |
-| every clip's duration | identical |
-| **content hash — 5 of 8 segments + `voiceover.mp3`** | **different** |
+|                                                      |                              |
+| ---------------------------------------------------- | ---------------------------- |
+| `durationMs`, every segment `endMs`                  | identical to the millisecond |
+| every clip's byte **length**                         | identical to the byte        |
+| every clip's duration                                | identical                    |
+| **content hash — 5 of 8 segments + `voiceover.mp3`** | **different**                |
 
 Neural synthesis varies sub-perceptually between runs while landing on the same frame
 count. This is the hardest shape of divergence to catch: every cheap check agrees and only
@@ -879,7 +881,7 @@ anything but content — and do not assume a re-run reproduces a shipped deliver
 **The recovery, if you have already re-run.** Nothing is lost. `textHash` hashes the
 narration **text**, not the audio, which makes the two separable: keep the re-run's
 `calibration-observed.json` and `timing.json`, restore the audio files that produced the
-shipped render, and you end with lineage proven *and* a bit-reproducible artefact. The
+shipped render, and you end with lineage proven _and_ a bit-reproducible artefact. The
 general property, which is the reason to fingerprint inputs rather than outputs:
 
 > **A fingerprint over the input is separable from the output it certifies; a fingerprint
@@ -888,11 +890,11 @@ general property, which is the reason to fingerprint inputs rather than outputs:
 Had `textHash` hashed the audio, that recovery would not exist — the choice would have
 been between proven lineage and a reproducible deliverable.
 
-Two notes on the recovery. `remix` is the reflow path that does *not* re-synthesise —
+Two notes on the recovery. `remix` is the reflow path that does _not_ re-synthesise —
 it reuses the narrated `segment_*.mp3` clips on disk byte-for-byte and only changes
 pacing. (A declared silent segment's clip it regenerates from the authored window; that
 is digital silence, the same bytes every time.) And
-`vo-envelope.json` is the one artefact derived from audio *content*, so it is **bound to
+`vo-envelope.json` is the one artefact derived from audio _content_, so it is **bound to
 the audio it measured**: it records a `measuredFrom` fingerprint of the voice track, and
 every consumer refuses an envelope that describes different audio. Restore the clips that
 produced a shipped render and the envelope is valid again — the same separability
@@ -903,11 +905,11 @@ restore audio it was not measured from.
 
 `vo-envelope.json` had no binding to the narration it measured. A measured instance:
 
-| | |
-|---|---|
-| envelope `durationMs` | 291,984 (14,600 hops present) |
+|                       |                                |
+| --------------------- | ------------------------------ |
+| envelope `durationMs` | 291,984 (14,600 hops present)  |
 | timeline `durationMs` | 276,528 (13,826 hops expected) |
-| drift | **15,456 ms** |
+| drift                 | **15,456 ms**                  |
 
 15.5 seconds stale, from a cut two rounds old — and the file parsed perfectly. A duck
 calibrated against it drifts further out of alignment the longer the video runs, with
@@ -922,12 +924,12 @@ against it.
 
 Four states are kept apart, because they are different situations for the operator:
 
-| State | Meaning |
-|---|---|
-| `current` | The recorded fingerprint matches the voice track on disk. |
-| `stale` | Present, readable, does not match. The refusal **names the fields that differ**. |
-| `unbound` | No binding at all — an envelope predating this check. **Absence is not permission.** |
-| `unreadable` | A binding is present but is not a binding. |
+| State        | Meaning                                                                              |
+| ------------ | ------------------------------------------------------------------------------------ |
+| `current`    | The recorded fingerprint matches the voice track on disk.                            |
+| `stale`      | Present, readable, does not match. The refusal **names the fields that differ**.     |
+| `unbound`    | No binding at all — an envelope predating this check. **Absence is not permission.** |
+| `unreadable` | A binding is present but is not a binding.                                           |
 
 A refusal states **only that the two differ**. It does not say who changed either file or
 when: mtimes are not provenance, and naming an unprovable cause is the mistake that got a
@@ -936,7 +938,7 @@ prints the command to run.
 
 **What it does not detect** is in `src/envelope-ducking.mjs`, in full: an envelope measured
 from the right audio whose RMS values were then edited; a timeline re-cut that leaves the
-voice audio untouched (deliberate — the envelope describes the *audio*); which stage wrote
+voice audio untouched (deliberate — the envelope describes the _audio_); which stage wrote
 either file; and a swap between the check and the read, which is narrowed by checking at
 the point of use, not closed.
 
@@ -945,7 +947,8 @@ the point of use, not closed.
 ```powershell
 npm install                 # first time — pulls playwright, msedge-tts, music-metadata, ajv
 node --test                 # run the tests
-
+npm run format:check        # verify formatting (Prettier, pinned locally)
+npm run format              # rewrite files to the Prettier format
 # verification
 node src/validate-timing.mjs                      # schema + contiguity + word rate
 node src/validate-timing.mjs --strict             # also fail on over-budget segments
@@ -984,6 +987,7 @@ directly by hand. See the skill for the stage ordering.
 **`partial` — the full pipeline except S1, but still scripts rather than a library.**
 
 **Done**
+
 - **Every pipeline stage except S1 is present**, including the S8/S9 music and remux
   path that implements the cheap audio-only route the skill is built around. A test
   (`engineScripts_coverEveryPipelineStage`) pins this so a partial extraction fails
@@ -993,32 +997,32 @@ directly by hand. See the skill for the stage ordering.
 - **Four scripts that "diverged" turned out to be the same script with project data
   hardcoded.** Each difference was a value, not logic, and is now a parameter:
 
-  | Script | Was | Now |
-  |---|---|---|
-  | `validate-timing.mjs` | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json` → `aggregate.observedEffWps` (measured), then `intake.wordsPerSecond` (estimate), then a default. The margin comes from `intake.wpsSafetyMargin` only — it hedges a guess and is not applied to a measurement |
-  | `write-storyboard.mjs` | Hardcoded per-video lede string | `project.lede` |
-  | `preview.mjs` | Hardcoded list of segment ids | Defaults to all segments; pass ids to narrow |
-  | `make-music.mjs` | Forked chord progression | Named presets (`warm`, `bright`), selectable by argv |
+    | Script                 | Was                                       | Now                                                                                                                                                                                                                                             |
+    | ---------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `validate-timing.mjs`  | `WPS=3.43*0.97` vs `3.00*0.95` — one line | Reads `calibration-observed.json` → `aggregate.observedEffWps` (measured), then `intake.wordsPerSecond` (estimate), then a default. The margin comes from `intake.wpsSafetyMargin` only — it hedges a guess and is not applied to a measurement |
+    | `write-storyboard.mjs` | Hardcoded per-video lede string           | `project.lede`                                                                                                                                                                                                                                  |
+    | `preview.mjs`          | Hardcoded list of segment ids             | Defaults to all segments; pass ids to narrow                                                                                                                                                                                                    |
+    | `make-music.mjs`       | Forked chord progression                  | Named presets (`warm`, `bright`), selectable by argv                                                                                                                                                                                            |
 
 - `canonical-json.mjs` has a real test suite — it had none, despite being the integrity
   backbone.
 - **The destructive and verification paths are now honest.** Two rules hold across the
-  engine: *nothing irreversible happens without being asked*, and *no script claims to
-  have done work it did not*. Every writing stage plans by default; every verifier can
+  engine: _nothing irreversible happens without being asked_, and _no script claims to
+  have done work it did not_. Every writing stage plans by default; every verifier can
   fail; path confinement follows links; and `--help` is answered before any work on every
   CLI. Covered by `tests/destructive-defaults.test.mjs`, `tests/path-boundary.test.mjs`,
   `tests/safe-defaults.test.mjs` and `tests/cli-help-contract.test.mjs`. The `--help`
   tests in the first three cover the **writing stages only**, by name, which is why five
   files went unguarded until the rule was swept rather than listed; `cli-help-contract`
   is the sweep, and it enumerates `src/` at run time so it cannot go stale the same way.
-- **A verifier must also be able to *pass*.** `validate-timing`'s contiguity check
+- **A verifier must also be able to _pass_.** `validate-timing`'s contiguity check
   asserted strict adjacency, but `voice.mjs` deliberately inserts a lead-in and
   inter-segment silence — so every timeline the real pipeline produces failed on every
   segment. That is the mirror of a check that can never fail, and worse in daily use: a
   line that is always red trains the reader to stop reading. Overlaps now fail; gaps pass
   and are reported, with uneven ones called out.
 - **The word budget knows the difference between a guess and a measurement.** Once the
-  windows come from synthesised audio *and* the rate is a measurement of that same audio,
+  windows come from synthesised audio _and_ the rate is a measurement of that same audio,
   `words / window` **is** that rate by construction — so a budget built from it, minus a
   safety margin, flags every segment above the mean by definition. In that one case the
   budget is skipped and **rate variance against the measured mean** is reported instead
@@ -1028,7 +1032,7 @@ directly by hand. See the skill for the stage ordering.
   planned. Every run states which rate it used and where it came from, so a silent
   fallback can never again look like a measurement. See `tests/word-rate.test.mjs`.
 - **The suppression requires lineage, not just measured windows.** `endMs - startMs ===
-  audio.durationMs` proves the windows came from *some* audio — not that the calibration
+audio.durationMs` proves the windows came from _some_ audio — not that the calibration
   measures the text in the file now. Edit a segment's narration without re-running the
   voice stage and that predicate still holds, which would wave through exactly the case
   the budget exists to catch. So `voice.mjs` records a **`textHash`** — a sha256 of each
@@ -1038,12 +1042,12 @@ directly by hand. See the skill for the stage ordering.
   silent segment, whose window is authored rather than narrated, so a silence edit does
   not make lineage stale; a silent window its record does not describe fails the
   declared-silence check instead, naming `remix`, or `voice` where its record names no
-  clip): they are a *summary*, and every summary collides — `"word0 word1 word2 word3"`
+  clip): they are a _summary_, and every summary collides — `"word0 word1 word2 word3"`
   and `"other word1 word2 word3"` agree on all three while being different scripts. A
   calibration with no fingerprint is **unproven**, not intact, so the budget is evaluated.
   A mismatch is **not** an error — editing and re-validating before re-synthesising is the
   normal loop — it reports `calibration lineage: STALE`, names both sides of the
-  divergence, and applies the measured rate as a *prediction* with the margin restored.
+  divergence, and applies the measured rate as a _prediction_ with the margin restored.
 
 **Breaking change for existing build sequences**
 
@@ -1057,6 +1061,7 @@ The in-repo callers (`remix.mjs`, `voice.mjs`) were updated, and have since stop
 spawning `silence-gen` at all; **external project build sequences must add the flags.**
 
 **Not done**
+
 - **`write-script.mjs` (S1) is not extracted.** It diverged ~120% between projects —
   genuinely rewritten, not drifted — and needs a real review to decide what is shared
   versus per-video. This is the one honest exclusion.
@@ -1073,15 +1078,26 @@ spawning `silence-gen` at all; **external project build sequences must add the f
 
 ## Dependencies
 
-| Package | Why |
-|---|---|
-| `playwright` | Headless browser for frame capture. No practical .NET equivalent for this workload — the reason this domain is Node (ADR 0002). |
-| `msedge-tts` | Narration synthesis. **Length-deterministic, not byte-deterministic** — see "Re-running the voice stage" below. The timing solve depends on the length determinism, and nothing depends on the bytes. |
-| `music-metadata` | Cheap audio probing without a full decode. |
-| `ajv` | JSON Schema validation for `validate-timing.mjs`, against `src/timing-schema.json`. The script already imported it but never declared it, so schema validation failed at runtime; declaring it is what makes that stage real. Draft 2020-12 support is the reason for `ajv` specifically, and it brings 4 small transitive packages. |
+| Package          | Why                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `playwright`     | Headless browser for frame capture. No practical .NET equivalent for this workload — the reason this domain is Node (ADR 0002).                                                                                                                                                                                                      |
+| `msedge-tts`     | Narration synthesis. **Length-deterministic, not byte-deterministic** — see "Re-running the voice stage" below. The timing solve depends on the length determinism, and nothing depends on the bytes.                                                                                                                                |
+| `music-metadata` | Cheap audio probing without a full decode.                                                                                                                                                                                                                                                                                           |
+| `ajv`            | JSON Schema validation for `validate-timing.mjs`, against `src/timing-schema.json`. The script already imported it but never declared it, so schema validation failed at runtime; declaring it is what makes that stage real. Draft 2020-12 support is the reason for `ajv` specifically, and it brings 4 small transitive packages. |
 
-`gsap` and `mp4-muxer` are used by the *generated* scene HTML, not by these scripts,
+`gsap` and `mp4-muxer` are used by the _generated_ scene HTML, not by these scripts,
 so they belong to the consuming project rather than here.
+
+**Dev dependency — `prettier` (exactly `3.9.9`).** The one dev dependency, and a
+liability the constitution asks us to justify: the alternative to a pinned local copy is
+`npx prettier`, which fetches whatever is current over the network on every run, so two
+machines can format the same file differently. Prettier has no stdlib equivalent in
+Node, and it is a single package with no runtime dependencies. It runs from
+`node_modules/.bin`, uses its defaults (no `.prettierrc`; `.editorconfig` supplies
+indentation), and is never imported by the engine. There is no `.prettierignore`:
+Prettier already skips `node_modules` and honours `.gitignore`, which covers the
+generated `coach/pack/` and the `.tool-fixture-*/` copies, and nothing else tracked
+here is generated or third-party.
 
 ## Gotchas
 

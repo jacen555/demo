@@ -90,7 +90,7 @@
  * values shaped like identifiers, values inside labels, and everything outside the graph
  * are NOT covered, and are listed above rather than implied to be.
  */
-import { CliError, EXIT } from './cli-support.mjs';
+import { CliError, EXIT } from "./cli-support.mjs";
 
 /**
  * THE REGISTRATION POINT. Adding a knob that reaches the mix graph means adding a row
@@ -108,9 +108,9 @@ import { CliError, EXIT } from './cli-support.mjs';
  */
 export const MIX_PARAMETERS = Object.freeze([
   Object.freeze({
-    name: 'voiceGain',
-    flag: '--voice-gain',
-    summary: 'the narration multiplier',
+    name: "voiceGain",
+    flag: "--voice-gain",
+    summary: "the narration multiplier",
     // PINNED, after being declared `pinned: false` and being wrong about it.
     //
     // The reasoning for leaving it out was that the pin's question is whether the BED
@@ -128,23 +128,23 @@ export const MIX_PARAMETERS = Object.freeze([
     pinned: true,
   }),
   Object.freeze({
-    name: 'musicGain',
-    flag: '--music-gain',
-    summary: 'the music bed multiplier',
+    name: "musicGain",
+    flag: "--music-gain",
+    summary: "the music bed multiplier",
     pinned: true,
   }),
   Object.freeze({
-    name: 'ceiling',
-    flag: '--ceiling',
-    summary: 'the limiter ceiling, in dB below full scale',
+    name: "ceiling",
+    flag: "--ceiling",
+    summary: "the limiter ceiling, in dB below full scale",
     // The knob that escaped. It clamps the finished mix, so it moves delivered loudness
     // directly — which is the whole question the pin asks.
     pinned: true,
   }),
   Object.freeze({
-    name: 'crossfade',
-    flag: '--crossfade',
-    summary: 'the crossfade at each loop wrap',
+    name: "crossfade",
+    flag: "--crossfade",
+    summary: "the crossfade at each loop wrap",
     // PINNED, after being declared `pinned: false` as a "transition shape" knob — how a
     // wrap is joined, not how loud the bed sits. That is true only of a bed that does not
     // loop. When it loops, tri curves on uncorrelated material dip up to -3.01 dB at each
@@ -155,9 +155,9 @@ export const MIX_PARAMETERS = Object.freeze([
     pinned: true,
   }),
   Object.freeze({
-    name: 'videoSeconds',
-    flag: '--video-seconds',
-    summary: 'the length the bed is trimmed to',
+    name: "videoSeconds",
+    flag: "--video-seconds",
+    summary: "the length the bed is trimmed to",
     // Not pinned: trimming changes how long the mix runs, not its level — and pinning it
     // would demand a fresh confirmation every time the video length moved by a frame,
     // which trains an operator to pass --confirm-gain reflexively. A confirmation that
@@ -185,32 +185,35 @@ export const MIX_PARAMETERS = Object.freeze([
   // them shape knobs and leaving them unpinned would be limit (e) above, committed
   // knowingly.
   Object.freeze({
-    name: 'duckDb',
-    flag: '--duck-db',
-    summary: 'how far the bed drops under narration, in dB',
+    name: "duckDb",
+    flag: "--duck-db",
+    summary: "how far the bed drops under narration, in dB",
     pinned: true,
   }),
   Object.freeze({
-    name: 'duckRatio',
-    flag: '--duck-ratio',
-    summary: 'the sidechain compression ratio the duck threshold is solved against',
+    name: "duckRatio",
+    flag: "--duck-ratio",
+    summary:
+      "the sidechain compression ratio the duck threshold is solved against",
     pinned: true,
   }),
   Object.freeze({
-    name: 'duckAttack',
-    flag: '--duck-attack',
-    summary: 'how fast the bed ducks when narration starts, in ms',
+    name: "duckAttack",
+    flag: "--duck-attack",
+    summary: "how fast the bed ducks when narration starts, in ms",
     pinned: true,
   }),
   Object.freeze({
-    name: 'duckRelease',
-    flag: '--duck-release',
-    summary: 'how fast the bed returns to the gaps level, in ms',
+    name: "duckRelease",
+    flag: "--duck-release",
+    summary: "how fast the bed returns to the gaps level, in ms",
     pinned: true,
   }),
 ]);
 
-const BY_NAME = new Map(MIX_PARAMETERS.map((parameter) => [parameter.name, parameter]));
+const BY_NAME = new Map(
+  MIX_PARAMETERS.map((parameter) => [parameter.name, parameter]),
+);
 
 /**
  * The fixed text of remux-music's filter graph that carries a digit.
@@ -228,19 +231,25 @@ const BY_NAME = new Map(MIX_PARAMETERS.map((parameter) => [parameter.name, param
  */
 const STRUCTURAL_LITERALS = Object.freeze([
   // the trim always starts at the head of the bed
-  Object.freeze({ text: 'atrim=0:', whole: false }),
+  Object.freeze({ text: "atrim=0:", whole: false }),
   // the voice bus forks in two: one leg to the mix, one to the sidechain
-  Object.freeze({ text: 'asplit=2', whole: true }),
+  Object.freeze({ text: "asplit=2", whole: true }),
   // amix takes exactly two buses, voice and music, and must not halve them
-  Object.freeze({ text: 'amix=inputs=2:duration=longest:normalize=0', whole: true }),
+  Object.freeze({
+    text: "amix=inputs=2:duration=longest:normalize=0",
+    whole: true,
+  }),
 ]);
 
 /** Where a filter starts or ends: the graph's own separators, or a redacted label. */
-const FILTER_EDGE = '[;,\\u0000]';
+const FILTER_EDGE = "[;,\\u0000]";
 
 function structuralPattern({ text, whole }) {
-  const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<=^|${FILTER_EDGE})${escaped}${whole ? `(?=$|${FILTER_EDGE})` : ''}`, 'g');
+  const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?<=^|${FILTER_EDGE})${escaped}${whole ? `(?=$|${FILTER_EDGE})` : ""}`,
+    "g",
+  );
 }
 
 /**
@@ -299,7 +308,7 @@ const HAS_DIGIT = /\d/;
 const IDENTIFIER = /^[A-Za-z_][0-9A-Za-z_]*$/;
 
 /** Replaces redacted spans; matches no part of GRAPH_TOKEN's character class. */
-const REDACTED = '\u0000';
+const REDACTED = "\u0000";
 
 /** The trailing `[label]` run of a filter chain: where that chain writes its output. */
 const OUTPUT_LABELS = /((?:\[[^\]]*\])+)$/;
@@ -347,8 +356,8 @@ function valuesIn(chainResidue) {
  * that one refusal rather than left for a second one that may never come.
  */
 function auditSites(graph, residue, declared) {
-  const rawChains = String(graph).split(';');
-  const residueChains = residue.split(';');
+  const rawChains = String(graph).split(";");
+  const residueChains = residue.split(";");
   if (rawChains.length !== residueChains.length) {
     throw new CliError(
       `the mix filter graph could not be split into chains consistently (${rawChains.length} raw, ` +
@@ -376,9 +385,9 @@ function auditSites(graph, residue, declared) {
       if (!chainOf.has(site)) {
         throw new CliError(
           `${entry.parameter.flag} was taken from the registry for the chain "${site}", but no chain in the ` +
-            'mix filter graph writes that label.\n' +
-            'The site is what lets the audit check a value is where it belongs, so a site that does not\n' +
-            'exist leaves that value unchecked. Name the output label of the chain it is interpolated into.',
+            "mix filter graph writes that label.\n" +
+            "The site is what lets the audit check a value is where it belongs, so a site that does not\n" +
+            "exist leaves that value unchecked. Name the output label of the chain it is interpolated into.",
           EXIT.FAILED,
         );
       }
@@ -386,17 +395,25 @@ function auditSites(graph, residue, declared) {
       const key = `${index}\u0000${entry.rendered}`;
       const seen = expected.get(key);
       if (seen === undefined) {
-        expected.set(key, { index, site, literal: entry.rendered, want: count, flags: [entry.parameter.flag] });
+        expected.set(key, {
+          index,
+          site,
+          literal: entry.rendered,
+          want: count,
+          flags: [entry.parameter.flag],
+        });
       } else {
         seen.want += count;
-        if (!seen.flags.includes(entry.parameter.flag)) seen.flags.push(entry.parameter.flag);
+        if (!seen.flags.includes(entry.parameter.flag))
+          seen.flags.push(entry.parameter.flag);
       }
     }
   }
 
   const countsByChain = residueChains.map((chain) => {
     const counts = new Map();
-    for (const value of valuesIn(chain)) counts.set(value, (counts.get(value) ?? 0) + 1);
+    for (const value of valuesIn(chain))
+      counts.set(value, (counts.get(value) ?? 0) + 1);
     return counts;
   });
 
@@ -414,24 +431,26 @@ function auditSites(graph, residue, declared) {
       .filter(({ at, found }) => at !== index && found > 0)
       .map(({ at, found }) =>
         labelsOf[at].length > 0
-          ? `${found} time(s) in the chain writing [${labelsOf[at].join('][')}]`
+          ? `${found} time(s) in the chain writing [${labelsOf[at].join("][")}]`
           : `${found} time(s) in a chain that writes no label`,
       );
     throw new CliError(
-      `${flags.join('/')} was taken from the registry ${want} time(s) for the mix graph's "${site}" chain, but ` +
+      `${flags.join("/")} was taken from the registry ${want} time(s) for the mix graph's "${site}" chain, but ` +
         `"${literal}" appears there ${got} time(s).\n` +
-        (elsewhere.length > 0 ? `It appears ${elsewhere.join(', and ')}.\n` : '') +
-        'A value accounted for only by number and count is a value that can MOVE: the same literals in the\n' +
-        'same quantity, on the wrong chains, is a different mix entirely — and the pin would record the\n' +
-        'values that were declared rather than the ones that were applied.\n' +
-        'Interpolate each value into the chain it was taken for, and take it for the chain it goes into.',
+        (elsewhere.length > 0
+          ? `It appears ${elsewhere.join(", and ")}.\n`
+          : "") +
+        "A value accounted for only by number and count is a value that can MOVE: the same literals in the\n" +
+        "same quantity, on the wrong chains, is a different mix entirely — and the pin would record the\n" +
+        "values that were declared rather than the ones that were applied.\n" +
+        "Interpolate each value into the chain it was taken for, and take it for the chain it goes into.",
       EXIT.FAILED,
     );
   }
 }
 
 function isPlainObject(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -460,27 +479,40 @@ export function createMixAudit() {
     if (parameter === undefined) {
       throw new CliError(
         `"${name}" reaches the mix but is not declared in MIX_PARAMETERS (src/mix-parameters.mjs).\n` +
-          'A value that moves the delivered mix without being declared is invisible to the gain pin,\n' +
-          'which is how --ceiling came to change the shipped loudness with the pin reporting valid.\n' +
-          'Declare it there — pinned: true if it moves the delivered level.',
+          "A value that moves the delivered mix without being declared is invisible to the gain pin,\n" +
+          "which is how --ceiling came to change the shipped loudness with the pin reporting valid.\n" +
+          "Declare it there — pinned: true if it moves the delivered level.",
         EXIT.FAILED,
       );
     }
     if (declared.has(name)) {
-      throw new CliError(`${parameter.flag} was declared twice — only one value of it reaches the graph`, EXIT.FAILED);
+      throw new CliError(
+        `${parameter.flag} was declared twice — only one value of it reaches the graph`,
+        EXIT.FAILED,
+      );
     }
     if (!Number.isFinite(value)) {
-      throw new CliError(`${parameter.flag} must be declared as a finite number — got ${JSON.stringify(value)}`, EXIT.FAILED);
+      throw new CliError(
+        `${parameter.flag} must be declared as a finite number — got ${JSON.stringify(value)}`,
+        EXIT.FAILED,
+      );
     }
     const text = String(rendered);
     if (!PLAIN_DECIMAL.test(text)) {
       throw new CliError(
         `${parameter.flag} renders as "${text}", which is not a plain decimal with a leading digit. ` +
-          'It would be interpolated into an ffmpeg filter graph and could not be audited there.',
+          "It would be interpolated into an ffmpeg filter graph and could not be audited there.",
         EXIT.FAILED,
       );
     }
-    declared.set(name, { parameter, value, rendered: text, uses: 0, sites: new Map(), inForce: true });
+    declared.set(name, {
+      parameter,
+      value,
+      rendered: text,
+      uses: 0,
+      sites: new Map(),
+      inForce: true,
+    });
   }
 
   /**
@@ -510,9 +542,19 @@ export function createMixAudit() {
       );
     }
     if (declared.has(name)) {
-      throw new CliError(`${parameter.flag} was declared twice — only one value of it reaches the graph`, EXIT.FAILED);
+      throw new CliError(
+        `${parameter.flag} was declared twice — only one value of it reaches the graph`,
+        EXIT.FAILED,
+      );
     }
-    declared.set(name, { parameter, value: NOT_IN_FORCE, rendered: null, uses: 0, sites: new Map(), inForce: false });
+    declared.set(name, {
+      parameter,
+      value: NOT_IN_FORCE,
+      rendered: null,
+      uses: 0,
+      sites: new Map(),
+      inForce: false,
+    });
   }
 
   /**
@@ -531,24 +573,29 @@ export function createMixAudit() {
   function use(name, site) {
     const entry = declared.get(name);
     if (entry === undefined) {
-      const known = BY_NAME.has(name) ? 'declared for this run' : 'declared in MIX_PARAMETERS';
-      throw new CliError(`"${name}" reached the mix graph without being ${known}`, EXIT.FAILED);
+      const known = BY_NAME.has(name)
+        ? "declared for this run"
+        : "declared in MIX_PARAMETERS";
+      throw new CliError(
+        `"${name}" reached the mix graph without being ${known}`,
+        EXIT.FAILED,
+      );
     }
     if (!entry.inForce) {
       throw new CliError(
         `${entry.parameter.flag} was declared NOT IN FORCE for this run and then taken from the registry.\n` +
-          'A knob cannot both be recorded as unapplied and be interpolated into the filter graph — the pin\n' +
-          'would certify a run that did not happen. Declare it with a value, or do not use it.',
+          "A knob cannot both be recorded as unapplied and be interpolated into the filter graph — the pin\n" +
+          "would certify a run that did not happen. Declare it with a value, or do not use it.",
         EXIT.FAILED,
       );
     }
-    if (typeof site !== 'string' || site.trim() === '') {
+    if (typeof site !== "string" || site.trim() === "") {
       throw new CliError(
         `${entry.parameter.flag} was taken from the registry without naming the chain it goes into.\n` +
-          'Pass the output label of the filter chain being built — mix.use(<name>, <label>) — so the audit\n' +
-          'can check the value is where it belongs. A value accounted for only by number and count can be\n' +
+          "Pass the output label of the filter chain being built — mix.use(<name>, <label>) — so the audit\n" +
+          "can check the value is where it belongs. A value accounted for only by number and count can be\n" +
           "moved onto another chain without the audit noticing, which is how a bed's gain can end up on\n" +
-          'the narration behind a pin that still reports valid.',
+          "the narration behind a pin that still reports valid.",
         EXIT.FAILED,
       );
     }
@@ -587,7 +634,7 @@ export function createMixAudit() {
       if (entry === undefined) {
         throw new CliError(
           `${parameter.flag} is a pinned mix parameter but was never declared for this run — ` +
-            'the pin would record a set that does not cover what is about to be mixed',
+            "the pin would record a set that does not cover what is about to be mixed",
           EXIT.FAILED,
         );
       }
@@ -608,7 +655,7 @@ export function createMixAudit() {
       if (entry.parameter.pinned && entry.inForce && entry.uses === 0) {
         throw new CliError(
           `${entry.parameter.flag} is pinned and was declared as ${entry.value}, but never reached the ` +
-            'mix graph — the pin would record a value that was not applied',
+            "mix graph — the pin would record a value that was not applied",
           EXIT.FAILED,
         );
       }
@@ -618,7 +665,10 @@ export function createMixAudit() {
     let residue = String(graph).replace(/\[[^\]]*\]/g, REDACTED);
     // Every literal is counted against the graph as built, before any is redacted, so one
     // literal's redaction cannot manufacture a filter boundary for another.
-    const patterns = STRUCTURAL_LITERALS.map((literal) => [literal, structuralPattern(literal)]);
+    const patterns = STRUCTURAL_LITERALS.map((literal) => [
+      literal,
+      structuralPattern(literal),
+    ]);
     for (const [literal, pattern] of patterns) {
       const found = residue.match(pattern)?.length ?? 0;
       const taken = structuralUses.get(literal.text) ?? 0;
@@ -626,14 +676,15 @@ export function createMixAudit() {
         throw new CliError(
           `the mix filter graph carries the structural literal "${literal.text}" ${found} time(s) at a filter ` +
             `boundary, but the graph builder took it ${taken} time(s).\n` +
-            'Structure is accounted for like values are. A second split/mix pair doubles a bus without\n' +
-            'adding a number, so a literal stripped wherever it appeared let exactly that pass as structure.\n' +
-            'Take every structural literal with mix.structural(<text>), and emit nothing else like it.',
+            "Structure is accounted for like values are. A second split/mix pair doubles a bus without\n" +
+            "adding a number, so a literal stripped wherever it appeared let exactly that pass as structure.\n" +
+            "Take every structural literal with mix.structural(<text>), and emit nothing else like it.",
           EXIT.FAILED,
         );
       }
     }
-    for (const [, pattern] of patterns) residue = residue.replace(pattern, REDACTED);
+    for (const [, pattern] of patterns)
+      residue = residue.replace(pattern, REDACTED);
 
     const budget = new Map();
     const flagsFor = new Map();
@@ -642,8 +693,14 @@ export function createMixAudit() {
       // budget. Including it would seed the map with a `null` key for a value the graph
       // cannot contain.
       if (!entry.inForce) continue;
-      budget.set(entry.rendered, (budget.get(entry.rendered) ?? 0) + entry.uses);
-      flagsFor.set(entry.rendered, [...(flagsFor.get(entry.rendered) ?? []), entry.parameter.flag]);
+      budget.set(
+        entry.rendered,
+        (budget.get(entry.rendered) ?? 0) + entry.uses,
+      );
+      flagsFor.set(entry.rendered, [
+        ...(flagsFor.get(entry.rendered) ?? []),
+        entry.parameter.flag,
+      ]);
     }
 
     const unaccounted = [];
@@ -669,27 +726,27 @@ export function createMixAudit() {
       const problems = [];
       if (unaccounted.length > 0) {
         problems.push(
-          `  ${unaccounted.length} value(s) that no registered mix parameter explains: ${unaccounted.join(', ')}`,
+          `  ${unaccounted.length} value(s) that no registered mix parameter explains: ${unaccounted.join(", ")}`,
         );
       }
       if (unreadable.length > 0) {
         problems.push(
           `  ${unreadable.length} run(s) it cannot read as either a plain decimal or a filter identifier: ` +
-            `${unreadable.join(', ')}\n` +
-            '    An unclassifiable run is REFUSED, not skipped. ffmpeg accepts .5, 5., +1.5, -1.5, 1e3,\n' +
-            '    6dB and 128k as values, and a scan that recognises only the shapes its author\n' +
-            '    anticipated reports a graph carrying one of them as fully accounted for.',
+            `${unreadable.join(", ")}\n` +
+            "    An unclassifiable run is REFUSED, not skipped. ffmpeg accepts .5, 5., +1.5, -1.5, 1e3,\n" +
+            "    6dB and 128k as values, and a scan that recognises only the shapes its author\n" +
+            "    anticipated reports a graph carrying one of them as fully accounted for.",
         );
       }
       throw new CliError(
-        'the mix filter graph did not pass the registry audit:\n' +
-          `${problems.join('\n')}\n` +
-          'Every number in the graph must be traceable to a parameter declared in MIX_PARAMETERS\n' +
-          '(src/mix-parameters.mjs) or to a declared structural literal of the graph. An untraceable\n' +
-          'value is a knob that can move the delivered loudness while the gain pin reports valid —\n' +
-          'which is bug-ledger 16, and is how --ceiling escaped the pin.\n' +
-          'Declare it in MIX_PARAMETERS (pinned: true if it moves the delivered level) and interpolate\n' +
-          'it with mix.use(<name>), so the pin covers it and this audit can account for it.',
+        "the mix filter graph did not pass the registry audit:\n" +
+          `${problems.join("\n")}\n` +
+          "Every number in the graph must be traceable to a parameter declared in MIX_PARAMETERS\n" +
+          "(src/mix-parameters.mjs) or to a declared structural literal of the graph. An untraceable\n" +
+          "value is a knob that can move the delivered loudness while the gain pin reports valid —\n" +
+          "which is bug-ledger 16, and is how --ceiling escaped the pin.\n" +
+          "Declare it in MIX_PARAMETERS (pinned: true if it moves the delivered level) and interpolate\n" +
+          "it with mix.use(<name>), so the pin covers it and this audit can account for it.",
         EXIT.FAILED,
       );
     }
@@ -707,11 +764,11 @@ export function createMixAudit() {
     for (const [literal, remaining] of budget) {
       if (remaining > 0) {
         throw new CliError(
-          `${flagsFor.get(literal).join('/')} was taken from the registry ${remaining} more time(s) than "${literal}" ` +
-            'appears in the mix filter graph.\n' +
-            'The audit accounts for values by use-count, so an unspent use would leave room for an\n' +
-            'undeclared value of the same number to pass unnoticed. Interpolate every value taken\n' +
-            'from mix.use(), or do not take it.',
+          `${flagsFor.get(literal).join("/")} was taken from the registry ${remaining} more time(s) than "${literal}" ` +
+            "appears in the mix filter graph.\n" +
+            "The audit accounts for values by use-count, so an unspent use would leave room for an\n" +
+            "undeclared value of the same number to pass unnoticed. Interpolate every value taken\n" +
+            "from mix.use(), or do not take it.",
           EXIT.FAILED,
         );
       }

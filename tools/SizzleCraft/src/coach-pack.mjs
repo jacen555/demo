@@ -1,8 +1,19 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, requireSafeFilename, resolveWithinRoot, resolveEngineOutput, planFooter, fingerprintBuffer } from './cli-support.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
+import {
+  EXIT,
+  CliError,
+  runCli,
+  parseCli,
+  requireExistingFile,
+  requireSafeFilename,
+  resolveWithinRoot,
+  resolveEngineOutput,
+  planFooter,
+  fingerprintBuffer,
+} from "./cli-support.mjs";
 
 const USAGE = `
 coach-pack — collect the exact input set the video coach may read, and bind it with a hash
@@ -35,8 +46,13 @@ Exit codes: 0 success/plan · 1 the input set could not be bound · 2 bad usage
 // were a link out of the tool, the boundary would realpath onto the target and happily
 // certify writes there. `coach/` is committed and holds the rubric, so it is the lowest
 // point that is actually known-good.
-const COACH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'coach');
-const REMEDY = 'Re-run `node src/preview.mjs --apply --replace` in the project to take fresh stills and rebind them.';
+const COACH_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "coach",
+);
+const REMEDY =
+  "Re-run `node src/preview.mjs --apply --replace` in the project to take fresh stills and rebind them.";
 
 // WHERE THE REGRESS STOPS, AND WHY. Every boundary root can itself be a link — `coach/`,
 // then `tools/SizzleCraft/`, then the checkout — so "root it one level higher" never
@@ -53,10 +69,14 @@ function assertCoachDirIsReal() {
   try {
     st = fs.lstatSync(COACH_DIR);
   } catch (err) {
-    throw new CliError(`the coach folder ${COACH_DIR} could not be inspected (${err.code ?? err.message}) — refusing rather than assuming a boundary`);
+    throw new CliError(
+      `the coach folder ${COACH_DIR} could not be inspected (${err.code ?? err.message}) — refusing rather than assuming a boundary`,
+    );
   }
   if (st.isSymbolicLink() || !st.isDirectory()) {
-    throw new CliError(`the coach folder ${COACH_DIR} is a link or not a directory — refusing to publish a manifest through it`);
+    throw new CliError(
+      `the coach folder ${COACH_DIR} is a link or not a directory — refusing to publish a manifest through it`,
+    );
   }
 }
 
@@ -73,8 +93,9 @@ function assertCoachDirIsReal() {
 // best-effort redaction of the path shapes this tool can actually emit — drive letters,
 // UNC shares, and the usual posix roots. It is NOT a general secret scanner and does not
 // claim to be; the manifest's own file list is safe by construction, not by this.
-const PATH_SHAPES = /(?:[A-Za-z]:(?:\\\\|[\\/])|\\\\\\\\[^\\/"]+|\/(?:home|Users|tmp|var|mnt|root)\/)[^"]*/g;
-const scrubText = (text) => text.replace(PATH_SHAPES, '<path redacted>');
+const PATH_SHAPES =
+  /(?:[A-Za-z]:(?:\\\\|[\\/])|\\\\\\\\[^\\/"]+|\/(?:home|Users|tmp|var|mnt|root)\/)[^"]*/g;
+const scrubText = (text) => text.replace(PATH_SHAPES, "<path redacted>");
 
 // Two projects can share a basename — `demo/` under two parents is ordinary — and the
 // basename alone would quietly point both packs at ONE destination, so the second would
@@ -82,52 +103,67 @@ const scrubText = (text) => text.replace(PATH_SHAPES, '<path redacted>');
 // of the absolute path makes the identity collision-resistant; it is a hash, so the path
 // it is derived from is not recoverable from the folder name.
 function packIdentity(projectDir) {
-  const safe = path.basename(projectDir).replace(/[^A-Za-z0-9._-]/g, '_') || 'project';
-  const digest = crypto.createHash('sha256').update(path.resolve(projectDir)).digest('hex').slice(0, 12);
+  const safe =
+    path.basename(projectDir).replace(/[^A-Za-z0-9._-]/g, "_") || "project";
+  const digest = crypto
+    .createHash("sha256")
+    .update(path.resolve(projectDir))
+    .digest("hex")
+    .slice(0, 12);
   return `${safe}-${digest}`;
 }
 
 await runCli(async () => {
   const { values, projectDir, apply, replace } = parseCli({
     usage: USAGE,
-    options: { pass: { type: 'string' } },
+    options: { pass: { type: "string" } },
   });
 
   // The pass decides the input set, so an unreadable one cannot be defaulted — guessing
   // pass 1 would hand the coach a smaller set than asked for and look like success.
-  if (values.pass !== '1' && values.pass !== '2') {
-    throw new CliError(`--pass must be 1 or 2, not ${JSON.stringify(values.pass ?? null)}.`);
+  if (values.pass !== "1" && values.pass !== "2") {
+    throw new CliError(
+      `--pass must be 1 or 2, not ${JSON.stringify(values.pass ?? null)}.`,
+    );
   }
   const pass = Number(values.pass);
 
-  const rel = (p) => path.relative(projectDir, p).split(path.sep).join('/');
+  const rel = (p) => path.relative(projectDir, p).split(path.sep).join("/");
   const collect = (name, label) => {
     const p = requireExistingFile(projectDir, name, label);
     return { ...fingerprintBuffer(fs.readFileSync(p), rel(p)), role: label };
   };
 
-  const files = [collect('script.md', 'script')];
+  const files = [collect("script.md", "script")];
   let audit = null;
 
   if (pass === 2) {
-    const recordPath = resolveWithinRoot(projectDir, 'preview/preview-record.json', 'preview record');
+    const recordPath = resolveWithinRoot(
+      projectDir,
+      "preview/preview-record.json",
+      "preview record",
+    );
     if (!fs.existsSync(recordPath)) {
       // ABSENCE IS A REFUSAL. Packing unbound stills would produce a manifest that is
       // cryptographically sound and semantically empty — it would prove the coach read some
       // bytes, while proving nothing about what those bytes show.
-      console.error(`\nFAILED: no preview record at ${rel(recordPath)}, so the stills cannot be bound to the timing and scene they show.`);
+      console.error(
+        `\nFAILED: no preview record at ${rel(recordPath)}, so the stills cannot be bound to the timing and scene they show.`,
+      );
       console.error(`  ${REMEDY}`);
       return EXIT.FAILED;
     }
-    const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+    const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
 
     // THE RECORD IS A FILE ON DISK, SO IT IS UNTRUSTED INPUT (§V). Its filenames are
     // interpolated into read paths, and a record carrying `../../..` would read outside the
     // project. Every name it supplies is resolved through the project boundary before it
     // becomes a path.
     const named = (name, label) => {
-      if (typeof name !== 'string' || !name) {
-        throw new CliError(`the preview record has no ${label} filename; it is malformed. ${REMEDY}`);
+      if (typeof name !== "string" || !name) {
+        throw new CliError(
+          `the preview record has no ${label} filename; it is malformed. ${REMEDY}`,
+        );
       }
       return resolveWithinRoot(projectDir, name, `recorded ${label}`);
     };
@@ -136,29 +172,44 @@ await runCli(async () => {
     // NOTHING — the same "absence reads as success" this stage exists to refuse, one level
     // further in. A record that binds no stills is malformed, not clean.
     if (!Array.isArray(record.stills) || record.stills.length === 0) {
-      console.error(`\nFAILED: the preview record at ${rel(recordPath)} binds no stills, so there is nothing to verify.`);
+      console.error(
+        `\nFAILED: the preview record at ${rel(recordPath)} binds no stills, so there is nothing to verify.`,
+      );
       console.error(`  ${REMEDY}`);
       return EXIT.FAILED;
     }
     // Likewise an absent transcript. Defaulting it to "no issues" would publish a manifest
     // asserting a clean audit that was never performed.
     if (!record.audit || !Array.isArray(record.audit.issues)) {
-      console.error(`\nFAILED: the preview record at ${rel(recordPath)} carries no audit transcript, so a clean audit cannot be claimed.`);
+      console.error(
+        `\nFAILED: the preview record at ${rel(recordPath)} carries no audit transcript, so a clean audit cannot be claimed.`,
+      );
       console.error(`  ${REMEDY}`);
       return EXIT.FAILED;
     }
 
     const bound = [
-      { entry: record.timing, path: named(record.timing?.file, 'timing'), label: 'timing' },
-      { entry: record.scene, path: named(record.scene?.file, 'scene'), label: 'scene' },
+      {
+        entry: record.timing,
+        path: named(record.timing?.file, "timing"),
+        label: "timing",
+      },
+      {
+        entry: record.scene,
+        path: named(record.scene?.file, "scene"),
+        label: "scene",
+      },
       // A STILL NAME IS A PLAIN FILENAME, NOT A PATH. Resolving `preview/${file}` against the
       // PROJECT root confines it to the project but not to `preview/`: `../script.md` stays
       // inside the project and would be accepted and labelled a still. The engine already has
       // the rule for a name that becomes a path component.
       ...record.stills.map((s) => ({
         entry: s,
-        path: named(`preview/${requireSafeFilename(s?.file, 'recorded still')}`, 'still'),
-        label: 'still',
+        path: named(
+          `preview/${requireSafeFilename(s?.file, "recorded still")}`,
+          "still",
+        ),
+        label: "still",
       })),
     ];
 
@@ -170,18 +221,21 @@ await runCli(async () => {
         continue;
       }
       const now = fingerprintBuffer(fs.readFileSync(p), name);
-      if (now.sha256 !== entry.sha256) stale.push(`${name} — changed since the stills were taken`);
+      if (now.sha256 !== entry.sha256)
+        stale.push(`${name} — changed since the stills were taken`);
       else files.push({ ...now, role: label });
     }
 
     if (stale.length) {
-      console.error(`\nFAILED: ${stale.length} input(s) no longer match the preview record:`);
+      console.error(
+        `\nFAILED: ${stale.length} input(s) no longer match the preview record:`,
+      );
       for (const s of stale) console.error(`  ${s}`);
       console.error(`  ${REMEDY}`);
       return EXIT.FAILED;
     }
 
-    files.push(collect('storyboard.html', 'storyboard'));
+    files.push(collect("storyboard.html", "storyboard"));
 
     // A NON-EMPTY STILL SET IS NOT A COMPLETE ONE. Every entry the record supplies is
     // verified, so a record listing two of three stills passes the loop above and publishes
@@ -192,14 +246,22 @@ await runCli(async () => {
     // preview --id can legitimately shoot a subset; that subset is fine for a preview and
     // NOT fine for a pass-2 pack. The remedy already prints the command that takes the full
     // set, because it passes no --id.
-    const shot = new Set(record.stills.map((s) => path.basename(String(s.file), '.png')));
-    const verifiedTiming = JSON.parse(fs.readFileSync(path.join(projectDir, record.timing.file), 'utf8'));
-    const expected = [...verifiedTiming.segments.map((s) => s.id), 'endcard'];
+    const shot = new Set(
+      record.stills.map((s) => path.basename(String(s.file), ".png")),
+    );
+    const verifiedTiming = JSON.parse(
+      fs.readFileSync(path.join(projectDir, record.timing.file), "utf8"),
+    );
+    const expected = [...verifiedTiming.segments.map((s) => s.id), "endcard"];
     const unseen = expected.filter((id) => !shot.has(id));
     if (unseen.length) {
-      console.error(`\nFAILED: the preview record covers ${shot.size} of ${expected.length} required stills.`);
-      console.error(`  never shot: ${unseen.join(', ')}`);
-      console.error(`  A coach cannot report on a segment it was not shown. ${REMEDY}`);
+      console.error(
+        `\nFAILED: the preview record covers ${shot.size} of ${expected.length} required stills.`,
+      );
+      console.error(`  never shot: ${unseen.join(", ")}`);
+      console.error(
+        `  A coach cannot report on a segment it was not shown. ${REMEDY}`,
+      );
       return EXIT.FAILED;
     }
 
@@ -210,21 +272,30 @@ await runCli(async () => {
     // It comes from the PAGE, so it is untrusted too, and it lands in an artifact an agent
     // quotes in a report read elsewhere. Its file paths are safe by construction; its own
     // keys and values are not, so they are scrubbed here (§V).
-    audit = { issues: JSON.parse(scrubText(JSON.stringify(record.audit.issues))) };
+    audit = {
+      issues: JSON.parse(scrubText(JSON.stringify(record.audit.issues))),
+    };
   }
 
   // Nobody names the manifest, so a link planted at it is REFUSED rather than written
   // through, and an existing pack is not silently replaced — the same rule preview.mjs
   // applies to its record. Rooted at COACH_DIR, so a link at `pack/` is caught too.
   // Resolved BEFORE the plan branch so a plan reports the path an apply would really use.
-  const packRelative = path.join('pack', packIdentity(projectDir), 'manifest.json');
+  const packRelative = path.join(
+    "pack",
+    packIdentity(projectDir),
+    "manifest.json",
+  );
   assertCoachDirIsReal();
   const manifestPath = resolveEngineOutput(COACH_DIR, packRelative, {
     apply,
     replace,
-    label: 'coach manifest',
+    label: "coach manifest",
   });
-  const shownPath = path.relative(process.cwd(), manifestPath).split(path.sep).join('/');
+  const shownPath = path
+    .relative(process.cwd(), manifestPath)
+    .split(path.sep)
+    .join("/");
 
   if (!apply) {
     console.log(`plan: pack ${files.length} file(s) for coach pass ${pass}`);
@@ -239,8 +310,13 @@ await runCli(async () => {
   // the one thing that must not leak, and it is never written.
   const manifest = {
     pass,
-    rubric: 'tools/SizzleCraft/coach/rubric.md',
-    files: files.map(({ file, bytes, sha256, role }) => ({ file, bytes, sha256, role })),
+    rubric: "tools/SizzleCraft/coach/rubric.md",
+    files: files.map(({ file, bytes, sha256, role }) => ({
+      file,
+      bytes,
+      sha256,
+      role,
+    })),
     ...(audit ? { audit } : {}),
   };
 

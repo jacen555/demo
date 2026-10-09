@@ -67,10 +67,15 @@
  * envelope that timed it. The bed's ducking record (see the end of this file) binds the
  * bed to that narration the same way, so remux-music can refuse the mismatch.
  */
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import { pipeline } from 'node:stream/promises';
-import { CliError, EXIT, openExclusiveEngineFile, resolveInternalArtifact } from './cli-support.mjs';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { pipeline } from "node:stream/promises";
+import {
+  CliError,
+  EXIT,
+  openExclusiveEngineFile,
+  resolveInternalArtifact,
+} from "./cli-support.mjs";
 
 /** The RMS above which a 20 ms hop counts as speech. Mirrors the synthesised-bed duck. */
 export const SPEECH_RMS_THRESHOLD = 0.004;
@@ -96,10 +101,10 @@ export const MIN_REPORTABLE_GAP_MS = 500;
 /** How far a delivered duck may miss the requested depth before the request is refused. */
 export const DUCK_DEPTH_TOLERANCE_DB = 0.1;
 
-const BINDING_KEY = 'measuredFrom';
+const BINDING_KEY = "measuredFrom";
 
 function isPlainObject(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const dbOf = (linear) => 20 * Math.log10(linear);
@@ -125,14 +130,22 @@ const linearOf = (db) => 10 ** (db / 20);
  *
  * @returns {Float64Array} the linear multiplier for each envelope hop
  */
-export function duckGainTrajectory({ rms, hopMs, duckGain, attackMs, releaseMs, threshold }) {
+export function duckGainTrajectory({
+  rms,
+  hopMs,
+  duckGain,
+  attackMs,
+  releaseMs,
+  threshold,
+}) {
   const attackCoefficient = Math.exp(-hopMs / attackMs);
   const releaseCoefficient = Math.exp(-hopMs / releaseMs);
   const gains = new Float64Array(rms.length);
   let current = 1;
   for (let k = 0; k < rms.length; k++) {
     const target = rms[k] > threshold ? duckGain : 1.0;
-    const coefficient = target < current ? attackCoefficient : releaseCoefficient;
+    const coefficient =
+      target < current ? attackCoefficient : releaseCoefficient;
     current = target + (current - target) * coefficient;
     gains[k] = current;
   }
@@ -189,12 +202,21 @@ export function timeToWithinDb({ duckDb, releaseMs, withinDb }) {
  *   make-music, which was handed it as `--envelope`, and a failed input to remux-music.
  * @returns {number} the hop, in milliseconds
  */
-export function requireEnvelopeHopMs(envelope, envelopePath, exitCode = EXIT.USAGE) {
+export function requireEnvelopeHopMs(
+  envelope,
+  envelopePath,
+  exitCode = EXIT.USAGE,
+) {
   const hopMs = envelope?.hopMs;
-  if (typeof hopMs !== 'number' || !Number.isFinite(hopMs) || hopMs < 1 || hopMs > 1000) {
+  if (
+    typeof hopMs !== "number" ||
+    !Number.isFinite(hopMs) ||
+    hopMs < 1 ||
+    hopMs > 1000
+  ) {
     throw new CliError(
-      `${envelopePath} "hopMs" is ${hopMs === undefined ? 'absent' : JSON.stringify(hopMs).slice(0, 32)} — it must be ` +
-      'a number of milliseconds from 1 to 1000 (vo-envelope writes 20). It is what places every dip the duck makes.',
+      `${envelopePath} "hopMs" is ${hopMs === undefined ? "absent" : JSON.stringify(hopMs).slice(0, 32)} — it must be ` +
+        "a number of milliseconds from 1 to 1000 (vo-envelope writes 20). It is what places every dip the duck makes.",
       exitCode,
     );
   }
@@ -214,28 +236,36 @@ export function requireEnvelopeHopMs(envelope, envelopePath, exitCode = EXIT.USA
  * duration, so its last hop is partial and the two halves legitimately differ by up to a
  * hop. Anything beyond that is not rounding.
  */
-export function assertEnvelopeSpansAgree(envelope, envelopePath, exitCode = EXIT.USAGE) {
+export function assertEnvelopeSpansAgree(
+  envelope,
+  envelopePath,
+  exitCode = EXIT.USAGE,
+) {
   const { durationMs } = envelope;
   const hopMs = requireEnvelopeHopMs(envelope, envelopePath, exitCode);
   const spanMs = envelope.rms.length * hopMs;
   // ABSENCE IS NOT AGREEMENT. vo-envelope is the only writer and it always records the
   // duration, so an envelope without one did not come from it — and skipping the check
   // for exactly those envelopes exempted the hand-edited ones it exists to catch.
-  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 0) {
+  if (
+    typeof durationMs !== "number" ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  ) {
     throw new CliError(
-      `${envelopePath} "durationMs" is ${durationMs === undefined ? 'absent' : JSON.stringify(durationMs).slice(0, 32)} — ` +
-      'it must be a non-negative number of milliseconds (vo-envelope writes one for every envelope it measures). ' +
-      `Its ${envelope.rms.length} frames at ${hopMs} ms describe ${spanMs} ms, and nothing can check that against ` +
-      'a span the envelope does not state.',
+      `${envelopePath} "durationMs" is ${durationMs === undefined ? "absent" : JSON.stringify(durationMs).slice(0, 32)} — ` +
+        "it must be a non-negative number of milliseconds (vo-envelope writes one for every envelope it measures). " +
+        `Its ${envelope.rms.length} frames at ${hopMs} ms describe ${spanMs} ms, and nothing can check that against ` +
+        "a span the envelope does not state.",
       exitCode,
     );
   }
   if (Math.abs(spanMs - durationMs) > hopMs + 1) {
     throw new CliError(
       `${envelopePath} contradicts itself: "durationMs" says ${durationMs} ms, but its ${envelope.rms.length} ` +
-      `frames at ${hopMs} ms describe ${spanMs} ms. One of them is wrong and which cannot be told from here — ` +
-      'an envelope short of its narration ducks the start and leaves the rest flat, and a padded one holds the ' +
-      'duck past the last word.\nRe-measure it: node src/vo-envelope.mjs --apply --replace',
+        `frames at ${hopMs} ms describe ${spanMs} ms. One of them is wrong and which cannot be told from here — ` +
+        "an envelope short of its narration ducks the start and leaves the rest flat, and a padded one holds the " +
+        "duck past the last word.\nRe-measure it: node src/vo-envelope.mjs --apply --replace",
       exitCode,
     );
   }
@@ -254,7 +284,12 @@ export function assertEnvelopeSpansAgree(envelope, envelopePath, exitCode = EXIT
  * duck to recover from and silence after the last has no phrase to be ready for, so
  * neither is a gap: counting them hid a project with no gaps at all behind its lead-in.
  */
-export function measureSpeech({ rms, hopMs, threshold = SPEECH_RMS_THRESHOLD, minGapMs = MIN_REPORTABLE_GAP_MS }) {
+export function measureSpeech({
+  rms,
+  hopMs,
+  threshold = SPEECH_RMS_THRESHOLD,
+  minGapMs = MIN_REPORTABLE_GAP_MS,
+}) {
   let sumOfSquares = 0;
   let speechFrames = 0;
   const gapLengths = [];
@@ -262,7 +297,8 @@ export function measureSpeech({ rms, hopMs, threshold = SPEECH_RMS_THRESHOLD, mi
 
   for (let k = 0; k < rms.length; k++) {
     if (rms[k] > threshold) {
-      if (speechFrames > 0 && run * hopMs >= minGapMs) gapLengths.push(run * hopMs);
+      if (speechFrames > 0 && run * hopMs >= minGapMs)
+        gapLengths.push(run * hopMs);
       speechFrames += 1;
       sumOfSquares += rms[k] * rms[k];
       run = 0;
@@ -275,11 +311,16 @@ export function measureSpeech({ rms, hopMs, threshold = SPEECH_RMS_THRESHOLD, mi
   return {
     frames: rms.length,
     speechFrames,
-    speechRms: speechFrames === 0 ? null : Math.sqrt(sumOfSquares / speechFrames),
+    speechRms:
+      speechFrames === 0 ? null : Math.sqrt(sumOfSquares / speechFrames),
     gaps: {
       count: gapLengths.length,
-      medianMs: gapLengths.length === 0 ? null : gapLengths[Math.floor((gapLengths.length - 1) / 2)],
-      longestMs: gapLengths.length === 0 ? null : gapLengths[gapLengths.length - 1],
+      medianMs:
+        gapLengths.length === 0
+          ? null
+          : gapLengths[Math.floor((gapLengths.length - 1) / 2)],
+      longestMs:
+        gapLengths.length === 0 ? null : gapLengths[gapLengths.length - 1],
     },
   };
 }
@@ -306,11 +347,19 @@ export function measureSpeech({ rms, hopMs, threshold = SPEECH_RMS_THRESHOLD, mi
  * clamp still keeps the value legal; a delivered depth more than DUCK_DEPTH_TOLERANCE_DB
  * from the request now stops the run and names the depth that is reachable.
  */
-export function calibrateDuckThreshold({ speechRms, voiceGain, duckDb, ratio }) {
+export function calibrateDuckThreshold({
+  speechRms,
+  voiceGain,
+  duckDb,
+  ratio,
+}) {
   const sidechainDb = dbOf(speechRms * voiceGain);
   const thresholdDb = sidechainDb - duckDb / (1 - 1 / ratio);
   const rounded = Number(linearOf(thresholdDb).toFixed(6));
-  const threshold = Math.min(SIDECHAIN_THRESHOLD_MAX, Math.max(SIDECHAIN_THRESHOLD_MIN, rounded));
+  const threshold = Math.min(
+    SIDECHAIN_THRESHOLD_MAX,
+    Math.max(SIDECHAIN_THRESHOLD_MIN, rounded),
+  );
 
   const delivered = achievedDuckDb({ threshold, speechRms, voiceGain, ratio });
   if (Math.abs(delivered - duckDb) <= DUCK_DEPTH_TOLERANCE_DB) return threshold;
@@ -352,19 +401,23 @@ export function achievedDuckDb({ threshold, speechRms, voiceGain, ratio }) {
  * read of a narration track blocks the event loop for as long as the disk takes.
  */
 export async function fingerprintVoice(voicePath, displayName) {
-  const hash = crypto.createHash('sha256');
+  const hash = crypto.createHash("sha256");
   let bytes = 0;
   const source = fs.createReadStream(voicePath);
-  source.on('data', (chunk) => {
+  source.on("data", (chunk) => {
     bytes += chunk.length;
   });
   await pipeline(source, hash);
-  return { file: displayName, bytes, sha256: hash.digest('hex') };
+  return { file: displayName, bytes, sha256: hash.digest("hex") };
 }
 
 /** Builds the record written into the envelope. Kept beside the reader that checks it. */
 export function envelopeBindingRecord(fingerprint) {
-  return { file: fingerprint.file, bytes: fingerprint.bytes, sha256: fingerprint.sha256 };
+  return {
+    file: fingerprint.file,
+    bytes: fingerprint.bytes,
+    sha256: fingerprint.sha256,
+  };
 }
 
 /**
@@ -378,21 +431,36 @@ export function envelopeBindingRecord(fingerprint) {
  */
 export function classifyEnvelopeLineage(envelope, fingerprint) {
   if (!isPlainObject(envelope)) {
-    return { state: 'unreadable', recorded: null, actual: fingerprint, differences: [] };
+    return {
+      state: "unreadable",
+      recorded: null,
+      actual: fingerprint,
+      differences: [],
+    };
   }
 
   const recorded = envelope[BINDING_KEY];
   if (recorded === undefined) {
-    return { state: 'unbound', recorded: null, actual: fingerprint, differences: [] };
+    return {
+      state: "unbound",
+      recorded: null,
+      actual: fingerprint,
+      differences: [],
+    };
   }
   if (
     !isPlainObject(recorded) ||
-    typeof recorded.sha256 !== 'string' ||
+    typeof recorded.sha256 !== "string" ||
     !/^[0-9a-f]{64}$/i.test(recorded.sha256) ||
     !Number.isInteger(recorded.bytes) ||
     recorded.bytes < 0
   ) {
-    return { state: 'unreadable', recorded, actual: fingerprint, differences: [] };
+    return {
+      state: "unreadable",
+      recorded,
+      actual: fingerprint,
+      differences: [],
+    };
   }
 
   // `file` is RECORDED BUT NOT COMPARED. A caller may legitimately point a stage at the
@@ -400,13 +468,28 @@ export function classifyEnvelopeLineage(envelope, fingerprint) {
   // is what the envelope was measured from, and the content is what is checked.
   const differences = [];
   if (recorded.bytes !== fingerprint.bytes) {
-    differences.push({ field: 'bytes', recorded: recorded.bytes, actual: fingerprint.bytes });
+    differences.push({
+      field: "bytes",
+      recorded: recorded.bytes,
+      actual: fingerprint.bytes,
+    });
   }
-  if (recorded.sha256.toLowerCase() !== String(fingerprint.sha256).toLowerCase()) {
-    differences.push({ field: 'sha256', recorded: recorded.sha256, actual: fingerprint.sha256 });
+  if (
+    recorded.sha256.toLowerCase() !== String(fingerprint.sha256).toLowerCase()
+  ) {
+    differences.push({
+      field: "sha256",
+      recorded: recorded.sha256,
+      actual: fingerprint.sha256,
+    });
   }
 
-  return { state: differences.length === 0 ? 'current' : 'stale', recorded, actual: fingerprint, differences };
+  return {
+    state: differences.length === 0 ? "current" : "stale",
+    recorded,
+    actual: fingerprint,
+    differences,
+  };
 }
 
 const REMEASURE = (voicePath) =>
@@ -420,19 +503,19 @@ const REMEASURE = (voicePath) =>
  * a guard that invents a cause is worse than one that reports a difference.
  */
 export function describeEnvelopeRefusal(verdict, { envelopePath, voicePath }) {
-  if (verdict.state === 'unbound') {
+  if (verdict.state === "unbound") {
     return (
       `${envelopePath} records no input fingerprint, so nothing can confirm it describes ${voicePath}.\n` +
-      'An envelope with no binding is NOT an envelope that matches — it predates the check, and\n' +
-      'treating absence as permission is the defect this guard exists to remove.\n' +
+      "An envelope with no binding is NOT an envelope that matches — it predates the check, and\n" +
+      "treating absence as permission is the defect this guard exists to remove.\n" +
       REMEASURE(voicePath)
     );
   }
 
-  if (verdict.state === 'unreadable') {
+  if (verdict.state === "unreadable") {
     return (
       `${envelopePath} carries a "${BINDING_KEY}" that cannot be read as an input fingerprint.\n` +
-      'A malformed binding is not an absent one and is not a matching one; it is refused on its own terms.\n' +
+      "A malformed binding is not an absent one and is not a matching one; it is refused on its own terms.\n" +
       REMEASURE(voicePath)
     );
   }
@@ -444,10 +527,10 @@ export function describeEnvelopeRefusal(verdict, { envelopePath, voicePath }) {
 
   return (
     `${envelopePath} was measured from different audio than ${voicePath}:\n` +
-    `${lines.join('\n')}\n` +
-    'The envelope drives the duck, so calibrating against it would mis-place every gain change\n' +
-    'by however far the two have diverged, and nothing downstream measures that.\n' +
-    'This states only that the two differ — not what changed them, which is not knowable here.\n' +
+    `${lines.join("\n")}\n` +
+    "The envelope drives the duck, so calibrating against it would mis-place every gain change\n" +
+    "by however far the two have diverged, and nothing downstream measures that.\n" +
+    "This states only that the two differ — not what changed them, which is not knowable here.\n" +
     REMEASURE(voicePath)
   );
 }
@@ -455,14 +538,14 @@ export function describeEnvelopeRefusal(verdict, { envelopePath, voicePath }) {
 /** One-line status for a plan. */
 export function describeEnvelopeState(verdict) {
   switch (verdict.state) {
-    case 'current':
-      return 'CURRENT — measured from the voice track on disk';
-    case 'stale':
-      return `STALE — measured from different audio (${verdict.differences.map((d) => d.field).join(', ')} differ)`;
-    case 'unbound':
-      return 'UNBOUND — records no input fingerprint, so it cannot be confirmed';
+    case "current":
+      return "CURRENT — measured from the voice track on disk";
+    case "stale":
+      return `STALE — measured from different audio (${verdict.differences.map((d) => d.field).join(", ")} differ)`;
+    case "unbound":
+      return "UNBOUND — records no input fingerprint, so it cannot be confirmed";
     default:
-      return 'UNREADABLE — carries a binding that is not a binding';
+      return "UNREADABLE — carries a binding that is not a binding";
   }
 }
 
@@ -483,13 +566,17 @@ export function describeEnvelopeState(verdict) {
  * ducked before records existed. The audio cannot tell those apart, so absence is
  * reported as exactly what it is: unknown.
  */
-export const BED_DUCK_RECORD_SUFFIX = '.duck.json';
+export const BED_DUCK_RECORD_SUFFIX = ".duck.json";
 
 /** The record make-music writes. `voiceFingerprint` is null for a bed it did not duck. */
 export function bedDuckRecord(bedFingerprint, voiceFingerprint) {
   const bed = envelopeBindingRecord(bedFingerprint);
   return voiceFingerprint
-    ? { bed, ducked: true, duckedAgainst: envelopeBindingRecord(voiceFingerprint) }
+    ? {
+        bed,
+        ducked: true,
+        duckedAgainst: envelopeBindingRecord(voiceFingerprint),
+      }
     : { bed, ducked: false };
 }
 
@@ -522,25 +609,37 @@ export function bedDuckRecord(bedFingerprint, voiceFingerprint) {
  *
  * @returns {{path: string, warnings: string[]}} the path published, and what was left behind
  */
-export function publishBedDuckRecord(root, recordPath, record, { replace = false } = {}) {
+export function publishBedDuckRecord(
+  root,
+  recordPath,
+  record,
+  { replace = false } = {},
+) {
   const body = `${JSON.stringify(record, null, 2)}\n`;
 
   let target;
   try {
-    target = resolveInternalArtifact(root, recordPath, 'ducking record', 'write');
+    target = resolveInternalArtifact(
+      root,
+      recordPath,
+      "ducking record",
+      "write",
+    );
   } catch (err) {
     // Without --replace, a link at the name is simply an entry that appeared.
-    if (!replace && entryExists(recordPath)) throw appearedAfterTheCheck(root, recordPath);
+    if (!replace && entryExists(recordPath))
+      throw appearedAfterTheCheck(root, recordPath);
     throw err;
   }
-  if (!replace && entryExists(target)) throw appearedAfterTheCheck(root, target);
+  if (!replace && entryExists(target))
+    throw appearedAfterTheCheck(root, target);
 
   let temp;
   try {
     temp = openExclusiveEngineFile(
       root,
-      `${target}.part-${process.pid}-${crypto.randomBytes(8).toString('hex')}`,
-      'ducking record temp file',
+      `${target}.part-${process.pid}-${crypto.randomBytes(8).toString("hex")}`,
+      "ducking record temp file",
     );
   } catch (err) {
     throw new CliError(
@@ -548,7 +647,7 @@ export function publishBedDuckRecord(root, recordPath, record, { replace = false
       EXIT.FAILED,
     );
   }
-  requireOpenedAt(temp, 'ducking record temp file');
+  requireOpenedAt(temp, "ducking record temp file");
 
   try {
     fs.writeFileSync(temp.fd, body);
@@ -565,16 +664,22 @@ export function publishBedDuckRecord(root, recordPath, record, { replace = false
   } catch (err) {
     const notes = withCloseNote(retireTemp(temp));
     // The authoritative no-clobber guard: the link cannot be made over any entry at all.
-    if (!replace && err.code === 'EEXIST') throw appearedAfterTheCheck(root, target, notes);
-    throw notPublished(`could not publish the ducking record ${target} (${err.code ?? err.message})`, notes, {
-      viaLink: !replace,
-    });
+    if (!replace && err.code === "EEXIST")
+      throw appearedAfterTheCheck(root, target, notes);
+    throw notPublished(
+      `could not publish the ducking record ${target} (${err.code ?? err.message})`,
+      notes,
+      {
+        viaLink: !replace,
+      },
+    );
   }
 
   // Verify, then retire the temp name, then close: every check needs the descriptor open.
   const verdict = openedAtVerdict(temp.fd, target);
-  const retired = retireTemp(temp, { published: verdict === 'same' });
-  if (verdict !== 'same') throw notTheRecordThisRunWrote(target, verdict, withCloseNote(retired));
+  const retired = retireTemp(temp, { published: verdict === "same" });
+  if (verdict !== "same")
+    throw notTheRecordThisRunWrote(target, verdict, withCloseNote(retired));
   if (retired.closeFailure) throw notClosed(root, target, retired);
   return { path: target, warnings: retired.notes };
 }
@@ -602,23 +707,26 @@ function howToClear(root, recordPath) {
   let entry;
   try {
     entry = fs.lstatSync(recordPath, { throwIfNoEntry: false });
-    if (entry === undefined) return 'Nothing is at that name now, so re-run without --replace.';
+    if (entry === undefined)
+      return "Nothing is at that name now, so re-run without --replace.";
   } catch {
     entry = undefined;
   }
-  if (entry?.isSymbolicLink()) return 'Move it aside: it is a link, and --replace does not overwrite a link.';
-  if (entry?.isDirectory()) return 'Move it aside: it is a directory, and --replace does not overwrite a directory.';
+  if (entry?.isSymbolicLink())
+    return "Move it aside: it is a link, and --replace does not overwrite a link.";
+  if (entry?.isDirectory())
+    return "Move it aside: it is a directory, and --replace does not overwrite a directory.";
   if (entry?.isFile()) {
     try {
-      resolveInternalArtifact(root, recordPath, 'ducking record', 'write');
-      return 'Move it aside, or re-run with --replace to overwrite it.';
+      resolveInternalArtifact(root, recordPath, "ducking record", "write");
+      return "Move it aside, or re-run with --replace to overwrite it.";
     } catch {
       // The link check refused this path, and a --replace run meets the same check.
     }
   }
   return (
-    'Move it aside: it could not be confirmed to be a regular file that --replace would overwrite, so ' +
-    '--replace is not advised.'
+    "Move it aside: it could not be confirmed to be a regular file that --replace would overwrite, so " +
+    "--replace is not advised."
   );
 }
 
@@ -626,10 +734,10 @@ function notPublished(what, notes, { viaLink = false } = {}) {
   return new CliError(
     `${what} — nothing was written at that name.` +
       (viaLink
-        ? ' Without --replace the record is published as a hard link, which some volumes (FAT, exFAT) cannot ' +
-          'make; --replace publishes it by rename instead, and overwrites an existing bed and a ducking record ' +
-          'that is a regular file.'
-        : '') +
+        ? " Without --replace the record is published as a hard link, which some volumes (FAT, exFAT) cannot " +
+          "make; --replace publishes it by rename instead, and overwrites an existing bed and a ducking record " +
+          "that is a regular file."
+        : "") +
       asSentences(notes),
     EXIT.FAILED,
   );
@@ -637,18 +745,21 @@ function notPublished(what, notes, { viaLink = false } = {}) {
 
 function notTheRecordThisRunWrote(target, verdict, notes) {
   const state = {
-    absent: 'was removed as it was published: nothing is at that name now',
+    absent: "was removed as it was published: nothing is at that name now",
     different:
-      'is not the record this run wrote: another entry took its place as it was published. That entry has ' +
-      'been left as it is',
+      "is not the record this run wrote: another entry took its place as it was published. That entry has " +
+      "been left as it is",
     unavailable:
-      'cannot be confirmed as the record this run wrote: this filesystem gives no file identity to check. ' +
-      'The entry at that name has been left as it is',
+      "cannot be confirmed as the record this run wrote: this filesystem gives no file identity to check. " +
+      "The entry at that name has been left as it is",
     unchecked:
-      'cannot be confirmed as the record this run wrote: it could not be examined. The entry at that name ' +
-      'has been left as it is',
+      "cannot be confirmed as the record this run wrote: it could not be examined. The entry at that name " +
+      "has been left as it is",
   }[verdict];
-  return new CliError(`the ducking record ${target} ${state}.${asSentences(notes)}`, EXIT.FAILED);
+  return new CliError(
+    `the ducking record ${target} ${state}.${asSentences(notes)}`,
+    EXIT.FAILED,
+  );
 }
 
 /**
@@ -667,7 +778,8 @@ function notClosed(root, target, { notes, closeFailure }) {
   );
 }
 
-const asSentences = (notes) => notes.map((note) => ` ${note[0].toUpperCase()}${note.slice(1)}.`).join('');
+const asSentences = (notes) =>
+  notes.map((note) => ` ${note[0].toUpperCase()}${note.slice(1)}.`).join("");
 
 /**
  * Removes the temp file's name — only while it still holds the file open as `temp.fd` —
@@ -679,7 +791,7 @@ const asSentences = (notes) => notes.map((note) => ` ${note[0].toUpperCase()}${n
 function retireTemp(temp, { published = false } = {}) {
   const notes = [];
   const verdict = openedAtVerdict(temp.fd, temp.path);
-  if (verdict === 'same') {
+  if (verdict === "same") {
     try {
       fs.unlinkSync(temp.path);
     } catch (err) {
@@ -690,9 +802,9 @@ function retireTemp(temp, { published = false } = {}) {
           : `the temp file ${temp.path} could not be removed (${err.code ?? err.message}) — delete it by hand`,
       );
     }
-  } else if (verdict !== 'absent') {
+  } else if (verdict !== "absent") {
     notes.push(
-      verdict === 'different'
+      verdict === "different"
         ? `the temp name ${temp.path} no longer holds the file this run wrote, so it has been left as it is`
         : `the temp name ${temp.path} cannot be confirmed as this run's, so it has been left as it is`,
     );
@@ -709,7 +821,10 @@ function retireTemp(temp, { published = false } = {}) {
 /** retireTemp's result as the notes for an error already being raised. */
 function withCloseNote({ notes, closeFailure }) {
   return closeFailure
-    ? [...notes, `the temp file's descriptor could not be closed (${closeFailure.code ?? closeFailure.message})`]
+    ? [
+        ...notes,
+        `the temp file's descriptor could not be closed (${closeFailure.code ?? closeFailure.message})`,
+      ]
     : notes;
 }
 
@@ -727,7 +842,7 @@ function withCloseNote({ notes, closeFailure }) {
  * this collapses; a caller that must report WHY should ask for the verdict instead.
  */
 export function isOpenedAt(fd, name) {
-  return openedAtVerdict(fd, name) === 'same';
+  return openedAtVerdict(fd, name) === "same";
 }
 
 /**
@@ -754,39 +869,43 @@ function openedAtVerdict(fd, name) {
     opened = fs.fstatSync(fd, { bigint: true });
     entry = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false });
   } catch {
-    return 'unchecked';
+    return "unchecked";
   }
-  if (entry === undefined) return 'absent';
-  if (!entry.isFile() || !opened.isFile()) return 'different';
-  if (entry.ino === 0n || opened.ino === 0n) return 'unavailable';
-  if (entry.ino !== opened.ino) return 'different';
+  if (entry === undefined) return "absent";
+  if (!entry.isFile() || !opened.isFile()) return "different";
+  if (entry.ino === 0n || opened.ino === 0n) return "unavailable";
+  if (entry.ino !== opened.ino) return "different";
   // Windows reports dev 0 for a stat by path and the volume serial for one by descriptor,
   // so the volume is compared only where both report one.
-  return entry.dev === 0n || opened.dev === 0n || entry.dev === opened.dev ? 'same' : 'different';
+  return entry.dev === 0n || opened.dev === 0n || entry.dev === opened.dev
+    ? "same"
+    : "different";
 }
 
 /** Refuses a just-created handle whose name cannot be shown to hold its file. Never deletes by name. */
 function requireOpenedAt(handle, label) {
   const verdict = openedAtVerdict(handle.fd, handle.path);
-  if (verdict === 'same') return;
+  if (verdict === "same") return;
   // Not handle.cleanup(): it removes by NAME, and the entry at the name is not provably this file.
-  try { fs.closeSync(handle.fd); } catch {}
-  if (verdict !== 'different') {
+  try {
+    fs.closeSync(handle.fd);
+  } catch {}
+  if (verdict !== "different") {
     const why = {
-      absent: 'it was removed as it was created',
-      unavailable: 'this filesystem gives no file identity to check',
-      unchecked: 'it could not be examined',
+      absent: "it was removed as it was created",
+      unavailable: "this filesystem gives no file identity to check",
+      unchecked: "it could not be examined",
     }[verdict];
     throw new CliError(
       `${label} ${handle.path} cannot be confirmed as the file this run just created: ${why}. Nothing was ` +
-        'written to it, and whatever is at that name has been left as it is.',
+        "written to it, and whatever is at that name has been left as it is.",
       EXIT.FAILED,
     );
   }
   throw new CliError(
     `${label} ${handle.path} is not the file this run just created there — a link or another entry took its ` +
-      'place as it was created. Nothing was written to it and it has been left as it is; if it is a link, an ' +
-      'empty file may now exist where it points.',
+      "place as it was created. Nothing was written to it and it has been left as it is; if it is a link, an " +
+      "empty file may now exist where it points.",
   );
 }
 
@@ -802,8 +921,8 @@ function entryExists(candidate) {
 function isFingerprint(value) {
   return (
     isPlainObject(value) &&
-    typeof value.file === 'string' &&
-    typeof value.sha256 === 'string' &&
+    typeof value.file === "string" &&
+    typeof value.sha256 === "string" &&
     /^[0-9a-f]{64}$/i.test(value.sha256) &&
     Number.isInteger(value.bytes) &&
     value.bytes >= 0
@@ -823,26 +942,48 @@ function isFingerprint(value) {
  * `voiceFingerprint` is a function, called only for a ducked bed: fingerprinting the
  * narration reads every byte of it, and no other state needs one.
  */
-export async function classifyBedDuckRecord(record, bedFingerprint, voiceFingerprint) {
-  if (record === undefined) return { state: 'absent' };
-  if (!isPlainObject(record)) return { state: 'malformed', reason: 'it is not a JSON object' };
+export async function classifyBedDuckRecord(
+  record,
+  bedFingerprint,
+  voiceFingerprint,
+) {
+  if (record === undefined) return { state: "absent" };
+  if (!isPlainObject(record))
+    return { state: "malformed", reason: "it is not a JSON object" };
   if (!isFingerprint(record.bed)) {
-    return { state: 'malformed', reason: '"bed" is not a fingerprint (file, bytes, sha256)' };
+    return {
+      state: "malformed",
+      reason: '"bed" is not a fingerprint (file, bytes, sha256)',
+    };
   }
-  if (typeof record.ducked !== 'boolean') return { state: 'malformed', reason: '"ducked" is not true or false' };
+  if (typeof record.ducked !== "boolean")
+    return { state: "malformed", reason: '"ducked" is not true or false' };
   if (record.ducked && !isFingerprint(record.duckedAgainst)) {
-    return { state: 'malformed', reason: '"ducked" is true but "duckedAgainst" is not a fingerprint' };
+    return {
+      state: "malformed",
+      reason: '"ducked" is true but "duckedAgainst" is not a fingerprint',
+    };
   }
   if (!record.ducked && record.duckedAgainst !== undefined) {
-    return { state: 'malformed', reason: '"ducked" is false but it names narration it was ducked against' };
+    return {
+      state: "malformed",
+      reason: '"ducked" is false but it names narration it was ducked against',
+    };
   }
 
   // The same comparison an envelope's binding gets: content, not name.
-  const bed = classifyEnvelopeLineage({ [BINDING_KEY]: record.bed }, bedFingerprint);
-  if (bed.state !== 'current') return { state: 'other-bed', differences: bed.differences };
-  if (!record.ducked) return { state: 'flat' };
+  const bed = classifyEnvelopeLineage(
+    { [BINDING_KEY]: record.bed },
+    bedFingerprint,
+  );
+  if (bed.state !== "current")
+    return { state: "other-bed", differences: bed.differences };
+  if (!record.ducked) return { state: "flat" };
 
-  const voice = classifyEnvelopeLineage({ [BINDING_KEY]: record.duckedAgainst }, await voiceFingerprint());
+  const voice = classifyEnvelopeLineage(
+    { [BINDING_KEY]: record.duckedAgainst },
+    await voiceFingerprint(),
+  );
   return { state: voice.state, differences: voice.differences };
 }
 
@@ -856,36 +997,39 @@ const fieldLines = (differences, recordedAs, actualAs) =>
  * The refusal text for a ducking record that does not clear the bed. Like the envelope's,
  * it reports what differs and never guesses at what changed it.
  */
-export function describeBedDuckRefusal(verdict, { recordPath, bedName, voiceName }) {
+export function describeBedDuckRefusal(
+  verdict,
+  { recordPath, bedName, voiceName },
+) {
   const redo =
-    'Re-duck the bed against the narration in play, with the --seconds and --preset it was made with:\n' +
+    "Re-duck the bed against the narration in play, with the --seconds and --preset it was made with:\n" +
     `  node src/vo-envelope.mjs --voice ${voiceName} --apply --replace\n` +
     `  node src/make-music.mjs --out ${bedName} --voice ${voiceName} --envelope vo-envelope.json --apply --replace`;
 
-  if (verdict.state === 'stale') {
+  if (verdict.state === "stale") {
     return (
       `${recordPath} says make-music ducked ${bedName} against different narration than ${voiceName}:\n` +
-      `${fieldLines(verdict.differences, 'ducked against', `${voiceName} is`).join('\n')}\n` +
+      `${fieldLines(verdict.differences, "ducked against", `${voiceName} is`).join("\n")}\n` +
       "That duck is baked into the bed's samples, timed to where the other narration spoke, so it\n" +
-      'dips in the wrong places under this one. The gain pin cannot see it — it covers the bed and the\n' +
-      'mix, not the narration — and --duck-db cannot fix it: an in-graph duck lands on top of the baked one.\n' +
-      'This states only that the two differ, not what changed them, which is not knowable here.\n' +
+      "dips in the wrong places under this one. The gain pin cannot see it — it covers the bed and the\n" +
+      "mix, not the narration — and --duck-db cannot fix it: an in-graph duck lands on top of the baked one.\n" +
+      "This states only that the two differ, not what changed them, which is not knowable here.\n" +
       redo
     );
   }
-  if (verdict.state === 'other-bed') {
+  if (verdict.state === "other-bed") {
     return (
       `${recordPath} describes a different bed than ${bedName}:\n` +
-      `${fieldLines(verdict.differences, 'record describes', `${bedName} is`).join('\n')}\n` +
-      'It was written for other bytes, so it says nothing about this bed — including whether it is ducked.\n' +
-      'Re-run make-music to write the bed and its record together, or, if this bed did not come from\n' +
-      'make-music, remove the leftover record.'
+      `${fieldLines(verdict.differences, "record describes", `${bedName} is`).join("\n")}\n` +
+      "It was written for other bytes, so it says nothing about this bed — including whether it is ducked.\n" +
+      "Re-run make-music to write the bed and its record together, or, if this bed did not come from\n" +
+      "make-music, remove the leftover record."
     );
   }
   return (
     `${recordPath} is not a ducking record make-music wrote: ${verdict.reason}.\n` +
-    'An unreadable record is not an absent one and not a flat one, and it is not guessed at.\n' +
-    'Re-run make-music to write the bed and its record together, or remove the file if it does not\n' +
-    'belong to this bed.'
+    "An unreadable record is not an absent one and not a flat one, and it is not guessed at.\n" +
+    "Re-run make-music to write the bed and its record together, or remove the file if it does not\n" +
+    "belong to this bed."
   );
 }

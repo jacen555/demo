@@ -4,9 +4,9 @@
 // read — so the one flag that must never do work was the one that crashed. The check now
 // lives behind parseCli, and the missing-asset case is a CliError rather than a raw throw,
 // so it reports `error: …` and exit 2 instead of a stack trace.
-import fs from 'node:fs';
-import path from 'node:path';
-import { CliError, guard, parseCli } from './cli-support.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import { CliError, guard, parseCli } from "./cli-support.mjs";
 
 const USAGE = `
 silence-asset — print the path to the project's shipped silence.mp3.
@@ -24,7 +24,7 @@ Exit codes: 0 success · 2 bad usage, or the asset is missing`.trim();
 
 guard(() => {
   const { projectDir } = parseCli({ usage: USAGE });
-  const silencePath = path.join(projectDir, 'silence.mp3');
+  const silencePath = path.join(projectDir, "silence.mp3");
 
   if (!fs.existsSync(silencePath)) {
     throw new CliError(

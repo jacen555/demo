@@ -36,18 +36,21 @@
 // WINDOWS-ONLY BY NATURE. POSIX unlinks an open file happily, so there is no EBUSY to
 // retry and the control in test 2 cannot fail. These skip rather than pretend elsewhere.
 // --------------------------------------------------------------------------------------
-import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { removeFixture, FIXTURE_REMOVAL } from './_helpers.mjs';
+import { removeFixture, FIXTURE_REMOVAL } from "./_helpers.mjs";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const windowsOnly = process.platform !== 'win32' ? 'EBUSY on a held handle is Windows behaviour' : false;
+const windowsOnly =
+  process.platform !== "win32"
+    ? "EBUSY on a held handle is Windows behaviour"
+    : false;
 
 /**
  * A directory a live child process is sitting in, which Windows will not let anyone remove.
@@ -67,18 +70,25 @@ function captureError(fn) {
   return null;
 }
 
-function heldDirectory(t, { holdMs, holdAt = 'root' }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-held-'));
-  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'src', 'encoder-page.html'), '<!doctype html>');
+function heldDirectory(t, { holdMs, holdAt = "root" }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sizzlecraft-held-"));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "src", "encoder-page.html"),
+    "<!doctype html>",
+  );
 
   // `root` is what runScript produces (cwd = the fixture); `inner` is the shape of the
   // captured failure, which named a file under src/.
-  const cwd = holdAt === 'root' ? dir : path.join(dir, 'src');
-  const child = spawn(process.execPath, ['-e', `process.stdout.write('held'); setTimeout(() => {}, ${holdMs})`], {
-    cwd,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  const cwd = holdAt === "root" ? dir : path.join(dir, "src");
+  const child = spawn(
+    process.execPath,
+    ["-e", `process.stdout.write('held'); setTimeout(() => {}, ${holdMs})`],
+    {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
   // THE CHILD ITSELF SAYS WHEN IT HOLDS THE DIRECTORY, and the first draft of this got it
   // wrong in the direction that matters. Resolving on the 'spawn' event made the removal
   // win the race against a directory nothing was holding yet: the control below reported
@@ -86,7 +96,7 @@ function heldDirectory(t, { holdMs, holdAt = 'root' }) {
   // the fix for flaky tests. The OS sets a process's working directory before that
   // process runs any code, so a byte written BY the child proves the handle is held. A
   // fixed sleep would only have made the same race less likely to be noticed.
-  const ready = new Promise((resolve) => child.stdout.once('data', resolve));
+  const ready = new Promise((resolve) => child.stdout.once("data", resolve));
 
   t.after(() => {
     if (child.exitCode === null) child.kill();
@@ -114,27 +124,27 @@ function heldDirectory(t, { holdMs, holdAt = 'root' }) {
  * the template around it, so an `fs.rmSync` written inside one would not be seen.
  */
 function stripNonCode(src) {
-  let out = '';
+  let out = "";
   let i = 0;
   // A '/' here starts a regex rather than a division, judged by the last code character.
-  let prev = '';
+  let prev = "";
   while (i < src.length) {
     const c = src[i];
     const n = src[i + 1];
-    if (c === '/' && n === '/') {
-      while (i < src.length && src[i] !== '\n') i++;
+    if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
       continue;
     }
-    if (c === '/' && n === '*') {
+    if (c === "/" && n === "*") {
       i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
       i += 2;
       continue;
     }
-    if (c === '"' || c === "'" || c === '`') {
+    if (c === '"' || c === "'" || c === "`") {
       i++;
       while (i < src.length && src[i] !== c) {
-        if (src[i] === '\\') i++;
+        if (src[i] === "\\") i++;
         i++;
       }
       i++;
@@ -142,16 +152,16 @@ function stripNonCode(src) {
       prev = '"';
       continue;
     }
-    if (c === '/' && (prev === '' || '(,=:[!&|?{};+-*%~^<>'.includes(prev))) {
+    if (c === "/" && (prev === "" || "(,=:[!&|?{};+-*%~^<>".includes(prev))) {
       i++;
-      while (i < src.length && src[i] !== '/') {
-        if (src[i] === '\\') i++;
-        if (src[i] === '[') while (i < src.length && src[i] !== ']') i++;
+      while (i < src.length && src[i] !== "/") {
+        if (src[i] === "\\") i++;
+        if (src[i] === "[") while (i < src.length && src[i] !== "]") i++;
         i++;
       }
       i++;
-      out += '//';
-      prev = '/';
+      out += "//";
+      prev = "/";
       continue;
     }
     out += c;
@@ -179,12 +189,12 @@ export function bareTeardownRemovals(source) {
     let depth = 1;
     let i = hook.lastIndex;
     for (; i < code.length && depth > 0; i++) {
-      if (code[i] === '(') depth++;
-      else if (code[i] === ')') depth--;
+      if (code[i] === "(") depth++;
+      else if (code[i] === ")") depth--;
     }
     const body = code.slice(hook.lastIndex, i);
     if (/\bfs\.rm(?:dir)?Sync\s*\(/.test(body)) {
-      found.push(`${m[1]}: ${body.replace(/\s+/g, ' ').trim().slice(0, 70)}`);
+      found.push(`${m[1]}: ${body.replace(/\s+/g, " ").trim().slice(0, 70)}`);
     }
   }
   return found;
@@ -192,12 +202,15 @@ export function bareTeardownRemovals(source) {
 
 /** The controls, kept outside any .mjs file so the audit can scan its own source. */
 function loadControls() {
-  const text = fs.readFileSync(path.join(TESTS_DIR, 'fixture-teardown.controls.txt'), 'utf8');
+  const text = fs.readFileSync(
+    path.join(TESTS_DIR, "fixture-teardown.controls.txt"),
+    "utf8",
+  );
   const blocks = [];
   for (const chunk of text.split(/^### /m).slice(1)) {
-    const [header, ...rest] = chunk.split('\n');
+    const [header, ...rest] = chunk.split("\n");
     const [expect, name] = header.trim().split(/\s+/);
-    blocks.push({ expect, name, source: rest.join('\n').trim() });
+    blocks.push({ expect, name, source: rest.join("\n").trim() });
   }
   return blocks;
 }
@@ -210,88 +223,130 @@ function suiteSources(dir) {
     // src/ under tests/, and another test may remove one between this walk and the read —
     // an audit that recursed into them would invent its own intermittent ENOENT, which is
     // precisely the class of defect this file was opened to remove.
-    if (entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...suiteSources(full));
-    else if (entry.name.endsWith('.mjs')) out.push(full);
+    else if (entry.name.endsWith(".mjs")) out.push(full);
   }
   return out;
 }
 
-describe('fixture teardown survives a busy machine', () => {
-  for (const holdAt of ['root', 'inner']) {
-    const where = holdAt === 'root' ? 'AtTheTreeRoot' : 'OneLevelIn';
+describe("fixture teardown survives a busy machine", () => {
+  for (const holdAt of ["root", "inner"]) {
+    const where = holdAt === "root" ? "AtTheTreeRoot" : "OneLevelIn";
 
-    test(`removeFixture_directoryHeldByALiveChildProcess${where}_succeedsOnceTheHandleIsReleased`, async (t) => {
-      const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
-      await ready;
+    test(
+      `removeFixture_directoryHeldByALiveChildProcess${where}_succeedsOnceTheHandleIsReleased`,
+      async (t) => {
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
+        await ready;
 
-      // The handle outlives the first attempt by seconds, so this can only pass by retrying.
-      removeFixture(dir);
+        // The handle outlives the first attempt by seconds, so this can only pass by retrying.
+        removeFixture(dir);
 
-      assert.equal(fs.existsSync(dir), false, 'the fixture must actually be gone');
-    }, { skip: windowsOnly, timeout: 60_000 });
+        assert.equal(
+          fs.existsSync(dir),
+          false,
+          "the fixture must actually be gone",
+        );
+      },
+      { skip: windowsOnly, timeout: 60_000 },
+    );
 
-    test(`removeFixture_theSameHeldDirectory${where}WithoutTheRetryBudget_failsWithEbusy`, async (t) => {
-      // THE POSITIVE CONTROL. Identical setup, retry budget removed. If this ever passes,
-      // the directory was not locked and the test above is vacuous.
-      const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
-      await ready;
+    test(
+      `removeFixture_theSameHeldDirectory${where}WithoutTheRetryBudget_failsWithEbusy`,
+      async (t) => {
+        // THE POSITIVE CONTROL. Identical setup, retry budget removed. If this ever passes,
+        // the directory was not locked and the test above is vacuous.
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
+        await ready;
 
-      const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true }));
+        const err = captureError(() =>
+          fs.rmSync(dir, { recursive: true, force: true }),
+        );
 
-      assert.equal(err?.code, 'EBUSY', `the held directory must genuinely refuse removal, got ${err?.code}`);
-    }, { skip: windowsOnly, timeout: 60_000 });
+        assert.equal(
+          err?.code,
+          "EBUSY",
+          `the held directory must genuinely refuse removal, got ${err?.code}`,
+        );
+      },
+      { skip: windowsOnly, timeout: 60_000 },
+    );
 
-    test(`removeFixture_aHeldDirectory${where}_isNotCoveredByTheRuntimesOwnRetryOption`, async (t) => {
-      // WHY THIS PACKAGE CANNOT JUST PASS `maxRetries` TO fs.rmSync.
-      //
-      // AN EARLIER VERSION OF THIS TEST NAMED THE WRONG AXIS, and the orchestrator caught
-      // it by failing to reproduce the claim. The distinction is not root-versus-inner,
-      // it is DIRECTORY-versus-FILE: measured, the runtime rides out an EBUSY on a file at
-      // any depth and refuses to wait even once on a directory at any depth. That is why
-      // this runs at both depths — to pin that depth does NOT rescue the directory case.
-      //
-      // `runScript` spawns every engine CLI with cwd set to the fixture, so a held
-      // DIRECTORY is this suite's common shape. Relying on the built-in option would have
-      // shipped a retry that cannot fire on it.
-      const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
-      await ready;
+    test(
+      `removeFixture_aHeldDirectory${where}_isNotCoveredByTheRuntimesOwnRetryOption`,
+      async (t) => {
+        // WHY THIS PACKAGE CANNOT JUST PASS `maxRetries` TO fs.rmSync.
+        //
+        // AN EARLIER VERSION OF THIS TEST NAMED THE WRONG AXIS, and the orchestrator caught
+        // it by failing to reproduce the claim. The distinction is not root-versus-inner,
+        // it is DIRECTORY-versus-FILE: measured, the runtime rides out an EBUSY on a file at
+        // any depth and refuses to wait even once on a directory at any depth. That is why
+        // this runs at both depths — to pin that depth does NOT rescue the directory case.
+        //
+        // `runScript` spawns every engine CLI with cwd set to the fixture, so a held
+        // DIRECTORY is this suite's common shape. Relying on the built-in option would have
+        // shipped a retry that cannot fire on it.
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
+        await ready;
 
-      // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which
-      // the reviewer correctly rejected: on the loaded machine this change is verified
-      // against, scheduling delay alone can exceed 1500ms without the runtime having
-      // retried anything. This asserts the OUTCOME instead. The budget below would wait
-      // ~55s if the runtime honoured it, twenty times the 2500ms hold — so a removal that
-      // still raises EBUSY can only mean the retry never happened. Nothing is timed.
-      const generous = { maxRetries: 10, retryDelay: 1000 };
-      const err = captureError(() => fs.rmSync(dir, { recursive: true, force: true, ...generous }));
+        // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which
+        // the reviewer correctly rejected: on the loaded machine this change is verified
+        // against, scheduling delay alone can exceed 1500ms without the runtime having
+        // retried anything. This asserts the OUTCOME instead. The budget below would wait
+        // ~55s if the runtime honoured it, twenty times the 2500ms hold — so a removal that
+        // still raises EBUSY can only mean the retry never happened. Nothing is timed.
+        const generous = { maxRetries: 10, retryDelay: 1000 };
+        const err = captureError(() =>
+          fs.rmSync(dir, { recursive: true, force: true, ...generous }),
+        );
 
-      assert.equal(err?.code, 'EBUSY', 'the runtime must not have ridden out a hold its budget easily covered');
-      assert.equal(fs.existsSync(dir), true, 'and the fixture must still be there');
+        assert.equal(
+          err?.code,
+          "EBUSY",
+          "the runtime must not have ridden out a hold its budget easily covered",
+        );
+        assert.equal(
+          fs.existsSync(dir),
+          true,
+          "and the fixture must still be there",
+        );
 
-      // The same hold, the same wait available, through this package's loop instead: gone.
-      // That difference is the whole justification for hand-rolling the retry.
-      removeFixture(dir);
-      assert.equal(fs.existsSync(dir), false);
-    }, { skip: windowsOnly, timeout: 60_000 });
+        // The same hold, the same wait available, through this package's loop instead: gone.
+        // That difference is the whole justification for hand-rolling the retry.
+        removeFixture(dir);
+        assert.equal(fs.existsSync(dir), false);
+      },
+      { skip: windowsOnly, timeout: 60_000 },
+    );
   }
 
-  test('removeFixture_aHandleThatIsNeverReleased_throwsRatherThanSilentlyGivingUp', async (t) => {
-    // A retry that gives up quietly is a swallow: the fixture stays on disk inside the
-    // package, and every later run reports clean while the tree fills up. Exhaustion is a
-    // real failure and must still reach the runner.
-    const { dir, ready } = heldDirectory(t, { holdMs: 60_000 });
-    await ready;
+  test(
+    "removeFixture_aHandleThatIsNeverReleased_throwsRatherThanSilentlyGivingUp",
+    async (t) => {
+      // A retry that gives up quietly is a swallow: the fixture stays on disk inside the
+      // package, and every later run reports clean while the tree fills up. Exhaustion is a
+      // real failure and must still reach the runner.
+      const { dir, ready } = heldDirectory(t, { holdMs: 60_000 });
+      await ready;
 
-    // An explicit short budget: the point is what happens AT exhaustion, not how long the
-    // shipped budget waits. The shipped values are pinned separately below.
-    const err = captureError(() => removeFixture(dir, { maxRetries: 1, retryDelay: 50 }));
+      // An explicit short budget: the point is what happens AT exhaustion, not how long the
+      // shipped budget waits. The shipped values are pinned separately below.
+      const err = captureError(() =>
+        removeFixture(dir, { maxRetries: 1, retryDelay: 50 }),
+      );
 
-    assert.equal(err?.code, 'EBUSY', `exhaustion must surface the real error, got ${err?.code}`);
-  }, { skip: windowsOnly, timeout: 60_000 });
+      assert.equal(
+        err?.code,
+        "EBUSY",
+        `exhaustion must surface the real error, got ${err?.code}`,
+      );
+    },
+    { skip: windowsOnly, timeout: 60_000 },
+  );
 
-  test('removeFixture_aFailureNothingCanRelease_isRaisedImmediatelyRatherThanWaitedOut', (t) => {
+  test("removeFixture_aFailureNothingCanRelease_isRaisedImmediatelyRatherThanWaitedOut", (t) => {
     // Not every error is a busy handle. Waiting out a failure no amount of time can clear
     // would turn a clear fault into a slow one, so only the releasable codes are retried.
     //
@@ -303,15 +358,21 @@ describe('fixture teardown survives a busy machine', () => {
     // not save us: `Atomics.wait` blocks the worker thread, so a regression that retried
     // this would have hung past the timeout rather than failing at it. Counting the calls
     // asks the question directly — one attempt means no retry — and cannot hang.
-    t.mock.method(fs, 'rmSync');
+    t.mock.method(fs, "rmSync");
 
-    const err = captureError(() => removeFixture(123, { maxRetries: 3, retryDelay: 1 }));
+    const err = captureError(() =>
+      removeFixture(123, { maxRetries: 3, retryDelay: 1 }),
+    );
 
-    assert.equal(err?.code, 'ERR_INVALID_ARG_TYPE');
-    assert.equal(fs.rmSync.mock.callCount(), 1, 'a non-releasable failure must be raised on the first attempt');
+    assert.equal(err?.code, "ERR_INVALID_ARG_TYPE");
+    assert.equal(
+      fs.rmSync.mock.callCount(),
+      1,
+      "a non-releasable failure must be raised on the first attempt",
+    );
   });
 
-  test('fixtureRemoval_theRetryBudget_mirrorsTheRepoSelfHealConvention', () => {
+  test("fixtureRemoval_theRetryBudget_mirrorsTheRepoSelfHealConvention", () => {
     // NOT A NUMBER PICKED TO MAKE THIS FILE PASS. voice.mjs:300-315 is the repo's stated
     // shape for a bounded self-heal over a transient failure: four attempts, linear
     // backoff of 1500ms * attempt, ~9s total, then fail honestly. One attempt plus three
@@ -319,41 +380,47 @@ describe('fixture teardown survives a busy machine', () => {
     assert.deepEqual(
       FIXTURE_REMOVAL,
       { maxRetries: 3, retryDelay: 1500 },
-      'changing this is changing how long every teardown tolerates a busy machine',
+      "changing this is changing how long every teardown tolerates a busy machine",
     );
   });
 
-  test('theTeardownAudit_detectsEveryHookFormItClaimsToCover', () => {
+  test("theTeardownAudit_detectsEveryHookFormItClaimsToCover", () => {
     // THE AUDIT'S OWN POSITIVE CONTROL. An audit that reports clean because it cannot see
     // the defect is worse than no audit: it certifies the thing it failed to look at.
     // Three of these — a paren inside a string, a comment, and a regex — are evasions the
     // reviewer identified in a scan that counted brackets over raw source.
     const controls = loadControls();
-    assert.ok(controls.length >= 13, `the controls file must have loaded, got ${controls.length}`);
+    assert.ok(
+      controls.length >= 13,
+      `the controls file must have loaded, got ${controls.length}`,
+    );
 
     for (const { expect, name, source } of controls) {
       const hits = bareTeardownRemovals(source);
-      if (expect === 'offender') assert.equal(hits.length, 1, `the audit must catch: ${name}`);
+      if (expect === "offender")
+        assert.equal(hits.length, 1, `the audit must catch: ${name}`);
       else assert.deepEqual(hits, [], `the audit must not accuse: ${name}`);
     }
   });
 
-  test('everyTeardownInTheSuite_goesThroughTheRetryingRemoval', () => {
+  test("everyTeardownInTheSuite_goesThroughTheRetryingRemoval", () => {
     // THE CLASS, NOT THE INSTANCE. coach-pack was the one that failed under load, but
     // every teardown that removes a directory a child may hold has the same defect. A new
     // one must not be able to reintroduce it quietly.
     const offenders = [];
     for (const file of suiteSources(TESTS_DIR)) {
-      for (const hit of bareTeardownRemovals(fs.readFileSync(file, 'utf8'))) {
-        offenders.push(`${path.relative(TESTS_DIR, file).split(path.sep).join('/')} — ${hit}`);
+      for (const hit of bareTeardownRemovals(fs.readFileSync(file, "utf8"))) {
+        offenders.push(
+          `${path.relative(TESTS_DIR, file).split(path.sep).join("/")} — ${hit}`,
+        );
       }
     }
 
     assert.deepEqual(
       offenders,
       [],
-      'these remove a fixture in teardown without a retry budget, so a handle Windows has ' +
-        'not released yet fails a test that already passed. Use removeFixture() from _helpers.mjs.',
+      "these remove a fixture in teardown without a retry budget, so a handle Windows has " +
+        "not released yet fails a test that already passed. Use removeFixture() from _helpers.mjs.",
     );
   });
 });

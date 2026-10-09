@@ -20,8 +20,8 @@
 // suite-owned directory, armed through its --import URL. This one matches the DESTINATION
 // basename. Two streams independently created a fixture called fail-rename.mjs and collided
 // on merge; the names now say which end each one matches.
-import fs from 'node:fs';
-import path from 'node:path';
+import fs from "node:fs";
+import path from "node:path";
 
 const target = process.env.FAIL_RENAME_DEST;
 if (target) {
@@ -29,7 +29,7 @@ if (target) {
   fs.renameSync = (from, to) => {
     if (path.basename(String(to)) === target) {
       const err = new Error(`fail-rename: refusing to publish ${target}`);
-      err.code = 'EPERM';
+      err.code = "EPERM";
       throw err;
     }
     return real(from, to);

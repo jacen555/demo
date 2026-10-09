@@ -15,7 +15,7 @@
  * cause nobody measured. Stated for this engine's guards at envelope-ducking.mjs:418-420:
  * "a guard that invents a cause is worse than one that reports a difference."
  */
-import { CliError } from './cli-support.mjs';
+import { CliError } from "./cli-support.mjs";
 /**
  * Decides HOW the scan child ended and refuses with the ending that actually happened.
  * Throws a CliError for every ending this stage cannot use; returns for a clean one.
@@ -33,8 +33,10 @@ export function classifyScanOutcome(result, budget) {
   // running — a confident, specific, wrong diagnosis, which is worse than a vague one
   // because it sends the author to rewrite an innocent pattern. Classify by error code
   // first, and reserve the timeout story for an actual timeout.
-  if (result.error && result.error.code !== 'ETIMEDOUT') {
-    throw new CliError(`the no-go scan could not run: ${result.error.code ?? result.error.message}`);
+  if (result.error && result.error.code !== "ETIMEDOUT") {
+    throw new CliError(
+      `the no-go scan could not run: ${result.error.code ?? result.error.message}`,
+    );
   }
   // ...and a THIRD time, in the same shape, caught in review. This branch was
   // `ETIMEDOUT || result.signal`, so a child stopped by any signal was told its budget
@@ -52,7 +54,7 @@ export function classifyScanOutcome(result, budget) {
         `and run again once it is gone.`,
     );
   }
-  if (result.error?.code === 'ETIMEDOUT') {
+  if (result.error?.code === "ETIMEDOUT") {
     // ...and then, for a release, this branch committed that same error in a new
     // direction. It read "stopped at the budget" as PROOF of catastrophic backtracking
     // and told the author to rewrite the named pattern. That is a property of the
@@ -79,12 +81,14 @@ export function classifyScanOutcome(result, budget) {
     // So naming that index as where execution WAS is the same unmeasured-cause error this
     // branch exists to correct, pointed one step further in. It is the last position the
     // scan reported, and that is all it is.
-    const started = [...(result.stderr ?? '').matchAll(/^scanning (\d+)$/gm)].at(-1);
+    const started = [
+      ...(result.stderr ?? "").matchAll(/^scanning (\d+)$/gm),
+    ].at(-1);
     const where = started
       ? `The last index it reported reaching was project.noGoPatterns[${started[1]}]. That ` +
         `marker is written before the pattern runs, and the scan does more work after its ` +
         `last pattern, so this does not say where the child was when it was stopped`
-      : 'It was stopped before it reported reaching any pattern';
+      : "It was stopped before it reported reaching any pattern";
     const { variable } = budget;
     throw new CliError(
       `the no-go scan did not finish within ${budget.ms} ms and was stopped. ${where}.\n` +

@@ -28,11 +28,11 @@
  *      unusable SIZZLECRAFT_SCAN_TIMEOUT_MS, or a no-go scan that could not be completed
  *      within its budget (unmeasurable, which is not the same as failed)
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { parseArgs } from 'node:util';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import fs from "node:fs";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   EXIT,
   CliError,
@@ -41,9 +41,9 @@ import {
   resolveWithinRoot,
   noGoPatternsProblem,
   resolveKnob,
-} from './cli-support.mjs';
-import { classifyScanOutcome } from './scan-outcome.mjs';
-import { isSilentSegment, shapeBlocker } from './silent-segment.mjs';
+} from "./cli-support.mjs";
+import { classifyScanOutcome } from "./scan-outcome.mjs";
+import { isSilentSegment, shapeBlocker } from "./silent-segment.mjs";
 
 const USAGE = `usage: node src/validate-scene.mjs [--project DIR] [--timing FILE] [--knobs FILE]
 
@@ -73,7 +73,7 @@ exit: 0 clean · 1 a check failed · 2 caller error`;
 const MIN_VIEWBOX_ASPECT = 2.7;
 
 /** The engine's own default (write-build-html.mjs), applied when a visual declares none. */
-const DEFAULT_VIEWBOX = '0 0 1600 900';
+const DEFAULT_VIEWBOX = "0 0 1600 900";
 
 /** Node box defaults, mirroring `Number(n.x || 0)` etc. in write-build-html's diagram(). */
 const NODE_DEFAULTS = { x: 0, y: 0, w: 240, h: 96 };
@@ -128,18 +128,23 @@ const NODE_DEFAULTS = { x: 0, y: 0, w: 240, h: 96 };
 function revealsTarget(trigger, seg, ids) {
   const action = trigger.action;
   const payload = trigger.payload || {};
-  if (action === 'progress' || action === 'zoomFocus') return false;
-  if ((action === 'spotlight' || action === 'codeFocus') && payload.release) return false;
-  if (action === 'codeFocus') return String(trigger.target).startsWith(`${seg.id}-path-`);
-  if (action === 'moveCursor') {
+  if (action === "progress" || action === "zoomFocus") return false;
+  if ((action === "spotlight" || action === "codeFocus") && payload.release)
+    return false;
+  if (action === "codeFocus")
+    return String(trigger.target).startsWith(`${seg.id}-path-`);
+  if (action === "moveCursor") {
     const destination = payload.toId ?? trigger.target; // apply():935 supplies this fallback
     return ids.has(destination);
   }
-  if (action === 'hover' || action === 'rollover') {
-    return typeof payload.toId === 'string' && ids.has(payload.toId);
+  if (action === "hover" || action === "rollover") {
+    return typeof payload.toId === "string" && ids.has(payload.toId);
   }
-  if (action === 'pulsePath') {
-    const chain = Array.isArray(payload.chain) && payload.chain.length ? payload.chain : [trigger.target];
+  if (action === "pulsePath") {
+    const chain =
+      Array.isArray(payload.chain) && payload.chain.length
+        ? payload.chain
+        : [trigger.target];
     return chain.includes(trigger.target);
   }
   return true;
@@ -203,7 +208,9 @@ const SCAN_TIMEOUT_FALLBACK_MS = 5000;
  * "use 5000" is how a typo silently disables the thing the operator was trying to set.
  */
 function resolveScanTimeoutMs() {
-  const { value, source, variable } = resolveKnob('SCAN_TIMEOUT_MS', { fallback: SCAN_TIMEOUT_FALLBACK_MS });
+  const { value, source, variable } = resolveKnob("SCAN_TIMEOUT_MS", {
+    fallback: SCAN_TIMEOUT_FALLBACK_MS,
+  });
   const ms = Number(value);
   if (!Number.isInteger(ms) || ms <= 0) {
     throw new CliError(
@@ -231,13 +238,17 @@ function resolveScanTimeoutMs() {
  */
 function slideMode(seg) {
   const v = seg.visual || {};
-  if (v.mode === 'footage' || (!v.mode && v.footage)) return 'footage';
-  if (v.mode && v.mode !== 'footage') return v.mode;
-  return v.nodes ? 'diagram' : v.shot || v.fields || v.hotspots ? 'live' : 'narrative';
+  if (v.mode === "footage" || (!v.mode && v.footage)) return "footage";
+  if (v.mode && v.mode !== "footage") return v.mode;
+  return v.nodes
+    ? "diagram"
+    : v.shot || v.fields || v.hotspots
+      ? "live"
+      : "narrative";
 }
 
 /** Segments whose rendered id set depends on inputs this stage cannot read. */
-const requestsFootage = (seg) => slideMode(seg) === 'footage';
+const requestsFootage = (seg) => slideMode(seg) === "footage";
 
 /**
  * The ids a segment could emit under ANY outcome this stage cannot resolve.
@@ -256,7 +267,11 @@ function possibleIds(seg) {
   const ids = emittedIds(seg);
   if (!requestsFootage(seg)) return ids;
   const v = seg.visual || {};
-  const fallback = v.nodes ? 'diagram' : v.shot || v.fields || v.hotspots ? 'live' : 'narrative';
+  const fallback = v.nodes
+    ? "diagram"
+    : v.shot || v.fields || v.hotspots
+      ? "live"
+      : "narrative";
   for (const id of emittedIds(seg, fallback)) ids.add(id);
   return ids;
 }
@@ -282,12 +297,15 @@ function emittedIds(seg, forceMode = null) {
   const ids = new Set([`${seg.id}-label`, `${seg.id}-title`]);
   if (v.subtitle) ids.add(`${seg.id}-subtitle`);
 
-  if (m === 'footage') {
+  if (m === "footage") {
     ids.add(`${seg.id}-footage`);
-    if ((v.footage?.overlays || ['lowerThird', 'brandBug']).includes('lowerThird')) ids.add(`${seg.id}-lt`);
+    if (
+      (v.footage?.overlays || ["lowerThird", "brandBug"]).includes("lowerThird")
+    )
+      ids.add(`${seg.id}-lt`);
     return ids;
   }
-  if (m === 'diagram') {
+  if (m === "diagram") {
     for (const n of v.nodes || []) ids.add(nodeId(seg, n));
     (v.edges || []).forEach((e, j) => {
       ids.add(edgeId(seg, e, j));
@@ -295,25 +313,30 @@ function emittedIds(seg, forceMode = null) {
     });
     return ids;
   }
-  if (m === 'code') {
+  if (m === "code") {
     ids.add(`${seg.id}-code`);
     return ids; // `-path-*` ids are dynamic and owned by write-build-html's own refusal
   }
-  if (m === 'live') {
+  if (m === "live") {
     ids.add(`${seg.id}-cursor`);
     (v.fields || []).forEach((f, j) => ids.add(`${seg.id}-field-${f.id ?? j}`));
-    (v.hotspots || []).forEach((hp, j) => ids.add(`${seg.id}-hotspot-${hp.id ?? j}`));
+    (v.hotspots || []).forEach((hp, j) =>
+      ids.add(`${seg.id}-hotspot-${hp.id ?? j}`),
+    );
     return ids;
   }
   // narrative: the builder slices items to 6 and shots to 4, so ids past those bounds are
   // never emitted even though the data declares them.
   (v.items || []).slice(0, 6).forEach((_, j) => ids.add(`${seg.id}-item-${j}`));
-  (v.shots || (v.image ? [1] : [])).slice(0, 4).forEach((_, j) => ids.add(`${seg.id}-shot-${j}`));
+  (v.shots || (v.image ? [1] : []))
+    .slice(0, 4)
+    .forEach((_, j) => ids.add(`${seg.id}-shot-${j}`));
   return ids;
 }
 
 /** Author-supplied triggers that actually address something. */
-const authoredTriggers = (seg) => (seg.triggers || []).filter((t) => t && t.target);
+const authoredTriggers = (seg) =>
+  (seg.triggers || []).filter((t) => t && t.target);
 
 /**
  * Does the BUILDER derive this segment's reveal sequence?
@@ -337,14 +360,15 @@ function checkA1(timing, report) {
     const pathPrefix = `${seg.id}-path-`;
     authoredTriggers(seg).forEach((t, i) => {
       // code-mode `-path-*` targets are resolved against the parsed JSON at build time.
-      if (slideMode(seg) === 'code' && String(t.target).startsWith(pathPrefix)) return;
+      if (slideMode(seg) === "code" && String(t.target).startsWith(pathPrefix))
+        return;
       if (ids.has(t.target)) return;
-      const sample = [...ids].slice(0, 6).join(', ');
+      const sample = [...ids].slice(0, 6).join(", ");
       report.fail(
-        'A1',
+        "A1",
         `segment "${seg.id}" trigger[${i}] targets "${t.target}", which no element in this ` +
           `${slideMode(seg)}-mode segment emits. Target ids are segment-qualified. ` +
-          `Emitted here: ${sample}${ids.size > 6 ? `, +${ids.size - 6} more` : ''}`,
+          `Emitted here: ${sample}${ids.size > 6 ? `, +${ids.size - 6} more` : ""}`,
       );
     });
   }
@@ -354,10 +378,10 @@ function checkA1(timing, report) {
 function checkA2(timing, report) {
   for (const seg of timing.segments) {
     authoredTriggers(seg).forEach((t, i) => {
-      if (t.action !== 'flowEdge') return;
+      if (t.action !== "flowEdge") return;
       if (String(t.target).startsWith(`${seg.id}-edge-`)) return;
       report.fail(
-        'A2',
+        "A2",
         `segment "${seg.id}" trigger[${i}] is flowEdge on "${t.target}", which is not an edge. ` +
           `flowEdge animates particles along a path — on anything else it silently does nothing, ` +
           `which looks exactly like a correctly-wired segment with no motion.`,
@@ -375,26 +399,52 @@ function checkA3(timing, report) {
     const triggers = authoredTriggers(seg);
     const ids = possibleIds(seg);
     const declared = [];
-    if (slideMode(seg) === 'diagram') {
-      const revealed = new Set(triggers.filter((t) => revealsTarget(t, seg, ids)).map((t) => t.target));
+    if (slideMode(seg) === "diagram") {
+      const revealed = new Set(
+        triggers.filter((t) => revealsTarget(t, seg, ids)).map((t) => t.target),
+      );
       // An edge must be DRAWN, not merely shown. This is deliberately stricter than the
       // renderer, which would make a `rise`-targeted edge visible-but-undrawn — and the
       // divergence is the point: A3's minimal failing input is an edge declared with no
       // drawEdge trigger, which is how `dimensions` shipped two edges that never appeared
       // to connect anything.
-      const drawn = new Set(triggers.filter((t) => t.action === 'drawEdge').map((t) => t.target));
-      for (const n of v.nodes || []) declared.push([revealed, nodeId(seg, n), `node "${n.id}"`, 'a revealing']);
+      const drawn = new Set(
+        triggers.filter((t) => t.action === "drawEdge").map((t) => t.target),
+      );
+      for (const n of v.nodes || [])
+        declared.push([
+          revealed,
+          nodeId(seg, n),
+          `node "${n.id}"`,
+          "a revealing",
+        ]);
       (v.edges || []).forEach((e, j) =>
-        declared.push([drawn, edgeId(seg, e, j), `edge ${e.id ?? j} (${e.from} -> ${e.to})`, 'a drawEdge']),
+        declared.push([
+          drawn,
+          edgeId(seg, e, j),
+          `edge ${e.id ?? j} (${e.from} -> ${e.to})`,
+          "a drawEdge",
+        ]),
       );
     } else {
-      const revealed = new Set(triggers.filter((t) => revealsTarget(t, seg, ids)).map((t) => t.target));
-      (v.items || []).slice(0, 6).forEach((_, j) => declared.push([revealed, `${seg.id}-item-${j}`, `item ${j}`, 'a revealing']));
+      const revealed = new Set(
+        triggers.filter((t) => revealsTarget(t, seg, ids)).map((t) => t.target),
+      );
+      (v.items || [])
+        .slice(0, 6)
+        .forEach((_, j) =>
+          declared.push([
+            revealed,
+            `${seg.id}-item-${j}`,
+            `item ${j}`,
+            "a revealing",
+          ]),
+        );
     }
     for (const [revealed, id, label, wanted] of declared) {
       if (revealed.has(id)) continue;
       report.fail(
-        'A3',
+        "A3",
         `segment "${seg.id}" declares ${label} (${id}) but no ${wanted} trigger ever shows it. ` +
           `revealNode does NOT draw an edge — a draw has to be asked for explicitly, and a diagram ` +
           `of disconnected boxes still looks plausible in a storyboard.`,
@@ -409,7 +459,7 @@ function checkA4(timing, report) {
     if (requestsFootage(seg)) continue;
     if (isAutoDriven(seg)) continue;
     const v = seg.visual || {};
-    if (slideMode(seg) !== 'diagram') continue;
+    if (slideMode(seg) !== "diagram") continue;
     const triggers = authoredTriggers(seg);
     const ids = possibleIds(seg);
     // Earliest reveal per target. A later duplicate cannot rescue an edge drawn before it.
@@ -417,11 +467,12 @@ function checkA4(timing, report) {
     for (const t of triggers) {
       if (!revealsTarget(t, seg, ids)) continue;
       const at = Number(t.atMs || 0);
-      if (!revealedAt.has(t.target) || at < revealedAt.get(t.target)) revealedAt.set(t.target, at);
+      if (!revealedAt.has(t.target) || at < revealedAt.get(t.target))
+        revealedAt.set(t.target, at);
     }
     const byId = new Map((v.edges || []).map((e, j) => [edgeId(seg, e, j), e]));
     for (const t of triggers) {
-      if (t.action !== 'drawEdge') continue;
+      if (t.action !== "drawEdge") continue;
       const edge = byId.get(t.target);
       if (!edge) continue; // an unresolvable target is A1's finding, not a second report here
       const at = Number(t.atMs || 0);
@@ -431,7 +482,7 @@ function checkA4(timing, report) {
         // A missing reveal entirely is A3's finding. A4 owns the ORDERING.
         if (when === undefined || when <= at) continue;
         report.fail(
-          'A4',
+          "A4",
           `segment "${seg.id}" draws ${t.target} at ${at} ms, but its endpoint "${end}" is not ` +
             `revealed until ${when} ms. The edge animates to a point nothing occupies.`,
         );
@@ -449,7 +500,7 @@ function checkA5(timing, report) {
       // Strictly less than. A beat ON the boundary fires as the NEXT slide takes over.
       if (at < window) return;
       report.fail(
-        'A5',
+        "A5",
         `segment "${seg.id}" trigger[${i}] fires at ${at} ms but the segment window is only ` +
           `${window} ms (${seg.startMs}..${seg.endMs}). It will never fire and will never error. ` +
           `voice.mjs reflows segment windows onto measured audio, so a narration edit can push ` +
@@ -472,7 +523,10 @@ function checkA5(timing, report) {
  * simultaneously accepted a node sitting outside the right edge of such a box.
  */
 function parseViewBox(raw) {
-  const parts = String(raw).trim().split(/[\s,]+/).map(Number);
+  const parts = String(raw)
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
   if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
   const [minX, minY, w, h] = parts;
   if (!(w > 0) || !(h > 0)) return null;
@@ -480,7 +534,8 @@ function parseViewBox(raw) {
 }
 
 /** Segments that draw a diagram, i.e. the ones B1-B3 are about. */
-const diagramSegments = (timing) => timing.segments.filter((s) => (s.visual?.nodes || []).length > 0);
+const diagramSegments = (timing) =>
+  timing.segments.filter((s) => (s.visual?.nodes || []).length > 0);
 
 /** B1 · viewBox aspect is wide enough not to letterbox (fit 1 only — see MIN_VIEWBOX_ASPECT). */
 function checkB1(timing, report) {
@@ -488,14 +543,20 @@ function checkB1(timing, report) {
     const raw = seg.visual.viewBox ?? DEFAULT_VIEWBOX;
     const box = parseViewBox(raw);
     if (!box) {
-      report.fail('B1', `segment "${seg.id}" has an unparseable viewBox: ${JSON.stringify(raw)}`);
+      report.fail(
+        "B1",
+        `segment "${seg.id}" has an unparseable viewBox: ${JSON.stringify(raw)}`,
+      );
       continue;
     }
     const aspect = box.w / box.h;
     if (aspect >= MIN_VIEWBOX_ASPECT) continue;
-    const defaulted = seg.visual.viewBox === undefined ? ' (the engine default — none declared)' : '';
+    const defaulted =
+      seg.visual.viewBox === undefined
+        ? " (the engine default — none declared)"
+        : "";
     report.fail(
-      'B1',
+      "B1",
       `segment "${seg.id}" viewBox "${raw}"${defaulted} has aspect ${aspect.toFixed(2)}, below ${MIN_VIEWBOX_ASPECT}. ` +
         `It letterboxes to height: measured, a 16:9 viewBox draws at ~58% of the width a wide one gets ` +
         `(1952 px vs 3379 px at 4K), which is the difference between legible and unreadable labels. ` +
@@ -511,9 +572,15 @@ function checkB2(timing, report) {
     if (!box) continue; // already reported by B1
     for (const n of seg.visual.nodes) {
       const r = nodeRect(n);
-      if (r.x >= box.minX && r.y >= box.minY && r.x + r.w <= box.minX + box.w && r.y + r.h <= box.minY + box.h) continue;
+      if (
+        r.x >= box.minX &&
+        r.y >= box.minY &&
+        r.x + r.w <= box.minX + box.w &&
+        r.y + r.h <= box.minY + box.h
+      )
+        continue;
       report.fail(
-        'B2',
+        "B2",
         `segment "${seg.id}" node "${n.id}" occupies ${r.x},${r.y} ${r.w}x${r.h}, outside its viewBox ` +
           `(${box.minX}..${box.minX + box.w} x ${box.minY}..${box.minY + box.h}). It renders clipped.`,
       );
@@ -549,7 +616,7 @@ function checkB3(timing, report) {
         const overlapY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
         if (overlapX <= 0 || overlapY <= 0) continue;
         report.fail(
-          'B3',
+          "B3",
           `segment "${seg.id}" nodes "${nodes[i].id}" and "${nodes[j].id}" overlap by ` +
             `${overlapX}x${overlapY}. Both are inside the viewBox and both render unreadable.`,
         );
@@ -576,18 +643,27 @@ function checkC1(timing, report) {
     const start = Number(seg.startMs);
     const end = Number(seg.endMs);
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      report.fail('C1', `segment "${seg.id}" has a non-numeric window (${seg.startMs}..${seg.endMs})`);
+      report.fail(
+        "C1",
+        `segment "${seg.id}" has a non-numeric window (${seg.startMs}..${seg.endMs})`,
+      );
       continue;
     }
     if (end <= start) {
-      report.fail('C1', `segment "${seg.id}" ends at ${end} ms, at or before its start of ${start} ms`);
+      report.fail(
+        "C1",
+        `segment "${seg.id}" ends at ${end} ms, at or before its start of ${start} ms`,
+      );
     }
     if (prev) {
       if (start < prev.start) {
-        report.fail('C1', `segment "${seg.id}" starts at ${start} ms, before "${prev.id}" at ${prev.start} ms`);
+        report.fail(
+          "C1",
+          `segment "${seg.id}" starts at ${start} ms, before "${prev.id}" at ${prev.start} ms`,
+        );
       } else if (start < prev.end) {
         report.fail(
-          'C1',
+          "C1",
           `segment "${seg.id}" starts at ${start} ms, inside "${prev.id}" which runs to ${prev.end} ms. ` +
             `Overlaps are an error; gaps are not — voice.mjs inserts inter-segment silence by design.`,
         );
@@ -615,12 +691,15 @@ function checkC2(timing, report) {
 
     if (!silent) {
       if (!Number.isFinite(Number(audio.durationMs))) {
-        report.fail('C2', `segment "${seg.id}" has no audio.durationMs, but this project has been synthesised`);
+        report.fail(
+          "C2",
+          `segment "${seg.id}" has no audio.durationMs, but this project has been synthesised`,
+        );
         continue;
       }
       if (!Array.isArray(audio.words) || audio.words.length === 0) {
         report.fail(
-          'C2',
+          "C2",
           `segment "${seg.id}" has no measured audio.words[], but this project has been synthesised. ` +
             `This is the shape a partial re-synthesis leaves behind.`,
         );
@@ -634,10 +713,13 @@ function checkC2(timing, report) {
     // from the words requirement is correct — they have no narration, so they have no
     // measured words — but exempting them from this was not: a silent segment that does
     // carry a measured clip must still describe the audio its window was solved from.
-    if (Number.isFinite(window) && Math.round(window) !== Math.round(Number(audio.durationMs))) {
+    if (
+      Number.isFinite(window) &&
+      Math.round(window) !== Math.round(Number(audio.durationMs))
+    ) {
       report.fail(
-        'C2',
-        `segment "${seg.id}"${silent ? ' (silent)' : ''} window is ${window} ms but its clip measures ` +
+        "C2",
+        `segment "${seg.id}"${silent ? " (silent)" : ""} window is ${window} ms but its clip measures ` +
           `${audio.durationMs} ms. The window no longer describes the audio it was solved from.`,
       );
     }
@@ -647,14 +729,21 @@ function checkC2(timing, report) {
 /** C5 · the render target keeps the aspect every viewBox threshold assumes. */
 function checkC5(timing, report) {
   const { width, height } = timing.project || {};
-  if (!Number.isFinite(Number(width)) || !Number.isFinite(Number(height)) || !(Number(height) > 0)) {
-    report.fail('C5', `project.width/height are not both positive numbers (${width}x${height})`);
+  if (
+    !Number.isFinite(Number(width)) ||
+    !Number.isFinite(Number(height)) ||
+    !(Number(height) > 0)
+  ) {
+    report.fail(
+      "C5",
+      `project.width/height are not both positive numbers (${width}x${height})`,
+    );
     return;
   }
   const aspect = Number(width) / Number(height);
   if (Math.abs(aspect - 16 / 9) <= 0.01) return;
   report.fail(
-    'C5',
+    "C5",
     `render target is ${width}x${height} (aspect ${aspect.toFixed(3)}), not 16:9. ` +
       `Every diagram viewBox threshold in this project is derived from a 16:9 stage, so a different ` +
       `target silently invalidates all of them.`,
@@ -675,39 +764,61 @@ function checkC5(timing, report) {
 function renderedStrings(timing) {
   const out = [];
   const add = (where, value) => {
-    if (typeof value === 'string' && value.length) out.push({ where, value });
+    if (typeof value === "string" && value.length) out.push({ where, value });
   };
   const p = timing.project || {};
-  add('project.name', p.name);
-  add('project.title', p.title);
-  add('project.lede', p.lede);
+  add("project.name", p.name);
+  add("project.title", p.title);
+  add("project.lede", p.lede);
 
   for (const seg of timing.segments) {
     const at = (f) => `segment "${seg.id}" ${f}`;
-    add(at('voiceoverText'), seg.voiceoverText);
-    add(at('title'), seg.title);
+    add(at("voiceoverText"), seg.voiceoverText);
+    add(at("title"), seg.title);
     const v = seg.visual || {};
-    for (const key of ['title', 'subtitle', 'kicker', 'caption', 'label', 'imageLabel', 'url']) {
+    for (const key of [
+      "title",
+      "subtitle",
+      "kicker",
+      "caption",
+      "label",
+      "imageLabel",
+      "url",
+    ]) {
       add(at(`visual.${key}`), v[key]);
     }
     (v.items || []).forEach((it, j) => {
-      for (const key of ['label', 'title', 'text', 'value']) add(at(`visual.items[${j}].${key}`), it?.[key]);
+      for (const key of ["label", "title", "text", "value"])
+        add(at(`visual.items[${j}].${key}`), it?.[key]);
     });
-    (v.shots || []).forEach((s, j) => add(at(`visual.shots[${j}].label`), s?.label));
-    (v.nodes || []).forEach((n, j) => add(at(`visual.nodes[${j}].label`), n?.label));
-    (v.edges || []).forEach((e, j) => add(at(`visual.edges[${j}].label`), e?.label));
+    (v.shots || []).forEach((s, j) =>
+      add(at(`visual.shots[${j}].label`), s?.label),
+    );
+    (v.nodes || []).forEach((n, j) =>
+      add(at(`visual.nodes[${j}].label`), n?.label),
+    );
+    (v.edges || []).forEach((e, j) =>
+      add(at(`visual.edges[${j}].label`), e?.label),
+    );
     (v.fields || []).forEach((f, j) => {
       add(at(`visual.fields[${j}].label`), f?.label);
       add(at(`visual.fields[${j}].text`), f?.text);
     });
-    (v.hotspots || []).forEach((h, j) => add(at(`visual.hotspots[${j}].label`), h?.label));
-    (v.highlights || []).forEach((h, j) => add(at(`visual.highlights[${j}].label`), h?.label));
+    (v.hotspots || []).forEach((h, j) =>
+      add(at(`visual.hotspots[${j}].label`), h?.label),
+    );
+    (v.highlights || []).forEach((h, j) =>
+      add(at(`visual.highlights[${j}].label`), h?.label),
+    );
 
     // code mode is the only mode that puts SOURCE DATA on screen instead of authored copy,
     // so it is the likeliest route for a hostname or an internal id to reach a frame.
-    for (const key of ['json', 'code', 'payload']) {
+    for (const key of ["json", "code", "payload"]) {
       if (v[key] === undefined) continue;
-      add(at(`visual.${key}`), typeof v[key] === 'string' ? v[key] : JSON.stringify(v[key]));
+      add(
+        at(`visual.${key}`),
+        typeof v[key] === "string" ? v[key] : JSON.stringify(v[key]),
+      );
     }
   }
   return out;
@@ -725,7 +836,7 @@ function checkD1(timing, report) {
   const raw = timing.project?.noGoPatterns;
   if (raw === undefined || raw === null) {
     report.fail(
-      'D1',
+      "D1",
       `project.noGoPatterns is absent. This is the guard that keeps deployment hostnames and ` +
         `internal pull-request ids out of a shipped video, and a missing key must not read as ` +
         `permission. Declare the patterns, or set it to [] to opt out explicitly.`,
@@ -735,12 +846,12 @@ function checkD1(timing, report) {
   // The shape is cli-support's `noGoPatternsProblem`, not restated here: write-build-html
   // reads the same field and had no bounds at all, so a number silently became a pattern
   // there while this stage refused it. One statement, imported by both.
-  const problem = noGoPatternsProblem(raw, 'project.noGoPatterns');
+  const problem = noGoPatternsProblem(raw, "project.noGoPatterns");
   if (problem) throw new CliError(problem);
   if (!raw.length) return; // the explicit opt-out
 
   for (const finding of scanInChildProcess(renderedStrings(timing), raw)) {
-    report.fail('D1', finding);
+    report.fail("D1", finding);
   }
 }
 
@@ -760,9 +871,9 @@ function checkD1(timing, report) {
 function scanInChildProcess(strings, patterns) {
   const self = fileURLToPath(import.meta.url);
   const budget = resolveScanTimeoutMs();
-  const result = spawnSync(process.execPath, [self, '--scan-stdin'], {
+  const result = spawnSync(process.execPath, [self, "--scan-stdin"], {
     input: JSON.stringify({ strings, patterns }),
-    encoding: 'utf8',
+    encoding: "utf8",
     timeout: budget.ms,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -771,15 +882,16 @@ function scanInChildProcess(strings, patterns) {
 
   if (result.status !== 0) {
     // The child reports an invalid pattern by INDEX, never by source — see scanMain().
-    throw new CliError((result.stdout || result.stderr || 'the no-go scan failed').trim());
+    throw new CliError(
+      (result.stdout || result.stderr || "the no-go scan failed").trim(),
+    );
   }
   try {
     return JSON.parse(result.stdout);
   } catch {
-    throw new CliError('the no-go scan returned unreadable output');
+    throw new CliError("the no-go scan returned unreadable output");
   }
 }
-
 
 /**
  * The child half of the scan. Reads `{strings, patterns}` on stdin, prints findings as
@@ -794,13 +906,15 @@ function scanInChildProcess(strings, patterns) {
  * source: forwarding it reintroduced the leak through the error path.
  */
 function scanMain() {
-  const { strings, patterns } = JSON.parse(fs.readFileSync(0, 'utf8'));
+  const { strings, patterns } = JSON.parse(fs.readFileSync(0, "utf8"));
   const compiled = [];
   for (const [index, source] of patterns.entries()) {
     try {
-      compiled.push({ index, re: new RegExp(source, 'i') });
+      compiled.push({ index, re: new RegExp(source, "i") });
     } catch {
-      console.log(`project.noGoPatterns[${index}] is not a valid regular expression`);
+      console.log(
+        `project.noGoPatterns[${index}] is not a valid regular expression`,
+      );
       return EXIT.USAGE;
     }
   }
@@ -834,16 +948,19 @@ function scanMain() {
 
 /** Where the two files say the same thing. Compared only where BOTH carry a value. */
 const OVERLAP = [
-  ['render.fps', 'project.fps'],
-  ['render.width', 'project.width'],
-  ['render.height', 'project.height'],
-  ['voice.voice', 'intake.voice'],
-  ['voice.speed', 'intake.speed'],
-  ['timing.leadInMs', 'intake.leadInMs'],
-  ['timing.perceivedGapMs', 'intake.perceivedGapMs'],
+  ["render.fps", "project.fps"],
+  ["render.width", "project.width"],
+  ["render.height", "project.height"],
+  ["voice.voice", "intake.voice"],
+  ["voice.speed", "intake.speed"],
+  ["timing.leadInMs", "intake.leadInMs"],
+  ["timing.perceivedGapMs", "intake.perceivedGapMs"],
 ];
 
-const dig = (obj, dotted) => dotted.split('.').reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), obj);
+const dig = (obj, dotted) =>
+  dotted
+    .split(".")
+    .reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), obj);
 
 /** C4 · knobs.json and timing.json agree where they overlap. */
 function checkC4(timing, knobs, report) {
@@ -853,7 +970,7 @@ function checkC4(timing, knobs, report) {
     if (kv === undefined || tv === undefined) continue; // present in only one file is not drift
     if (kv === tv) continue;
     report.fail(
-      'C4',
+      "C4",
       `knobs.${kPath} is ${JSON.stringify(kv)} but timing.${tPath} is ${JSON.stringify(tv)}. ` +
         `One file was edited and the other was not.`,
     );
@@ -862,11 +979,11 @@ function checkC4(timing, knobs, report) {
 
 /** E1 · non-null music attribution requires an end card to carry it. */
 function checkE1(timing, knobs, report) {
-  const attribution = dig(knobs, 'audio.music.attribution');
+  const attribution = dig(knobs, "audio.music.attribution");
   if (attribution === undefined || attribution === null) return;
   if (timing.endCard?.enabled === true) return;
   report.fail(
-    'E1',
+    "E1",
     `knobs.audio.music.attribution is ${JSON.stringify(attribution)} but endCard.enabled is ` +
       `${JSON.stringify(timing.endCard?.enabled)}. The end card is the only credit surface, so this ` +
       `ships an uncredited work.`,
@@ -882,40 +999,55 @@ function checkE1(timing, knobs, report) {
  * exited 0. Two guards, one hole, each deferring to the other.
  */
 function checkE2(knobs, report) {
-  const music = dig(knobs, 'audio.music');
-  if (!music || typeof music !== 'object') return;
+  const music = dig(knobs, "audio.music");
+  if (!music || typeof music !== "object") return;
   if (music.generated === false) {
-    for (const key of ['file', 'licence']) {
+    for (const key of ["file", "licence"]) {
       if (music[key] !== undefined && music[key] !== null) continue;
-      report.fail('E2', `knobs.audio.music.generated is false, so "${key}" is required and is missing`);
+      report.fail(
+        "E2",
+        `knobs.audio.music.generated is false, so "${key}" is required and is missing`,
+      );
     }
     const seconds = music.durationSeconds;
-    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+    if (
+      typeof seconds !== "number" ||
+      !Number.isFinite(seconds) ||
+      seconds <= 0
+    ) {
       report.fail(
-        'E2',
+        "E2",
         `knobs.audio.music.generated is false, so "durationSeconds" must be a finite positive number; ` +
           `it is ${JSON.stringify(seconds)}. E3 cannot compare a value it cannot read.`,
       );
     }
     return;
   }
-  if (music.generated === true && (music.preset === undefined || music.preset === null)) {
-    report.fail('E2', 'knobs.audio.music.generated is true, so "preset" is required and is missing');
+  if (
+    music.generated === true &&
+    (music.preset === undefined || music.preset === null)
+  ) {
+    report.fail(
+      "E2",
+      'knobs.audio.music.generated is true, so "preset" is required and is missing',
+    );
   }
 }
 
 /** E3 · a track shorter than the video is flagged for looping. */
 function checkE3(timing, knobs, report) {
-  const music = dig(knobs, 'audio.music');
+  const music = dig(knobs, "audio.music");
   if (!music || music.generated !== false) return;
   const seconds = music.durationSeconds;
   // A malformed duration is E2's finding AND is reported there — this is a genuine
   // hand-off, not the silent return that let "unknown" through.
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return;
-  const videoSeconds = Number(timing.durationMs ?? timing.segments.at(-1)?.endMs ?? 0) / 1000;
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0)
+    return;
+  const videoSeconds =
+    Number(timing.durationMs ?? timing.segments.at(-1)?.endMs ?? 0) / 1000;
   if (seconds >= videoSeconds || music.loop?.required === true) return;
   report.fail(
-    'E3',
+    "E3",
     `the music bed is ${seconds}s against a ${videoSeconds}s video and loop.required is not true. ` +
       `ffmpeg's "amix duration=longest" does NOT extend a short input — the remainder plays with no ` +
       `bed at all and nothing reports it.`,
@@ -927,22 +1059,22 @@ function checkE3(timing, knobs, report) {
 // ---------------------------------------------------------------------------
 
 const CHECK_TITLES = {
-  A1: 'trigger targets resolve to emitted elements',
-  A2: 'flowEdge targets an edge',
-  A3: 'every declared element is revealed',
-  A4: 'edges are drawn after their endpoints',
-  A5: 'no trigger fires past its segment end',
-  B1: 'viewBox is wide enough not to letterbox',
-  B2: 'nodes stay inside their viewBox',
-  B3: 'nodes do not overlap each other',
-  C1: 'segments are ordered and non-overlapping',
-  C2: 'every segment carries measured audio',
-  C4: 'knobs.json and timing.json agree',
-  C5: 'render target is 16:9',
-  D1: 'nothing reaching a frame is a no-go',
-  E1: 'music attribution has a credit surface',
-  E2: 'music source is internally consistent',
-  E3: 'a short bed is flagged for looping',
+  A1: "trigger targets resolve to emitted elements",
+  A2: "flowEdge targets an edge",
+  A3: "every declared element is revealed",
+  A4: "edges are drawn after their endpoints",
+  A5: "no trigger fires past its segment end",
+  B1: "viewBox is wide enough not to letterbox",
+  B2: "nodes stay inside their viewBox",
+  B3: "nodes do not overlap each other",
+  C1: "segments are ordered and non-overlapping",
+  C2: "every segment carries measured audio",
+  C4: "knobs.json and timing.json agree",
+  C5: "render target is 16:9",
+  D1: "nothing reaching a frame is a no-go",
+  E1: "music attribution has a credit surface",
+  E2: "music source is internally consistent",
+  E3: "a short bed is flagged for looping",
 };
 
 function createReport() {
@@ -963,14 +1095,16 @@ function printReport(report, timingPath) {
   console.log(`validate-scene: ${timingPath}\n`);
   for (const id of report.evaluated) {
     const failures = report.problems.filter((p) => p.id === id);
-    const status = failures.length ? `FAIL (${failures.length})` : 'ok';
+    const status = failures.length ? `FAIL (${failures.length})` : "ok";
     console.log(`  ${id}  ${CHECK_TITLES[id].padEnd(46)} ${status}`);
     for (const f of failures) console.log(`        ${f.message}`);
   }
   for (const { id, why } of report.notEvaluated) {
-    console.log(`  ${id}  ${CHECK_TITLES[id].padEnd(46)} NOT evaluated — ${why}`);
+    console.log(
+      `  ${id}  ${CHECK_TITLES[id].padEnd(46)} NOT evaluated — ${why}`,
+    );
   }
-  console.log('');
+  console.log("");
   // `passed` and `could not run` are different states, and this engine reports them so.
   for (const line of report.absences) console.log(line);
   console.log(
@@ -978,8 +1112,8 @@ function printReport(report, timingPath) {
   );
   console.log(`${report.problems.length} problems`);
   console.log(
-    '\nendCard canonical form is not re-stated here: end-card.mjs produces that invariant and ' +
-      'timing-schema.json checks it. Run validate-timing for it, and for schema shape generally.',
+    "\nendCard canonical form is not re-stated here: end-card.mjs produces that invariant and " +
+      "timing-schema.json checks it. Run validate-timing for it, and for schema shape generally.",
   );
 }
 
@@ -987,9 +1121,11 @@ function printReport(report, timingPath) {
 function readJson(abs, label) {
   let raw;
   try {
-    raw = fs.readFileSync(abs, 'utf8');
+    raw = fs.readFileSync(abs, "utf8");
   } catch (err) {
-    throw new CliError(`${label}: could not read ${abs} (${err.code ?? err.message})`);
+    throw new CliError(
+      `${label}: could not read ${abs} (${err.code ?? err.message})`,
+    );
   }
   try {
     return JSON.parse(raw);
@@ -1007,11 +1143,11 @@ await runCli(async () => {
   try {
     ({ values } = parseArgs({
       options: {
-        project: { type: 'string' },
-        timing: { type: 'string' },
-        knobs: { type: 'string' },
-        'scan-stdin': { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
+        project: { type: "string" },
+        timing: { type: "string" },
+        knobs: { type: "string" },
+        "scan-stdin": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
       },
       strict: true,
     }));
@@ -1024,15 +1160,21 @@ await runCli(async () => {
   }
   // The child half of the bounded no-go scan. Internal: not in USAGE, and it reads only
   // stdin, so it touches no path and needs no project root.
-  if (values['scan-stdin']) return scanMain();
+  if (values["scan-stdin"]) return scanMain();
 
   const projectDir = path.resolve(values.project ?? process.cwd());
   if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
-    throw new CliError(`--project "${projectDir}" is not an existing directory`);
+    throw new CliError(
+      `--project "${projectDir}" is not an existing directory`,
+    );
   }
 
-  const timingPath = requireExistingFile(projectDir, values.timing ?? 'timing.json', 'timing file');
-  const timing = readJson(timingPath, 'timing file');
+  const timingPath = requireExistingFile(
+    projectDir,
+    values.timing ?? "timing.json",
+    "timing file",
+  );
+  const timing = readJson(timingPath, "timing file");
 
   // Can every check below read this segment list at all? Asked FIRST, because a malformed
   // entry is not one failed check — it makes the segment unreadable, so every check would
@@ -1059,17 +1201,17 @@ await runCli(async () => {
   report.absences = [];
 
   const always = [
-    ['A1', () => checkA1(timing, report)],
-    ['A2', () => checkA2(timing, report)],
-    ['A3', () => checkA3(timing, report)],
-    ['A4', () => checkA4(timing, report)],
-    ['A5', () => checkA5(timing, report)],
-    ['B1', () => checkB1(timing, report)],
-    ['B2', () => checkB2(timing, report)],
-    ['B3', () => checkB3(timing, report)],
-    ['C1', () => checkC1(timing, report)],
-    ['C5', () => checkC5(timing, report)],
-    ['D1', () => checkD1(timing, report)],
+    ["A1", () => checkA1(timing, report)],
+    ["A2", () => checkA2(timing, report)],
+    ["A3", () => checkA3(timing, report)],
+    ["A4", () => checkA4(timing, report)],
+    ["A5", () => checkA5(timing, report)],
+    ["B1", () => checkB1(timing, report)],
+    ["B2", () => checkB2(timing, report)],
+    ["B3", () => checkB3(timing, report)],
+    ["C1", () => checkC1(timing, report)],
+    ["C5", () => checkC5(timing, report)],
+    ["D1", () => checkD1(timing, report)],
   ];
   for (const [id, run] of always) {
     report.ran(id);
@@ -1096,20 +1238,29 @@ await runCli(async () => {
   // read and parsed from outside the project root — and when the escaped path did not
   // exist it was reported as "knobs.json: ABSENT", a boundary breach degrading into a
   // clean bill of health.
-  const calibrationPath = resolveWithinRoot(projectDir, 'calibration-observed.json', 'calibration file');
+  const calibrationPath = resolveWithinRoot(
+    projectDir,
+    "calibration-observed.json",
+    "calibration file",
+  );
   if (fs.existsSync(calibrationPath)) {
-    report.ran('C2');
+    report.ran("C2");
     checkC2(timing, report);
   } else {
-    report.skipped('C2', 'calibration-observed.json is absent — this project has not been synthesised');
-    report.absences.push('calibration-observed.json: ABSENT — 1 check NOT evaluated');
+    report.skipped(
+      "C2",
+      "calibration-observed.json is absent — this project has not been synthesised",
+    );
+    report.absences.push(
+      "calibration-observed.json: ABSENT — 1 check NOT evaluated",
+    );
   }
 
-  const knobsName = values.knobs ?? 'knobs.json';
-  const knobsPath = resolveWithinRoot(projectDir, knobsName, 'knobs file');
-  const knobsIds = ['C4', 'E1', 'E2', 'E3'];
+  const knobsName = values.knobs ?? "knobs.json";
+  const knobsPath = resolveWithinRoot(projectDir, knobsName, "knobs file");
+  const knobsIds = ["C4", "E1", "E2", "E3"];
   if (fs.existsSync(knobsPath)) {
-    const knobs = readJson(knobsPath, 'knobs file');
+    const knobs = readJson(knobsPath, "knobs file");
     for (const id of knobsIds) report.ran(id);
     checkC4(timing, knobs, report);
     checkE1(timing, knobs, report);
@@ -1122,7 +1273,9 @@ await runCli(async () => {
     for (const id of knobsIds) {
       report.skipped(id, `${knobsName} is absent`);
     }
-    report.absences.push(`${knobsName}: ABSENT — ${knobsIds.length} checks NOT evaluated`);
+    report.absences.push(
+      `${knobsName}: ABSENT — ${knobsIds.length} checks NOT evaluated`,
+    );
   }
 
   printReport(report, timingPath);

@@ -14,7 +14,11 @@
  */
 
 /** Every field that exists only to describe an end card. */
-export const END_CARD_ONLY_FIELDS = Object.freeze(['builderVersion', 'contentMs', 'outroMs']);
+export const END_CARD_ONLY_FIELDS = Object.freeze([
+  "builderVersion",
+  "contentMs",
+  "outroMs",
+]);
 
 /**
  * Applies the end-card contract to a timing object, in place.

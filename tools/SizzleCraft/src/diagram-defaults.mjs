@@ -33,7 +33,7 @@
  *
  * CONSUMERS(DIAGRAM_VIEWBOX): write-build-html.mjs, write-storyboard.mjs
  */
-export const DIAGRAM_VIEWBOX = '0 0 1600 900';
+export const DIAGRAM_VIEWBOX = "0 0 1600 900";
 
 /**
  * The box a node occupies when it declares no geometry of its own.

@@ -1,172 +1,279 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>SizzleCraft WebCodecs Encoder</title>
-</head>
-<body>
-<div id="status">idle</div>
-<script src="./mp4-muxer.js"></script>
-<script>
-const status = (message) => {
-  document.getElementById('status').textContent = message;
-  console.log(message);
-};
+    <head>
+        <meta charset="utf-8" />
+        <title>SizzleCraft WebCodecs Encoder</title>
+    </head>
+    <body>
+        <div id="status">idle</div>
+        <script src="./mp4-muxer.js"></script>
+        <script>
+            const status = (message) => {
+                document.getElementById("status").textContent = message;
+                console.log(message);
+            };
 
-window.__sizzleEncoderReady = typeof Mp4Muxer !== 'undefined' &&
-  typeof VideoEncoder !== 'undefined' &&
-  typeof VideoFrame !== 'undefined' &&
-  typeof AudioEncoder !== 'undefined' &&
-  typeof AudioData !== 'undefined';
+            window.__sizzleEncoderReady =
+                typeof Mp4Muxer !== "undefined" &&
+                typeof VideoEncoder !== "undefined" &&
+                typeof VideoFrame !== "undefined" &&
+                typeof AudioEncoder !== "undefined" &&
+                typeof AudioData !== "undefined";
 
-window.encodeSizzleFrames = async function ({ frameCount, frameFileUrls, fps, width, height, audioMp3Base64, bitrateKbps = 6000, audioBitrateKbps = 192, normalizePeakDb = null, latencyMode = 'quality' }) {
-  if (!window.__sizzleEncoderReady) throw new Error('WebCodecs or muxer unavailable');
-  if (typeof window.writeMp4Chunk !== 'function') {
-    throw new Error('host bindings are missing');
-  }
-  if (!Array.isArray(frameFileUrls) || frameFileUrls.length !== frameCount) {
-    throw new Error(`frameFileUrls (${frameFileUrls && frameFileUrls.length}) must match frameCount (${frameCount})`);
-  }
+            window.encodeSizzleFrames = async function ({
+                frameCount,
+                frameFileUrls,
+                fps,
+                width,
+                height,
+                audioMp3Base64,
+                bitrateKbps = 6000,
+                audioBitrateKbps = 192,
+                normalizePeakDb = null,
+                latencyMode = "quality",
+            }) {
+                if (!window.__sizzleEncoderReady)
+                    throw new Error("WebCodecs or muxer unavailable");
+                if (typeof window.writeMp4Chunk !== "function") {
+                    throw new Error("host bindings are missing");
+                }
+                if (
+                    !Array.isArray(frameFileUrls) ||
+                    frameFileUrls.length !== frameCount
+                ) {
+                    throw new Error(
+                        `frameFileUrls (${frameFileUrls && frameFileUrls.length}) must match frameCount (${frameCount})`,
+                    );
+                }
 
-  let videoChunks = 0, audioChunks = 0;
-  let audioInfo = null;
-  if (audioMp3Base64) {
-    const mp3Bytes = Uint8Array.from(atob(audioMp3Base64), (c) => c.charCodeAt(0));
-    const probeContext = new AudioContext();
-    const decoded = await probeContext.decodeAudioData(mp3Bytes.buffer.slice(mp3Bytes.byteOffset, mp3Bytes.byteOffset + mp3Bytes.byteLength));
-    audioInfo = {
-      mp3Bytes,
-      sampleRate: decoded.sampleRate,
-      numberOfChannels: Math.min(2, decoded.numberOfChannels),
-      estimatedAudioChunks: Math.ceil(decoded.length / 1024),
-    };
-    probeContext.close?.();
-  }
+                let videoChunks = 0,
+                    audioChunks = 0;
+                let audioInfo = null;
+                if (audioMp3Base64) {
+                    const mp3Bytes = Uint8Array.from(
+                        atob(audioMp3Base64),
+                        (c) => c.charCodeAt(0),
+                    );
+                    const probeContext = new AudioContext();
+                    const decoded = await probeContext.decodeAudioData(
+                        mp3Bytes.buffer.slice(
+                            mp3Bytes.byteOffset,
+                            mp3Bytes.byteOffset + mp3Bytes.byteLength,
+                        ),
+                    );
+                    audioInfo = {
+                        mp3Bytes,
+                        sampleRate: decoded.sampleRate,
+                        numberOfChannels: Math.min(2, decoded.numberOfChannels),
+                        estimatedAudioChunks: Math.ceil(decoded.length / 1024),
+                    };
+                    probeContext.close?.();
+                }
 
-  const pendingWrites = [];
-  const muxer = new Mp4Muxer.Muxer({
-    target: new Mp4Muxer.StreamTarget({
-      onData: (data, position) => pendingWrites.push(window.writeMp4Chunk(Array.from(data), position)),
-      chunked: true,
-      chunkSize: 1024 * 1024,
-    }),
-    video: { codec: 'avc', width, height, frameRate: fps },
-    audio: audioInfo ? { codec: 'aac', sampleRate: audioInfo.sampleRate, numberOfChannels: audioInfo.numberOfChannels } : undefined,
-    fastStart: audioInfo
-      ? { expectedVideoChunks: frameCount, expectedAudioChunks: audioInfo.estimatedAudioChunks }
-      : { expectedVideoChunks: frameCount },
-  });
+                const pendingWrites = [];
+                const muxer = new Mp4Muxer.Muxer({
+                    target: new Mp4Muxer.StreamTarget({
+                        onData: (data, position) =>
+                            pendingWrites.push(
+                                window.writeMp4Chunk(
+                                    Array.from(data),
+                                    position,
+                                ),
+                            ),
+                        chunked: true,
+                        chunkSize: 1024 * 1024,
+                    }),
+                    video: { codec: "avc", width, height, frameRate: fps },
+                    audio: audioInfo
+                        ? {
+                              codec: "aac",
+                              sampleRate: audioInfo.sampleRate,
+                              numberOfChannels: audioInfo.numberOfChannels,
+                          }
+                        : undefined,
+                    fastStart: audioInfo
+                        ? {
+                              expectedVideoChunks: frameCount,
+                              expectedAudioChunks:
+                                  audioInfo.estimatedAudioChunks,
+                          }
+                        : { expectedVideoChunks: frameCount },
+                });
 
-  const videoEncoder = new VideoEncoder({
-    output: (chunk, metadata) => { videoChunks++; muxer.addVideoChunk(chunk, metadata); },
-    error: (error) => { throw error; },
-  });
-  videoEncoder.configure({
-    codec: 'avc1.640033',
-    width,
-    height,
-    bitrate: bitrateKbps * 1000,
-    framerate: fps,
-    avc: { format: 'avc' },
-    latencyMode, // #7: 'realtime' (draft, faster/larger) or 'quality' (live/publish, best compression)
-  });
+                const videoEncoder = new VideoEncoder({
+                    output: (chunk, metadata) => {
+                        videoChunks++;
+                        muxer.addVideoChunk(chunk, metadata);
+                    },
+                    error: (error) => {
+                        throw error;
+                    },
+                });
+                videoEncoder.configure({
+                    codec: "avc1.640033",
+                    width,
+                    height,
+                    bitrate: bitrateKbps * 1000,
+                    framerate: fps,
+                    avc: { format: "avc" },
+                    latencyMode, // #7: 'realtime' (draft, faster/larger) or 'quality' (live/publish, best compression)
+                });
 
-  status(`encoding ${frameCount} frames`);
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  const encodeStart = Date.now();
+                status(`encoding ${frameCount} frames`);
+                const canvas = new OffscreenCanvas(width, height);
+                const ctx = canvas.getContext("2d");
+                const encodeStart = Date.now();
 
-  for (let i = 0; i < frameCount; i++) {
-    // Read the frame file directly in the browser (native local I/O + hardware image decode). We use
-    // <img>.decode() rather than fetch(file://): several Chromium builds reject fetch(file://) with
-    // "Failed to fetch" even under --allow-file-access-from-files, whereas Image.decode() works
-    // universally and yields identical decoded pixels — one platform-independent decode path.
-    const img = new Image();
-    img.src = frameFileUrls[i];
-    try { await img.decode(); }
-    catch (e) { throw new Error(`failed to read frame ${i} (${frameFileUrls[i]}): ${e && e.message}`); }
-    const bitmap = await createImageBitmap(img);
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
+                for (let i = 0; i < frameCount; i++) {
+                    // Read the frame file directly in the browser (native local I/O + hardware image decode). We use
+                    // <img>.decode() rather than fetch(file://): several Chromium builds reject fetch(file://) with
+                    // "Failed to fetch" even under --allow-file-access-from-files, whereas Image.decode() works
+                    // universally and yields identical decoded pixels — one platform-independent decode path.
+                    const img = new Image();
+                    img.src = frameFileUrls[i];
+                    try {
+                        await img.decode();
+                    } catch (e) {
+                        throw new Error(
+                            `failed to read frame ${i} (${frameFileUrls[i]}): ${e && e.message}`,
+                        );
+                    }
+                    const bitmap = await createImageBitmap(img);
+                    ctx.clearRect(0, 0, width, height);
+                    ctx.drawImage(bitmap, 0, 0, width, height);
+                    bitmap.close();
 
-    const frame = new VideoFrame(canvas, {
-      timestamp: Math.round((i * 1_000_000) / fps),
-      duration: Math.round(1_000_000 / fps),
-    });
-    videoEncoder.encode(frame, { keyFrame: i % Math.max(1, Math.floor(fps * 2)) === 0 });
-    frame.close();
+                    const frame = new VideoFrame(canvas, {
+                        timestamp: Math.round((i * 1_000_000) / fps),
+                        duration: Math.round(1_000_000 / fps),
+                    });
+                    videoEncoder.encode(frame, {
+                        keyFrame: i % Math.max(1, Math.floor(fps * 2)) === 0,
+                    });
+                    frame.close();
 
-    if ((i + 1) % 30 === 0 || i + 1 === frameCount) {
-      const n = i + 1, elapsed = Date.now() - encodeStart, eta = n > 0 ? elapsed * (frameCount - n) / n : 0;
-      const secs = ms => { const s = Math.max(0, Math.round(ms / 1000)), m = Math.floor(s / 60); return m > 0 ? `${m}m${String(s % 60).padStart(2, '0')}s` : `${s}s`; };
-      status(`video ${n}/${frameCount} ${Math.round(n / frameCount * 100)}% ETA ${secs(eta)} elapsed ${secs(elapsed)}`);
-    }
-    if (videoEncoder.encodeQueueSize > 30) await new Promise((resolve) => setTimeout(resolve, 5));
-    if (pendingWrites.length > 100) await Promise.all(pendingWrites.splice(0, pendingWrites.length - 50));
-  }
-  await videoEncoder.flush();
-  videoEncoder.close();
+                    if ((i + 1) % 30 === 0 || i + 1 === frameCount) {
+                        const n = i + 1,
+                            elapsed = Date.now() - encodeStart,
+                            eta = n > 0 ? (elapsed * (frameCount - n)) / n : 0;
+                        const secs = (ms) => {
+                            const s = Math.max(0, Math.round(ms / 1000)),
+                                m = Math.floor(s / 60);
+                            return m > 0
+                                ? `${m}m${String(s % 60).padStart(2, "0")}s`
+                                : `${s}s`;
+                        };
+                        status(
+                            `video ${n}/${frameCount} ${Math.round((n / frameCount) * 100)}% ETA ${secs(eta)} elapsed ${secs(elapsed)}`,
+                        );
+                    }
+                    if (videoEncoder.encodeQueueSize > 30)
+                        await new Promise((resolve) => setTimeout(resolve, 5));
+                    if (pendingWrites.length > 100)
+                        await Promise.all(
+                            pendingWrites.splice(0, pendingWrites.length - 50),
+                        );
+                }
+                await videoEncoder.flush();
+                videoEncoder.close();
 
-  if (audioInfo) {
-    status('encoding audio');
-    const audioContext = new AudioContext({ sampleRate: audioInfo.sampleRate });
-    const decoded = await audioContext.decodeAudioData(audioInfo.mp3Bytes.buffer.slice(audioInfo.mp3Bytes.byteOffset, audioInfo.mp3Bytes.byteOffset + audioInfo.mp3Bytes.byteLength));
-    const channels = audioInfo.numberOfChannels;
-    const totalSamples = decoded.length;
-    const interleaved = new Float32Array(totalSamples * channels);
-    for (let ch = 0; ch < channels; ch++) {
-      const data = decoded.getChannelData(ch);
-      for (let i = 0; i < totalSamples; i++) interleaved[i * channels + ch] = data[i];
-    }
+                if (audioInfo) {
+                    status("encoding audio");
+                    const audioContext = new AudioContext({
+                        sampleRate: audioInfo.sampleRate,
+                    });
+                    const decoded = await audioContext.decodeAudioData(
+                        audioInfo.mp3Bytes.buffer.slice(
+                            audioInfo.mp3Bytes.byteOffset,
+                            audioInfo.mp3Bytes.byteOffset +
+                                audioInfo.mp3Bytes.byteLength,
+                        ),
+                    );
+                    const channels = audioInfo.numberOfChannels;
+                    const totalSamples = decoded.length;
+                    const interleaved = new Float32Array(
+                        totalSamples * channels,
+                    );
+                    for (let ch = 0; ch < channels; ch++) {
+                        const data = decoded.getChannelData(ch);
+                        for (let i = 0; i < totalSamples; i++)
+                            interleaved[i * channels + ch] = data[i];
+                    }
 
-    // Loudness normalization: lift the true peak to a consistent ceiling so the delivered
-    // video is reliably audible + even across segments (extends the audio-presence gate).
-    if (normalizePeakDb != null) {
-      let peak = 0;
-      for (let i = 0; i < interleaved.length; i++) { const a = Math.abs(interleaved[i]); if (a > peak) peak = a; }
-      if (peak > 0) {
-        const gain = Math.min(Math.pow(10, normalizePeakDb / 20) / peak, 32);
-        if (gain > 1.0001 || gain < 0.9999) {
-          for (let i = 0; i < interleaved.length; i++) interleaved[i] = Math.max(-1, Math.min(1, interleaved[i] * gain));
-          status(`audio normalized ${(20 * Math.log10(peak)).toFixed(1)}dB -> ${normalizePeakDb}dB (gain ${gain.toFixed(2)}x)`);
-        }
-      }
-    }
+                    // Loudness normalization: lift the true peak to a consistent ceiling so the delivered
+                    // video is reliably audible + even across segments (extends the audio-presence gate).
+                    if (normalizePeakDb != null) {
+                        let peak = 0;
+                        for (let i = 0; i < interleaved.length; i++) {
+                            const a = Math.abs(interleaved[i]);
+                            if (a > peak) peak = a;
+                        }
+                        if (peak > 0) {
+                            const gain = Math.min(
+                                Math.pow(10, normalizePeakDb / 20) / peak,
+                                32,
+                            );
+                            if (gain > 1.0001 || gain < 0.9999) {
+                                for (let i = 0; i < interleaved.length; i++)
+                                    interleaved[i] = Math.max(
+                                        -1,
+                                        Math.min(1, interleaved[i] * gain),
+                                    );
+                                status(
+                                    `audio normalized ${(20 * Math.log10(peak)).toFixed(1)}dB -> ${normalizePeakDb}dB (gain ${gain.toFixed(2)}x)`,
+                                );
+                            }
+                        }
+                    }
 
-    const audioEncoder = new AudioEncoder({
-      output: (chunk, metadata) => { audioChunks++; muxer.addAudioChunk(chunk, metadata); },
-      error: (error) => { throw error; },
-    });
-    audioEncoder.configure({ codec: 'mp4a.40.2', sampleRate: decoded.sampleRate, numberOfChannels: channels, bitrate: audioBitrateKbps * 1000 });
+                    const audioEncoder = new AudioEncoder({
+                        output: (chunk, metadata) => {
+                            audioChunks++;
+                            muxer.addAudioChunk(chunk, metadata);
+                        },
+                        error: (error) => {
+                            throw error;
+                        },
+                    });
+                    audioEncoder.configure({
+                        codec: "mp4a.40.2",
+                        sampleRate: decoded.sampleRate,
+                        numberOfChannels: channels,
+                        bitrate: audioBitrateKbps * 1000,
+                    });
 
-    for (let start = 0; start < totalSamples; start += 1024) {
-      const end = Math.min(totalSamples, start + 1024);
-      const data = interleaved.subarray(start * channels, end * channels);
-      const audioData = new AudioData({
-        format: 'f32',
-        sampleRate: decoded.sampleRate,
-        numberOfFrames: end - start,
-        numberOfChannels: channels,
-        timestamp: Math.round((start * 1_000_000) / decoded.sampleRate),
-        data,
-      });
-      audioEncoder.encode(audioData);
-      audioData.close();
-    }
-    await audioEncoder.flush();
-    audioEncoder.close();
-    audioContext.close?.();
-  }
+                    for (let start = 0; start < totalSamples; start += 1024) {
+                        const end = Math.min(totalSamples, start + 1024);
+                        const data = interleaved.subarray(
+                            start * channels,
+                            end * channels,
+                        );
+                        const audioData = new AudioData({
+                            format: "f32",
+                            sampleRate: decoded.sampleRate,
+                            numberOfFrames: end - start,
+                            numberOfChannels: channels,
+                            timestamp: Math.round(
+                                (start * 1_000_000) / decoded.sampleRate,
+                            ),
+                            data,
+                        });
+                        audioEncoder.encode(audioData);
+                        audioData.close();
+                    }
+                    await audioEncoder.flush();
+                    audioEncoder.close();
+                    audioContext.close?.();
+                }
 
-  status('finalizing');
-  muxer.finalize();
-  await Promise.all(pendingWrites);
-  status('done');
-  return { videoChunks, audioChunks };
-};
+                status("finalizing");
+                muxer.finalize();
+                await Promise.all(pendingWrites);
+                status("done");
+                return { videoChunks, audioChunks };
+            };
 
-status('encoder ready');
-</script>
-</body>
+            status("encoder ready");
+        </script>
+    </body>
 </html>

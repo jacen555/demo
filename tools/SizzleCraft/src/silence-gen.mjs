@@ -9,11 +9,16 @@
 //
 // Writing is an explicit opt-in: this script is invoked with a caller-supplied output path,
 // so an unguarded run could overwrite an arbitrary file. The default plans and writes nothing.
-import fs from 'node:fs';
-import path from 'node:path';
-import { parseArgs } from 'node:util';
-import { EXIT, CliError, runCli, resolveOutput } from './cli-support.mjs';
-import { SILENCE_FRAME_BYTES, SILENCE_FRAME_MS, silentFrameCount, silentMp3 } from './silent-segment.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import { EXIT, CliError, runCli, resolveOutput } from "./cli-support.mjs";
+import {
+  SILENCE_FRAME_BYTES,
+  SILENCE_FRAME_MS,
+  silentFrameCount,
+  silentMp3,
+} from "./silent-segment.mjs";
 
 // Imported, not redeclared. concat-audio.mjs generates silence for declared silent
 // segments using the same maths, and two copies of a frame size would disagree as drift
@@ -47,9 +52,11 @@ Exit codes: 0 success/plan · 1 write failed · 2 bad usage or refused overwrite
  * `Number(argv[3])` accepted values like "1e9", which is a 288 GB allocation.
  */
 function parseDurationMs(raw) {
-  const text = String(raw ?? '').trim();
+  const text = String(raw ?? "").trim();
   if (!/^(?:\d+|\d*\.\d+)$/.test(text)) {
-    throw new CliError(`--ms must be a plain number of milliseconds — got "${raw}"`);
+    throw new CliError(
+      `--ms must be a plain number of milliseconds — got "${raw}"`,
+    );
   }
   const value = Number(text);
   if (!Number.isFinite(value) || value <= 0 || value > 3_600_000) {
@@ -64,12 +71,12 @@ await runCli(() => {
   try {
     ({ values, positionals } = parseArgs({
       options: {
-        out: { type: 'string' },
-        ms: { type: 'string' },
-        project: { type: 'string' },
-        apply: { type: 'boolean', default: false },
-        replace: { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
+        out: { type: "string" },
+        ms: { type: "string" },
+        project: { type: "string" },
+        apply: { type: "boolean", default: false },
+        replace: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
       },
       allowPositionals: true,
       strict: true,
@@ -84,8 +91,8 @@ await runCli(() => {
   }
 
   const projectDir = path.resolve(values.project ?? process.cwd());
-  const outArg = values.out ?? positionals[0] ?? 'silence.mp3';
-  const msArg = values.ms ?? positionals[1] ?? '3500';
+  const outArg = values.out ?? positionals[0] ?? "silence.mp3";
+  const msArg = values.ms ?? positionals[1] ?? "3500";
 
   // Validated before anything touches the filesystem: `ms` drives an allocation size
   // and `out` is a caller-supplied write target.
@@ -95,19 +102,23 @@ await runCli(() => {
   const outPath = resolveOutput(projectDir, outArg, {
     apply: values.apply === true,
     replace: values.replace === true,
-    label: 'output',
+    label: "output",
   });
 
   if (!values.apply) {
-    console.log(`plan: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${bytes} bytes`);
+    console.log(
+      `plan: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${bytes} bytes`,
+    );
     console.log(`  output ${outPath}`);
-    console.log('');
-    console.log('nothing was written. Re-run with --apply to write.');
+    console.log("");
+    console.log("nothing was written. Re-run with --apply to write.");
     return EXIT.OK;
   }
 
   const buf = silentMp3(targetMs);
   fs.writeFileSync(outPath, buf);
-  console.log(`${outPath}: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${buf.length} bytes`);
+  console.log(
+    `${outPath}: ${frames} frames, ${(frames * FRAME_MS).toFixed(0)}ms, ${buf.length} bytes`,
+  );
   return EXIT.OK;
 });

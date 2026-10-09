@@ -32,19 +32,32 @@
  * loop decision are the two things a plan exists to report, and neither can be answered
  * without its input. What a plan will never do is run the encode or touch the output.
  */
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { parseArgs } from 'node:util';
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { parseArgs } from "node:util";
 import {
-  EXIT, CliError, runCli, requireExistingFile, resolveOutput, parseBoundedNumber,
-  resolveInternalArtifact, readOptionalEngineJson, openExclusiveEngineFile, readEngineFile,
+  EXIT,
+  CliError,
+  runCli,
+  requireExistingFile,
+  resolveOutput,
+  parseBoundedNumber,
+  resolveInternalArtifact,
+  readOptionalEngineJson,
+  openExclusiveEngineFile,
+  readEngineFile,
   resolveFfmpegOrOverride as resolveFfmpeg,
-} from './cli-support.mjs';
-import { videoStreamVerdict } from './remux-verify.mjs';
-import { classifyGainPin, confirmedLockRecord, describeGainPinRefusal, describeGainPinPlan } from './gain-pin.mjs';
-import { MIX_PARAMETERS, createMixAudit } from './mix-parameters.mjs';
-import { probeDurationSeconds } from './audio-probe.mjs';
+} from "./cli-support.mjs";
+import { videoStreamVerdict } from "./remux-verify.mjs";
+import {
+  classifyGainPin,
+  confirmedLockRecord,
+  describeGainPinRefusal,
+  describeGainPinPlan,
+} from "./gain-pin.mjs";
+import { MIX_PARAMETERS, createMixAudit } from "./mix-parameters.mjs";
+import { probeDurationSeconds } from "./audio-probe.mjs";
 import {
   SPEECH_RMS_THRESHOLD,
   REFERENCE_ATTACK_MS,
@@ -62,10 +75,15 @@ import {
   achievedDuckDb,
   recoveryShortfallDb,
   timeToWithinDb,
-} from './envelope-ducking.mjs';
+} from "./envelope-ducking.mjs";
 
 /** The duck knobs, in the order they are declared. Absent together, present together. */
-const DUCK_PARAMETERS = Object.freeze(['duckDb', 'duckRatio', 'duckAttack', 'duckRelease']);
+const DUCK_PARAMETERS = Object.freeze([
+  "duckDb",
+  "duckRatio",
+  "duckAttack",
+  "duckRelease",
+]);
 
 /** How close to the gaps level the plan reports the bed getting, in dB. */
 const GAPS_TOLERANCE_DB = 0.1;
@@ -80,19 +98,23 @@ const MEASURED_RECOVERY = Object.freeze({
   duckDb: 11,
   gapMs: 1820,
   rows: Object.freeze([
-    Object.freeze({ releaseMs: 800, measured: '0.05-0.12' }),
-    Object.freeze({ releaseMs: 1500, measured: '2.0-3.5' }),
-    Object.freeze({ releaseMs: 2500, measured: '6.1-8.7' }),
+    Object.freeze({ releaseMs: 800, measured: "0.05-0.12" }),
+    Object.freeze({ releaseMs: 1500, measured: "2.0-3.5" }),
+    Object.freeze({ releaseMs: 2500, measured: "6.1-8.7" }),
   ]),
 });
 
 /** The one-pole model's shortfall for the measured render, at `releaseMs`. */
 const modelledShortfall = (releaseMs) =>
-  recoveryShortfallDb({ duckDb: MEASURED_RECOVERY.duckDb, releaseMs, gapMs: MEASURED_RECOVERY.gapMs }).toFixed(2);
+  recoveryShortfallDb({
+    duckDb: MEASURED_RECOVERY.duckDb,
+    releaseMs,
+    gapMs: MEASURED_RECOVERY.gapMs,
+  }).toFixed(2);
 
-const TIMING_NAME = 'timing.json';
+const TIMING_NAME = "timing.json";
 
-const LOCK_NAME = 'music-gain.lock.json';
+const LOCK_NAME = "music-gain.lock.json";
 
 /**
  * Reads the gain lock, if there is one.
@@ -105,11 +127,16 @@ const LOCK_NAME = 'music-gain.lock.json';
  * read was "refused to write through" sends them looking for the wrong thing.
  */
 function readGainLock(projectDir) {
-  const lockPath = resolveInternalArtifact(projectDir, LOCK_NAME, 'music gain pin', 'read');
+  const lockPath = resolveInternalArtifact(
+    projectDir,
+    LOCK_NAME,
+    "music gain pin",
+    "read",
+  );
   if (!fs.existsSync(lockPath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    parsed = JSON.parse(fs.readFileSync(lockPath, "utf8"));
   } catch {
     // Deliberately not surfacing the parse error: an unreadable pin is classified as
     // "not a confirmation" by classifyGainPin, which is the answer that matters, and the
@@ -119,7 +146,8 @@ function readGainLock(projectDir) {
   // A present-but-unusable pin is NOT an absent one. Returning null here would report it
   // as "never confirmed", which is the wrong diagnosis for a file that is sitting right
   // there — the same absent/malformed collapse readOptionalEngineJson exists to prevent.
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return {};
   return parsed;
 }
 
@@ -140,10 +168,19 @@ function readGainLock(projectDir) {
  * file says.
  */
 function writeGainLock(projectDir, current) {
-  const lockPath = resolveInternalArtifact(projectDir, LOCK_NAME, 'music gain pin', 'write');
+  const lockPath = resolveInternalArtifact(
+    projectDir,
+    LOCK_NAME,
+    "music gain pin",
+    "write",
+  );
   const record = confirmedLockRecord(current, new Date().toISOString());
 
-  const temp = openExclusiveEngineFile(projectDir, `${LOCK_NAME}.part-${process.pid}`, 'music gain pin temp file');
+  const temp = openExclusiveEngineFile(
+    projectDir,
+    `${LOCK_NAME}.part-${process.pid}`,
+    "music gain pin temp file",
+  );
   try {
     fs.writeFileSync(temp.fd, `${JSON.stringify(record, null, 2)}\n`);
     fs.closeSync(temp.fd);
@@ -154,7 +191,7 @@ function writeGainLock(projectDir, current) {
     const leftover = temp.cleanup();
     throw new CliError(
       `could not publish the music gain pin (${err.code ?? err.message})` +
-      `${leftover ? ` — ${leftover.message}` : ''}`,
+        `${leftover ? ` — ${leftover.message}` : ""}`,
       EXIT.FAILED,
     );
   }
@@ -171,12 +208,16 @@ function writeGainLock(projectDir, current) {
 function resolveVideoSeconds(override, timing) {
   if (override !== null) return override;
   if (timing === null) {
-    throw new Error(`no ${TIMING_NAME} in the project — pass --video-seconds to state the video length`);
+    throw new Error(
+      `no ${TIMING_NAME} in the project — pass --video-seconds to state the video length`,
+    );
   }
   const fps = Number(timing.project?.fps || 30);
   const durationMs = Number(timing.durationMs);
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
-    throw new Error(`invalid timing.durationMs (${durationMs}) in ${TIMING_NAME}`);
+    throw new Error(
+      `invalid timing.durationMs (${durationMs}) in ${TIMING_NAME}`,
+    );
   }
   return Math.ceil(((durationMs + 1000) / 1000) * fps) / fps;
 }
@@ -204,7 +245,9 @@ function parseGain(raw, name) {
 }
 
 /** The flags a confirmation covers — read off the registry, so a new pinned knob documents itself. */
-const PINNED_FLAGS = MIX_PARAMETERS.filter((p) => p.pinned).map((p) => p.flag).join(', ');
+const PINNED_FLAGS = MIX_PARAMETERS.filter((p) => p.pinned)
+  .map((p) => p.flag)
+  .join(", ");
 
 const USAGE = `
 remux-music — mix the music bed under the narration and mux it onto an existing
@@ -254,9 +297,11 @@ Options
                         across a ${(MEASURED_RECOVERY.gapMs / 1000).toFixed(2)} s median gap:
                             release  modelled  measured
 ${MEASURED_RECOVERY.rows
-  .map(({ releaseMs, measured }) =>
-    `                            ${String(releaseMs).padStart(4)} ms   ${modelledShortfall(releaseMs)} dB  ${measured} dB`)
-  .join('\n')}
+  .map(
+    ({ releaseMs, measured }) =>
+      `                            ${String(releaseMs).padStart(4)} ms   ${modelledShortfall(releaseMs)} dB  ${measured} dB`,
+  )
+  .join("\n")}
                         Smaller than modelled at 800 ms, larger at 1500 and 2500 ms, and
                         nothing was measured below 800 ms — so release is NOT the
                         coefficient to tune by this number. The plan prints the modelled
@@ -301,27 +346,27 @@ await runCli(async () => {
   try {
     ({ values } = parseArgs({
       options: {
-        video: { type: 'string' },
-        out: { type: 'string' },
-        voice: { type: 'string' },
-        music: { type: 'string' },
-        'voice-gain': { type: 'string' },
-        'music-gain': { type: 'string' },
-        crossfade: { type: 'string' },
-        'duck-db': { type: 'string' },
-        'duck-envelope': { type: 'string' },
-        'duck-ratio': { type: 'string' },
-        'duck-attack': { type: 'string' },
-        'duck-release': { type: 'string' },
-        'no-loop': { type: 'boolean' },
-        'confirm-gain': { type: 'boolean' },
-        ceiling: { type: 'string' },
-        'video-seconds': { type: 'string' },
-        project: { type: 'string' },
-        ffmpeg: { type: 'string' },
-        apply: { type: 'boolean', default: false },
-        replace: { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
+        video: { type: "string" },
+        out: { type: "string" },
+        voice: { type: "string" },
+        music: { type: "string" },
+        "voice-gain": { type: "string" },
+        "music-gain": { type: "string" },
+        crossfade: { type: "string" },
+        "duck-db": { type: "string" },
+        "duck-envelope": { type: "string" },
+        "duck-ratio": { type: "string" },
+        "duck-attack": { type: "string" },
+        "duck-release": { type: "string" },
+        "no-loop": { type: "boolean" },
+        "confirm-gain": { type: "boolean" },
+        ceiling: { type: "string" },
+        "video-seconds": { type: "string" },
+        project: { type: "string" },
+        ffmpeg: { type: "string" },
+        apply: { type: "boolean", default: false },
+        replace: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
       },
       strict: true,
     }));
@@ -338,16 +383,26 @@ await runCli(async () => {
   }
 
   const projectDir = path.resolve(values.project ?? process.cwd());
-  const video = requireExistingFile(projectDir, values.video, 'video');
-  const voice = requireExistingFile(projectDir, values.voice ?? 'voiceover.mp3', 'voice track');
-  const music = requireExistingFile(projectDir, values.music ?? 'music.wav', 'music bed');
+  const video = requireExistingFile(projectDir, values.video, "video");
+  const voice = requireExistingFile(
+    projectDir,
+    values.voice ?? "voiceover.mp3",
+    "voice track",
+  );
+  const music = requireExistingFile(
+    projectDir,
+    values.music ?? "music.wav",
+    "music bed",
+  );
   const outPath = resolveOutput(projectDir, values.out, {
     apply: values.apply === true,
     replace: values.replace === true,
-    label: 'output',
+    label: "output",
   });
   if (outPath === video) {
-    throw new CliError('--out must differ from --video; remuxing onto the source in place would destroy it');
+    throw new CliError(
+      "--out must differ from --video; remuxing onto the source in place would destroy it",
+    );
   }
 
   // Validated before they are ever interpolated. `volume=${gain}` sits inside a filter
@@ -360,11 +415,11 @@ await runCli(async () => {
   // which is exactly how --ceiling escaped. See mix-parameters.mjs, including its limits.
   const mix = createMixAudit();
 
-  const voiceGain = parseGain(values['voice-gain'] ?? '1.14', '--voice-gain');
-  mix.declare('voiceGain', { value: voiceGain });
+  const voiceGain = parseGain(values["voice-gain"] ?? "1.14", "--voice-gain");
+  mix.declare("voiceGain", { value: voiceGain });
 
-  const musicGain = parseGain(values['music-gain'] ?? '1.50', '--music-gain');
-  mix.declare('musicGain', { value: musicGain });
+  const musicGain = parseGain(values["music-gain"] ?? "1.50", "--music-gain");
+  mix.declare("musicGain", { value: musicGain });
 
   // A LIMITER CEILING IS dBFS; A DELIVERY TARGET IS USUALLY dBTP. The two are not the
   // same number: inter-sample peaks reconstructed on playback run above the sample peaks
@@ -380,13 +435,15 @@ await runCli(async () => {
   //
   // PARSED HERE, BEFORE THE PIN, because the pin now covers it. Parsing it after the pin
   // check is what let a ceiling change reach the mix without a renewed confirmation.
-  const ceilingBelowFs = parseBoundedNumber(values.ceiling ?? '1.0', {
-    name: '--ceiling', min: 0.1, max: 12,
+  const ceilingBelowFs = parseBoundedNumber(values.ceiling ?? "1.0", {
+    name: "--ceiling",
+    min: 0.1,
+    max: 12,
   });
   const ceilingLinear = Number(Math.pow(10, -ceilingBelowFs / 20).toFixed(6));
   // Pinned as the dB the operator typed, rendered as the linear limit the graph carries —
   // a refusal that quoted 0.794328 back at someone who typed 2.0 would be no use.
-  mix.declare('ceiling', { value: ceilingBelowFs, rendered: ceilingLinear });
+  mix.declare("ceiling", { value: ceilingBelowFs, rendered: ceilingLinear });
 
   // ---- THE SIDECHAIN DUCK ------------------------------------------------------------
   //
@@ -405,62 +462,93 @@ await runCli(async () => {
   //
   // DECLARED BEFORE THE PIN, because the pin covers all four. Parsing a pinned knob after
   // the pin check is exactly how --ceiling once reached the mix unconfirmed.
-  const duckDb = parseBoundedNumber(values['duck-db'] ?? '0', { name: '--duck-db', min: 0, max: 40 });
+  const duckDb = parseBoundedNumber(values["duck-db"] ?? "0", {
+    name: "--duck-db",
+    min: 0,
+    max: 40,
+  });
   const ducking = duckDb > 0;
 
   // The narration's fingerprint, taken at most once: the envelope check below and the
   // bed's ducking record both need it, and it reads every byte of the voice track.
   let voiceFingerprintOnce = null;
-  const voiceFingerprint = () => (voiceFingerprintOnce ??= fingerprintVoice(voice, path.basename(voice)));
+  const voiceFingerprint = () =>
+    (voiceFingerprintOnce ??= fingerprintVoice(voice, path.basename(voice)));
 
   let duck = null;
   if (!ducking) {
     // A DUCK OPTION WITHOUT --duck-db IS REFUSED, NOT IGNORED. --duck-db without an
     // envelope always was; this direction let someone who forgot --duck-db believe the
     // bed was ducked, and never range-checked what they passed — --duck-ratio 999 planned.
-    const orphans = ['duck-envelope', 'duck-ratio', 'duck-attack', 'duck-release']
+    const orphans = [
+      "duck-envelope",
+      "duck-ratio",
+      "duck-attack",
+      "duck-release",
+    ]
       .filter((name) => values[name] !== undefined)
       .map((name) => `--${name}`);
     if (orphans.length > 0) {
       throw new CliError(
-        `${orphans.join(', ')} ${orphans.length === 1 ? 'has' : 'have'} no effect without --duck-db — ducking is ` +
-          `off${values['duck-db'] !== undefined ? ' (--duck-db 0 is off)' : ''}, so nothing would read ` +
-          `${orphans.length === 1 ? 'it' : 'them'}.\nPass --duck-db <dB> to duck the bed, or drop ` +
-          `${orphans.length === 1 ? 'the option' : 'the options'}.`,
+        `${orphans.join(", ")} ${orphans.length === 1 ? "has" : "have"} no effect without --duck-db — ducking is ` +
+          `off${values["duck-db"] !== undefined ? " (--duck-db 0 is off)" : ""}, so nothing would read ` +
+          `${orphans.length === 1 ? "it" : "them"}.\nPass --duck-db <dB> to duck the bed, or drop ` +
+          `${orphans.length === 1 ? "the option" : "the options"}.`,
       );
     }
     // Recorded as NOT IN FORCE rather than omitted, so "ducking was off" is a fact the
     // pin carries and switching it on later reads as a changed pinned parameter.
     for (const name of DUCK_PARAMETERS) mix.declareAbsent(name);
   } else {
-    if (values['duck-envelope'] === undefined) {
+    if (values["duck-envelope"] === undefined) {
       throw new CliError(
-        '--duck-db needs --duck-envelope <vo-envelope.json>.\n' +
-        'The sidechain threshold is SOLVED against the narration level measured in the envelope, so\n' +
-        'without one the depth would be whatever a guessed threshold happened to produce — which is\n' +
-        'the behaviour this flag exists to replace. Produce one with:\n' +
-        '  node src/vo-envelope.mjs --apply',
+        "--duck-db needs --duck-envelope <vo-envelope.json>.\n" +
+          "The sidechain threshold is SOLVED against the narration level measured in the envelope, so\n" +
+          "without one the depth would be whatever a guessed threshold happened to produce — which is\n" +
+          "the behaviour this flag exists to replace. Produce one with:\n" +
+          "  node src/vo-envelope.mjs --apply",
       );
     }
 
-    const duckRatio = parseBoundedNumber(values['duck-ratio'] ?? '4', { name: '--duck-ratio', min: 1.5, max: 20 });
-    const duckAttack = parseBoundedNumber(values['duck-attack'] ?? String(REFERENCE_ATTACK_MS), {
-      name: '--duck-attack', min: 1, max: 2000,
+    const duckRatio = parseBoundedNumber(values["duck-ratio"] ?? "4", {
+      name: "--duck-ratio",
+      min: 1.5,
+      max: 20,
     });
-    const duckRelease = parseBoundedNumber(values['duck-release'] ?? String(REFERENCE_RELEASE_MS), {
-      name: '--duck-release', min: 1, max: 9000,
-    });
+    const duckAttack = parseBoundedNumber(
+      values["duck-attack"] ?? String(REFERENCE_ATTACK_MS),
+      {
+        name: "--duck-attack",
+        min: 1,
+        max: 2000,
+      },
+    );
+    const duckRelease = parseBoundedNumber(
+      values["duck-release"] ?? String(REFERENCE_RELEASE_MS),
+      {
+        name: "--duck-release",
+        min: 1,
+        max: 9000,
+      },
+    );
 
-    const envelopePath = requireExistingFile(projectDir, values['duck-envelope'], 'duck envelope');
+    const envelopePath = requireExistingFile(
+      projectDir,
+      values["duck-envelope"],
+      "duck envelope",
+    );
     const envelope = readDuckEnvelope(envelopePath);
 
     // THE ENVELOPE MUST DESCRIBE THE NARRATION BEING MIXED. It sets the level the
     // threshold is solved against, so a stale one mis-places every gain change by however
     // far the two have diverged and nothing downstream measures that.
     const lineage = classifyEnvelopeLineage(envelope, await voiceFingerprint());
-    if (lineage.state !== 'current') {
+    if (lineage.state !== "current") {
       throw new CliError(
-        describeEnvelopeRefusal(lineage, { envelopePath, voicePath: path.basename(voice) }),
+        describeEnvelopeRefusal(lineage, {
+          envelopePath,
+          voicePath: path.basename(voice),
+        }),
         EXIT.FAILED,
       );
     }
@@ -469,29 +557,41 @@ await runCli(async () => {
     if (speech.speechRms === null) {
       throw new CliError(
         `${envelopePath} has no frame above the speech threshold (${SPEECH_RMS_THRESHOLD}), so there is no\n` +
-        'narration level to solve the duck against. Ducking silence would reduce to a constant gain,\n' +
-        'which --music-gain already is.',
+          "narration level to solve the duck against. Ducking silence would reduce to a constant gain,\n" +
+          "which --music-gain already is.",
         EXIT.FAILED,
       );
     }
 
     const threshold = calibrateDuckThreshold({
-      speechRms: speech.speechRms, voiceGain, duckDb, ratio: duckRatio,
+      speechRms: speech.speechRms,
+      voiceGain,
+      duckDb,
+      ratio: duckRatio,
     });
 
     // Pinned as the dB the operator asked for, rendered as the threshold that delivers it
     // — the --ceiling shape. Pinning the solved threshold instead would demand a fresh
     // confirmation every time the narration was re-synthesised, and a confirmation that
     // fires constantly stops being one.
-    mix.declare('duckDb', { value: duckDb, rendered: threshold });
-    mix.declare('duckRatio', { value: duckRatio });
-    mix.declare('duckAttack', { value: duckAttack });
-    mix.declare('duckRelease', { value: duckRelease });
+    mix.declare("duckDb", { value: duckDb, rendered: threshold });
+    mix.declare("duckRatio", { value: duckRatio });
+    mix.declare("duckAttack", { value: duckAttack });
+    mix.declare("duckRelease", { value: duckRelease });
 
     duck = {
-      db: duckDb, ratio: duckRatio, attack: duckAttack, release: duckRelease,
-      threshold, speech,
-      achievedDb: achievedDuckDb({ threshold, speechRms: speech.speechRms, voiceGain, ratio: duckRatio }),
+      db: duckDb,
+      ratio: duckRatio,
+      attack: duckAttack,
+      release: duckRelease,
+      threshold,
+      speech,
+      achievedDb: achievedDuckDb({
+        threshold,
+        speechRms: speech.speechRms,
+        voiceGain,
+        ratio: duckRatio,
+      }),
       envelopePath,
     };
   }
@@ -514,7 +614,7 @@ await runCli(async () => {
     bedFingerprint,
     voiceFingerprint,
   );
-  if (!['absent', 'flat', 'current'].includes(bedDuck.state)) {
+  if (!["absent", "flat", "current"].includes(bedDuck.state)) {
     throw new CliError(
       describeBedDuckRefusal(bedDuck, {
         recordPath: `${music}${BED_DUCK_RECORD_SUFFIX}`,
@@ -529,13 +629,13 @@ await runCli(async () => {
   // bed against the narration in play, so an in-graph duck would land on top of it and the
   // bed would drop by both under every phrase. A conflicting request, so exit 2 — after the
   // stale refusal above, which is the failure to report when both apply.
-  if (ducking && bedDuck.state === 'current') {
+  if (ducking && bedDuck.state === "current") {
     throw new CliError(
       `${music}${BED_DUCK_RECORD_SUFFIX} says the bed already carries make-music's duck against ` +
         `${path.basename(voice)}, baked into its samples, so --duck-db would duck it a second time.\n` +
         "There is no stacking mode. Drop --duck-db and its --duck-* options, and the bed's own duck is used;\n" +
-        'or write a flat bed with make-music — no --envelope — with the --seconds and --preset it was made\n' +
-        'with, and duck that in the graph:\n' +
+        "or write a flat bed with make-music — no --envelope — with the --seconds and --preset it was made\n" +
+        "with, and duck that in the graph:\n" +
         `  node src/make-music.mjs --out ${path.relative(projectDir, music)} --apply --replace`,
       EXIT.USAGE,
     );
@@ -546,8 +646,10 @@ await runCli(async () => {
   // --crossfade is pinned, and it reaches the mix only when the bed loops — so whether it
   // is in force has to be known before the pin can be checked. Deciding the loop after the
   // pin is exactly how a pinned knob reaches the mix unconfirmed.
-  const xfade = parseBoundedNumber(values.crossfade ?? '3', {
-    name: '--crossfade', min: 0.1, max: 30,
+  const xfade = parseBoundedNumber(values.crossfade ?? "3", {
+    name: "--crossfade",
+    min: 0.1,
+    max: 30,
   });
 
   // A BAD ARGUMENT IS A USAGE ERROR, NOT AN UNDECIDABLE INPUT. Parsed here, outside the
@@ -555,18 +657,24 @@ await runCli(async () => {
   // plan path — which would let `--video-seconds 0` be planned around at exit 0 instead
   // of refused. The operator being wrong and the input being unknowable are different
   // states and only one of them is recoverable.
-  const videoSecondsOverride = values['video-seconds'] !== undefined
-    ? parseBoundedNumber(values['video-seconds'], { name: '--video-seconds', min: 0.1, max: 36000 })
-    : null;
+  const videoSecondsOverride =
+    values["video-seconds"] !== undefined
+      ? parseBoundedNumber(values["video-seconds"], {
+          name: "--video-seconds",
+          min: 0.1,
+          max: 36000,
+        })
+      : null;
 
   // Read up front, and OUTSIDE the try below, because the states are not the same kind of
   // thing. A link, a malformed file or an unreadable one is a REFUSAL — it means someone
   // put something there that must not be read through, and folding that into "could not
   // decide" would let a planted file be planned around at exit 0. An ABSENT timing.json
   // is a legitimately undecidable input, and readOptionalEngineJson reserves null for it.
-  const timing = videoSecondsOverride !== null
-    ? null
-    : readOptionalEngineJson(projectDir, TIMING_NAME, 'timing');
+  const timing =
+    videoSecondsOverride !== null
+      ? null
+      : readOptionalEngineJson(projectDir, TIMING_NAME, "timing");
 
   // Probing decodes media, so it is strict under --apply but must NOT be a precondition
   // of planning: a plan is supposed to be answerable about inputs that are absent,
@@ -597,25 +705,29 @@ await runCli(async () => {
   // LENGTH; the first file-sourced track hit this immediately, leaving 92 s bedless.
   const short = undecidable === null && musicSeconds < videoSeconds;
 
-  if (short && values['no-loop'] === true) {
+  if (short && values["no-loop"] === true) {
     throw new CliError(
       `music is ${musicSeconds.toFixed(2)}s but the video is ${videoSeconds.toFixed(2)}s — ` +
-      `the last ${(videoSeconds - musicSeconds).toFixed(2)}s would have NO bed at all. ` +
-      `Drop --no-loop to loop it with a crossfade, or supply a longer track.`);
+        `the last ${(videoSeconds - musicSeconds).toFixed(2)}s would have NO bed at all. ` +
+        `Drop --no-loop to loop it with a crossfade, or supply a longer track.`,
+    );
   }
   if (short && musicSeconds <= xfade) {
     throw new CliError(
-      `music (${musicSeconds.toFixed(2)}s) must be longer than the ${xfade}s crossfade to loop`);
+      `music (${musicSeconds.toFixed(2)}s) must be longer than the ${xfade}s crossfade to loop`,
+    );
   }
 
   // n copies crossfaded end-to-end yield n*D - (n-1)*X seconds. Smallest covering n.
-  const copies = short ? Math.max(2, Math.ceil((videoSeconds - xfade) / (musicSeconds - xfade))) : 1;
+  const copies = short
+    ? Math.max(2, Math.ceil((videoSeconds - xfade) / (musicSeconds - xfade)))
+    : 1;
 
   // PINNED, AND IN FORCE ONLY WHEN THE BED LOOPS. With no wrap there is no crossfade in
   // the mix, so it is recorded NOT IN FORCE — as the duck is without --duck-db — and a
   // --crossfade that reaches nothing asks for no confirmation.
-  if (copies > 1) mix.declare('crossfade', { value: xfade });
-  else mix.declareAbsent('crossfade');
+  if (copies > 1) mix.declare("crossfade", { value: xfade });
+  else mix.declareAbsent("crossfade");
 
   // THE GAIN PIN (bug-ledger entry 16).
   //
@@ -632,39 +744,47 @@ await runCli(async () => {
   // the pin status instead of refusing, and --apply is where an unconfirmed mix is
   // stopped. See gain-pin.mjs for what this pin does and does not certify.
   const lock = readGainLock(projectDir);
-  const current = { source: path.basename(music), sha256: bedFingerprint.sha256, mix: mix.pinnedValues() };
+  const current = {
+    source: path.basename(music),
+    sha256: bedFingerprint.sha256,
+    mix: mix.pinnedValues(),
+  };
   const pin = classifyGainPin(lock, current);
-  const confirmed = values['confirm-gain'] === true;
+  const confirmed = values["confirm-gain"] === true;
 
   if (values.apply && pin.requiresConfirmation && !confirmed) {
     throw new CliError(describeGainPinRefusal(pin, current));
   }
 
-  if (undecidable === null) mix.declare('videoSeconds', { value: videoSeconds });
+  if (undecidable === null)
+    mix.declare("videoSeconds", { value: videoSeconds });
   // Every value names the chain it is interpolated into, so the audit can refuse one that
   // is present but on the wrong chain. The trim and the music gain both land on the chain
   // that writes [mu], looped or not; the crossfades land on their own [ml<n>] chains.
-  const trim = undecidable === null ? `${mix.structural('atrim=0:')}${mix.use('videoSeconds', 'mu')},` : '';
+  const trim =
+    undecidable === null
+      ? `${mix.structural("atrim=0:")}${mix.use("videoSeconds", "mu")},`
+      : "";
 
   let musicFilter;
   if (copies === 1) {
-    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];`;
+    musicFilter = `[2:a]${trim}asetpts=N/SR/TB,volume=${mix.use("musicGain", "mu")}[mu];`;
   } else {
-    let prev = '2:a';
-    musicFilter = '';
+    let prev = "2:a";
+    musicFilter = "";
     for (let i = 1; i < copies; i += 1) {
       const label = `ml${i}`;
-      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${mix.use('crossfade', label)}:c1=tri:c2=tri[${label}];`;
+      musicFilter += `[${prev}][${i + 2}:a]acrossfade=d=${mix.use("crossfade", label)}:c1=tri:c2=tri[${label}];`;
       prev = label;
     }
-    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use('musicGain', 'mu')}[mu];`;
+    musicFilter += `[${prev}]${trim}asetpts=N/SR/TB,volume=${mix.use("musicGain", "mu")}[mu];`;
   }
 
   // The voice bus forks only when the duck needs a sidechain tap, so a run without
   // --duck-db produces the graph this stage has always produced, character for character.
   const voiceFilter = ducking
-    ? `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0,${mix.structural('asplit=2')}[vo][vosc];`
-    : `[1:a]volume=${mix.use('voiceGain', 'vo')},pan=stereo|c0=c0|c1=c0[vo];`;
+    ? `[1:a]volume=${mix.use("voiceGain", "vo")},pan=stereo|c0=c0|c1=c0,${mix.structural("asplit=2")}[vo][vosc];`
+    : `[1:a]volume=${mix.use("voiceGain", "vo")},pan=stereo|c0=c0|c1=c0[vo];`;
 
   // `apad` ON THE SIDECHAIN, and it is load-bearing. sidechaincompress ends its output
   // when EITHER input ends, so a narration track shorter than the trimmed bed would cut
@@ -674,16 +794,16 @@ await runCli(async () => {
   // so amix duration=longest is unaffected.
   const duckFilter = ducking
     ? `[vosc]apad[vop];` +
-      `[mu][vop]sidechaincompress=threshold=${mix.use('duckDb', 'mud')}:ratio=${mix.use('duckRatio', 'mud')}` +
-      `:attack=${mix.use('duckAttack', 'mud')}:release=${mix.use('duckRelease', 'mud')}[mud];`
-    : '';
+      `[mu][vop]sidechaincompress=threshold=${mix.use("duckDb", "mud")}:ratio=${mix.use("duckRatio", "mud")}` +
+      `:attack=${mix.use("duckAttack", "mud")}:release=${mix.use("duckRelease", "mud")}[mud];`
+    : "";
 
   const filter =
     voiceFilter +
     musicFilter +
     duckFilter +
-    `[vo][${ducking ? 'mud' : 'mu'}]${mix.structural('amix=inputs=2:duration=longest:normalize=0')}[mx];` +
-    `[mx]alimiter=limit=${mix.use('ceiling', 'out')}:level=disabled[out]`;
+    `[vo][${ducking ? "mud" : "mu"}]${mix.structural("amix=inputs=2:duration=longest:normalize=0")}[mx];` +
+    `[mx]alimiter=limit=${mix.use("ceiling", "out")}:level=disabled[out]`;
 
   // FAIL CLOSED ON AN UNREGISTERED VALUE. Anything interpolated into the graph without
   // going through the registry leaves a number here that traces to nothing, and the run
@@ -693,72 +813,134 @@ await runCli(async () => {
   // else in this engine.
   mix.audit(filter);
 
-  const musicInputs = Array.from({ length: copies }, () => ['-i', music]).flat();
+  const musicInputs = Array.from({ length: copies }, () => [
+    "-i",
+    music,
+  ]).flat();
 
   const FF = resolveFfmpeg(projectDir, values.ffmpeg);
   const ffArgs = [
-    values.replace ? '-y' : '-n', '-hide_banner', '-loglevel', 'error',
-    '-i', video, '-i', voice, ...musicInputs,
-    '-filter_complex', filter,
-    '-map', '0:v', '-c:v', 'copy',
-    '-map', '[out]', '-c:a', 'aac', '-b:a', '160k', '-ar', '24000', '-ac', '2',
-    '-movflags', '+faststart',
+    values.replace ? "-y" : "-n",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    video,
+    "-i",
+    voice,
+    ...musicInputs,
+    "-filter_complex",
+    filter,
+    "-map",
+    "0:v",
+    "-c:v",
+    "copy",
+    "-map",
+    "[out]",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "160k",
+    "-ar",
+    "24000",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
     outPath,
   ];
 
   if (!values.apply) {
-    console.log('plan: audio-only remux (video stream copied, not re-encoded)');
+    console.log("plan: audio-only remux (video stream copied, not re-encoded)");
     console.log(`  video   ${video}`);
     console.log(`  voice   ${voice}  (gain ${voiceGain})`);
     console.log(`  music   ${music}  (gain ${musicGain})`);
-    for (const line of describeDuckPlan(duck, bedDuck, path.basename(voice))) console.log(line);
+    for (const line of describeDuckPlan(duck, bedDuck, path.basename(voice)))
+      console.log(line);
     console.log(`  gain    ${describeGainPinPlan(pin, current, confirmed)}`);
     if (undecidable !== null) {
-      console.log(`  loop    UNDECIDED — could not read durations (${undecidable}).`);
-      console.log('          Planned WITHOUT looping. If the track is shorter than the');
-      console.log('          video, --apply will loop it and this plan understates the graph.');
-      console.log('          The gain line is for that unlooped mix, with --crossfade not in');
-      console.log('          force; --apply checks the pin against the mix it actually builds.');
+      console.log(
+        `  loop    UNDECIDED — could not read durations (${undecidable}).`,
+      );
+      console.log(
+        "          Planned WITHOUT looping. If the track is shorter than the",
+      );
+      console.log(
+        "          video, --apply will loop it and this plan understates the graph.",
+      );
+      console.log(
+        "          The gain line is for that unlooped mix, with --crossfade not in",
+      );
+      console.log(
+        "          force; --apply checks the pin against the mix it actually builds.",
+      );
     } else if (copies > 1) {
-      console.log(`  loop    music ${musicSeconds.toFixed(2)}s < video ${videoSeconds.toFixed(2)}s ` +
-        `— ${copies} copies, ${xfade}s crossfade at each wrap`);
+      console.log(
+        `  loop    music ${musicSeconds.toFixed(2)}s < video ${videoSeconds.toFixed(2)}s ` +
+          `— ${copies} copies, ${xfade}s crossfade at each wrap`,
+      );
     } else {
-      console.log(`  loop    not needed — music ${musicSeconds.toFixed(2)}s covers video ${videoSeconds.toFixed(2)}s`);
+      console.log(
+        `  loop    not needed — music ${musicSeconds.toFixed(2)}s covers video ${videoSeconds.toFixed(2)}s`,
+      );
     }
     console.log(`  output  ${outPath}`);
     console.log(`  filter  ${filter}`);
-    console.log(`\nwould run:\n  ${FF} ${ffArgs.join(' ')}`);
-    console.log('\nnothing was written. Re-run with --apply to remux.');
+    console.log(`\nwould run:\n  ${FF} ${ffArgs.join(" ")}`);
+    console.log("\nnothing was written. Re-run with --apply to remux.");
     return EXIT.OK;
   }
 
   // The one line an --apply run prints before ffmpeg, so it says whether the bed is ducked:
   // a log that cannot tell a ducked mix from a flat one cannot show which one shipped.
-  const duckState = duck !== null
-    ? `duck -${duck.db} dB`
-    : bedDuck.state === 'current'
-      ? 'duck baked into the bed by make-music'
-      : bedDuck.state === 'flat'
-        ? 'duck off'
-        : 'duck off in the graph; the bed has no ducking record';
+  const duckState =
+    duck !== null
+      ? `duck -${duck.db} dB`
+      : bedDuck.state === "current"
+        ? "duck baked into the bed by make-music"
+        : bedDuck.state === "flat"
+          ? "duck off"
+          : "duck off in the graph; the bed has no ducking record";
   console.log(`voice ${voiceGain} · music ${musicGain} · ${duckState}`);
   try {
-    execFileSync(FF, ffArgs, { stdio: 'inherit' });
+    execFileSync(FF, ffArgs, { stdio: "inherit" });
   } catch (err) {
-    throw new CliError(`ffmpeg failed while remuxing (${err.message}) — ${outPath} was not produced`, EXIT.FAILED);
+    throw new CliError(
+      `ffmpeg failed while remuxing (${err.message}) — ${outPath} was not produced`,
+      EXIT.FAILED,
+    );
   }
 
   // Prove the video stream survived untouched. This check is the entire justification
   // for the cheap path: if the stream changed, the output is a re-encode wearing the
   // cheap path's name, and it must not be published as an approved deliverable.
-  const md5 = (f) => execFileSync(FF, ['-hide_banner', '-loglevel', 'error', '-i', f,
-    '-map', '0:v', '-c', 'copy', '-f', 'md5', '-'], { encoding: 'utf8' }).trim();
+  const md5 = (f) =>
+    execFileSync(
+      FF,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        f,
+        "-map",
+        "0:v",
+        "-c",
+        "copy",
+        "-f",
+        "md5",
+        "-",
+      ],
+      { encoding: "utf8" },
+    ).trim();
 
   const before = md5(video);
   const after = md5(outPath);
   console.log(`video ${before}`);
   console.log(`remux ${after}`);
-  console.log(`${outPath} ${(fs.statSync(outPath).size / 1048576).toFixed(2)} MB`);
+  console.log(
+    `${outPath} ${(fs.statSync(outPath).size / 1048576).toFixed(2)} MB`,
+  );
 
   const verdict = videoStreamVerdict(before, after, path.basename(outPath));
   if (!verdict.identical) {
@@ -775,18 +957,25 @@ await runCli(async () => {
   if (confirmed) {
     writeGainLock(projectDir, current);
     const recorded = Object.entries(current.mix)
-      .map(([name, value]) => `${MIX_PARAMETERS.find((p) => p.name === name).flag} ${value}`)
-      .join(', ');
-    console.log(`${LOCK_NAME}: ${recorded} confirmed for ${current.source} ` +
-      `(${current.sha256.slice(0, 12)})`);
-    console.log('   this records your acceptance, NOT a measurement — check the mix with:');
-    console.log(`   node src/check-levels.mjs --file ${path.basename(outPath)}`);
+      .map(
+        ([name, value]) =>
+          `${MIX_PARAMETERS.find((p) => p.name === name).flag} ${value}`,
+      )
+      .join(", ");
+    console.log(
+      `${LOCK_NAME}: ${recorded} confirmed for ${current.source} ` +
+        `(${current.sha256.slice(0, 12)})`,
+    );
+    console.log(
+      "   this records your acceptance, NOT a measurement — check the mix with:",
+    );
+    console.log(
+      `   node src/check-levels.mjs --file ${path.basename(outPath)}`,
+    );
   }
 
   return EXIT.OK;
 });
-
-
 
 /**
  * Reads the envelope the duck is calibrated from, validating the one field it depends on.
@@ -798,20 +987,27 @@ await runCli(async () => {
 function readDuckEnvelope(envelopePath) {
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(envelopePath, 'utf8'));
+    parsed = JSON.parse(fs.readFileSync(envelopePath, "utf8"));
   } catch (err) {
-    throw new CliError(`${envelopePath} could not be read as an envelope — ${err.message}`, EXIT.FAILED);
+    throw new CliError(
+      `${envelopePath} could not be read as an envelope — ${err.message}`,
+      EXIT.FAILED,
+    );
   }
   if (!Array.isArray(parsed?.rms) || parsed.rms.length === 0) {
     throw new CliError(
-      `${envelopePath} must contain a non-empty "rms" array of envelope samples`, EXIT.FAILED,
+      `${envelopePath} must contain a non-empty "rms" array of envelope samples`,
+      EXIT.FAILED,
     );
   }
-  const bad = parsed.rms.findIndex((v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0);
+  const bad = parsed.rms.findIndex(
+    (v) => typeof v !== "number" || !Number.isFinite(v) || v < 0,
+  );
   if (bad !== -1) {
     throw new CliError(
       `${envelopePath} "rms"[${bad}] is ${JSON.stringify(parsed.rms[bad])} — every envelope sample must be a ` +
-      'finite non-negative number', EXIT.FAILED,
+        "finite non-negative number",
+      EXIT.FAILED,
     );
   }
   // hopMs turns frame counts into the gap lengths the plan reports, and it places every
@@ -832,7 +1028,7 @@ function readDuckEnvelope(envelopePath) {
  * @returns {unknown} the parsed JSON, or `undefined` when there is no record
  */
 function readBedDuckRecord(projectDir, recordPath) {
-  const label = 'ducking record';
+  const label = "ducking record";
   const { file, text } = readEngineFile(projectDir, recordPath, label);
   if (text === null) return undefined;
   try {
@@ -840,7 +1036,7 @@ function readBedDuckRecord(projectDir, recordPath) {
   } catch {
     throw new CliError(
       `${label} ${file} is not valid JSON (${text.length} characters), so it is not a record make-music wrote.\n` +
-      'Re-run make-music to write the bed and its record together, or remove the file if it does not belong to this bed.',
+        "Re-run make-music to write the bed and its record together, or remove the file if it does not belong to this bed.",
       EXIT.FAILED,
     );
   }
@@ -856,29 +1052,44 @@ function readBedDuckRecord(projectDir, recordPath) {
  */
 function describeDuckPlan(duck, bedDuck, voiceName) {
   if (duck === null) {
-    if (bedDuck.state === 'current') {
-      return [`  duck    none in the graph — the bed carries make-music's duck, against ${voiceName}: CURRENT`];
+    if (bedDuck.state === "current") {
+      return [
+        `  duck    none in the graph — the bed carries make-music's duck, against ${voiceName}: CURRENT`,
+      ];
     }
-    if (bedDuck.state === 'flat') {
-      return ['  duck    none (no --duck-db) — the bed plays flat: its ducking record says make-music did not duck it'];
+    if (bedDuck.state === "flat") {
+      return [
+        "  duck    none (no --duck-db) — the bed plays flat: its ducking record says make-music did not duck it",
+      ];
     }
     return [
-      '  duck    none (no --duck-db) — and no ducking record beside the bed, so whether make-music',
-      '          ducked it cannot be told; a duck baked into it is NOT checked against the narration',
+      "  duck    none (no --duck-db) — and no ducking record beside the bed, so whether make-music",
+      "          ducked it cannot be told; a duck baked into it is NOT checked against the narration",
     ];
   }
 
-  const { db, ratio, attack, release, threshold, speech, achievedDb, envelopePath } = duck;
+  const {
+    db,
+    ratio,
+    attack,
+    release,
+    threshold,
+    speech,
+    achievedDb,
+    envelopePath,
+  } = duck;
   const speechDb = (20 * Math.log10(speech.speechRms)).toFixed(1);
   const lines = [
     `  duck    -${db} dB under narration, in-graph sidechaincompress`,
     // A current ducked record never gets here: that second duck is refused.
-    ...(bedDuck.state === 'absent'
+    ...(bedDuck.state === "absent"
       ? [
-          '          no ducking record beside the bed, so whether make-music ducked it cannot be',
-          '          told; if it did, this duck is applied on top of the one baked into it',
+          "          no ducking record beside the bed, so whether make-music ducked it cannot be",
+          "          told; if it did, this duck is applied on top of the one baked into it",
         ]
-      : ["          the bed's ducking record says make-music did not duck it, so this is its only duck"]),
+      : [
+          "          the bed's ducking record says make-music did not duck it, so this is its only duck",
+        ]),
     `          envelope ${envelopePath} — CURRENT (${speech.speechFrames} speech frames, level ${speechDb} dBFS)`,
     `          threshold ${threshold} solved for that level; ratio ${ratio}, attack ${attack} ms, release ${release} ms`,
     `          solved depth ${achievedDb.toFixed(2)} dB at the AVERAGE speech level; a syllable N dB louder`,
@@ -887,31 +1098,39 @@ function describeDuckPlan(duck, bedDuck, voiceName) {
 
   if (speech.gaps.count === 0) {
     lines.push(
-      '          NO GAP of 500 ms or more BETWEEN PHRASES in this envelope, so no between-phrase',
-      '          recovery is modelled and no figure for it is given. Only gaps between phrases',
-      '          were counted: not the lead-in or the tail, where the bed starts at or returns',
-      '          towards the gaps level, and not any gap under 500 ms, which a fast release may',
-      '          still recover in.',
+      "          NO GAP of 500 ms or more BETWEEN PHRASES in this envelope, so no between-phrase",
+      "          recovery is modelled and no figure for it is given. Only gaps between phrases",
+      "          were counted: not the lead-in or the tail, where the bed starts at or returns",
+      "          towards the gaps level, and not any gap under 500 ms, which a fast release may",
+      "          still recover in.",
     );
     return lines;
   }
 
-  const atMedian = recoveryShortfallDb({ duckDb: db, releaseMs: release, gapMs: speech.gaps.medianMs });
-  const settle = timeToWithinDb({ duckDb: db, releaseMs: release, withinDb: GAPS_TOLERANCE_DB });
+  const atMedian = recoveryShortfallDb({
+    duckDb: db,
+    releaseMs: release,
+    gapMs: speech.gaps.medianMs,
+  });
+  const settle = timeToWithinDb({
+    duckDb: db,
+    releaseMs: release,
+    withinDb: GAPS_TOLERANCE_DB,
+  });
   const { duckDb: measuredDb, gapMs: measuredGapMs, rows } = MEASURED_RECOVERY;
   lines.push(
     `          gaps level is APPROACHED, NOT REACHED — MODELLED, NOT MEASURED: across this`,
     `          envelope's median gap of ${(speech.gaps.medianMs / 1000).toFixed(2)}s (${speech.gaps.count} gaps >= 0.5s) the one-pole model puts the`,
     `          bed ${atMedian.toFixed(2)} dB under it when narration resumes, and within ${GAPS_TOLERANCE_DB} dB after ${(settle / 1000).toFixed(2)}s.`,
-    '          The model is NOT A BOUND in either direction. One render was measured,',
+    "          The model is NOT A BOUND in either direction. One render was measured,",
     `          with an ${measuredDb} dB duck across a ${(measuredGapMs / 1000).toFixed(2)}s median gap:`,
     ...rows.map(
       ({ releaseMs, measured }) =>
         `          release ${String(releaseMs).padStart(4)} ms  model ${modelledShortfall(releaseMs)} dB  measured ${measured} dB`,
     ),
     `          Nothing was measured below ${rows[0].releaseMs} ms. Only a decode of the isolated bed`,
-    '          settles it — the mixed file cannot, because speech masks the bed it is',
-    '          ducking.',
+    "          settles it — the mixed file cannot, because speech masks the bed it is",
+    "          ducking.",
   );
   return lines;
 }

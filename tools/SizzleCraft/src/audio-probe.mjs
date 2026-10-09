@@ -1,9 +1,11 @@
-import { parseFile } from 'music-metadata';
-import { parseCli, requireExistingFile, runCli } from './cli-support.mjs';
+import { parseFile } from "music-metadata";
+import { parseCli, requireExistingFile, runCli } from "./cli-support.mjs";
+import { isEntryPoint } from "./entry-point.mjs";
 
 export async function probeDurationSeconds(audioPath) {
   const metadata = await parseFile(audioPath, { duration: true });
-  if (typeof metadata.format?.duration !== 'number') throw new Error(`no duration for ${audioPath}`);
+  if (typeof metadata.format?.duration !== "number")
+    throw new Error(`no duration for ${audioPath}`);
   return metadata.format.duration;
 }
 
@@ -16,7 +18,12 @@ export async function probeMany(paths, { concurrency = 8 } = {}) {
       result[file] = await probeDurationSeconds(file);
     }
   }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, paths.length)) }, worker));
+  await Promise.all(
+    Array.from(
+      { length: Math.max(1, Math.min(concurrency, paths.length)) },
+      worker,
+    ),
+  );
   return result;
 }
 
@@ -40,10 +47,17 @@ Exit codes: 0 success · 1 the file could not be probed · 2 bad usage`.trim();
 // The file is resolved against --project rather than the process cwd, which is what the
 // usage above says: advertising an option and then ignoring it would send a caller's path
 // somewhere other than where they were told, and leave the input unconfined.
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
+if (isEntryPoint(import.meta.url)) {
   await runCli(async () => {
-    const { positionals, projectDir } = parseCli({ usage: USAGE, allowPositionals: true });
-    const file = requireExistingFile(projectDir, positionals[0] ?? 'voiceover.mp3', 'audio file');
+    const { positionals, projectDir } = parseCli({
+      usage: USAGE,
+      allowPositionals: true,
+    });
+    const file = requireExistingFile(
+      projectDir,
+      positionals[0] ?? "voiceover.mp3",
+      "audio file",
+    );
     console.log(await probeDurationSeconds(file));
   });
 }

@@ -84,6 +84,6 @@
 //     spawn none on --apply now (they write their pauses in-process); a child that needs
 //     neither faked module would not need it anyway.
 //   - It is a TEST fixture. Nothing in src/ may import it.
-import { register } from 'node:module';
+import { register } from "node:module";
 
-register('./fake-audio-hooks.mjs', import.meta.url);
+register("./fake-audio-hooks.mjs", import.meta.url);

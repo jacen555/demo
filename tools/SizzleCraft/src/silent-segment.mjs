@@ -38,12 +38,18 @@
  * lets "voice has not run" stay a failure for silent and narrated segments alike.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
+import fs from "node:fs";
+import path from "node:path";
 import {
-  CliError, EXIT, assertDistinctDestinations, createBoundary, narrationFingerprint, pathExists,
-  resolveEngineOutput, resolveWithinRoot,
-} from './cli-support.mjs';
+  CliError,
+  EXIT,
+  assertDistinctDestinations,
+  createBoundary,
+  narrationFingerprint,
+  pathExists,
+  resolveEngineOutput,
+  resolveWithinRoot,
+} from "./cli-support.mjs";
 
 // MPEG-2 Layer III, 24 kHz, 96 kbps, mono — the msedge-tts profile this engine
 // concatenates by raw bytes. Frame size 72 * 96000 / 24000 = 288 bytes; frame time
@@ -78,15 +84,24 @@ export function silentMp3DurationMs(targetMs) {
  *   for one that does not: the allocation is as large as the target asks.
  */
 export function silentMp3(targetMs) {
-  if (typeof targetMs !== 'number' || !(targetMs > 0) || targetMs > SILENCE_MAX_MS) {
-    throw new RangeError(`silentMp3: the target is ${shownKind(targetMs)} — generated silence must be a number of ` +
-      `milliseconds above 0 and at most ${SILENCE_MAX_MS}`);
+  if (
+    typeof targetMs !== "number" ||
+    !(targetMs > 0) ||
+    targetMs > SILENCE_MAX_MS
+  ) {
+    throw new RangeError(
+      `silentMp3: the target is ${shownKind(targetMs)} — generated silence must be a number of ` +
+        `milliseconds above 0 and at most ${SILENCE_MAX_MS}`,
+    );
   }
   const frames = silentFrameCount(targetMs);
   const buf = Buffer.alloc(SILENCE_FRAME_BYTES * frames);
   for (let i = 0; i < frames; i++) {
     const o = i * SILENCE_FRAME_BYTES;
-    buf[o] = 0xff; buf[o + 1] = 0xf3; buf[o + 2] = 0xa4; buf[o + 3] = 0xc0;
+    buf[o] = 0xff;
+    buf[o + 1] = 0xf3;
+    buf[o + 2] = 0xa4;
+    buf[o + 3] = 0xc0;
   }
   return buf;
 }
@@ -146,8 +161,9 @@ export function silenceAssetBytes(ms, name) {
   if (!isGenerablePause(ms)) {
     throw new CliError(
       `${name}: the solved pause is ${text}ms — a pause asset must be a plain number of milliseconds ` +
-      `above 0 and at most ${SILENCE_MAX_MS}. Check the timeline's lead-in, gap and outro values.`,
-      EXIT.FAILED);
+        `above 0 and at most ${SILENCE_MAX_MS}. Check the timeline's lead-in, gap and outro values.`,
+      EXIT.FAILED,
+    );
   }
   return silentMp3(value);
 }
@@ -161,7 +177,9 @@ export function silenceAssetBytes(ms, name) {
  * declaration as "not silent" would reintroduce the very inference this exists to remove.
  */
 export function isSilentSegment(seg) {
-  return seg !== null && typeof seg === 'object' && Object.hasOwn(seg, 'silence');
+  return (
+    seg !== null && typeof seg === "object" && Object.hasOwn(seg, "silence")
+  );
 }
 
 /**
@@ -169,7 +187,9 @@ export function isSilentSegment(seg) {
  * bounds are numbers: a null, a string or an array is no window, and is not coerced into one.
  */
 export function silentDurationMs(seg) {
-  return typeof seg.startMs === 'number' && typeof seg.endMs === 'number' ? seg.endMs - seg.startMs : NaN;
+  return typeof seg.startMs === "number" && typeof seg.endMs === "number"
+    ? seg.endMs - seg.startMs
+    : NaN;
 }
 
 /**
@@ -180,18 +200,27 @@ export function silentDurationMs(seg) {
  * and a remedy that sends someone to remix has to ask this first.
  */
 export function hasAudioFile(seg) {
-  return typeof seg?.audio?.file === 'string' && seg.audio.file.trim() !== '';
+  return typeof seg?.audio?.file === "string" && seg.audio.file.trim() !== "";
 }
 
 // What a record value is, for a diagnostic that describes a file's shape and never quotes
 // its content: a number is shown, anything else is named by its type.
-const kindOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'an array' : typeof v === 'number' ? String(v)
-  : typeof v === 'object' ? 'an object' : `a ${typeof v}`);
+const kindOf = (v) =>
+  v === null
+    ? "null"
+    : Array.isArray(v)
+      ? "an array"
+      : typeof v === "number"
+        ? String(v)
+        : typeof v === "object"
+          ? "an object"
+          : `a ${typeof v}`;
 // The same, for a value that may be absent.
-const shownKind = (v) => (v === undefined ? 'missing' : kindOf(v));
+const shownKind = (v) => (v === undefined ? "missing" : kindOf(v));
 // A value a diagnostic quotes, as JSON, except a number JSON cannot write: JSON.stringify
 // writes NaN and Infinity, which JSON.parse reads from 1e999, as null.
-const shownValue = (v) => (typeof v === 'number' ? String(v) : JSON.stringify(v));
+const shownValue = (v) =>
+  typeof v === "number" ? String(v) : JSON.stringify(v);
 
 /**
  * What a silent segment's audio record says about its window, as one of:
@@ -220,19 +249,30 @@ const shownValue = (v) => (typeof v === 'number' ? String(v) : JSON.stringify(v)
  */
 export function silentRecordState(seg) {
   const audio = seg?.audio;
-  if (audio === undefined) return { state: 'absent' };
-  if (audio === null || typeof audio !== 'object' || Array.isArray(audio)) {
-    return { state: 'unusable', why: `its audio record is ${kindOf(audio)}, not an object` };
+  if (audio === undefined) return { state: "absent" };
+  if (audio === null || typeof audio !== "object" || Array.isArray(audio)) {
+    return {
+      state: "unusable",
+      why: `its audio record is ${kindOf(audio)}, not an object`,
+    };
   }
   const recordedMs = audio.durationMs;
-  if (recordedMs === undefined) return { state: 'unusable', why: 'its audio record has no durationMs' };
-  if (typeof recordedMs !== 'number' || !Number.isFinite(recordedMs) || recordedMs < 0) {
+  if (recordedMs === undefined)
+    return { state: "unusable", why: "its audio record has no durationMs" };
+  if (
+    typeof recordedMs !== "number" ||
+    !Number.isFinite(recordedMs) ||
+    recordedMs < 0
+  ) {
     return {
-      state: 'unusable',
+      state: "unusable",
       why: `its audio record's durationMs is ${kindOf(recordedMs)}, not a finite number of milliseconds >= 0`,
     };
   }
-  return { state: silentDurationMs(seg) === recordedMs ? 'matches' : 'differs', recordedMs };
+  return {
+    state: silentDurationMs(seg) === recordedMs ? "matches" : "differs",
+    recordedMs,
+  };
 }
 
 /**
@@ -266,45 +306,58 @@ export function silentRecordState(seg) {
 export function durationShortfallRemedy(lead, dir, timing, lastIndex, labelOf) {
   const segs = timing.segments;
   const declaration = declarationBlocker(segs, labelOf);
-  if (declaration) return `${lead}, but ${malformedDeclaration(declaration.fact)}`;
+  if (declaration)
+    return `${lead}, but ${malformedDeclaration(declaration.fact)}`;
   const last = segs[lastIndex];
   if (isSilentSegment(last)) {
     const where = labelOf(last, lastIndex);
     if (!hasAudioFile(last)) {
       if (segs.every(isSilentSegment)) {
         // voice.mjs has no narration to synthesise, and remix refuses this record.
-        return `${lead}, and ${where} is declared silent but no audio.file names its clip, and every segment is ` +
+        return (
+          `${lead}, and ${where} is declared silent but no audio.file names its clip, and every segment is ` +
           "declared silent, so no stage measures the timeline: set timing.durationMs by hand, no shorter than the last " +
-          "segment's end";
+          "segment's end"
+        );
       }
-      return `${lead}, and ${where} is declared silent but no audio.file names its clip, so the voice stage has not run ` +
+      return (
+        `${lead}, and ${where} is declared silent but no audio.file names its clip, so the voice stage has not run ` +
         `for it: ${gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-          open: 'run voice.mjs (S3), which generates its clip and re-measures the timeline',
-          stem: 'voice.mjs (S3) generates its clip and re-measures the timeline',
-        })}`;
+          open: "run voice.mjs (S3), which generates its clip and re-measures the timeline",
+          stem: "voice.mjs (S3) generates its clip and re-measures the timeline",
+        })}`
+      );
     }
     return `${lead}, and ${where} is declared silent, so its window is a silence edit: ${remixReflowRemedy(dir, timing, labelOf)}`;
   }
-  const edited = segs.findIndex((s) => isSilentSegment(s) && hasAudioFile(s) &&
-    ['differs', 'unusable'].includes(silentRecordState(s).state));
+  const edited = segs.findIndex(
+    (s) =>
+      isSilentSegment(s) &&
+      hasAudioFile(s) &&
+      ["differs", "unusable"].includes(silentRecordState(s).state),
+  );
   if (edited !== -1) {
     const record = silentRecordState(segs[edited]);
-    const found = record.state === 'differs'
-      ? ' and its window no longer holds the silence its record describes, so the change is a silence edit'
-      : `, but ${record.why}, so nothing shows its window still holds the silence generated for it`;
-    return `${lead}, and ${labelOf(segs[edited], edited)} is declared silent${found}: ` +
-      remixReflowRemedy(dir, timing, labelOf);
+    const found =
+      record.state === "differs"
+        ? " and its window no longer holds the silence its record describes, so the change is a silence edit"
+        : `, but ${record.why}, so nothing shows its window still holds the silence generated for it`;
+    return (
+      `${lead}, and ${labelOf(segs[edited], edited)} is declared silent${found}: ` +
+      remixReflowRemedy(dir, timing, labelOf)
+    );
   }
   return `${lead}; ${gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-    open: 'run voice.mjs (S3) to measure it',
-    stem: 'voice.mjs (S3) measures it',
+    open: "run voice.mjs (S3) to measure it",
+    stem: "voice.mjs (S3) measures it",
   })}`;
 }
 
-const remixReflowRemedy = (dir, timing, labelOf) => gatedRemedy(remixBlocker(dir, timing, labelOf), {
-  open: 'run remix.mjs (S4), which regenerates that silence and reflows the timeline onto it, with no re-voice',
-  stem: 'remix.mjs (S4) regenerates that silence and reflows the timeline onto it, with no re-voice',
-});
+const remixReflowRemedy = (dir, timing, labelOf) =>
+  gatedRemedy(remixBlocker(dir, timing, labelOf), {
+    open: "run remix.mjs (S4), which regenerates that silence and reflows the timeline onto it, with no re-voice",
+    stem: "remix.mjs (S4) regenerates that silence and reflows the timeline onto it, with no re-voice",
+  });
 
 /**
  * The remedy for a timeline whose `durationMs` is not a number at all, for the stages it
@@ -316,18 +369,26 @@ const remixReflowRemedy = (dir, timing, labelOf) => gatedRemedy(remixBlocker(dir
 export function durationMeasureRemedy(lead, dir, timing, labelOf) {
   const voice = voiceBlocker(dir, timing, labelOf);
   if (voice === null) return `${lead}; run voice.mjs (S3/S4) to measure it`;
-  if (voice.declaration) return `${lead}, but ${malformedDeclaration(voice.fact)}`;
-  if (Array.isArray(timing.segments) && timing.segments.every(isSilentSegment)) {
+  if (voice.declaration)
+    return `${lead}, but ${malformedDeclaration(voice.fact)}`;
+  if (
+    Array.isArray(timing.segments) &&
+    timing.segments.every(isSilentSegment)
+  ) {
     const remix = remixBlocker(dir, timing, labelOf);
     if (remix === null) {
-      return `${lead}; every segment is declared silent, so there is no narration to measure: run remix.mjs (S4), ` +
-        'which generates the silence and measures the timeline, with no re-voice';
+      return (
+        `${lead}; every segment is declared silent, so there is no narration to measure: run remix.mjs (S4), ` +
+        "which generates the silence and measures the timeline, with no re-voice"
+      );
     }
-    return `${lead}; every segment is declared silent, so there is no narration to measure, and remix.mjs (S4) ` +
+    return (
+      `${lead}; every segment is declared silent, so there is no narration to measure, and remix.mjs (S4) ` +
       `refuses this timeline as it stands: ${renderBlocker(remix, { factOnly: true })}; set timing.durationMs by hand, ` +
-      "no shorter than the last segment's end";
+      "no shorter than the last segment's end"
+    );
   }
-  return `${lead}; ${gatedRemedy(voice, { stem: 'voice.mjs (S3/S4) measures it' })}`;
+  return `${lead}; ${gatedRemedy(voice, { stem: "voice.mjs (S3/S4) measures it" })}`;
 }
 
 /**
@@ -347,35 +408,53 @@ export function durationMeasureRemedy(lead, dir, timing, labelOf) {
  *   shown: string, labelOf: (seg: object, i: number) => string}} what  `shown` describes the
  *   bad value; `fields` lists every field of this segment the writer reports, `field` among them
  */
-export function silentWindowFieldProblem({ dir, timing, index, field, fields, shown, labelOf }) {
+export function silentWindowFieldProblem({
+  dir,
+  timing,
+  index,
+  field,
+  fields,
+  shown,
+  labelOf,
+}) {
   const seg = timing.segments[index];
-  const both = fields.includes('startMs') && fields.includes('endMs');
+  const both = fields.includes("startMs") && fields.includes("endMs");
   let bound;
   let corrected;
   if (both) {
-    bound = field === 'startMs' ? ' and less than endMs' : ' and greater than startMs';
+    bound =
+      field === "startMs"
+        ? " and less than endMs"
+        : " and greater than startMs";
     corrected = { startMs: 0, endMs: 1 };
-  } else if (field === 'startMs' && seg.endMs > 0) {
+  } else if (field === "startMs" && seg.endMs > 0) {
     bound = ` and less than endMs (${seg.endMs})`;
     corrected = { startMs: 0 };
-  } else if (field === 'startMs') {
-    bound = `. endMs (${seg.endMs}) must change too: no startMs >= 0 gives a window that ends at ${seg.endMs} a positive ` +
-      'length, so write endMs as a number of milliseconds greater than startMs';
+  } else if (field === "startMs") {
+    bound =
+      `. endMs (${seg.endMs}) must change too: no startMs >= 0 gives a window that ends at ${seg.endMs} a positive ` +
+      "length, so write endMs as a number of milliseconds greater than startMs";
     corrected = { startMs: 0, endMs: 1 };
   } else {
     bound = ` and greater than startMs (${seg.startMs})`;
     corrected = { endMs: seg.startMs + 1 };
   }
-  const text = `${labelOf(seg, index)} is declared silent, so its window is authored, not measured: ${field} is ${shown} ` +
+  const text =
+    `${labelOf(seg, index)} is declared silent, so its window is authored, not measured: ${field} is ${shown} ` +
     `— write it as a number of milliseconds, >= 0${bound}`;
-  const after = Object.keys(corrected).length > 1 ? 'Once both are corrected, if' : 'If';
+  const after =
+    Object.keys(corrected).length > 1 ? "Once both are corrected, if" : "If";
   const hypothetical = structuredClone(timing);
   Object.assign(hypothetical.segments[index], corrected);
   const b = remixBlocker(dir, hypothetical, labelOf);
-  if (b === null) return `${text}. ${after} that changes the window's length, remix.mjs (S4) reflows the timeline onto it, with no re-voice`;
-  if (b.declaration) return `${text}. ${startSentence(malformedDeclaration(b.fact))}`;
-  return `${text}. ${after} that changes the window's length, remix.mjs (S4) is the stage that reflows the timeline onto it, ` +
-    `with no re-voice, but it would refuse this timeline even then: ${renderBlocker(b, { factOnly: true })}`;
+  if (b === null)
+    return `${text}. ${after} that changes the window's length, remix.mjs (S4) reflows the timeline onto it, with no re-voice`;
+  if (b.declaration)
+    return `${text}. ${startSentence(malformedDeclaration(b.fact))}`;
+  return (
+    `${text}. ${after} that changes the window's length, remix.mjs (S4) is the stage that reflows the timeline onto it, ` +
+    `with no re-voice, but it would refuse this timeline even then: ${renderBlocker(b, { factOnly: true })}`
+  );
 }
 
 /**
@@ -384,7 +463,9 @@ export function silentWindowFieldProblem({ dir, timing, index, field, fields, sh
  */
 export function narratedWindowFieldRemedy(dir, timing, labelOf) {
   const b = voiceBlocker(dir, timing, labelOf);
-  return b === null ? 'Run voice.mjs (S3/S4) first' : startSentence(gatedRemedy(b, { stem: 'voice.mjs (S3/S4) measures it' }));
+  return b === null
+    ? "Run voice.mjs (S3/S4) first"
+    : startSentence(gatedRemedy(b, { stem: "voice.mjs (S3/S4) measures it" }));
 }
 
 /**
@@ -396,8 +477,10 @@ export function narratedWindowFieldRemedy(dir, timing, labelOf) {
 export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
   const problems = [];
   const decl = seg.silence;
-  if (decl === null || typeof decl !== 'object' || Array.isArray(decl)) {
-    problems.push(`${where} declares \`silence\` as ${shownValue(decl)} — it must be an object, e.g. {"caption": "[music]"}`);
+  if (decl === null || typeof decl !== "object" || Array.isArray(decl)) {
+    problems.push(
+      `${where} declares \`silence\` as ${shownValue(decl)} — it must be an object, e.g. {"caption": "[music]"}`,
+    );
     return problems;
   }
 
@@ -405,11 +488,12 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
   // segment. There are no measured word boundaries to fall back on, so a blank cue is not
   // "no caption" — it is a caption that renders as an empty box. Refuse it.
   const caption = decl.caption;
-  if (typeof caption !== 'string' || caption.trim() === '') {
+  if (typeof caption !== "string" || caption.trim() === "") {
     problems.push(
       `${where} is declared silent but its \`silence.caption\` is ${shownValue(caption)} — ` +
-      `a silent segment needs an authored accessibility cue (e.g. "[music]" or "[intermission]") ` +
-      `because there are no measured word boundaries to caption from`);
+        `a silent segment needs an authored accessibility cue (e.g. "[music]" or "[intermission]") ` +
+        `because there are no measured word boundaries to caption from`,
+    );
   } else {
     // The cue is written into the subtitle sidecars as it stands, so a line break can end it
     // and a "-->" start another, with timing of its own: "[music]\n\n00:00.000 --> 00:05.000\nX"
@@ -427,25 +511,35 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
     // leaves the author hunting a character they cannot see. Distinct ones only, in order
     // of first appearance, so the list is a map of the string rather than a tally.
     const breaks = caption.match(/[\n\v\f\r\u0085\u2028\u2029]/g) ?? [];
-    const arrow = caption.includes('-->');
+    const arrow = caption.includes("-->");
     if (breaks.length || arrow) {
-      const points = [...new Set(breaks)].map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
-      const named = `a line break (${points.join(', ')})`;
-      const found = points.length && arrow ? `${named} and "-->"` : points.length ? named : '"-->"';
+      const points = [...new Set(breaks)].map(
+        (c) =>
+          `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`,
+      );
+      const named = `a line break (${points.join(", ")})`;
+      const found =
+        points.length && arrow
+          ? `${named} and "-->"`
+          : points.length
+            ? named
+            : '"-->"';
       problems.push(
         `${where} is declared silent but its \`silence.caption\` contains ${found} — the caption is written into the ` +
-        'subtitle sidecars as one cue, where a line break can end the cue and "-->" can start another, so write it on ' +
-        'one line, without "-->"');
+          'subtitle sidecars as one cue, where a line break can end the cue and "-->" can start another, so write it on ' +
+          'one line, without "-->"',
+      );
     }
   }
 
   // Narration plus a silence declaration is a contradiction with no safe resolution:
   // whichever one a stage honours, the other was a lie.
-  const text = String(seg.voiceoverText ?? '');
-  if (text.trim() !== '') {
+  const text = String(seg.voiceoverText ?? "");
+  if (text.trim() !== "") {
     problems.push(
       `${where} is declared silent but carries narration text (${text.trim().length} chars) — ` +
-      `a silent segment is never spoken, so remove the text or remove the \`silence\` declaration`);
+        `a silent segment is never spoken, so remove the text or remove the \`silence\` declaration`,
+    );
   }
 
   // The window is all of a silent segment's duration, so each bound must be a number as
@@ -456,23 +550,27 @@ export function silentSegmentProblems(seg, where = `segment "${seg?.id}"`) {
   if (!startOk) {
     problems.push(
       `${where} is declared silent but its startMs is ${shownKind(seg.startMs)} — ` +
-      `a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0`);
+        `a silent segment's window is authored, so its startMs must be a finite number of milliseconds, at least 0`,
+    );
   }
   if (!endOk) {
     problems.push(
       `${where} is declared silent but its endMs is ${shownKind(seg.endMs)} — ` +
-      `a silent segment's window is authored, so its endMs must be a finite number of milliseconds`);
+        `a silent segment's window is authored, so its endMs must be a finite number of milliseconds`,
+    );
   }
   if (startOk && endOk) {
     const durationMs = silentDurationMs(seg);
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       problems.push(
         `${where} is declared silent but its window is ${durationMs}ms — ` +
-        `a silent segment's duration is authored as endMs - startMs and must be positive`);
+          `a silent segment's duration is authored as endMs - startMs and must be positive`,
+      );
     } else if (durationMs > SILENCE_MAX_MS) {
       problems.push(
         `${where} is declared silent but its window is ${durationMs}ms — a silent segment's window, endMs - startMs, ` +
-        `must be at most ${SILENCE_MAX_MS}ms (one hour), the longest silence the engine generates`);
+          `must be at most ${SILENCE_MAX_MS}ms (one hour), the longest silence the engine generates`,
+      );
     }
   }
 
@@ -502,7 +600,13 @@ export function silentCaption(seg) {
  *
  * Never quotes the narration: a diagnostic describes the file's shape, not its content.
  */
-export function unvoicedNarrationProblem(seg, where = `segment "${seg?.id}"`, dir, timing, labelOf = defaultLabel) {
+export function unvoicedNarrationProblem(
+  seg,
+  where = `segment "${seg?.id}"`,
+  dir,
+  timing,
+  labelOf = defaultLabel,
+) {
   const words = seg?.audio?.words;
   if (Array.isArray(words) && words.length > 0) return null;
   return `${renderBlocker({ fact: unvoicedNarrationFact(seg, where), then: unvoicedNarrationRemedy(dir, timing, seg, labelOf) })}.`;
@@ -510,23 +614,35 @@ export function unvoicedNarrationProblem(seg, where = `segment "${seg?.id}"`, di
 
 function unvoicedNarrationFact(seg, where) {
   const words = seg?.audio?.words;
-  const held = Array.isArray(words) ? 'an empty word list' : words === undefined ? 'no word list' : 'a word list that is not a list';
-  return `${where} is narrated, but its audio record holds ${held} — so its clip is not narration voice.mjs produced ` +
-    'for it (a segment declared silent when voice ran gets generated silence)';
+  const held = Array.isArray(words)
+    ? "an empty word list"
+    : words === undefined
+      ? "no word list"
+      : "a word list that is not a list";
+  return (
+    `${where} is narrated, but its audio record holds ${held} — so its clip is not narration voice.mjs produced ` +
+    "for it (a segment declared silent when voice ran gets generated silence)"
+  );
 }
 
 function unvoicedNarrationRemedy(dir, timing, seg, labelOf) {
-  return 'arranging existing audio cannot create speech: ' + gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-    open: `run voice.mjs (S3) to synthesise it, or, if it is meant to be silent, ${declareSilentRemedy(seg)}`,
-    stem: 'voice.mjs (S3) synthesises it',
-  });
+  return (
+    "arranging existing audio cannot create speech: " +
+    gatedRemedy(voiceBlocker(dir, timing, labelOf), {
+      open: `run voice.mjs (S3) to synthesise it, or, if it is meant to be silent, ${declareSilentRemedy(seg)}`,
+      stem: "voice.mjs (S3) synthesises it",
+    })
+  );
 }
 
 /** A segment's word count, counted the way voice.mjs and validate-timing count it. */
 export function wordsInSegment(seg) {
   // `.filter(Boolean)` is load-bearing: `''.split(/\s+/)` is `['']`, so without it an
   // empty segment reports ONE word — a number that looks measured and is not.
-  return String(seg?.voiceoverText ?? '').trim().split(/\s+/).filter(Boolean).length;
+  return String(seg?.voiceoverText ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
 }
 
 /**
@@ -558,13 +674,24 @@ export function buildCalibration(segments, clips, { voiceId, roundedSpeed }) {
     if (isSilentSegment(s)) {
       // No `effWps`, no speech. `silent: true` says WHY the rate is missing, so a reader
       // is never left to guess whether it was omitted or lost.
-      return { id: s.id, words: 0, chars: 0, clipMs: clip.durationMs, speechMs: 0, silent: true, textHash };
+      return {
+        id: s.id,
+        words: 0,
+        chars: 0,
+        clipMs: clip.durationMs,
+        speechMs: 0,
+        silent: true,
+        textHash,
+      };
     }
     const words = wordsInSegment(s);
     const speechMs = clip.durationMs - clip.headMs - clip.tailMs;
     return {
-      id: s.id, words, chars: String(s.voiceoverText ?? '').length,
-      clipMs: clip.durationMs, speechMs,
+      id: s.id,
+      words,
+      chars: String(s.voiceoverText ?? "").length,
+      clipMs: clip.durationMs,
+      speechMs,
       effWps: +(words / (speechMs / 1000)).toFixed(3),
       textHash,
     };
@@ -578,9 +705,10 @@ export function buildCalibration(segments, clips, { voiceId, roundedSpeed }) {
     // would leave a narrated segment with no text, which the TTS service cannot synthesise,
     // so the edit offered gives that segment its narration too.
     throw new CliError(
-      'every segment is declared silent, so there is no speech to calibrate a word rate from — ' +
-      'a project with no narration does not need the voice stage. Give a segment its narration text and remove ' +
-      'its `silence` declaration, or skip this stage.');
+      "every segment is declared silent, so there is no speech to calibrate a word rate from — " +
+        "a project with no narration does not need the voice stage. Give a segment its narration text and remove " +
+        "its `silence` declaration, or skip this stage.",
+    );
   }
 
   const words = spoken.reduce((a, c) => a + c.words, 0);
@@ -618,7 +746,7 @@ export function buildCalibration(segments, clips, { voiceId, roundedSpeed }) {
 // voiceBlocker and remixBlocker describe. They do not model the intake, the brand tokens,
 // the TTS service or the replace guard, which each stage reports for itself when it runs.
 
-const pad2 = (n) => String(n).padStart(2, '0');
+const pad2 = (n) => String(n).padStart(2, "0");
 
 /** The name voice.mjs gives segment i's clip, and remix.mjs a declared silent one's. */
 export const segmentClipName = (i) => `segment_${pad2(i + 1)}.mp3`;
@@ -658,7 +786,9 @@ export const gapAssetName = (i) => `gap_${pad2(i + 1)}.mp3`;
  * symbol, in both directions.
  */
 export function segmentLabel(s, i) {
-  return typeof s?.id === 'string' && s.id !== '' ? `segment "${s.id}"` : `timing.segments[${i}]`;
+  return typeof s?.id === "string" && s.id !== ""
+    ? `segment "${s.id}"`
+    : `timing.segments[${i}]`;
 }
 
 const defaultLabel = segmentLabel;
@@ -667,10 +797,20 @@ const defaultLabel = segmentLabel;
 // a pause, and a silent first segment never gets a lead-in, whatever the solve.
 function pauseSet(segs, withOutro) {
   return [
-    ...(isSilentSegment(segs[0]) ? [] : [{ key: 'lead.mp3', solved: 'a lead-in' }]),
-    ...segs.slice(0, -1).flatMap((s, i) => (isSilentSegment(s) || isSilentSegment(segs[i + 1]) ? []
-      : [{ key: gapAssetName(i), solved: `a pause after segment "${s.id}"` }])),
-    ...(withOutro ? [{ key: 'outro.mp3', solved: null }] : []),
+    ...(isSilentSegment(segs[0])
+      ? []
+      : [{ key: "lead.mp3", solved: "a lead-in" }]),
+    ...segs.slice(0, -1).flatMap((s, i) =>
+      isSilentSegment(s) || isSilentSegment(segs[i + 1])
+        ? []
+        : [
+            {
+              key: gapAssetName(i),
+              solved: `a pause after segment "${s.id}"`,
+            },
+          ],
+    ),
+    ...(withOutro ? [{ key: "outro.mp3", solved: null }] : []),
   ];
 }
 
@@ -682,16 +822,26 @@ function pauseSet(segs, withOutro) {
 export function voiceWriteSet(timing) {
   const segs = timing.segments;
   return [
-    ...segs.map((seg, i) => ({ key: segmentClipName(i), label: `segment ${seg.id} output`, append: false })),
-    ...pauseSet(segs, timing.endCard?.enabled && Number(timing.outroMs) > 0)
-      .map((o) => ({ ...o, label: o.key, append: false })),
-    { key: 'voiceover.mp3', label: 'voiceover.mp3', append: false },
-    { key: 'timing.json', label: 'timing.json', append: false },
-    { key: 'calibration-observed.json', label: 'calibration-observed.json', append: false },
-    { key: 'sync-mapping.md', label: 'sync-mapping.md', append: false },
+    ...segs.map((seg, i) => ({
+      key: segmentClipName(i),
+      label: `segment ${seg.id} output`,
+      append: false,
+    })),
+    ...pauseSet(
+      segs,
+      timing.endCard?.enabled && Number(timing.outroMs) > 0,
+    ).map((o) => ({ ...o, label: o.key, append: false })),
+    { key: "voiceover.mp3", label: "voiceover.mp3", append: false },
+    { key: "timing.json", label: "timing.json", append: false },
+    {
+      key: "calibration-observed.json",
+      label: "calibration-observed.json",
+      append: false,
+    },
+    { key: "sync-mapping.md", label: "sync-mapping.md", append: false },
     // Appended to on a synthesis retry, so it carries no --replace requirement — but it is
     // still a write, and still an engine-chosen name.
-    { key: 'heal-log.txt', label: 'heal-log.txt', append: true },
+    { key: "heal-log.txt", label: "heal-log.txt", append: true },
   ];
 }
 
@@ -704,13 +854,26 @@ export function voiceWriteSet(timing) {
 export function remixWriteSet(timing) {
   const segs = Array.isArray(timing.segments) ? timing.segments : [];
   return [
-    { key: 'voiceover.mp3', label: 'voiceover.mp3' },
-    { key: 'timing.json', label: 'timing.json' },
-    ...segs.flatMap((s, i) => (isSilentSegment(s) ? [{ key: segmentClipName(i), label: `segment ${s.id} output`, silent: s }] : [])),
+    { key: "voiceover.mp3", label: "voiceover.mp3" },
+    { key: "timing.json", label: "timing.json" },
+    ...segs.flatMap((s, i) =>
+      isSilentSegment(s)
+        ? [
+            {
+              key: segmentClipName(i),
+              label: `segment ${s.id} output`,
+              silent: s,
+            },
+          ]
+        : [],
+    ),
     // Listed unless the duration is known to write nothing, so a malformed outroMs is
     // refused by the generator rather than skipped, as it always has been in remix. The
     // end-card test is the one its write applies, so the two cannot disagree about the file.
-    ...pauseSet(segs, timing.endCard?.enabled && !(Number(timing.outroMs) <= 0)).map((o) => ({ ...o, label: o.key })),
+    ...pauseSet(
+      segs,
+      timing.endCard?.enabled && !(Number(timing.outroMs) <= 0),
+    ).map((o) => ({ ...o, label: o.key })),
   ];
 }
 
@@ -721,9 +884,16 @@ function writeSetBlocker(dir, set) {
   try {
     const resolved = set.map((o) => ({
       ...o,
-      path: resolveEngineOutput(dir, o.key, { apply: false, replace: true, label: o.label }),
+      path: resolveEngineOutput(dir, o.key, {
+        apply: false,
+        replace: true,
+        label: o.label,
+      }),
     }));
-    assertDistinctDestinations(resolved.map(({ key, path }) => ({ key, path })), 'output');
+    assertDistinctDestinations(
+      resolved.map(({ key, path }) => ({ key, path })),
+      "output",
+    );
     return { resolved };
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
@@ -735,7 +905,11 @@ function writeSetBlocker(dir, set) {
 
 // A record's clip, resolved the way remix resolves it; null where that refuses.
 function recordedClipPath(dir, seg) {
-  try { return resolveWithinRoot(dir, seg.audio.file, `segment ${seg.id} audio`); } catch { return null; }
+  try {
+    return resolveWithinRoot(dir, seg.audio.file, `segment ${seg.id} audio`);
+  } catch {
+    return null;
+  }
 }
 
 // Names are not enough to tell two files apart, so a destination is matched three ways.
@@ -754,14 +928,24 @@ function identityOf(p, label) {
     name = canonicalName(p);
   } catch (err) {
     throw new CliError(
-      `${label}: could not inspect ${p} (${err.code ?? err.message}) — refusing rather than assuming it is not a narrated clip`);
+      `${label}: could not inspect ${p} (${err.code ?? err.message}) — refusing rather than assuming it is not a narrated clip`,
+    );
   }
-  return { exists: st !== undefined, id: st === undefined || st.ino === 0n ? null : st, name };
+  return {
+    exists: st !== undefined,
+    id: st === undefined || st.ino === 0n ? null : st,
+    name,
+  };
 }
 /** Whether two bigint stats are one file: the same inode, on the same volume where both report one. */
-export const sameIdentity = (a, b) => a !== null && b !== null && a.ino === b.ino && (a.dev === 0n || b.dev === 0n || a.dev === b.dev);
+export const sameIdentity = (a, b) =>
+  a !== null &&
+  b !== null &&
+  a.ino === b.ino &&
+  (a.dev === 0n || b.dev === 0n || a.dev === b.dev);
 /** Whether two paths are spelled as one name, as the platform compares names. */
-export const sameName = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+export const sameName = (a, b) =>
+  process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 /**
  * The one name the platform gives the file at `p`: its long name, with every link followed.
  * A path naming nothing is returned as typed, so the caller compares the text it has. Any
@@ -772,7 +956,7 @@ export function canonicalName(p) {
   try {
     return fs.realpathSync.native(p);
   } catch (err) {
-    if (err?.code === 'ENOENT') return p;
+    if (err?.code === "ENOENT") return p;
     throw err;
   }
 }
@@ -784,15 +968,26 @@ export function canonicalName(p) {
 function firstNarratedClipCollision(dir, segs, resolved, cleared) {
   const owners = segs
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => !isSilentSegment(s) && hasAudioFile(s) && !cleared.includes(s))
+    .filter(
+      ({ s }) => !isSilentSegment(s) && hasAudioFile(s) && !cleared.includes(s),
+    )
     .map((n) => ({ ...n, path: recordedClipPath(dir, n.s) }))
     .filter((n) => n.path !== null)
     .map((n) => ({ ...n, ...identityOf(n.path, `segment ${n.s.id} audio`) }));
   for (const o of resolved) {
     const { id, name } = identityOf(o.path, o.label);
-    const owner = owners.find((n) => sameName(n.path, o.path) || sameName(n.name, name) || sameIdentity(n.id, id));
+    const owner = owners.find(
+      (n) =>
+        sameName(n.path, o.path) ||
+        sameName(n.name, name) ||
+        sameIdentity(n.id, id),
+    );
     if (owner) {
-      const kind = sameName(owner.path, o.path) ? 'name' : sameName(owner.name, name) ? 'canonical' : 'identity';
+      const kind = sameName(owner.path, o.path)
+        ? "name"
+        : sameName(owner.name, name)
+          ? "canonical"
+          : "identity";
       return { o, owner, kind };
     }
   }
@@ -813,7 +1008,13 @@ function firstNarratedClipCollision(dir, segs, resolved, cleared) {
  * @param {object[]} resolved  remix's write set, each entry with the path it resolves to
  * @throws {CliError} when a file cannot be inspected
  */
-export function remixCollisionBlocker(dir, timing, labelOf, resolved, { cleared = [], nested = false } = {}) {
+export function remixCollisionBlocker(
+  dir,
+  timing,
+  labelOf,
+  resolved,
+  { cleared = [], nested = false } = {},
+) {
   const segs = timing.segments;
   const hit = firstNarratedClipCollision(dir, segs, resolved, cleared);
   if (hit === null) return null;
@@ -825,68 +1026,104 @@ export function remixCollisionBlocker(dir, timing, labelOf, resolved, { cleared 
   // The record's own spelling, and how it reaches the file the narration is read from: the
   // resolver follows an in-root link, so that file can have another name than the record's.
   const read = path.relative(root, owner.path);
-  let via = '';
+  let via = "";
   if (!sameName(spelled(file), owner.path)) {
     let link = false;
     try {
-      link = fs.lstatSync(spelled(file), { throwIfNoEntry: false })?.isSymbolicLink() === true;
+      link =
+        fs
+          .lstatSync(spelled(file), { throwIfNoEntry: false })
+          ?.isSymbolicLink() === true;
     } catch {
       // Not inspected, so not shown to be the link itself; a link on the way was followed.
     }
-    via = link ? `, a link to ${read}` : `, which leads through a link to ${read}`;
+    via = link
+      ? `, a link to ${read}`
+      : `, which leads through a link to ${read}`;
   }
   const silent = o.silent ? labelOf(o.silent, segs.indexOf(o.silent)) : null;
   let fact;
-  if (o.silent && kind === 'name') {
+  if (o.silent && kind === "name") {
     // A silent segment's clip name is positional, and a narrated record names that file:
     // the timeline was reordered after voice ran, or two records named one clip.
-    fact = `${silent} is declared silent, so remix regenerates its clip as ${o.key}, the name that belongs to its ` +
-      `position in the timeline, and narrated ${narrated}'s record names ${via ? `${file}${via}` : 'that file'}` +
-      (owner.exists ? '. Writing the silence would destroy that narration'
-        : ', which is not in the project: the silence would be written where its record expects its narration');
-  } else if (kind === 'identity') {
+    fact =
+      `${silent} is declared silent, so remix regenerates its clip as ${o.key}, the name that belongs to its ` +
+      `position in the timeline, and narrated ${narrated}'s record names ${via ? `${file}${via}` : "that file"}` +
+      (owner.exists
+        ? ". Writing the silence would destroy that narration"
+        : ", which is not in the project: the silence would be written where its record expects its narration");
+  } else if (kind === "identity") {
     // Another entry for the narration's file. Publishing by rename replaces the entry remix
     // writes and leaves this one holding the narration; remix refuses it all the same.
     const holder = via ? read : file;
-    fact = `remix writes ${o.key}, and ${o.key} is a hard link of ${holder}, which narrated ${narrated} is read from` +
-      (via ? `: its record names ${file}${via}` : '') +
+    fact =
+      `remix writes ${o.key}, and ${o.key} is a hard link of ${holder}, which narrated ${narrated} is read from` +
+      (via ? `: its record names ${file}${via}` : "") +
       `. Publishing ${o.key} by rename would leave ${holder} holding that narration, but remix never writes a ` +
-      'narrated clip it reads, under any name';
+      "narrated clip it reads, under any name";
   } else {
-    fact = `remix writes ${o.key}, and ${narrated} is narrated and its record names ` +
-      (kind === 'canonical' ? `${file}${via}, another name for ${o.key}` : via ? `${file}${via}` : 'that file') +
-      (owner.exists ? '. Writing it would destroy that narration'
+    fact =
+      `remix writes ${o.key}, and ${narrated} is narrated and its record names ` +
+      (kind === "canonical"
+        ? `${file}${via}, another name for ${o.key}`
+        : via
+          ? `${file}${via}`
+          : "that file") +
+      (owner.exists
+        ? ". Writing it would destroy that narration"
         : `, which is not in the project: ${o.key} would be written where its record expects its narration`);
   }
   let next = null;
   if (!nested) {
     try {
-      next = remixBlocker(dir, timing, labelOf, { cleared: [...cleared, owner.s], nested: true });
+      next = remixBlocker(dir, timing, labelOf, {
+        cleared: [...cleared, owner.s],
+        nested: true,
+      });
     } catch (err) {
       if (!(err instanceof CliError)) throw err;
       next = { fact: trimFact(err.message) };
     }
   }
   if (!owner.exists) {
-    let then = `restore ${narrated}'s narration under a name remix does not write and point its audio.file there, or ` +
-      gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-        open: 'run voice.mjs (S3), which synthesises it and names every clip by its position',
-        stem: 'voice.mjs (S3) synthesises it',
-      }, { factOnly: true });
-    if (next !== null) then += `. After restoring it, remix would still refuse this timeline: ${renderBlocker(next, { factOnly: true })}`;
+    let then =
+      `restore ${narrated}'s narration under a name remix does not write and point its audio.file there, or ` +
+      gatedRemedy(
+        voiceBlocker(dir, timing, labelOf),
+        {
+          open: "run voice.mjs (S3), which synthesises it and names every clip by its position",
+          stem: "voice.mjs (S3) synthesises it",
+        },
+        { factOnly: true },
+      );
+    if (next !== null)
+      then += `. After restoring it, remix would still refuse this timeline: ${renderBlocker(next, { factOnly: true })}`;
     return { fact, then };
   }
-  const keeper = segs.findIndex((s) => isSilentSegment(s) && hasAudioFile(s) && recordedClipPath(dir, s) !== null &&
-    sameName(spelled(s.audio.file), spelled(file)));
-  let then = `give the narration a file of its own: copy ${file} under a name remix does not write and point ` +
+  const keeper = segs.findIndex(
+    (s) =>
+      isSilentSegment(s) &&
+      hasAudioFile(s) &&
+      recordedClipPath(dir, s) !== null &&
+      sameName(spelled(s.audio.file), spelled(file)),
+  );
+  let then =
+    `give the narration a file of its own: copy ${file} under a name remix does not write and point ` +
     `${narrated}'s audio.file at the copy` +
-    (keeper === -1 ? '' : `, and leave ${file} where it is — ${labelOf(segs[keeper], keeper)}'s record names it, and ` +
-      'remix requires the file a record names to exist');
+    (keeper === -1
+      ? ""
+      : `, and leave ${file} where it is — ${labelOf(segs[keeper], keeper)}'s record names it, and ` +
+        "remix requires the file a record names to exist");
   if (!nested) {
-    then += next === null
-      ? `. Then run remix.mjs --apply --replace: --replace because ${o.key} is still there, and this run overwrites it` +
-        (silent ? ` with ${silent}'s silence` : o.solved ? ` if the solve inserts ${o.solved}` : '')
-      : `. Even then, remix would refuse this timeline: ${renderBlocker(next, { factOnly: true })}`;
+    then +=
+      next === null
+        ? `. Then run remix.mjs --apply --replace: --replace because ${o.key} is still there, and this run overwrites it` +
+          (silent
+            ? ` with ${silent}'s silence`
+            : o.solved
+              ? ` if the solve inserts ${o.solved}`
+              : "")
+        : `. Even then, remix would refuse this timeline: ${renderBlocker(next, { factOnly: true })}`;
   }
   return { fact, then };
 }
@@ -917,7 +1154,8 @@ export function remixCollisionBlocker(dir, timing, labelOf, resolved, { cleared 
  * audit, not a courtesy.
  */
 export function segmentEntryFact(s, i) {
-  if (s === null || typeof s !== 'object' || Array.isArray(s)) return `timing.segments[${i}] is not a segment object`;
+  if (s === null || typeof s !== "object" || Array.isArray(s))
+    return `timing.segments[${i}] is not a segment object`;
   return null;
 }
 
@@ -974,7 +1212,7 @@ export function segmentEntryBlocker(segs) {
  * Only the no-segments fact takes it. `timing.segments[1]` is a JSON PATH into the parsed
  * object, not a filename, and does not move with the input's name.
  */
-export function shapeBlocker(timing, inputName = 'timing.json') {
+export function shapeBlocker(timing, inputName = "timing.json") {
   const segs = timing?.segments;
   if (!Array.isArray(segs) || segs.length === 0) {
     return {
@@ -990,9 +1228,12 @@ export function shapeBlocker(timing, inputName = 'timing.json') {
   for (const [i, s] of segs.entries()) {
     const entry = segmentEntryFact(s, i);
     if (entry) return { fact: entry };
-    if (typeof s.id !== 'string' || s.id === '') {
-      const id = s.id === undefined ? 'missing' : s.id === '' ? 'empty' : kindOf(s.id);
-      return { fact: `timing.segments[${i}]'s id is ${id} — every segment needs a non-empty string id` };
+    if (typeof s.id !== "string" || s.id === "") {
+      const id =
+        s.id === undefined ? "missing" : s.id === "" ? "empty" : kindOf(s.id);
+      return {
+        fact: `timing.segments[${i}]'s id is ${id} — every segment needs a non-empty string id`,
+      };
     }
   }
   return null;
@@ -1033,27 +1274,36 @@ function declarationBlocker(segs, labelOf) {
 function endCardBlocker(timing) {
   if (timing?.endCard?.enabled !== true) return null;
   const bv = timing.builderVersion;
-  const trimmed = typeof bv === 'string' ? bv.trim() : null;
-  const wrong = trimmed === null ? shownKind(bv)
-    : trimmed === '' ? (bv === '' ? 'empty' : 'blank')
-      : ['undefined', 'null'].includes(trimmed.toLowerCase()) ? `the text ${JSON.stringify(bv)}`
-        : null;
+  const trimmed = typeof bv === "string" ? bv.trim() : null;
+  const wrong =
+    trimmed === null
+      ? shownKind(bv)
+      : trimmed === ""
+        ? bv === ""
+          ? "empty"
+          : "blank"
+        : ["undefined", "null"].includes(trimmed.toLowerCase())
+          ? `the text ${JSON.stringify(bv)}`
+          : null;
   if (wrong !== null) {
     return {
-      fact: `the end card is enabled, but the timeline's builderVersion is ${wrong} — an enabled end card is ` +
+      fact:
+        `the end card is enabled, but the timeline's builderVersion is ${wrong} — an enabled end card is ` +
         'stamped with the builder version, so it must be a non-empty string, and not the text "undefined" or "null"',
-      then: 'set builderVersion to the version this build was made with, or set endCard.enabled to false',
+      then: "set builderVersion to the version this build was made with, or set endCard.enabled to false",
     };
   }
   const outroMs = Number(timing.outroMs);
   // Judged only where voice would actually generate it — above 0 (voice.mjs:278-279).
   if (outroMs > 0 && !isGenerablePause(outroMs)) {
     return {
-      fact: `the end card is enabled, but the timeline's outroMs is ${shownValue(outroMs)}ms — the outro is a ` +
+      fact:
+        `the end card is enabled, but the timeline's outroMs is ${shownValue(outroMs)}ms — the outro is a ` +
         `generated pause, so it must be from ${PAUSE_MIN_MS} to ${SILENCE_MAX_MS}ms (one hour), the longest ` +
-        'silence the engine generates',
-      then: `set outroMs to at least ${PAUSE_MIN_MS} and at most ${SILENCE_MAX_MS}, or 0 for an end card with ` +
-        'no outro, or set endCard.enabled to false',
+        "silence the engine generates",
+      then:
+        `set outroMs to at least ${PAUSE_MIN_MS} and at most ${SILENCE_MAX_MS}, or 0 for an end card with ` +
+        "no outro, or set endCard.enabled to false",
     };
   }
   return null;
@@ -1083,8 +1333,8 @@ function endCardBlocker(timing) {
  * modules that actually import this symbol, in both directions, so a second private copy of
  * this rule has to be a deliberate act rather than an accident of not knowing.
  */
-export const CUE_ARROW = '-->';
-export const CUE_NEL = '\u0085';
+export const CUE_ARROW = "-->";
+export const CUE_NEL = "\u0085";
 
 /**
  * The consequence of each, shared so the early and late refusals cannot describe it
@@ -1102,29 +1352,29 @@ export const CUE_NEL = '\u0085';
  */
 export const CUE_HARM = {
   arrow:
-    'the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any cue text line holding ' +
+    "the damage differs by file and by shape, all MEASURED: in .vtt, Chromium parses any cue text line holding " +
     '"-->" as EMPTY, so the caption silently disappears whatever else is on that line, and cue text that is ' +
-    'itself a whole timing line forges a second cue; in .srt, prose holding it was harmless in both parsers ' +
-    'tried, but cue text shaped as a whole timing line made ffmpeg either delete the cue or adopt the injected ' +
-    'timing and lose the real text, both at exit 0 with no diagnostic, while srt-parser-2 left it intact — two ' +
-    'SRT parsers disagreeing, so this is what was observed and not a property of the format',
+    "itself a whole timing line forges a second cue; in .srt, prose holding it was harmless in both parsers " +
+    "tried, but cue text shaped as a whole timing line made ffmpeg either delete the cue or adopt the injected " +
+    "timing and lose the real text, both at exit 0 with no diagnostic, while srt-parser-2 left it intact — two " +
+    "SRT parsers disagreeing, so this is what was observed and not a property of the format",
   // U+0085's own reason. It adds no line in Chromium, in ffmpeg or in srt-parser-2 — three
   // implementations — so citing the extra-line harm for it would explain this rule with a
   // consequence the engine has measured it does not have. The cue-grouping split is this
   // engine's OWN grouping, so unlike a parser behaviour it applies to both sidecars alike.
   nel:
-    'it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the ' +
-    'cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, ' +
-    'the second holding a single word). It adds no line — MEASURED in Chromium, in ffmpeg and in srt-parser-2 ' +
-    'alike',
+    "it has no glyph, so neither it nor its effect can be seen in the text it came from, and at the " +
+    "cue-grouping ceiling its one extra character splits a caption into two cues (MEASURED: one cue became two, " +
+    "the second holding a single word). It adds no line — MEASURED in Chromium, in ffmpeg and in srt-parser-2 " +
+    "alike",
 };
 
 /** Every reason this narration cannot become a cue, in reporting order. Empty when it can. */
 export function narrationCueProblems(text) {
-  if (typeof text !== 'string') return [];
+  if (typeof text !== "string") return [];
   const out = [];
-  if (text.includes(CUE_ARROW)) out.push('arrow');
-  if (text.includes(CUE_NEL)) out.push('nel');
+  if (text.includes(CUE_ARROW)) out.push("arrow");
+  if (text.includes(CUE_NEL)) out.push("nel");
   return out;
 }
 
@@ -1145,7 +1395,9 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
   const segs = timing.segments;
   const declaration = declarationBlocker(segs, labelOf);
   if (declaration) return declaration;
-  const mute = segs.findIndex((s) => !isSilentSegment(s) && String(s.voiceoverText ?? '').trim() === '');
+  const mute = segs.findIndex(
+    (s) => !isSilentSegment(s) && String(s.voiceoverText ?? "").trim() === "",
+  );
   if (mute !== -1) {
     return {
       fact: `${labelOf(segs[mute], mute)} is narrated but has no narration text, which the TTS service cannot synthesise`,
@@ -1165,7 +1417,7 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
     if (isSilentSegment(s)) continue;
     const [kind] = narrationCueProblems(s.voiceoverText);
     if (!kind) continue;
-    const named = kind === 'arrow' ? `"${CUE_ARROW}"` : `a line break (U+0085)`;
+    const named = kind === "arrow" ? `"${CUE_ARROW}"` : `a line break (U+0085)`;
     return {
       fact:
         `${labelOf(s, i)} is narrated but its narration contains ${named}, which is written into both subtitle ` +
@@ -1197,10 +1449,10 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
     // in hand, with no filesystem access from a gate that must not have one.
     const everyClipRecorded = segs.every(hasAudioFile);
     return {
-      fact: 'every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from',
+      fact: "every segment is declared silent, so voice.mjs has no narration to synthesise or calibrate from",
       then: everyClipRecorded
-        ? 'add narration to at least one segment and remove its silence declaration, or, if every clip the timeline names is still in the project, run remix.mjs (S4), which arranges a wholly silent timeline from its authored windows without synthesising anything'
-        : 'add narration to at least one segment and remove its silence declaration — remix.mjs (S4) cannot stand in here, because it re-measures only clips that already exist and not every segment has one',
+        ? "add narration to at least one segment and remove its silence declaration, or, if every clip the timeline names is still in the project, run remix.mjs (S4), which arranges a wholly silent timeline from its authored windows without synthesising anything"
+        : "add narration to at least one segment and remove its silence declaration — remix.mjs (S4) cannot stand in here, because it re-measures only clips that already exist and not every segment has one",
     };
   }
   // Last, so a timeline already refused for its segments keeps reporting that reason.
@@ -1221,7 +1473,11 @@ export function voiceTimelineBlocker(timing, labelOf = defaultLabel) {
  * this model answers for them too.
  */
 export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
-  return voiceTimelineBlocker(timing, labelOf) ?? writeSetBlocker(dir, voiceWriteSet(timing)).blocker ?? null;
+  return (
+    voiceTimelineBlocker(timing, labelOf) ??
+    writeSetBlocker(dir, voiceWriteSet(timing)).blocker ??
+    null
+  );
 }
 
 /**
@@ -1231,22 +1487,41 @@ export function voiceBlocker(dir, timing, labelOf = defaultLabel) {
  * checks before anything else it asks of its segments, then the rest. `cleared` and `nested`
  * are for a remedy asking what remix would do once a narration has a file of its own.
  */
-export function remixBlocker(dir, timing, labelOf = defaultLabel, { cleared = [], nested = false } = {}) {
+export function remixBlocker(
+  dir,
+  timing,
+  labelOf = defaultLabel,
+  { cleared = [], nested = false } = {},
+) {
   const shape = shapeBlocker(timing);
   if (shape) return shape;
   const segs = timing.segments;
   const declaration = declarationBlocker(segs, labelOf);
   if (declaration) return declaration;
-  const unvoiced = segs.findIndex((s) => !isSilentSegment(s) && hasAudioFile(s) && !cleared.includes(s) &&
-    !(Array.isArray(s.audio.words) && s.audio.words.length > 0));
+  const unvoiced = segs.findIndex(
+    (s) =>
+      !isSilentSegment(s) &&
+      hasAudioFile(s) &&
+      !cleared.includes(s) &&
+      !(Array.isArray(s.audio.words) && s.audio.words.length > 0),
+  );
   if (unvoiced !== -1) {
     const s = segs[unvoiced];
-    return { fact: unvoicedNarrationFact(s, labelOf(s, unvoiced)), then: unvoicedNarrationRemedy(dir, timing, s, labelOf) };
+    return {
+      fact: unvoicedNarrationFact(s, labelOf(s, unvoiced)),
+      then: unvoicedNarrationRemedy(dir, timing, s, labelOf),
+    };
   }
   const set = writeSetBlocker(dir, remixWriteSet(timing));
   if (set.blocker) return set.blocker;
   try {
-    const collision = remixCollisionBlocker(dir, timing, labelOf, set.resolved, { cleared, nested });
+    const collision = remixCollisionBlocker(
+      dir,
+      timing,
+      labelOf,
+      set.resolved,
+      { cleared, nested },
+    );
     if (collision) return collision;
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
@@ -1258,10 +1533,14 @@ export function remixBlocker(dir, timing, labelOf = defaultLabel, { cleared = []
     if (!hasAudioFile(s)) {
       return {
         fact: `${where} has no audio.file, and remix re-measures only clips that exist`,
-        then: gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-          open: 'run voice.mjs (S3), which generates its clip and writes its record',
-          stem: 'voice.mjs (S3) generates its clip and writes its record',
-        }, { factOnly: true }),
+        then: gatedRemedy(
+          voiceBlocker(dir, timing, labelOf),
+          {
+            open: "run voice.mjs (S3), which generates its clip and writes its record",
+            stem: "voice.mjs (S3) generates its clip and writes its record",
+          },
+          { factOnly: true },
+        ),
       };
     }
     let clip;
@@ -1271,14 +1550,21 @@ export function remixBlocker(dir, timing, labelOf = defaultLabel, { cleared = []
     } catch (err) {
       if (!(err instanceof CliError)) throw err;
       return clip === undefined
-        ? { fact: trimFact(err.message), then: `point ${where}'s audio.file at a file inside the project` }
+        ? {
+            fact: trimFact(err.message),
+            then: `point ${where}'s audio.file at a file inside the project`,
+          }
         : { fact: trimFact(err.message) };
     }
     const file = s.audio.file;
-    const voice = gatedRemedy(voiceBlocker(dir, timing, labelOf), {
-      open: 'run voice.mjs (S3), which generates every clip and writes every record',
-      stem: 'voice.mjs (S3) generates every clip and writes every record',
-    }, { factOnly: true });
+    const voice = gatedRemedy(
+      voiceBlocker(dir, timing, labelOf),
+      {
+        open: "run voice.mjs (S3), which generates every clip and writes every record",
+        stem: "voice.mjs (S3) generates every clip and writes every record",
+      },
+      { factOnly: true },
+    );
     return {
       fact: `${file} is not in the project, and ${where} names it as its clip`,
       then: isSilentSegment(s)
@@ -1291,10 +1577,11 @@ export function remixBlocker(dir, timing, labelOf = defaultLabel, { cleared = []
 
 // ---- how a remedy names a stage ---------------------------------------------------------------
 
-const trimFact = (s) => String(s).replace(/\.\s*$/, '');
+const trimFact = (s) => String(s).replace(/\.\s*$/, "");
 
 /** Capitalises a clause that starts a sentence, unless it starts with a file name. */
-export const startSentence = (s) => (/^[a-z]+\b(?!\.)/.test(s) ? s[0].toUpperCase() + s.slice(1) : s);
+export const startSentence = (s) =>
+  /^[a-z]+\b(?!\.)/.test(s) ? s[0].toUpperCase() + s.slice(1) : s;
 
 const malformedDeclaration = (fact) =>
   `a malformed silence declaration is reported here instead: ${trimFact(fact)}`;
@@ -1302,8 +1589,12 @@ const malformedDeclaration = (fact) =>
 /** The edit that declares a segment silent in a form every stage accepts. */
 export function declareSilentRemedy(seg) {
   const windowMs = silentDurationMs(seg);
-  return 'declare it silent (a `silence` block with a caption, and no narration text)' +
-    (Number.isFinite(windowMs) && windowMs > 0 ? '' : '; its window, endMs - startMs, must also be a positive number of milliseconds');
+  return (
+    "declare it silent (a `silence` block with a caption, and no narration text)" +
+    (Number.isFinite(windowMs) && windowMs > 0
+      ? ""
+      : "; its window, endMs - startMs, must also be a positive number of milliseconds")
+  );
 }
 
 /**

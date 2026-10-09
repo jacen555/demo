@@ -13,7 +13,7 @@
 //   aggregate.observedEffWps = words / (speechMs / 1000)    -> speech-only, nested
 //   segments[].textHash      = sha256(voiceoverText)        -> the lineage fingerprint
 
-import { narrationFingerprint } from '../src/cli-support.mjs';
+import { narrationFingerprint } from "../src/cli-support.mjs";
 
 /**
  * @param {Array<{id: string, words: number, clipMs: number, headMs?: number, tailMs?: number}>} specs
@@ -27,7 +27,9 @@ export function measuredProject(specs, { leadInMs = 2016, gapsMs = [] } = {}) {
   specs.forEach((spec, i) => {
     const headMs = spec.headMs ?? 240;
     const tailMs = spec.tailMs ?? 264;
-    const text = Array.from({ length: spec.words }, (_, w) => `word${w}`).join(' ');
+    const text = Array.from({ length: spec.words }, (_, w) => `word${w}`).join(
+      " ",
+    );
     const startMs = cursor;
     const endMs = cursor + spec.clipMs;
 
@@ -38,7 +40,13 @@ export function measuredProject(specs, { leadInMs = 2016, gapsMs = [] } = {}) {
       voiceoverText: text,
       // voice.mjs writes plannedDurationMs alongside the measured window.
       plannedDurationMs: spec.clipMs,
-      audio: { file: `segment_0${i + 1}.mp3`, durationMs: spec.clipMs, headMs, tailMs, words: [] },
+      audio: {
+        file: `segment_0${i + 1}.mp3`,
+        durationMs: spec.clipMs,
+        headMs,
+        tailMs,
+        words: [],
+      },
     });
 
     const speechMs = spec.clipMs - headMs - tailMs;
@@ -65,7 +73,7 @@ export function measuredProject(specs, { leadInMs = 2016, gapsMs = [] } = {}) {
   return {
     observedEffWps: +obsEff.toFixed(3),
     timing: {
-      project: { name: 'demo', fps: 30, width: 1280, height: 720 },
+      project: { name: "demo", fps: 30, width: 1280, height: 720 },
       durationMs: contentMs,
       contentMs,
       leadInMs,
@@ -73,7 +81,7 @@ export function measuredProject(specs, { leadInMs = 2016, gapsMs = [] } = {}) {
     },
     // Byte-for-byte the object literal voice.mjs passes to JSON.stringify.
     calibration: {
-      voiceId: 'en-US-AvaNeural',
+      voiceId: "en-US-AvaNeural",
       roundedSpeed,
       aggregate: {
         words: totW,

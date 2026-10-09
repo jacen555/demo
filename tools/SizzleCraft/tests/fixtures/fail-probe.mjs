@@ -15,6 +15,6 @@
 //
 // With FAIL_PROBE_AFTER unset the loader does nothing, so an inherited environment cannot
 // arm it in an unrelated run.
-import { register } from 'node:module';
+import { register } from "node:module";
 
-register('./fail-probe-hooks.mjs', import.meta.url);
+register("./fail-probe-hooks.mjs", import.meta.url);

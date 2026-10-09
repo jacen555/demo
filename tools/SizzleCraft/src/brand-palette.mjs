@@ -20,5 +20,10 @@
  * CONSUMERS(BRAND_PALETTE): write-build-html.mjs, write-storyboard.mjs
  */
 export const BRAND_PALETTE = Object.freeze([
-  '#0078D4', '#00B7C3', '#8661C5', '#E3008C', '#107C10', '#F7630C',
+  "#0078D4",
+  "#00B7C3",
+  "#8661C5",
+  "#E3008C",
+  "#107C10",
+  "#F7630C",
 ]);
