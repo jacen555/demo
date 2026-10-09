@@ -349,9 +349,10 @@ node src/frame-capture.mjs --apply             # actually capture, REPLACING fra
   process spawned, no browser launched. All of them route through `parseCli`, which
   throws `HelpRequested` *before it returns*, so a script cannot fall through into its own
   I/O with help requested.
-  **26 of the 34 files are CLIs; the other 8 are side-effect-free modules** —
-  `astats-levels`, `cli-support`, `end-card`, `envelope-ducking`, `gain-pin`,
-  `mix-parameters`, `remux-verify`, `silent-segment` — which are imported rather than
+  **26 of the 38 files are CLIs; the other 12 are side-effect-free modules** —
+  `astats-levels`, `brand-palette`, `cli-support`, `diagram-defaults`,
+  `end-card`, `entry-point`, `envelope-ducking`, `gain-pin`, `mix-parameters`,
+  `remux-verify`, `scan-outcome`, `silent-segment` — which are imported rather than
   invoked and deliberately have no CLI. Giving them one would manufacture uniformity over
   a real distinction.
   This is swept rather than listed. `tests/cli-help-contract.test.mjs` enumerates `src/`

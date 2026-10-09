@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveWithinRoot, resolveEngineOutput, planFooter, isEntryPoint } from './cli-support.mjs';
+import { EXIT, CliError, runCli, parseCli, requireExistingFile, resolveWithinRoot, resolveEngineOutput, planFooter } from './cli-support.mjs';
+import { isEntryPoint } from './entry-point.mjs';
 
 const USAGE = `
 coach-rulings — present a coach report with the project's prior rulings collapsed against
@@ -196,11 +197,6 @@ export function parseReport(text) {
 // rules the whole design rests on — the normalisation and the sentence rule — so that they
 // can be tested against real text rather than only through the CLI. Without this guard,
 // importing them to test them would execute the CLI with the test runner's argv.
-//
-// The question is asked through isEntryPoint (cli-support.mjs), which compares filesystem
-// identity rather than path spelling. This file used to compare `path.resolve(argv[1])`
-// against `fileURLToPath(import.meta.url)`; invoked through a directory junction those two
-// strings differ, the CLI was skipped, and the tool exited 0 having printed nothing.
 if (isEntryPoint(import.meta.url)) {
   await runCli(async () => {
   const { values, projectDir, apply } = parseCli({

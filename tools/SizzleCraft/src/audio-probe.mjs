@@ -1,5 +1,6 @@
 import { parseFile } from 'music-metadata';
-import { parseCli, requireExistingFile, runCli, isEntryPoint } from './cli-support.mjs';
+import { parseCli, requireExistingFile, runCli } from './cli-support.mjs';
+import { isEntryPoint } from './entry-point.mjs';
 
 export async function probeDurationSeconds(audioPath) {
   const metadata = await parseFile(audioPath, { duration: true });
@@ -40,12 +41,6 @@ Exit codes: 0 success · 1 the file could not be probed · 2 bad usage`.trim();
 // The file is resolved against --project rather than the process cwd, which is what the
 // usage above says: advertising an option and then ignoring it would send a caller's path
 // somewhere other than where they were told, and leave the input unconfined.
-//
-// Guarded because remux-music.mjs imports probeDurationSeconds: the CLI must not run on
-// import. The question goes through isEntryPoint (cli-support.mjs), which asks the
-// filesystem rather than comparing spellings. This file used to use `endsWith`, which was
-// wrong in both directions — it rejected a junction (CLI skipped, exit 0, no output) and
-// could also match a mere path SUFFIX, running the CLI for a differently-rooted file.
 if (isEntryPoint(import.meta.url)) {
   await runCli(async () => {
     const { positionals, projectDir } = parseCli({ usage: USAGE, allowPositionals: true });
