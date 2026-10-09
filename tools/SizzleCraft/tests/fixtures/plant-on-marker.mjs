@@ -21,23 +21,29 @@
 // than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from 'node:fs';
-import { requireTestOwnedPath } from './suite-owned-path.mjs';
+import fs from "node:fs";
+import { requireTestOwnedPath } from "./suite-owned-path.mjs";
 
 const params = new URL(import.meta.url).searchParams;
-const marker = params.get('marker');
-const body = params.get('body');
-if (!marker || body === null || !params.get('target')) {
-  throw new Error('plant-on-marker: its --import URL must carry marker, target and body');
+const marker = params.get("marker");
+const body = params.get("body");
+if (!marker || body === null || !params.get("target")) {
+    throw new Error(
+        "plant-on-marker: its --import URL must carry marker, target and body",
+    );
 }
-const target = requireTestOwnedPath(params.get('target'), 'plant-on-marker target', { mayBeAbsent: true });
+const target = requireTestOwnedPath(
+    params.get("target"),
+    "plant-on-marker target",
+    { mayBeAbsent: true },
+);
 
 const log = console.log;
 let planted = false;
 console.log = (...args) => {
-  log(...args);
-  if (planted || !args.map(String).join(' ').includes(marker)) return;
-  planted = true;
-  fs.writeFileSync(target, body, { flag: 'wx' });
-  log(`plant-on-marker: planted ${target}`);
+    log(...args);
+    if (planted || !args.map(String).join(" ").includes(marker)) return;
+    planted = true;
+    fs.writeFileSync(target, body, { flag: "wx" });
+    log(`plant-on-marker: planted ${target}`);
 };

@@ -19,49 +19,66 @@
 // staged rather than passing because it never was.
 //
 // It is a TEST fixture. Nothing in src/ may import it.
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { TEST_DIR_PREFIX } from "./suite-owned-path.mjs";
 
 const params = new URL(import.meta.url).searchParams;
-const fragment = params.get('fragment');
-if (!params.get('dir') || !fragment) {
-  throw new Error('substitute-on-rename: its --import URL must carry dir and fragment');
+const fragment = params.get("fragment");
+if (!params.get("dir") || !fragment) {
+    throw new Error(
+        "substitute-on-rename: its --import URL must carry dir and fragment",
+    );
 }
-const dir = fs.realpathSync.native(params.get('dir'));
+const dir = fs.realpathSync.native(params.get("dir"));
 const tmp = fs.realpathSync.native(os.tmpdir());
-if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
-  throw new Error(`substitute-on-rename: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
+if (
+    path.dirname(dir) !== tmp ||
+    !path.basename(dir).startsWith(TEST_DIR_PREFIX)
+) {
+    throw new Error(
+        `substitute-on-rename: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`,
+    );
 }
 
 const targeted = (candidate) =>
-  typeof candidate === 'string' &&
-  candidate.includes(fragment) &&
-  path.dirname(path.resolve(candidate)) === dir;
+    typeof candidate === "string" &&
+    candidate.includes(fragment) &&
+    path.dirname(path.resolve(candidate)) === dir;
 
 /** The path whose identity is withheld once the rename has failed. */
 let substituted = null;
 
 const lstatSync = fs.lstatSync;
 fs.lstatSync = (candidate, ...rest) => {
-  const st = lstatSync(candidate, ...rest);
-  if (substituted === null || typeof candidate !== 'string' || path.resolve(candidate) !== substituted) return st;
-  // A different file at the same name: same kind, an inode that is not the caller's.
-  if (st !== null && typeof st === 'object' && 'ino' in st) {
-    st.ino = typeof st.ino === 'bigint' ? st.ino + 1n : st.ino + 1;
-  }
-  return st;
+    const st = lstatSync(candidate, ...rest);
+    if (
+        substituted === null ||
+        typeof candidate !== "string" ||
+        path.resolve(candidate) !== substituted
+    )
+        return st;
+    // A different file at the same name: same kind, an inode that is not the caller's.
+    if (st !== null && typeof st === "object" && "ino" in st) {
+        st.ino = typeof st.ino === "bigint" ? st.ino + 1n : st.ino + 1;
+    }
+    return st;
 };
 
 const renameSync = fs.renameSync;
 fs.renameSync = (from, ...rest) => {
-  if (substituted !== null || !targeted(from)) return renameSync(from, ...rest);
-  substituted = path.resolve(from);
-  process.stderr.write(`substitute-on-rename: failed the rename of ${substituted} and substituted it\n`);
-  const err = new Error(`EPERM: operation not permitted, rename '${from}'`);
-  err.code = 'EPERM';
-  throw err;
+    if (substituted !== null || !targeted(from))
+        return renameSync(from, ...rest);
+    substituted = path.resolve(from);
+    process.stderr.write(
+        `substitute-on-rename: failed the rename of ${substituted} and substituted it\n`,
+    );
+    const err = new Error(`EPERM: operation not permitted, rename '${from}'`);
+    err.code = "EPERM";
+    throw err;
 };
 
-process.stderr.write(`substitute-on-rename: armed — the first rename of ${fragment}* inside ${dir} fails\n`);
+process.stderr.write(
+    `substitute-on-rename: armed — the first rename of ${fragment}* inside ${dir} fails\n`,
+);

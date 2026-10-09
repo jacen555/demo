@@ -7,7 +7,7 @@
 - **Sections of a report.** A finding under a rule marked defect-eligible goes in the coach's **DEFECTS** section, and every other finding in **ADVISORY**. Every rule the coach does not evaluate, every lane under "Covered by the pipeline" and every item under "Not evaluatable from these inputs" goes in **NOT EVALUATED**, citing its ID. The backtest's own records keep the names in force when they were written.
 - **Defect-eligible.** A rule is defect-eligible only if it is objective, meaning two careful reviewers who follow its check procedure on the same inputs reach the same answer, and either (a) it rests on a [VERIFIED] source, or (b) it tests the video against itself: narration against on-screen text, numbers, labels, timing, the storyboard's declared structure or the brief, where a contradiction is wrong under any taste. No threshold without a source: a rule whose procedure needs a judgement is not defect-eligible. What that rules out is a threshold no source gives, or one the reviewer must choose while checking. A figure selected once, inside bounds measured on the user's own reviews, and fixed before any check, is sourced; OBJ-07's 1.5 s is that case (see "Fitted, not yet tested"). A rule that cannot run on the inputs this pipeline produces is not objective, because nobody can follow its procedure, so it is not defect-eligible either (see "Carried by no input"). Each rule's Defect-eligible field gives its reason in one line.
 - **IDs.** `OBJ-nn` are objective rules and `CRAFT-nn` craft rules. `ENG-nn` are the lanes the engine's audits do or do not own ("Covered by the pipeline"). `NE-nn` are what no input here can show ("Not evaluatable from these inputs").
-- **Format.** `tools/SizzleCraft/tests/coach-rubric.test.mjs` reads this file and fails on anything it cannot read. A rule is a heading `### <ID> — <name>` followed by exactly ten one-line bullets, in this order: Rule, Class, Defect-eligible, Pass, Tag & source, Inputs used, Check procedure, Evidence to cite, Not a defect, Blind spot. Class opens with `objective` or `craft`, matching the ID. Defect-eligible is `yes` or `no`; an objective rule gives its reason after ` — `, and a craft rule is never `yes`. Pass is `1`, `2` or `both`, the values the coach acts on, or `none` for a rule no input lets run, which the coach reports under NOT EVALUATED at both passes; any of them may be followed by ` — ` and a note. Tag & source opens with exactly one of [VERIFIED], [PRACTICE] and [HOUSE]. A figure is a number with its unit: "1.5 s" and "1.5 ms" are different figures, and a criterion's number such as 1.4.1 is one figure, not three. Every figure a rule's Rule field states must appear, in the same unit, in its Check procedure. Pass 1 has only the script and the brief, so a rule marked `1` or `both` names the script or the brief for pass 1, and names a pass-2 input (timing, storyboard, stills, audit output) only after "at pass 2", for what it reads then. The test also applies the defect-eligible criterion above as far as it can be read mechanically. A rule evaluated at any pass may not ask, in its Rule, Inputs used, Check procedure or Evidence to cite, for anything listed under "Carried by no input"; a `none` rule names what it lacks in its Pass note, and is never defect-eligible. A defect-eligible rule's Rule, Check procedure and Blind spot carry none of the marks of a threshold no source gives ("judgement", a figure written "~5", "typically", "conventional", "roughly", "approximately"). Every figure in its Check procedure has a unit, and its Tag & source states that figure in that unit, so a criterion's number cannot pass for a threshold. A threshold written in plain words, with none of those marks and no figure, gets past the test, so the reviewer still reads for one. A lane is a heading `### ENG-nn — <name>` with five bullets: Status, Audit, On failure, Seen to fail, Owner. Each not-evaluatable item opens with its bold `NE-nn`. IDs are unique, and every ID the text mentions is defined.
+- **Format.** `tools/SizzleCraft/tests/coach-rubric.test.mjs` reads this file and fails on anything it cannot read. A rule is a heading `### <ID> — <name>` followed by exactly ten one-line bullets, in this order: Rule, Class, Defect-eligible, Pass, Tag & source, Inputs used, Check procedure, Evidence to cite, Not a defect, Blind spot. Class opens with `objective` or `craft`, matching the ID. Defect-eligible is `yes` or `no`; an objective rule gives its reason after `—`, and a craft rule is never `yes`. Pass is `1`, `2` or `both`, the values the coach acts on, or `none` for a rule no input lets run, which the coach reports under NOT EVALUATED at both passes; any of them may be followed by `—` and a note. Tag & source opens with exactly one of [VERIFIED], [PRACTICE] and [HOUSE]. A figure is a number with its unit: "1.5 s" and "1.5 ms" are different figures, and a criterion's number such as 1.4.1 is one figure, not three. Every figure a rule's Rule field states must appear, in the same unit, in its Check procedure. Pass 1 has only the script and the brief, so a rule marked `1` or `both` names the script or the brief for pass 1, and names a pass-2 input (timing, storyboard, stills, audit output) only after "at pass 2", for what it reads then. The test also applies the defect-eligible criterion above as far as it can be read mechanically. A rule evaluated at any pass may not ask, in its Rule, Inputs used, Check procedure or Evidence to cite, for anything listed under "Carried by no input"; a `none` rule names what it lacks in its Pass note, and is never defect-eligible. A defect-eligible rule's Rule, Check procedure and Blind spot carry none of the marks of a threshold no source gives ("judgement", a figure written "~5", "typically", "conventional", "roughly", "approximately"). Every figure in its Check procedure has a unit, and its Tag & source states that figure in that unit, so a criterion's number cannot pass for a threshold. A threshold written in plain words, with none of those marks and no figure, gets past the test, so the reviewer still reads for one. A lane is a heading `### ENG-nn — <name>` with five bullets: Status, Audit, On failure, Seen to fail, Owner. Each not-evaluatable item opens with its bold `NE-nn`. IDs are unique, and every ID the text mentions is defined.
 
 ## Fitted, not yet tested
 
@@ -15,9 +15,9 @@ The backtest found two holes in this rubric (ADR 0006), and graduation closed bo
 
 **OBJ-07's tolerance: the bounds were measured, and 1.5 s was selected inside them.** The figures come from the EvalLoopDemo timing files: each named element's reveal `atMs`, less the claim word's time from the segment's start.
 
-- *Must pass.* The shipped cut (`3bd77a2`, on branch `eval-loop-demo-build`). Every presence claim in it lags its visual by exactly what it did in r7 (`fc8dece`), which the user reviewed and sent to render with a single fix, to a fact count. Its worst lag is 0.63 s: in `hard`, "On the right of the screen, the interview branches", "screen" is spoken at 6.672 s and the last branch edge is drawn at 7.302 s. Timed from "On" (6.229 s) instead, it is 1.07 s. Every other claim's visual is on screen before its word, or within 0.08 s of it.
-- *Must fail.* R2-06, in r2's `many`: "screen" at 11.996 s, and the three strips at 16.442, 17.421 and 18.400 s, which is 4.45 s to the first and 6.40 s to the last. R6-10, in r6's `twotier`: "screen" at 1.545 s and the API lane at 12.928 s, 11.38 s later; and "labelled" (A P I) at 10.827 s, 2.10 s before the same lane appears. The user reported both items.
-- *So* the tolerance must sit above 1.07 s and, to catch every claim in the items the user reported, below 2.10 s. 1.5 s was selected inside those bounds, leaving at least 0.4 s on either side whichever word a claim is timed from. The selection is a judgement, made once, here, and disclosed; the coach applies the fixed figure. That keeps OBJ-07 defect-eligible. The rule against a threshold without a source is aimed at a threshold no source gives, or one a reviewer must choose while checking, and this one is neither: measurements bound it, and it is fixed before any check.
+- _Must pass._ The shipped cut (`3bd77a2`, on branch `eval-loop-demo-build`). Every presence claim in it lags its visual by exactly what it did in r7 (`fc8dece`), which the user reviewed and sent to render with a single fix, to a fact count. Its worst lag is 0.63 s: in `hard`, "On the right of the screen, the interview branches", "screen" is spoken at 6.672 s and the last branch edge is drawn at 7.302 s. Timed from "On" (6.229 s) instead, it is 1.07 s. Every other claim's visual is on screen before its word, or within 0.08 s of it.
+- _Must fail._ R2-06, in r2's `many`: "screen" at 11.996 s, and the three strips at 16.442, 17.421 and 18.400 s, which is 4.45 s to the first and 6.40 s to the last. R6-10, in r6's `twotier`: "screen" at 1.545 s and the API lane at 12.928 s, 11.38 s later; and "labelled" (A P I) at 10.827 s, 2.10 s before the same lane appears. The user reported both items.
+- _So_ the tolerance must sit above 1.07 s and, to catch every claim in the items the user reported, below 2.10 s. 1.5 s was selected inside those bounds, leaving at least 0.4 s on either side whichever word a claim is timed from. The selection is a judgement, made once, here, and disclosed; the coach applies the fixed figure. That keeps OBJ-07 defect-eligible. The rule against a threshold without a source is aimed at a threshold no source gives, or one a reviewer must choose while checking, and this one is neither: measurements bound it, and it is fixed before any check.
 - The backtest's answer key used 1.0 s, chosen before any run and never measured. Timed from its first word, the shipped cut's `hard` claim would fail it.
 - The shipped cut still trips OBJ-07 once, whatever the tolerance. In `blindspot`, "Watch it drive the real U I" plays over the stage-trace diagram because the interface was never captured, and the shipped cut records that as an accepted gap. "The shipped cut passes" therefore bounds the tolerance, not the rule.
 
@@ -48,7 +48,7 @@ This rubric equips a read-only coach that reviews short (roughly 3–6 minute) n
 
 Three boundary conditions recur across the rules and are stated once here rather than in each entry:
 
-1. **Expertise reversal.** Kalyuga, Ayres, Chandler & Sweller (2003) report that instructional supports which help novices (extra elaboration, redundant restatement, heavier signaling) can fail to help, or actively slow down, learners who already hold a schema for the material — the "expertise reversal effect." This pipeline's audience is domain-experienced engineers. Rules touching redundancy, pacing, or explanatory depth are calibrated to an expert audience: the coach must not flag the *absence* of novice-oriented scaffolding (defining basic terms, restating a diagram in words) as a defect.
+1. **Expertise reversal.** Kalyuga, Ayres, Chandler & Sweller (2003) report that instructional supports which help novices (extra elaboration, redundant restatement, heavier signaling) can fail to help, or actively slow down, learners who already hold a schema for the material — the "expertise reversal effect." This pipeline's audience is domain-experienced engineers. Rules touching redundancy, pacing, or explanatory depth are calibrated to an expert audience: the coach must not flag the _absence_ of novice-oriented scaffolding (defining basic terms, restating a diagram in words) as a defect.
 2. **System-paced delivery.** The video plays at a fixed pace with no viewer-side pause/replay built into the format itself. Cognitive-load-relevant rules (e.g., simultaneous novelty, missing signaling) are held to a stricter standard than they would be for self-paced material, because the viewer cannot slow down a confusing moment.
 3. **Synthetic narration.** Historic "voice principle" findings that a human-recorded voice outperforms a machine voice were established using early, robotic-sounding TTS. Craig & Schroeder (2017) revisited the comparison with a more conversational synthetic voice and found the human-voice advantage shrank and was not consistent across their experiments. This rubric does not treat synthetic narration itself as a defect, and no rule below penalizes "sounding like TTS"; only script- and delivery-level properties that narration can actually control are in scope.
 
@@ -59,6 +59,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 ## Message and structure
 
 ### OBJ-01 — Script scope contradicts the brief
+
 - Rule: It is a defect when the script's actual subject matter, scope, or assumed audience knowledge contradicts what the brief states.
 - Class: objective
 - Defect-eligible: yes — tests the video against itself (brief vs. script); a contradiction is wrong under any taste.
@@ -71,6 +72,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether the brief itself was well-scoped, only whether the script matches it; not applicable when Pass 1 has no brief supplied.
 
 ### CRAFT-01 — Missing or weak opening hook
+
 - Rule: It is a defect-candidate (craft) when the opening segment gives the viewer no concrete question, stake, or surprising fact before it starts explaining mechanism.
 - Class: craft
 - Defect-eligible: no — craft rules are judgement calls, never defect-eligible by definition.
@@ -83,6 +85,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot tell whether a hook lands emotionally — only whether one is structurally present.
 
 ### OBJ-02 — Chapter markers don't align to segment/topic boundaries
+
 - Rule: It is a defect when a marked chapter starts or ends in the middle of a script segment/sub-topic rather than at a segment boundary.
 - Class: objective
 - Defect-eligible: no — its own procedure leaves marginal placements to reviewer judgement because no source gives a tolerance, and a rule whose procedure needs a judgement is not defect-eligible.
@@ -95,11 +98,12 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether chapter titles are well-worded, only their placement.
 
 ### CRAFT-02 — Section count mismatched to runtime and audience
+
 - Rule: It is a defect-candidate (craft) when the number of top-level sections is so high, for a 3–6 minute video, that a viewer must track more top-level chunks than short-term memory comfortably holds at once.
 - Class: craft
 - Defect-eligible: no.
 - Pass: both
-- Tag & source: [VERIFIED] Cowan, N. (2001). The magical number 4 in short-term memory: A reconsideration of mental storage capacity. *Behavioral and Brain Sciences, 24*(1), 87–114. https://www.cambridge.org/core/journals/behavioral-and-brain-sciences/article/magical-number-4-in-shortterm-memory-a-reconsideration-of-mental-storage-capacity/44023F1147D4A1D44BDC0AD226838496 — finding: capacity-limited storage in short-term/working memory holds roughly 3–5 meaningful chunks once rehearsal and long-term-memory strategies are controlled for, revising the older "7±2" estimate downward. Boundary: this is a simultaneous-holding capacity finding, not a validated rule for video section counts — used only as a soft order-of-magnitude anchor, which is why this stays craft rather than objective.
+- Tag & source: [VERIFIED] Cowan, N. (2001). The magical number 4 in short-term memory: A reconsideration of mental storage capacity. _Behavioral and Brain Sciences, 24_(1), 87–114. https://www.cambridge.org/core/journals/behavioral-and-brain-sciences/article/magical-number-4-in-shortterm-memory-a-reconsideration-of-mental-storage-capacity/44023F1147D4A1D44BDC0AD226838496 — finding: capacity-limited storage in short-term/working memory holds roughly 3–5 meaningful chunks once rehearsal and long-term-memory strategies are controlled for, revising the older "7±2" estimate downward. Boundary: this is a simultaneous-holding capacity finding, not a validated rule for video section counts — used only as a soft order-of-magnitude anchor, which is why this stays craft rather than objective.
 - Inputs used: script (segment headings), brief.
 - Check procedure: 1) Count top-level sections/headings. 2) Judge whether, for a 3–6 minute runtime, the count sits near Cowan's small-chunk range or clearly exceeds it with no grouping/recap device. No numeric pass/fail threshold is asserted.
 - Evidence to cite: the list of section headings and their count.
@@ -107,6 +111,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot measure actual viewer recall; this is an analogy to a memory-capacity finding, not a direct test of it.
 
 ### CRAFT-03 — Register inconsistent with a technical-peer tone
+
 - Rule: It is a defect-candidate (craft) when the narration's register shifts inconsistently between casual/conversational phrasing and stiff, formal technical prose across segments, with no apparent reason.
 - Class: craft
 - Defect-eligible: no.
@@ -119,6 +124,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: "conversational" is itself a judgement call; the check cannot hear delivery, only read word choice.
 
 ### OBJ-03 — Same concept given inconsistent names with no on-screen mapping
+
 - Rule: It is a defect when the narration refers to the same system/concept by two or more different names across segments and the storyboard never visually maps the names to each other.
 - Class: objective
 - Defect-eligible: yes — objective count/match check, and a self-test (script vs. script, cross-checked against storyboard) that a VERIFIED source also motivates.
@@ -131,6 +137,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether the audience would find the terms obviously synonymous; relies on the reviewer's domain knowledge.
 
 ### CRAFT-04 — Dense technical concept has no analogy or concrete example
+
 - Rule: It is a defect-candidate (craft) when a segment introduces an abstract mechanism with no analogy, concrete example, or worked instance to anchor it.
 - Class: craft
 - Defect-eligible: no.
@@ -143,6 +150,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether an analogy present is actually a good or accurate one, only whether one exists.
 
 ### CRAFT-05 — Flat delivery pacing with no emphasis variation
+
 - Rule: It is a defect-candidate (craft) when the script gives the narration no cues (punctuation, phrasing, short emphatic sentences) to vary pace or stress key terms anywhere in the video.
 - Class: craft
 - Defect-eligible: no.
@@ -155,6 +163,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: this reads only the script text; actual TTS delivery variation (prosody) cannot be assessed from these inputs (see Not evaluatable).
 
 ### OBJ-04 — Narrated number contradicts the on-screen number
+
 - Rule: It is a defect when the narration states a numeric value (count, percentage, size, duration, version) that differs from the corresponding number rendered on screen in the same segment.
 - Class: objective
 - Defect-eligible: yes — tests the video against itself; a numeric contradiction is wrong under any taste.
@@ -167,6 +176,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot verify which number is factually correct, only that they disagree.
 
 ### OBJ-05 — Narrated label contradicts the on-screen label
+
 - Rule: It is a defect when the narration names a component or step using a term that does not match the label rendered for that same component or step on screen.
 - Class: objective
 - Defect-eligible: no — its procedure starts from the trigger words in the timing file, and no input carries trigger words, so it cannot run as written.
@@ -179,6 +189,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge which label is more correct, only that they disagree.
 
 ### OBJ-06 — Visual trigger keyed to a word absent from the narration
+
 - Rule: It is a defect when a visual step's trigger word (from the timing file) does not actually occur in the narration text at or near that timestamp.
 - Class: objective
 - Defect-eligible: no — it compares trigger words with the narration, and no input carries trigger words, so it cannot run as written.
@@ -191,6 +202,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether the chosen trigger word is a good choice, only whether it exists in the narration at all.
 
 ### OBJ-07 — Narration points at a visual that is not on screen
+
 - Rule: It is a defect when the narration speaks of a visual as already on screen ("on screen", "shown here", "as you can see", "labelled …", "watch", "notice", "this diagram") and an element it names is still not on screen 1.5 s after the word that makes the claim, including an element that never appears in that segment at all.
 - Class: objective
 - Defect-eligible: yes — tests the video against itself (the narration's claim against the timing file's reveal times, the storyboard and the still), with a tolerance selected inside measured bounds; narration that points at something that is not there is wrong under any taste.
@@ -203,6 +215,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: the timing file carries only authored triggers. A segment with no authored trigger target gets its reveal times from the builder, and those are in no input, so the lag cannot be measured there: report that under NOT EVALUATED, while the never-shown clause still applies. The timing file records reveals, not removals, so an element hidden again before it is spoken of reads as present. Which elements a claim names is a reading of the script, not a measurement. The rule cannot judge whether a visual that is present matches what the narration meant.
 
 ### OBJ-08 — On-screen claim contradicts narration or brief elsewhere
+
 - Rule: It is a defect when text rendered on screen asserts something that contradicts a statement made in the narration (in the same or a different segment) or in the brief.
 - Class: objective
 - Defect-eligible: yes — self-test; a direct contradiction is wrong under any taste.
@@ -215,11 +228,12 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot verify which claim is factually correct, only that they disagree. At pass 1 the script's On-screen notes stand in for the screen, so a note the storyboard later departs from can raise a finding the render would not; pass 2 checks the storyboard and the stills themselves.
 
 ### OBJ-09 — Cumulative new on-screen elements exceed a working-memory-motivated ceiling
+
 - Rule: It is a defect when more than a small number of new distinct visual elements accumulate on screen within a short time window without any being removed, grouped, or visually consolidated.
 - Class: objective
 - Defect-eligible: no — its count is sourced but its rolling 5-second window is not: Cowan (2001) bounds how many chunks are held at once, not over what span of time, and no threshold may stand without a source.
 - Pass: 2
-- Tag & source: [VERIFIED] Cowan, N. (2001). The magical number 4 in short-term memory: A reconsideration of mental storage capacity. *Behavioral and Brain Sciences, 24*(1), 87–114. https://www.cambridge.org/core/journals/behavioral-and-brain-sciences/article/magical-number-4-in-shortterm-memory-a-reconsideration-of-mental-storage-capacity/44023F1147D4A1D44BDC0AD226838496 — finding: capacity-limited storage in short-term/working memory holds roughly 3–5 meaningful chunks. Boundary: this concerns simultaneously-held items, distinct from visual events overlapping in time, the literal timing collisions that no engine audit checks (ENG-12); this rule instead flags cumulative, non-overlapping new elements that still pile up faster than they can be chunked. For expert viewers, chunking may occur at a higher level (a whole diagram read as one chunk) — the check counts newly-introduced distinct visual elements, not raw shapes, so a single diagram revealed at once (one new chunk) does not itself trigger this rule.
+- Tag & source: [VERIFIED] Cowan, N. (2001). The magical number 4 in short-term memory: A reconsideration of mental storage capacity. _Behavioral and Brain Sciences, 24_(1), 87–114. https://www.cambridge.org/core/journals/behavioral-and-brain-sciences/article/magical-number-4-in-shortterm-memory-a-reconsideration-of-mental-storage-capacity/44023F1147D4A1D44BDC0AD226838496 — finding: capacity-limited storage in short-term/working memory holds roughly 3–5 meaningful chunks. Boundary: this concerns simultaneously-held items, distinct from visual events overlapping in time, the literal timing collisions that no engine audit checks (ENG-12); this rule instead flags cumulative, non-overlapping new elements that still pile up faster than they can be chunked. For expert viewers, chunking may occur at a higher level (a whole diagram read as one chunk) — the check counts newly-introduced distinct visual elements, not raw shapes, so a single diagram revealed at once (one new chunk) does not itself trigger this rule.
 - Inputs used: timing (visual step trigger times), storyboard, stills.
 - Check procedure: 1) List each segment's visual steps in trigger-time order. 2) In any rolling ~5-second window, count new distinct elements introduced (not yet removed/merged). 3) Flag a defect where the count exceeds 5 (the top of Cowan's range) with no consolidation (e.g., grouping several under one labeled container) before the next new element appears.
 - Evidence to cite: the visual step ids and trigger timestamps of the elements counted; the still filename showing the pileup.
@@ -227,6 +241,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether an expert viewer would perceive several elements as obviously one thing faster than a novice would; this is a mechanical count, not a perception test.
 
 ### OBJ-10 — Emphasized content has no visual cue distinguishing it
+
 - Rule: It is a defect when the visual element the narration is currently emphasizing (via a trigger word/phrase that names or foregrounds it) has no distinguishing visual treatment (color, outline, arrow, motion, size) setting it apart from co-present elements at that moment.
 - Class: objective
 - Defect-eligible: no — its procedure finds the emphasized moment through trigger words, which no input carries, and inspects a still at that moment, when there is one still per segment; it cannot run as written.
@@ -239,11 +254,12 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether the cue chosen is a good one (e.g., color alone may fail SC 1.4.1, covered separately under Accessibility) — only whether some cue exists.
 
 ### OBJ-11 — Visual element never referenced by the narration (possible seductive detail)
+
 - Rule: It is a defect when a visual element present on a still/storyboard is never mentioned, implied, or referenced anywhere in that segment's narration, and carries no on-screen explanatory label of its own.
 - Class: objective
 - Defect-eligible: yes — objective presence/absence check against a VERIFIED source, and also a self-test (element vs. narration text).
 - Pass: 2
-- Tag & source: [VERIFIED] Rey, G. D. (2012). A review of research and a meta-analysis of the seductive detail effect. *Educational Research Review, 7*(3), 216–237 (accessed via ERIC EJ986386). https://eric.ed.gov/?id=EJ986386 — finding: the meta-analysis found interesting-but-irrelevant "seductive details" reliably reduce learning outcomes across the reviewed studies. Boundary: the effect concerns irrelevant added material competing for attention/processing, not visual complexity per se; a relevant element unmentioned by narration but explained by its own on-screen label is not automatically seductive — the check specifically flags elements with neither a narration reference nor on-screen explanatory text.
+- Tag & source: [VERIFIED] Rey, G. D. (2012). A review of research and a meta-analysis of the seductive detail effect. _Educational Research Review, 7_(3), 216–237 (accessed via ERIC EJ986386). https://eric.ed.gov/?id=EJ986386 — finding: the meta-analysis found interesting-but-irrelevant "seductive details" reliably reduce learning outcomes across the reviewed studies. Boundary: the effect concerns irrelevant added material competing for attention/processing, not visual complexity per se; a relevant element unmentioned by narration but explained by its own on-screen label is not automatically seductive — the check specifically flags elements with neither a narration reference nor on-screen explanatory text.
 - Inputs used: script, storyboard, stills.
 - Check procedure: 1) List every distinct visual element present in a segment's storyboard. 2) For each, check whether it is referenced by the narration OR carries its own on-screen explanatory label/caption. 3) Flag a defect for any element with neither.
 - Evidence to cite: the storyboard element id or still filename showing the element; confirmation that the segment's full narration text contains no reference to it.
@@ -251,6 +267,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether an unreferenced element still helps orientation (e.g., a recurring map/legend); flags presence, not necessarily true irrelevance.
 
 ### CRAFT-06 — Visual style inconsistent across segments covering similar content
+
 - Rule: It is a defect-candidate (craft) when the palette, typography, or iconography used for the same kind of content (e.g., all "warning" callouts, all data labels) changes without an apparent reason across segments.
 - Class: craft
 - Defect-eligible: no.
@@ -263,6 +280,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge whether a style choice is aesthetically good, only whether it is applied consistently.
 
 ### CRAFT-07 — No clear focal point in a still
+
 - Rule: It is a defect-candidate (craft) when a rendered still has no single element that reads as the primary focus, leaving the eye with no place to land first.
 - Class: craft
 - Defect-eligible: no.
@@ -275,6 +293,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: this is a purely compositional judgement from a static image; cannot account for the still's context in motion (what came immediately before/after).
 
 ### OBJ-19 — One element drawn across another
+
 - Rule: It is a defect when one element is drawn across another that it does not join or belong to (an edge passing under or over a box that is not one of its two ends, an arrowhead or a label hidden by another element, or one box overlapping another), as a still shows it or, where the still cannot settle it, as the storyboard's coordinates place it.
 - Class: objective
 - Defect-eligible: yes — tests the video against itself: the storyboard declares which elements connect and which stand apart, so a still that draws one across another shows a connection, or hides content, that the video's own structure does not have.
@@ -287,6 +306,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: there is one still per segment, taken late in its window (at 86 % of it, as `preview` takes it), so a crossing that resolves before that moment is invisible, and an element revealed after it is not in the still at all. For a diagram, the storyboard's coordinates give the final layout whatever the timing, but not motion, such as an element crossing another as it slides in; a slide that is not a diagram has no coordinates, so only its still can show a crossing. The coordinates describe square boxes, while the boxes are drawn with rounded corners, so a line that clips only a rounded-off corner shows in the coordinates and not in the still.
 
 ### OBJ-12 — Meaning conveyed by color alone
+
 - Rule: It is a defect when color is the only visual means of distinguishing or conveying information (e.g., "the red path is the failure case") with no redundant non-color cue (label, icon, pattern, position).
 - Class: objective
 - Defect-eligible: yes — objective presence/absence check against a VERIFIED W3C standard.
@@ -299,6 +319,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot assess whether a colorblind viewer would actually be confused in practice, only whether a redundant cue exists on paper.
 
 ### OBJ-13 — Essential meaning conveyed by shape, position, or sound alone
+
 - Rule: It is a defect when instructions or meaning depend solely on a visual element's shape, size, visual location, or on a sound cue, with no text alternative (e.g., "the item on the right" with no other identifying label).
 - Class: objective
 - Defect-eligible: yes — objective presence/absence check against a VERIFIED W3C standard.
@@ -311,6 +332,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot verify whether a screen-reader user would actually be able to follow along; checks presence of a text identifier, not full assistive-technology usability.
 
 ### OBJ-14 — Subtitle/caption placement obscures essential on-screen content
+
 - Rule: It is a defect when the region where subtitles/captions render overlaps a visual element carrying information the narration does not otherwise state (e.g., a label, number, or diagram detail).
 - Class: objective
 - Defect-eligible: no — its caption band is a convention no source gives: the WCAG 2.2 text it cites says only that captions "should not obscure or obstruct relevant information in the video", and no input says where the player will place subtitles.
@@ -323,6 +345,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot see the actual rendered caption box at that instant if caption position is computed later in the pipeline; flags only elements placed in the conventional caption-safe band.
 
 ### OBJ-15 — Visual-only information has no spoken equivalent
+
 - Rule: It is a gap to report as advice, not a defect, when a visual conveys information essential to understanding the segment (a value, a relationship, a state change) that is not spoken in the narration, and no separate text alternative to the video is supplied; on-screen text is part of the visual.
 - Class: objective
 - Defect-eligible: no — by the user's ruling of 2026-10-06, it detects the gap WCAG describes and reports it as advice, in ADVISORY, rather than as a defect; its procedure also needs a judgement of which facts are essential.
@@ -335,6 +358,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot judge how much visual nuance is "essential" versus merely illustrative; relies on reviewer judgement of what counts as essential information. It treats on-screen text as WCAG does, as visual content: WCAG 2.2's definition of audio description lists "on-screen text" among the visual content to be described (Note 1), and needs no description only "where all of the video information is already provided in existing audio" (Note 3). So an essential fact shown only as on-screen text is reported, as advice. It cannot see a separate text alternative unless the brief names one.
 
 ### OBJ-16 — Flashing content risk
+
 - Rule: It is a defect when any visual element flashes (rapid alternation between light and dark, or rapid color change) more than three times in any one-second period.
 - Class: objective
 - Defect-eligible: no — it counts flashes from the storyboard's animation timing, which the storyboard does not carry, and its area condition cannot be checked, as its blind spot says; it cannot run as written.
@@ -347,6 +371,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot verify actual rendered luminance/contrast of a flash (only declared animation timing), and cannot check the SC's precise area-of-screen threshold without knowing final render dimensions.
 
 ### CRAFT-08 — No variation in segment rhythm across the runtime
+
 - Rule: It is a defect-candidate (craft) when every segment runs roughly the same duration with no faster or slower stretches, producing a metronomic rhythm across the whole video.
 - Class: craft
 - Defect-eligible: no.
@@ -359,6 +384,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: duration alone does not capture perceived pace (motion speed, word density); this is a coarse proxy only.
 
 ### CRAFT-09 — Runtime devoted to a point disproportionate to its importance
+
 - Rule: It is a defect-candidate (craft) when a segment's duration is clearly out of proportion to the importance the brief assigns to that point (a minor caveat gets as much time as the core mechanism).
 - Class: craft
 - Defect-eligible: no.
@@ -371,6 +397,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: "importance" is itself the brief author's judgement, which this check cannot independently verify.
 
 ### OBJ-17 — New named concepts introduced faster than a comfortable rate
+
 - Rule: It is a defect when a burst of new named technical terms/concepts appears within a short span of narration with no definition, example, or restatement attached to any of them.
 - Class: objective (a countable pattern: number of undefined new terms in a window) though the "how many is too many" threshold is unsourced.
 - Defect-eligible: no — the counting procedure is objective, but no fetched source gives a specific rate/count threshold for this exact pattern, so per "no threshold without a source" this stays advisory (judgement).
@@ -383,6 +410,7 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 - Blind spot: cannot measure the viewer's actual cognitive load; "no definition nearby" is judged from the same script window only, so a definition given much later in the video is not credited.
 
 ### OBJ-18 — Redundant re-explanation of material already established for this audience
+
 - Rule: It is a defect when the script re-explains, in full, a concept the brief already identifies as known to the target audience, or that the script itself already explained earlier without new information being added.
 - Class: objective — self-test (script vs brief; script vs itself).
 - Defect-eligible: yes — self-test under clause (b); a stated-audience contradiction or a verbatim/near-verbatim repeat is wrong under any taste.
@@ -399,21 +427,25 @@ Rules are grouped: Message and structure; Narration (script); Narration and visu
 The user-supplied checklist was checked bullet-by-bullet against its own cited sources. Result: none of the four fetched non-video sources (esteem.nd.edu; thecrashcourse.com/creator-lab; academyforvirtualteaching.com; indie-film-making.com) state the specific claim attributed to them in the checklist — Crash Course's own page describes a four-unit creator course (research, script, revise, produce), not these bullet-level rules. The eight YouTube links could not be fetched as readable text and so are not verified sources. Every bullet below is tagged [PRACTICE] "user-supplied checklist (unsourced)" unless marked otherwise.
 
 **1. Research and Outline**
+
 - Pick a focused topic — [PRACTICE] unsourced (cited esteem.nd.edu and Crash Course Creator Lab do not state this). — OBJ-01 (topic-scope self-test).
 - Write a strong hook — [PRACTICE] unsourced (same two sources checked; neither specifies hook technique). — CRAFT-01 (craft judgement, not defect-eligible).
 - Organize into modular sections (three to four sub-topics) — [PRACTICE] unsourced; the specific "three to four" count appears in neither fetched source. — OBJ-02 (structure self-test; the numeric "three to four" is not adopted as a threshold since unsourced). OBJ-02 cannot run on these inputs (see "Carried by no input"), so no rule here carries this bullet.
 
 **2. Write the Script**
+
 - Keep the tone conversational (humor, analogies) — [PRACTICE] unsourced (YouTube sources unfetchable). — CRAFT-03/CRAFT-04. See Conflicts: analogies/humor aimed at a general audience can add extraneous load for expert viewers (Kalyuga et al., 2003).
 - Pace your delivery (energetic, fast, with emphasis) — [PRACTICE] unsourced (YouTube sources unfetchable). — CRAFT-05, CRAFT-08. See Conflicts: "fast cadence" in a system-paced video removes the viewer's ability to self-pace, which cognitive-load research treats as a risk factor, not a virtue, for complex material.
 - Plan your visuals alongside talking-head footage — [PRACTICE] unsourced (YouTube sources unfetchable); "talking-head footage" itself is Not applicable (no camera, no on-screen presenter in this format). The surviving principle — deliberately plan what visual supports each script beat — is carried by OBJ-04, OBJ-07 and OBJ-08 (Narration and visuals together). OBJ-05 and OBJ-06 belong to the same group but cannot run on these inputs (see "Carried by no input").
 
 **3. Film Your Footage** — the entire section is Not applicable: this format has no camera, no on-location recording, and no presenter to light, frame, or mic.
+
 - Set up clean lighting — Not applicable: no camera or physical set exists.
 - Prioritize good audio (quiet room, external mic) — Not applicable as stated (no live recording). The underlying goal (clean, intelligible narration audio) is not a coach rule, and no engine audit measures it either (ENG-14); it is heard at the draft review (NE-08).
 - Frame your shots (medium shots, close-ups) — Not applicable: there is no face or body on screen to frame.
 
 **4. Edit and Polish**
+
 - Do a rough cut (import clips, remove pauses/breaths/dead air) — Not applicable as stated: there are no camera clips to import, and synthetic TTS has no breaths. The surviving "avoid dead air" concern is carried by CRAFT-08 (segment rhythm).
 - Layer in multimedia for "high visual engagement" — [PRACTICE] unsourced (YouTube sources unfetchable). Direct Conflict with [VERIFIED] research: see Conflicts section and OBJ-11 (seductive-detail defect) — decorative additions purely for engagement are exactly the pattern the cited meta-analysis found to hurt retention.
 - Mix your audio (voice above music) — not a coach rule. The engine sets the music's level under speech by its gain and duck, and refuses a duck it cannot deliver (ENG-06), but nothing measures the delivered mix (ENG-14); see the open question on WCAG SC 1.4.7 under Covered by the pipeline.
@@ -438,11 +470,13 @@ These matter but require listening to real audio, watching real motion, or a ful
 Two checklist recommendations conflict with a [VERIFIED] source. In both cases, research wins, per the task's authority model.
 
 **1. Conversational tone / fast energetic pacing vs. the expertise-reversal effect**
+
 - Checklist: "Keep the tone conversational... using humor and analogies" and "Pace your delivery: Aim for an energetic, fast cadence" (Write the Script section).
 - [VERIFIED]: Kalyuga, S., Ayres, P., Chandler, P., & Sweller, J. (2003). The expertise reversal effect. Educational Psychologist, 38(1), 23-31. https://doi.org/10.1207/S15326985EP3801_4 — finding: instructional elaboration (extra explanation, analogy, redundant framing) that helps novices can measurably hurt higher-knowledge learners, because processing already-known or loosely-mapped material consumes working-memory capacity without adding information.
 - Resolution: for this audience (experienced engineers, per the brief) and this format (system-paced: the viewer cannot slow the video down the way a reader can re-read a sentence), a fast, joke- and analogy-dense conversational style is not adopted as a goal. The rubric keeps a narrower, sourced version of "conversational" (plain, direct sentences; see CRAFT-03/CRAFT-04) but treats "fast energetic cadence" and "humor/analogy for its own sake" as a craft option the author may choose, never a defect the coach checks for, and explicitly not a virtue to reward. Where an analogy or aside is not tied to a needed distinction and adds length without new information, it falls under OBJ-18 (redundant re-explanation) instead.
 
 **2. "High visual engagement" via B-roll/stock footage/pop-up graphics vs. the seductive-detail effect**
+
 - Checklist: "Layer in multimedia: Add relevant B-roll, stock footage, pop-up text graphics, and background music to maintain high visual engagement" (Edit and Polish section).
 - [VERIFIED]: Rey, G. D. (2012). A review of research and a meta-analysis of the seductive detail effect. Educational Research Review, 7(3), 216-237. https://doi.org/10.1016/j.edurev.2012.05.003 — finding: across the reviewed studies, interesting-but-irrelevant additions (decorative graphics, tangential anecdotes) reliably reduced retention/transfer test performance versus a version without them, even though they may raise subjective interest; the effect held across delivery formats.
 - Resolution: "maintain high visual engagement" is not adopted as a rubric goal. Decorative elements that do not carry information relevant to the segment's point are treated as a defect risk (OBJ-11), not a quality signal. This does not ban all illustrative motion; it bans engagement-only additions that compete with the segment's actual point for attention.
@@ -462,6 +496,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 **Open question for the pipeline (not a coach rule):** [VERIFIED] W3C WAI, WCAG 2.2, Success Criterion 1.4.7 Low or No Background Audio (Level AAA). https://www.w3.org/WAI/WCAG22/Understanding/low-or-no-background-audio.html — quantified threshold: background sound should be at least 20 dB lower than foreground speech (roughly four times quieter), with brief exceptions of a second or two. This SC is written for audio-only content and is Level AAA, so it does not directly bind this video format, but it is the only sourced numeric bound this research pass found for "how much quieter must music be than speech." The engine has no check of the music's level under speech to compare it with: that level is set by the music's gain and duck (ENG-06) and is not measured in the mix (ENG-14). Whether those settings put a project's music 20 dB under its narration is not verified here — an open question for whoever owns the mix targets, not adopted as a rubric rule.
 
 ### ENG-01 — A code block clipping its own content
+
 - Status: covered
 - Audit: the scene's `auditLayout`, reason `codeblock-clipped`, run by `preview` on each segment's still (its transcript is pass 2's audit input) and by `frame-capture` at each segment's start.
 - On failure: `preview` exits 1; `frame-capture` stops the render (read in its source, not seen). `preview` prints the whole scene's issues under every segment it previews, so the slide at fault is the one in the issue's own `id`, not the segment it is printed under.
@@ -469,6 +504,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: `auditLayout`, in `preview` and `frame-capture`
 
 ### ENG-02 — A slide whose safe area still overflows after fitting
+
 - Status: covered
 - Audit: `auditLayout`, reason `overflow-after-fit`, once the layout has shrunk the slide's content to its floor (fit 0.6); the same stages as ENG-01.
 - On failure: as ENG-01.
@@ -476,6 +512,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: `auditLayout`, in `preview` and `frame-capture`
 
 ### ENG-03 — Text contrast below WCAG AA (4.5:1, or 3:1 for large text)
+
 - Status: covered
 - Audit: the scene's `auditLegibility`, reasons `low-contrast` and `contrast-unverified`, run by `frame-capture` at each segment's start. `preview` does not run it, so its findings are not in pass 2's audit input.
 - On failure: logged as an advisory, and the render continues (read in `frame-capture`'s source). Nothing stops.
@@ -483,6 +520,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: `auditLegibility` in `frame-capture`, an advisory log that stops nothing
 
 ### ENG-04 — Rendered text below the minimum size
+
 - Status: covered
 - Audit: `auditLegibility`, reason `text-too-small`: text smaller than 1.4 % of the stage's height, or than 14 px where that is larger; `frame-capture` only.
 - On failure: logged as an advisory; nothing stops.
@@ -490,6 +528,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: `auditLegibility` in `frame-capture`, an advisory log that stops nothing
 
 ### ENG-05 — A narration track that drifts from the timeline
+
 - Status: covered
 - Audit: `remix`'s voice-drift check (C-6), which compares the rebuilt voice track with the reflowed timeline's duration before anything is published.
 - On failure: `remix --apply` exits 1 and publishes nothing.
@@ -497,6 +536,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: `remix`'s voice-drift check
 
 ### ENG-06 — A music duck the bed cannot deliver
+
 - Status: covered
 - Audit: the duck's threshold solve, which turns the depth a project asks for under speech into a threshold for the measured narration.
 - On failure: refused, naming the depth that can be reached.
@@ -504,6 +544,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: engine: the duck's threshold solve
 
 ### ENG-07 — A diagram node outside its viewBox, which renders clipped
+
 - Status: not run
 - Audit: `validate-scene` check B2.
 - On failure: `validate-scene` would exit 1, but the demo-recording skill does not run it; neither its SKILL.md nor its pipeline contract names `validate-scene`.
@@ -511,6 +552,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody, until the skill runs `validate-scene` before capture; a clipped node may still show in a still
 
 ### ENG-08 — Two diagram nodes overlapping
+
 - Status: not run
 - Audit: `validate-scene` check B3. Boxes that only touch are not overlap.
 - On failure: as ENG-07: it would exit 1, but nothing runs it.
@@ -518,6 +560,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: pass 2, where OBJ-19 reaches it
 
 ### ENG-09 — An element clipped by its container, or hidden under another
+
 - Status: not covered
 - Audit: none. `auditLayout` checks only a slide's safe area (ENG-02) and its code blocks (ENG-01), not an arrowhead under a box, a node's label cut off by its box, or one card over another.
 - On failure: nothing runs.
@@ -525,6 +568,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: pass 2, where OBJ-19 reaches an element hidden under another; clipping by a container is caught only when a still happens to show it
 
 ### ENG-10 — Content outside the video frame
+
 - Status: not covered
 - Audit: `frame-capture` refuses a scene built for a different frame size from the one it captures.
 - On failure: `frame-capture` would stop the render.
@@ -532,6 +576,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody
 
 ### ENG-11 — Contrast of graphics against their background (3:1)
+
 - Status: not covered
 - Audit: none. `auditLegibility` reads text only.
 - On failure: nothing runs.
@@ -539,6 +584,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody
 
 ### ENG-12 — Visual events overlapping in time within a segment
+
 - Status: not covered
 - Audit: none. `validate-timing` and `validate-scene` (C1) compare segments with each other, not the events within one.
 - On failure: nothing runs.
@@ -546,6 +592,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody
 
 ### ENG-13 — Subtitle line width and reading speed (by default 42 characters a line, 20 characters a second)
+
 - Status: not covered
 - Audit: `write-subtitles` measures both and prints them in its summary.
 - On failure: nothing; it exits 0 whatever they are.
@@ -553,6 +600,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody
 
 ### ENG-14 — Loudness, true peak and the music's level in the delivered mix
+
 - Status: not covered
 - Audit: none that fails. No stage measures integrated loudness or true peak; `check-levels` reports RMS and peak levels and fails only when it cannot measure. The music's level under speech is set by its gain and duck (ENG-06), not measured in the mix.
 - On failure: nothing runs.
@@ -560,6 +608,7 @@ For a lane that is not covered, or not run, the Owner names any rule that reache
 - Owner: nobody; the user hears the mix at the draft review (NE-08), which measures nothing
 
 ### ENG-15 — Audio and video drift in the encoded file
+
 - Status: not covered
 - Audit: `encode-mp4` refuses a drift beyond its budget.
 - On failure: `encode-mp4` would stop.
@@ -580,6 +629,7 @@ It also records one ruling. OBJ-15's findings are advice, not defects, by the us
 ## Sources
 
 **W3C standards and WAI guidance (fetched):**
+
 1. WCAG 2.2 SC 1.2.2 Captions (Prerecorded) — https://www.w3.org/WAI/WCAG22/Understanding/captions-prerecorded.html — fetched.
 2. WCAG 2.2 SC 1.2.3 Audio Description or Media Alternative (Prerecorded) — https://www.w3.org/WAI/WCAG22/Understanding/audio-description-or-media-alternative-prerecorded.html — fetched.
 3. WCAG 2.2 SC 1.3.3 Sensory Characteristics — https://www.w3.org/WAI/WCAG22/Understanding/sensory-characteristics.html — fetched.
@@ -591,31 +641,11 @@ It also records one ruling. OBJ-15's findings are advice, not defects, by the us
 9. W3C WAI, Audio Description — https://www.w3.org/WAI/media/av/description/ — fetched.
 10. W3C WAI, Captions/Subtitles — https://www.w3.org/WAI/media/av/captions/ — fetched.
 
-**Peer-reviewed research (fetched):**
-11. Cowan, N. (2001). The magical number 4 in short-term memory. Behavioral and Brain Sciences, 24(1), 87-114. https://doi.org/10.1017/S0140525X01003922 — fetched (abstract).
-12. Richter, J., Scheiter, K., & Eitel, A. (2016). Signaling text-picture relations in multimedia learning: A comprehensive meta-analysis. Educational Research Review, 17, 19-36. https://doi.org/10.1016/j.edurev.2015.12.003 — fetched (abstract).
-13. Rey, G. D. (2012). A review of research and a meta-analysis of the seductive detail effect. Educational Research Review, 7(3), 216-237. https://doi.org/10.1016/j.edurev.2012.05.003 — fetched (abstract).
-14. Craig, S. D., & Schroeder, N. L. (2017). Reconsidering the voice effect when learning from a virtual human. Computers & Education, 114, 193-205. https://doi.org/10.1016/j.compedu.2017.07.003 — fetched (abstract).
-15. Kalyuga, S., Ayres, P., Chandler, P., & Sweller, J. (2003). The expertise reversal effect. Educational Psychologist, 38(1), 23-31. https://doi.org/10.1207/S15326985EP3801_4 — fetched (abstract).
+**Peer-reviewed research (fetched):** 11. Cowan, N. (2001). The magical number 4 in short-term memory. Behavioral and Brain Sciences, 24(1), 87-114. https://doi.org/10.1017/S0140525X01003922 — fetched (abstract). 12. Richter, J., Scheiter, K., & Eitel, A. (2016). Signaling text-picture relations in multimedia learning: A comprehensive meta-analysis. Educational Research Review, 17, 19-36. https://doi.org/10.1016/j.edurev.2015.12.003 — fetched (abstract). 13. Rey, G. D. (2012). A review of research and a meta-analysis of the seductive detail effect. Educational Research Review, 7(3), 216-237. https://doi.org/10.1016/j.edurev.2012.05.003 — fetched (abstract). 14. Craig, S. D., & Schroeder, N. L. (2017). Reconsidering the voice effect when learning from a virtual human. Computers & Education, 114, 193-205. https://doi.org/10.1016/j.compedu.2017.07.003 — fetched (abstract). 15. Kalyuga, S., Ayres, P., Chandler, P., & Sweller, J. (2003). The expertise reversal effect. Educational Psychologist, 38(1), 23-31. https://doi.org/10.1207/S15326985EP3801_4 — fetched (abstract).
 
-**Peer-reviewed research identified but NOT fetched (excluded from all rule citations):**
-16. Mayer, R. E., & Moreno, R. (2003). Nine ways to reduce cognitive load in multimedia learning. Educational Psychologist, 38(1), 43-52. — not fetched.
-17. Ginns, P. (2006). Integrating information: A meta-analysis of the spatial contiguity and temporal contiguity effects. Learning and Instruction, 16(6), 511-525. — not fetched.
-18. Mayer, R. E., & Johnson, C. I. (2008). Revising the redundancy principle in multimedia learning. Journal of Educational Psychology, 100(2), 380-386. — not fetched.
-19. Mayer, R. E., Sobko, K., & Mautone, P. D. (2003). Social cues in multimedia learning: Role of speaker's voice. Journal of Educational Psychology, 95(2), 419-425. — not fetched.
-20. Schroeder, N. L., & Cenkci, A. T. (2018). Spatial contiguity and spatial split-attention effects in multimedia learning environments: A meta-analysis. Educational Psychology Review, 30(3), 679-701. — not fetched.
-21. Sweller, J., van Merriënboer, J. J. G., & Paas, F. (2019). Cognitive architecture and instructional design: 20 years later. Educational Psychology Review, 31(2), 261-292. — not fetched.
+**Peer-reviewed research identified but NOT fetched (excluded from all rule citations):** 16. Mayer, R. E., & Moreno, R. (2003). Nine ways to reduce cognitive load in multimedia learning. Educational Psychologist, 38(1), 43-52. — not fetched. 17. Ginns, P. (2006). Integrating information: A meta-analysis of the spatial contiguity and temporal contiguity effects. Learning and Instruction, 16(6), 511-525. — not fetched. 18. Mayer, R. E., & Johnson, C. I. (2008). Revising the redundancy principle in multimedia learning. Journal of Educational Psychology, 100(2), 380-386. — not fetched. 19. Mayer, R. E., Sobko, K., & Mautone, P. D. (2003). Social cues in multimedia learning: Role of speaker's voice. Journal of Educational Psychology, 95(2), 419-425. — not fetched. 20. Schroeder, N. L., & Cenkci, A. T. (2018). Spatial contiguity and spatial split-attention effects in multimedia learning environments: A meta-analysis. Educational Psychology Review, 30(3), 679-701. — not fetched. 21. Sweller, J., van Merriënboer, J. J. G., & Paas, F. (2019). Cognitive architecture and instructional design: 20 years later. Educational Psychology Review, 31(2), 261-292. — not fetched.
 
-**User-supplied checklist links:**
-22. https://esteem.nd.edu/news/7-step-guide-to-creating-online-video-courses/ — fetched; does not state the attributed claims.
-23. https://thecrashcourse.com/creator-lab/ — fetched; describes a four-unit creator course, not these bullets.
-24. https://www.academyforvirtualteaching.com/courses/video-making-crash-course — fetched; does not state the attributed claims.
-25. https://www.indie-film-making.com/how-to-make-a-video/ — fetched; does not state the attributed claims.
-26. https://www.youtube.com/watch?v=6xk4iUuL4IY&t=200 — not fetched (video content unfetchable).
-27. https://www.youtube.com/watch?v=ArBS88h1r2Q — not fetched.
-28. https://www.youtube.com/watch?v=8QCK_qEp_PI&t=18 — not fetched.
-29. https://www.youtube.com/watch?v=K-FJIc93RqE — not fetched.
-30. https://www.youtube.com/watch?v=fDe7G8Tz6cA&t=7 — not fetched.
+**User-supplied checklist links:** 22. https://esteem.nd.edu/news/7-step-guide-to-creating-online-video-courses/ — fetched; does not state the attributed claims. 23. https://thecrashcourse.com/creator-lab/ — fetched; describes a four-unit creator course, not these bullets. 24. https://www.academyforvirtualteaching.com/courses/video-making-crash-course — fetched; does not state the attributed claims. 25. https://www.indie-film-making.com/how-to-make-a-video/ — fetched; does not state the attributed claims. 26. https://www.youtube.com/watch?v=6xk4iUuL4IY&t=200 — not fetched (video content unfetchable). 27. https://www.youtube.com/watch?v=ArBS88h1r2Q — not fetched. 28. https://www.youtube.com/watch?v=8QCK_qEp_PI&t=18 — not fetched. 29. https://www.youtube.com/watch?v=K-FJIc93RqE — not fetched. 30. https://www.youtube.com/watch?v=fDe7G8Tz6cA&t=7 — not fetched.
 
 ## SOURCES CONSULTED
 

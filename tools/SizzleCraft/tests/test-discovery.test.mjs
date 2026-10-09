@@ -19,14 +19,14 @@
 // directory called `test/`, is picked up by one command and not the other, and this fails
 // before anyone builds on the number.
 // --------------------------------------------------------------------------------------
-import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PKG_DIR = path.join(TESTS_DIR, '..');
+const PKG_DIR = path.join(TESTS_DIR, "..");
 
 /**
  * Node's own default test-file patterns, as documented for the runner:
@@ -36,17 +36,17 @@ const PKG_DIR = path.join(TESTS_DIR, '..');
  * below pins each clause so a wrong transcription fails here instead of going unnoticed.
  */
 export function matchesNodeDefaultDiscovery(relPath) {
-  const parts = relPath.split(/[\\/]/);
-  const base = parts.at(-1);
-  if (!/\.(c|m)?js$/.test(base)) return false;
-  if (parts.slice(0, -1).includes('test')) return true;
-  return (
-    /\.test\.(c|m)?js$/.test(base) ||
-    /-test\.(c|m)?js$/.test(base) ||
-    /_test\.(c|m)?js$/.test(base) ||
-    /^test-.*\.(c|m)?js$/.test(base) ||
-    /^test\.(c|m)?js$/.test(base)
-  );
+    const parts = relPath.split(/[\\/]/);
+    const base = parts.at(-1);
+    if (!/\.(c|m)?js$/.test(base)) return false;
+    if (parts.slice(0, -1).includes("test")) return true;
+    return (
+        /\.test\.(c|m)?js$/.test(base) ||
+        /-test\.(c|m)?js$/.test(base) ||
+        /_test\.(c|m)?js$/.test(base) ||
+        /^test-.*\.(c|m)?js$/.test(base) ||
+        /^test\.(c|m)?js$/.test(base)
+    );
 }
 
 /**
@@ -81,54 +81,97 @@ export function matchesNodeDefaultDiscovery(relPath) {
 
 /** The registry's glob, `tests/**\/*.test.mjs`, applied to a package-relative path. */
 export function matchesRegistryGlob(relPath) {
-  const parts = relPath.split(/[\\/]/);
-  return parts[0] === 'tests' && parts.length >= 2 && /\.test\.mjs$/.test(parts.at(-1));
+    const parts = relPath.split(/[\\/]/);
+    return (
+        parts[0] === "tests" &&
+        parts.length >= 2 &&
+        /\.test\.mjs$/.test(parts.at(-1))
+    );
 }
 
 function walk(dir, out = []) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    // Generated and vendored trees are not part of the suite's own file set.
-    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, out);
-    else out.push(path.relative(PKG_DIR, full).split(path.sep).join('/'));
-  }
-  return out;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        // Generated and vendored trees are not part of the suite's own file set.
+        if (entry.name === "node_modules" || entry.name.startsWith("."))
+            continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, out);
+        else out.push(path.relative(PKG_DIR, full).split(path.sep).join("/"));
+    }
+    return out;
 }
 
-describe('the two prescribed test commands select the same files', () => {
-  // The predicate is hand-written, so it is pinned before anything leans on it. Without
-  // this, a mistyped clause would make the audit below silently vacuous.
-  test('discoveryPredicates_matchTheDocumentedPatterns', () => {
-    for (const yes of ['a.test.mjs', 'a-test.js', 'a_test.cjs', 'test-a.mjs', 'test.mjs', 'test/any.mjs', 'deep/test/any.js']) {
-      assert.equal(matchesNodeDefaultDiscovery(yes), true, `node --test should pick up ${yes}`);
-    }
-    for (const no of ['helpers.mjs', 'a.testing.mjs', 'attest.mjs', 'fixtures/fake-audio.mjs', 'tests/README.md']) {
-      assert.equal(matchesNodeDefaultDiscovery(no), false, `node --test should NOT pick up ${no}`);
-    }
-    assert.equal(matchesRegistryGlob('tests/a.test.mjs'), true);
-    assert.equal(matchesRegistryGlob('tests/fixtures/a.test.mjs'), true);
-    assert.equal(matchesRegistryGlob('tests/fixtures/test-a.mjs'), false, 'the glob needs the .test.mjs suffix');
-    assert.equal(matchesRegistryGlob('src/a.test.mjs'), false, 'the glob is rooted at tests/');
-  });
+describe("the two prescribed test commands select the same files", () => {
+    // The predicate is hand-written, so it is pinned before anything leans on it. Without
+    // this, a mistyped clause would make the audit below silently vacuous.
+    test("discoveryPredicates_matchTheDocumentedPatterns", () => {
+        for (const yes of [
+            "a.test.mjs",
+            "a-test.js",
+            "a_test.cjs",
+            "test-a.mjs",
+            "test.mjs",
+            "test/any.mjs",
+            "deep/test/any.js",
+        ]) {
+            assert.equal(
+                matchesNodeDefaultDiscovery(yes),
+                true,
+                `node --test should pick up ${yes}`,
+            );
+        }
+        for (const no of [
+            "helpers.mjs",
+            "a.testing.mjs",
+            "attest.mjs",
+            "fixtures/fake-audio.mjs",
+            "tests/README.md",
+        ]) {
+            assert.equal(
+                matchesNodeDefaultDiscovery(no),
+                false,
+                `node --test should NOT pick up ${no}`,
+            );
+        }
+        assert.equal(matchesRegistryGlob("tests/a.test.mjs"), true);
+        assert.equal(matchesRegistryGlob("tests/fixtures/a.test.mjs"), true);
+        assert.equal(
+            matchesRegistryGlob("tests/fixtures/test-a.mjs"),
+            false,
+            "the glob needs the .test.mjs suffix",
+        );
+        assert.equal(
+            matchesRegistryGlob("src/a.test.mjs"),
+            false,
+            "the glob is rooted at tests/",
+        );
+    });
 
-  test('everyFileTheBareRunnerWouldPickUp_isAlsoMatchedByTheRegistryGlob', () => {
-    const files = walk(PKG_DIR);
-    const onlyNode = files.filter((f) => matchesNodeDefaultDiscovery(f) && !matchesRegistryGlob(f));
+    test("everyFileTheBareRunnerWouldPickUp_isAlsoMatchedByTheRegistryGlob", () => {
+        const files = walk(PKG_DIR);
+        const onlyNode = files.filter(
+            (f) => matchesNodeDefaultDiscovery(f) && !matchesRegistryGlob(f),
+        );
 
-    assert.deepEqual(
-      onlyNode,
-      [],
-      'these are run by `node --test` but not by the registry test_cmd, so the two commands ' +
-        'report different totals. A fixture must not be named test-*.mjs, *-test.mjs, *_test.mjs ' +
-        'or test.mjs, and must not live in a directory called test/.',
-    );
-  });
+        assert.deepEqual(
+            onlyNode,
+            [],
+            "these are run by `node --test` but not by the registry test_cmd, so the two commands " +
+                "report different totals. A fixture must not be named test-*.mjs, *-test.mjs, *_test.mjs " +
+                "or test.mjs, and must not live in a directory called test/.",
+        );
+    });
 
-  test('everyFileTheRegistryGlobMatches_isAlsoPickedUpByTheBareRunner', () => {
-    const files = walk(PKG_DIR);
-    const onlyGlob = files.filter((f) => !matchesNodeDefaultDiscovery(f) && matchesRegistryGlob(f));
+    test("everyFileTheRegistryGlobMatches_isAlsoPickedUpByTheBareRunner", () => {
+        const files = walk(PKG_DIR);
+        const onlyGlob = files.filter(
+            (f) => !matchesNodeDefaultDiscovery(f) && matchesRegistryGlob(f),
+        );
 
-    assert.deepEqual(onlyGlob, [], 'the registry test_cmd runs these and `node --test` does not');
-  });
+        assert.deepEqual(
+            onlyGlob,
+            [],
+            "the registry test_cmd runs these and `node --test` does not",
+        );
+    });
 });

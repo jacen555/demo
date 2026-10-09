@@ -10,7 +10,7 @@
  * branch could not be reached by a test while it was inline — which is how it survived
  * a round of review still only printing a warning and exiting 0.
  */
-import { EXIT } from './cli-support.mjs';
+import { EXIT } from "./cli-support.mjs";
 
 /**
  * ffmpeg's `-f md5 -` muxer emits exactly one line: `MD5=<32 lowercase hex digits>`.
@@ -23,8 +23,8 @@ import { EXIT } from './cli-support.mjs';
 const MD5_LINE = /^MD5=([0-9a-fA-F]{32})$/;
 
 function parseDigest(raw) {
-  const match = MD5_LINE.exec(String(raw ?? '').trim());
-  return match ? match[1].toLowerCase() : null;
+    const match = MD5_LINE.exec(String(raw ?? "").trim());
+    return match ? match[1].toLowerCase() : null;
 }
 
 /**
@@ -35,35 +35,49 @@ function parseDigest(raw) {
  * @param {string} outputName   basename of the output, for the message
  * @returns {{identical: boolean, exitCode: number, message: string}}
  */
-export function videoStreamVerdict(beforeOutput, afterOutput, outputName = 'the output') {
-  const before = parseDigest(beforeOutput);
-  const after = parseDigest(afterOutput);
+export function videoStreamVerdict(
+    beforeOutput,
+    afterOutput,
+    outputName = "the output",
+) {
+    const before = parseDigest(beforeOutput);
+    const after = parseDigest(afterOutput);
 
-  if (before === null || after === null) {
-    const bad = [
-      before === null ? `source=${JSON.stringify(String(beforeOutput ?? '').trim())}` : null,
-      after === null ? `remuxed=${JSON.stringify(String(afterOutput ?? '').trim())}` : null,
-    ].filter(Boolean).join(', ');
+    if (before === null || after === null) {
+        const bad = [
+            before === null
+                ? `source=${JSON.stringify(String(beforeOutput ?? "").trim())}`
+                : null,
+            after === null
+                ? `remuxed=${JSON.stringify(String(afterOutput ?? "").trim())}`
+                : null,
+        ]
+            .filter(Boolean)
+            .join(", ");
+        return {
+            identical: false,
+            exitCode: EXIT.FAILED,
+            message:
+                `could not read an MD5 digest from ffmpeg (${bad}). Equal-but-unparsed output is not ` +
+                `evidence that either digest was computed, so the bit-identical guarantee is ` +
+                `unverified and ${outputName} must not be published.`,
+        };
+    }
+
+    if (before !== after) {
+        return {
+            identical: false,
+            exitCode: EXIT.FAILED,
+            message:
+                `the video stream CHANGED (${before} -> ${after}). The whole point of this path is a ` +
+                `bit-identical video stream, so ${outputName} must not be treated as the approved ` +
+                `render. Investigate before publishing.`,
+        };
+    }
+
     return {
-      identical: false,
-      exitCode: EXIT.FAILED,
-      message:
-        `could not read an MD5 digest from ffmpeg (${bad}). Equal-but-unparsed output is not ` +
-        `evidence that either digest was computed, so the bit-identical guarantee is ` +
-        `unverified and ${outputName} must not be published.`,
+        identical: true,
+        exitCode: EXIT.OK,
+        message: "VIDEO STREAM IDENTICAL",
     };
-  }
-
-  if (before !== after) {
-    return {
-      identical: false,
-      exitCode: EXIT.FAILED,
-      message:
-        `the video stream CHANGED (${before} -> ${after}). The whole point of this path is a ` +
-        `bit-identical video stream, so ${outputName} must not be treated as the approved ` +
-        `render. Investigate before publishing.`,
-    };
-  }
-
-  return { identical: true, exitCode: EXIT.OK, message: 'VIDEO STREAM IDENTICAL' };
 }

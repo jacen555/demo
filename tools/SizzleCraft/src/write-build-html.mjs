@@ -1,9 +1,21 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import { EXIT, guard, parseCli, resolveOutput, requireExistingFile, readOptionalEngineJson, describeWrite, planFooter, resolveWithinRoot, CliError, noGoPatternsProblem } from './cli-support.mjs';
-import { BRAND_PALETTE } from './brand-palette.mjs';
-import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from './diagram-defaults.mjs';
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import {
+    EXIT,
+    guard,
+    parseCli,
+    resolveOutput,
+    requireExistingFile,
+    readOptionalEngineJson,
+    describeWrite,
+    planFooter,
+    resolveWithinRoot,
+    CliError,
+    noGoPatternsProblem,
+} from "./cli-support.mjs";
+import { BRAND_PALETTE } from "./brand-palette.mjs";
+import { DIAGRAM_VIEWBOX, NODE_DEFAULTS as ND } from "./diagram-defaults.mjs";
 
 const USAGE = `
 write-build-html — build the renderable scene video-auto.html from timing.json (stage S5).
@@ -37,21 +49,30 @@ Exit codes: 0 success/plan · 1 build failed · 2 bad usage or refused overwrite
 // drive-relative form — produced only CliError and HelpRequested, and the duck-type never
 // disagreed with instanceof. CliError always carries an exitCode, so `err.exitCode ??
 // EXIT.FAILED` and guard's `err.exitCode` cannot differ either.
-const cli = guard(() => parseCli({ usage: USAGE, options: { out: { type: 'string' } } }));
+const cli = guard(() =>
+    parseCli({ usage: USAGE, options: { out: { type: "string" } } }),
+);
 
 const dir = cli.projectDir;
 // timing.json is ENGINE-chosen: the caller named a project directory, not this file. Joined
 // raw, a planted link was followed and handed to JSON.parse, whose message quotes the bytes
 // it parsed — disclosing a file outside the project on the bare invocation path.
-const timingPath = guard(() => requireExistingFile(dir, 'timing.json', 'timing file'));
+const timingPath = guard(() =>
+    requireExistingFile(dir, "timing.json", "timing file"),
+);
 // AND THE PARSE ITSELF IS GUARDED, BY SIZE. An unparseable timing.json threw at module top
 // level, so the refusal was a V8 stack — and V8's SyntaxError quotes bytes of the input, which
 // is the disclosure this stage exists to prevent, on the very first thing it reads. Reported
 // by size, matching write-chapters.mjs:197 and the other three stages standardised on exit 2.
 const timing = guard(() => {
-  const text = fs.readFileSync(timingPath, 'utf8');
-  try { return JSON.parse(text); }
-  catch { throw new CliError(`${timingPath} is not valid JSON (${text.length} characters)`); }
+    const text = fs.readFileSync(timingPath, "utf8");
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new CliError(
+            `${timingPath} is not valid JSON (${text.length} characters)`,
+        );
+    }
 });
 // Harden DOM tokens: segment ids AND node/edge ids (and edge from/to) get interpolated into DOM/SVG
 // element ids (e.g. `${seg.id}-label`, `${seg.id}-shot-0`, node/edge ids) and `url(#…)` marker refs. The
@@ -62,7 +83,14 @@ const TOKEN_RE = /^[A-Za-z0-9._-]{1,128}$/;
 // THE TOKEN ERROR IS POSITIONAL TOO. It used to quote the offending value, which meant an
 // identifier that was BOTH an invalid DOM token AND a no-go match got echoed here — before
 // the screen below ever saw it. Order matters as much as wording: screen first, then shape.
-const assertTok = (val, where) => { const t = String(val == null ? '' : val); if (!TOKEN_RE.test(t)) throw new CliError(`${where} is not a valid DOM token — it must match ${TOKEN_RE} (fix timing.json and re-run schema validation). It is named by position and deliberately not quoted.`); return t; };
+const assertTok = (val, where) => {
+    const t = String(val == null ? "" : val);
+    if (!TOKEN_RE.test(t))
+        throw new CliError(
+            `${where} is not a valid DOM token — it must match ${TOKEN_RE} (fix timing.json and re-run schema validation). It is named by position and deliberately not quoted.`,
+        );
+    return t;
+};
 // AN IDENTIFIER IS AUTHOR CONTENT THAT SHIPS. The ids above are interpolated into the
 // rendered HTML as DOM element ids and into this stage's diagnostics, so a no-go string in
 // one reaches the artefact on a SUCCESSFUL build — the case the frame-level guard never
@@ -141,28 +169,35 @@ const assertTok = (val, where) => { const t = String(val == null ? '' : val); if
 // stage's reach to projects that never render source data. Anything unusable is skipped and
 // the screen simply does less.
 const noGoScreen = (() => {
-  const raw = timing.project?.noGoPatterns;
-  if (!Array.isArray(raw)) return null;
-  const usable = [];
-  for (const src of raw) {
-    if (typeof src !== 'string') continue;
-    try { usable.push({ src, re: new RegExp(src, 'i') }); } catch { /* codeBlock reports it */ }
-  }
-  return usable.length ? (s) => usable.some(c => c.re.test(s) || s.includes(c.src)) : null;
+    const raw = timing.project?.noGoPatterns;
+    if (!Array.isArray(raw)) return null;
+    const usable = [];
+    for (const src of raw) {
+        if (typeof src !== "string") continue;
+        try {
+            usable.push({ src, re: new RegExp(src, "i") });
+        } catch {
+            /* codeBlock reports it */
+        }
+    }
+    return usable.length
+        ? (s) => usable.some((c) => c.re.test(s) || s.includes(c.src))
+        : null;
 })();
 // The refusal names the identifier BY POSITION and never quotes it — quoting it here would
 // do precisely the damage the screen exists to prevent, in the message announcing it.
 const assertNotDisclosing = (val, where) => {
-  if (noGoScreen && noGoScreen(String(val == null ? '' : val))) {
-    throw new CliError(
-      `${where} matches timing.project.noGoPatterns.\n` +
-      'This value is written into the rendered HTML — as visible text, as a DOM element id,\n' +
-      'as an attribute, or as trigger data the runtime paints into the frame — and into this\n' +
-      "stage's diagnostics, so a no-go string in it reaches the video and the logs even when\n" +
-      'every scanned value passes. It is named by position and deliberately not quoted —\n' +
-      'read it in timing.json and change it.');
-  }
-  return val;
+    if (noGoScreen && noGoScreen(String(val == null ? "" : val))) {
+        throw new CliError(
+            `${where} matches timing.project.noGoPatterns.\n` +
+                "This value is written into the rendered HTML — as visible text, as a DOM element id,\n" +
+                "as an attribute, or as trigger data the runtime paints into the frame — and into this\n" +
+                "stage's diagnostics, so a no-go string in it reaches the video and the logs even when\n" +
+                "every scanned value passes. It is named by position and deliberately not quoted —\n" +
+                "read it in timing.json and change it.",
+        );
+    }
+    return val;
 };
 // SCREEN BY THE ACT OF QUOTING. Every disclosure of this class has had the same shape: a
 // diagnostic interpolates an author value that the no-go walk never ran on — a missing file,
@@ -174,56 +209,76 @@ const assertNotDisclosing = (val, where) => {
 // put an author value inside a diagnostic: it screens and then quotes, which makes "I forgot
 // to screen this first" unrepresentable rather than merely discouraged.
 const quoted = (value, where) => {
-  const s = String(value ?? '');
-  assertNotDisclosing(s, where);
-  return JSON.stringify(s);
+    const s = String(value ?? "");
+    assertNotDisclosing(s, where);
+    return JSON.stringify(s);
 };
 for (const [si, s] of (timing.segments || []).entries()) {
-  // Labels are POSITIONAL. They previously embedded `s.id`, which put the very identifier
-  // being screened into the message that screens it.
-  //
-  // SCREEN BEFORE SHAPE, everywhere: `assertTok`'s refusal names a field, so a value that
-  // fails both checks must be caught by the screen first or the token error discloses it.
-  //
-  // `guard()` is what makes this a refusal rather than a crash: a CliError thrown at module
-  // top level escapes as an uncaught exception with a stack, and the first version of this
-  // screen did exactly that — exit 1 with a stack trace instead of a clean USAGE refusal.
-  guard(() => {
-    const tok = (val, where) => { assertNotDisclosing(val, where); assertTok(val, where); };
-    if (s && s.id != null) tok(s.id, `segments[${si}].id`);
-    const v = s && s.visual; if (!v) return;
-    (v.nodes || []).forEach((n, i) => { if (n && n.id != null) tok(n.id, `segments[${si}].visual.nodes[${i}].id`); });
-    (v.edges || []).forEach((e, i) => {
-      if (!e) return;
-      const at = `segments[${si}].visual.edges[${i}]`;
-      if (e.id != null) tok(e.id, `${at}.id`);
-      if (e.from != null) tok(e.from, `${at}.from`);
-      if (e.to != null) tok(e.to, `${at}.to`);
+    // Labels are POSITIONAL. They previously embedded `s.id`, which put the very identifier
+    // being screened into the message that screens it.
+    //
+    // SCREEN BEFORE SHAPE, everywhere: `assertTok`'s refusal names a field, so a value that
+    // fails both checks must be caught by the screen first or the token error discloses it.
+    //
+    // `guard()` is what makes this a refusal rather than a crash: a CliError thrown at module
+    // top level escapes as an uncaught exception with a stack, and the first version of this
+    // screen did exactly that — exit 1 with a stack trace instead of a clean USAGE refusal.
+    guard(() => {
+        const tok = (val, where) => {
+            assertNotDisclosing(val, where);
+            assertTok(val, where);
+        };
+        if (s && s.id != null) tok(s.id, `segments[${si}].id`);
+        const v = s && s.visual;
+        if (!v) return;
+        (v.nodes || []).forEach((n, i) => {
+            if (n && n.id != null)
+                tok(n.id, `segments[${si}].visual.nodes[${i}].id`);
+        });
+        (v.edges || []).forEach((e, i) => {
+            if (!e) return;
+            const at = `segments[${si}].visual.edges[${i}]`;
+            if (e.id != null) tok(e.id, `${at}.id`);
+            if (e.from != null) tok(e.from, `${at}.from`);
+            if (e.to != null) tok(e.to, `${at}.to`);
+        });
+        // Fields and hotspots are interpolated into `id="…"` at :422 and :424 UNESCAPED, and
+        // `assertTok` never covered them — so a quote in one could close the attribute. They are
+        // DOM identifiers by use, so they get the same two checks as the rest.
+        (v.fields || []).forEach((f, i) => {
+            if (f && f.id != null)
+                tok(f.id, `segments[${si}].visual.fields[${i}].id`);
+        });
+        (v.hotspots || []).forEach((hp, i) => {
+            if (hp && hp.id != null)
+                tok(hp.id, `segments[${si}].visual.hotspots[${i}].id`);
+        });
+        // `clipId` is already shape-constrained by safeClipId because it is used as a path
+        // segment, but it is ALSO emitted as `data-clip` at :325/:329, so it ships. Shape and
+        // disclosure are different questions and a valid token can still be a no-go string.
+        if (v.footage?.clipId != null)
+            assertNotDisclosing(
+                v.footage.clipId,
+                `segments[${si}].visual.footage.clipId`,
+            );
+        // An explicit trigger target is an author-written reference to a DOM id. It is compared
+        // against generated ids, quoted in a refusal at :665, and serialised into the shipped
+        // trigger data.
+        // A TARGET MUST BE A STRING, not merely screenable as one. An object target stringifies
+        // to `[object Object]` for the check — which discloses nothing and so passes — while its
+        // PROPERTIES are serialised unchanged into `elementTriggers` and ship. Screening a
+        // coercion is not screening the value; this is the `[123]` coercion defect once more, in
+        // the one place left that still trusted `String()`.
+        (s.triggers || []).forEach((t, i) => {
+            if (!t || t.target == null) return;
+            const where = `segments[${si}].triggers[${i}].target`;
+            if (typeof t.target !== "string")
+                throw new CliError(
+                    `${where} must be a string naming a DOM element id. It is named by position and deliberately not quoted.`,
+                );
+            assertNotDisclosing(t.target, where);
+        });
     });
-    // Fields and hotspots are interpolated into `id="…"` at :422 and :424 UNESCAPED, and
-    // `assertTok` never covered them — so a quote in one could close the attribute. They are
-    // DOM identifiers by use, so they get the same two checks as the rest.
-    (v.fields || []).forEach((f, i) => { if (f && f.id != null) tok(f.id, `segments[${si}].visual.fields[${i}].id`); });
-    (v.hotspots || []).forEach((hp, i) => { if (hp && hp.id != null) tok(hp.id, `segments[${si}].visual.hotspots[${i}].id`); });
-    // `clipId` is already shape-constrained by safeClipId because it is used as a path
-    // segment, but it is ALSO emitted as `data-clip` at :325/:329, so it ships. Shape and
-    // disclosure are different questions and a valid token can still be a no-go string.
-    if (v.footage?.clipId != null) assertNotDisclosing(v.footage.clipId, `segments[${si}].visual.footage.clipId`);
-    // An explicit trigger target is an author-written reference to a DOM id. It is compared
-    // against generated ids, quoted in a refusal at :665, and serialised into the shipped
-    // trigger data.
-    // A TARGET MUST BE A STRING, not merely screenable as one. An object target stringifies
-    // to `[object Object]` for the check — which discloses nothing and so passes — while its
-    // PROPERTIES are serialised unchanged into `elementTriggers` and ship. Screening a
-    // coercion is not screening the value; this is the `[123]` coercion defect once more, in
-    // the one place left that still trusted `String()`.
-    (s.triggers || []).forEach((t, i) => {
-      if (!t || t.target == null) return;
-      const where = `segments[${si}].triggers[${i}].target`;
-      if (typeof t.target !== 'string') throw new CliError(`${where} must be a string naming a DOM element id. It is named by position and deliberately not quoted.`);
-      assertNotDisclosing(t.target, where);
-    });
-  });
 }
 // Every slide switch, hold and trigger time is computed from startMs/endMs, and this stage does not
 // run validate-timing. A missing time became NaN, which JSON writes as null, and the hold cap
@@ -231,66 +286,106 @@ for (const [si, s] of (timing.segments || []).entries()) {
 // A numeric string is no safer, since trigger times add to it ("2000" + 500). Only a finite JSON
 // number places a segment. Ordering and overlap stay validate-timing's job.
 guard(() => {
-  const describeMs = (v, where) => v === undefined ? 'missing' : typeof v === 'number' ? String(v) : typeof v === 'string' ? `the string ${quoted(v.slice(0, 40), `${where} value`)}` : v === null ? 'null' : `a ${Array.isArray(v) ? 'list' : typeof v}`;
-  const unusable = [];
-  (timing.segments || []).forEach((s, i) => {
-    for (const k of ['startMs', 'endMs']) {
-      const v = s?.[k];
-      // The segment id IS quoted here, and that is safe: the identifier gate above runs
-      // first and has already screened it. What was NOT screened is the offending VALUE,
-      // which `describeMs` now formats through `quoted()`. Removing the id as well broke the
-      // contract these tests pin by name — a message that names the segment.
-      if (typeof v !== 'number' || !Number.isFinite(v)) unusable.push(`segments[${i}] ${JSON.stringify(s?.id ?? null)}: ${k} is ${describeMs(v, `segments[${i}].${k}`)}`);
-    }
-  });
-  if (unusable.length) throw new CliError(`cannot place ${unusable.length === 1 ? 'a segment' : 'segments'} on the timeline; startMs and endMs must be finite numbers of milliseconds (fix timing.json and re-run validate-timing):\n  ${unusable.join('\n  ')}`);
+    const describeMs = (v, where) =>
+        v === undefined
+            ? "missing"
+            : typeof v === "number"
+              ? String(v)
+              : typeof v === "string"
+                ? `the string ${quoted(v.slice(0, 40), `${where} value`)}`
+                : v === null
+                  ? "null"
+                  : `a ${Array.isArray(v) ? "list" : typeof v}`;
+    const unusable = [];
+    (timing.segments || []).forEach((s, i) => {
+        for (const k of ["startMs", "endMs"]) {
+            const v = s?.[k];
+            // The segment id IS quoted here, and that is safe: the identifier gate above runs
+            // first and has already screened it. What was NOT screened is the offending VALUE,
+            // which `describeMs` now formats through `quoted()`. Removing the id as well broke the
+            // contract these tests pin by name — a message that names the segment.
+            if (typeof v !== "number" || !Number.isFinite(v))
+                unusable.push(
+                    `segments[${i}] ${JSON.stringify(s?.id ?? null)}: ${k} is ${describeMs(v, `segments[${i}].${k}`)}`,
+                );
+        }
+    });
+    if (unusable.length)
+        throw new CliError(
+            `cannot place ${unusable.length === 1 ? "a segment" : "segments"} on the timeline; startMs and endMs must be finite numbers of milliseconds (fix timing.json and re-run validate-timing):\n  ${unusable.join("\n  ")}`,
+        );
 });
 // DIMENSIONS ARE INTERPOLATED INTO CSS AND INTO A `content=` ATTRIBUTE, so a non-numeric
 // value is markup injection as well as an unscreened author string. `|| 3840` accepts any
 // truthy value, including a string — the same "truthy is not valid" shape as the no-go list
 // accepting `[123]`. A frame size is a finite positive number or the project is unbuildable.
 const dim = (raw, fallback, where) => {
-  if (raw == null) return fallback;
-  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1 || raw > 16384) {
-    throw new CliError(`${where} must be a whole number of pixels between 1 and 16384. It is named by position and deliberately not quoted.`);
-  }
-  return raw;
+    if (raw == null) return fallback;
+    if (
+        typeof raw !== "number" ||
+        !Number.isInteger(raw) ||
+        raw < 1 ||
+        raw > 16384
+    ) {
+        throw new CliError(
+            `${where} must be a whole number of pixels between 1 and 16384. It is named by position and deliberately not quoted.`,
+        );
+    }
+    return raw;
 };
-const w = guard(() => dim(timing.project?.width, 3840, 'project.width')), h = guard(() => dim(timing.project?.height, 2160, 'project.height'));
+const w = guard(() => dim(timing.project?.width, 3840, "project.width")),
+    h = guard(() => dim(timing.project?.height, 2160, "project.height"));
 // Repair the classic "UTF-8 bytes read back as Latin-1/CP1252" mojibake (e.g. "Â·" -> "·", "â€™" -> "'")
 // that upstream tools can bake into titles/labels/watermarks on Windows. Guarded: it only re-decodes when
 // the string is EXACTLY the latin1 view of a valid UTF-8 byte sequence (no U+FFFD and perfectly
 // reversible), so clean text — and lone accented chars like "é" (U+00E9) — pass through byte-identical.
-const demojibake = s => {
-  if (!/[\u00C2\u00C3\u00E2]/.test(s)) return s;
-  try { const r = Buffer.from(s, 'latin1').toString('utf8'); if (!r.includes('\uFFFD') && Buffer.from(r, 'utf8').toString('latin1') === s) return r; } catch {}
-  return s;
+const demojibake = (s) => {
+    if (!/[\u00C2\u00C3\u00E2]/.test(s)) return s;
+    try {
+        const r = Buffer.from(s, "latin1").toString("utf8");
+        if (
+            !r.includes("\uFFFD") &&
+            Buffer.from(r, "utf8").toString("latin1") === s
+        )
+            return r;
+    } catch {}
+    return s;
 };
 const esc = (s, where) => {
-  const out = demojibake(String(s ?? ''));
-  // SCREEN AT THE POINT OF EMISSION. Everything that reaches the rendered HTML as author
-  // text passes through here, and — MEASURED — the engine's own scaffolding does not: the
-  // real project's `https?://` pattern matches the generated document 62 times, 61 of them
-  // the SVG `xmlns` declaration and one a w3.org reference, and BOTH live at :439 and :936
-  // as literal template text that is never interpolated. So this screen sees author content
-  // and structurally cannot see scaffolding. That is why it is here and not over the
-  // finished document, which was measured as refusing the only real project for nothing.
-  //
-  // An ENGINE FALLBACK is screened too, deliberately: `v.title || seg.title || 'Demo'`
-  // renders the engine's own word when the author supplies none, and if the author has said
-  // `Demo` must not reach a frame then it reaching the frame is a violation whoever wrote it.
-  //
-  // THE LINE IS NOT VISIBILITY — an earlier version of this comment said it was, and that was
-  // wrong by its own code: `data-path` is screened and is never visible to a viewer. The line
-  // is PROVENANCE PLUS SHIPPING. Everything that passes through here is author text, or
-  // engine text standing in for it, and all of it is written into the artefact. `xmlns` is
-  // neither: it is engine structure that no author input can influence, and it is literal
-  // template text that never reaches this function at all.
-  //
-  // A consequence, accepted rather than special-cased: a fallback inside a
-  // `visibility:hidden` element is screened too, because it still ships in the file.
-  if (where) assertNotDisclosing(out, where);
-  return out.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const out = demojibake(String(s ?? ""));
+    // SCREEN AT THE POINT OF EMISSION. Everything that reaches the rendered HTML as author
+    // text passes through here, and — MEASURED — the engine's own scaffolding does not: the
+    // real project's `https?://` pattern matches the generated document 62 times, 61 of them
+    // the SVG `xmlns` declaration and one a w3.org reference, and BOTH live at :439 and :936
+    // as literal template text that is never interpolated. So this screen sees author content
+    // and structurally cannot see scaffolding. That is why it is here and not over the
+    // finished document, which was measured as refusing the only real project for nothing.
+    //
+    // An ENGINE FALLBACK is screened too, deliberately: `v.title || seg.title || 'Demo'`
+    // renders the engine's own word when the author supplies none, and if the author has said
+    // `Demo` must not reach a frame then it reaching the frame is a violation whoever wrote it.
+    //
+    // THE LINE IS NOT VISIBILITY — an earlier version of this comment said it was, and that was
+    // wrong by its own code: `data-path` is screened and is never visible to a viewer. The line
+    // is PROVENANCE PLUS SHIPPING. Everything that passes through here is author text, or
+    // engine text standing in for it, and all of it is written into the artefact. `xmlns` is
+    // neither: it is engine structure that no author input can influence, and it is literal
+    // template text that never reaches this function at all.
+    //
+    // A consequence, accepted rather than special-cased: a fallback inside a
+    // `visibility:hidden` element is screened too, because it still ships in the file.
+    if (where) assertNotDisclosing(out, where);
+    return out.replace(
+        /[&<>"']/g,
+        (c) =>
+            ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+            })[c],
+    );
 };
 // THE DERIVED IDENTIFIER, SCREENED WHERE IT IS FORMED.
 //
@@ -300,10 +395,15 @@ const esc = (s, where) => {
 //
 // Every generated element id in this stage goes through here, enforced by
 // `everyGeneratedElementId_goesThroughTheScreeningHelpers` in tests/guard-inputs.test.mjs.
-const elId = (value, where) => { const t = String(value ?? ''); assertNotDisclosing(t, where); return t; };
+const elId = (value, where) => {
+    const t = String(value ?? "");
+    assertNotDisclosing(t, where);
+    return t;
+};
 // Provenance for a screening refusal, by POSITION. `seg.id` is itself screened, so it must
 // not appear in a message about screening.
-const segWhere = (seg, field) => `segments[${timing.segments.indexOf(seg)}].${field}`;
+const segWhere = (seg, field) =>
+    `segments[${timing.segments.indexOf(seg)}].${field}`;
 /**
  * The id the builder gives a generated element: `<segment>-<kind>-<item's id, or its index>`.
  *
@@ -316,30 +416,35 @@ const segWhere = (seg, field) => `segments[${timing.segments.indexOf(seg)}].${fi
  * `validate-scene.mjs` builds the same shape with `??`, so an empty-string id behaves
  * differently there. The two are NOT interchangeable and this is not shared with it.
  */
-const generatedElId = (segId, kind, item, j) => `${segId}-${kind}-${item.id || j}`;
+const generatedElId = (segId, kind, item, j) =>
+    `${segId}-${kind}-${item.id || j}`;
 // jsonScript() is the ONLY sanctioned way to embed timing-derived JSON inside a <script> block.
 // Valid JSON is NOT script-safe: a narration/title/payload string containing `</script><script>` would
 // terminate the block early and inject attacker markup, and U+2028/U+2029 are raw line terminators in
 // JS source. Escaping `<`, `>`, `&`, U+2028 and U+2029 to \uXXXX form keeps the value byte-for-byte
 // equivalent after JSON.parse while making script breakout structurally impossible. Never interpolate a
 // bare JSON.stringify(...) into `<script>`.
-const jsonScript = (value, space) => JSON.stringify(value, null, space)
-  .replace(/</g, '\\u003C').replace(/>/g, '\\u003E').replace(/&/g, '\\u0026')
-  .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+const jsonScript = (value, space) =>
+    JSON.stringify(value, null, space)
+        .replace(/</g, "\\u003C")
+        .replace(/>/g, "\\u003E")
+        .replace(/&/g, "\\u0026")
+        .replace(/\u2028/g, "\\u2028")
+        .replace(/\u2029/g, "\\u2029");
 // SAFE_SRC is canonical containment, not a regex-only allowlist. Every generated image source must
 // resolve beneath this run's approved evidence-pack root and remain a local relative file path.
 // Containment is decided on the REALPATH: a symlink/junction/reparse point inside evidence-pack whose
 // target lives outside it is an escape, and path.resolve() alone cannot see that.
 let EVIDENCE_ROOT;
 try {
-  EVIDENCE_ROOT = fs.realpathSync(path.resolve(dir, 'evidence-pack'));
+    EVIDENCE_ROOT = fs.realpathSync(path.resolve(dir, "evidence-pack"));
 } catch (err) {
-  // A bare ENOENT stack here reads as a crash rather than a missing prerequisite.
-  console.error(
-    `error: evidence-pack/ not found in ${dir} (${err.code ?? err.message}) — every on-screen asset must ` +
-      `resolve beneath the approved evidence pack, so the scene cannot be built without it.`,
-  );
-  process.exit(EXIT.USAGE);
+    // A bare ENOENT stack here reads as a crash rather than a missing prerequisite.
+    console.error(
+        `error: evidence-pack/ not found in ${dir} (${err.code ?? err.message}) — every on-screen asset must ` +
+            `resolve beneath the approved evidence pack, so the scene cannot be built without it.`,
+    );
+    process.exit(EXIT.USAGE);
 }
 /**
  * Does this `path.relative` result leave the root it was measured from?
@@ -356,41 +461,80 @@ try {
  * and a helper reached through a function defined earlier is only safe by argument about
  * call order. This needs no argument.
  */
-const escapesRoot = rel => !rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
-const safeEvidenceSrc = raw => {
-  const s = String(raw ?? '').trim();
-  if (!s || s.includes('\0') || s.includes('\\') || s.includes('%') || /[?#]/.test(s)) throw new Error('unsafe evidence src rejected');
-  if (s.startsWith('//') || s.startsWith('/') || /^[A-Za-z]:/.test(s) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)) throw new Error('unsafe evidence src rejected');
-  const parts = s.split('/');
-  if (parts.some(p => p === '' || p === '.' || p === '..')) throw new Error('unsafe evidence src rejected');
-  const absolute = path.resolve(dir, ...parts);
-  const inside = path.relative(EVIDENCE_ROOT, absolute);
-  if (escapesRoot(inside)) throw new Error('unsafe evidence src rejected');
-  // Reject reparse points (POSIX symlinks AND Windows symlinks/junctions/mount points) on every
-  // component, then re-check containment on the fully resolved realpath. lstat() is what distinguishes a
-  // link from its target; on Windows a junction reports isSymbolicLink() === true for lstat, and any
-  // other reparse point still resolves differently under realpath, which the containment re-check below
-  // catches. Missing files are allowed to fail the realpath step and be rejected.
-  let walk = EVIDENCE_ROOT;
-  for (const part of path.relative(EVIDENCE_ROOT, absolute).split(path.sep)) {
-    walk = path.join(walk, part);
-    let st; try { st = fs.lstatSync(walk); } catch { throw new Error('unsafe evidence src rejected'); }
-    if (st.isSymbolicLink()) throw new Error('unsafe evidence src rejected');
-  }
-  let real; try { real = fs.realpathSync(absolute); } catch { throw new Error('unsafe evidence src rejected'); }
-  const realInside = path.relative(EVIDENCE_ROOT, real);
-  if (escapesRoot(realInside)) throw new Error('unsafe evidence src rejected');
-  return path.relative(dir, absolute).split(path.sep).join('/');
+const escapesRoot = (rel) =>
+    !rel ||
+    rel === ".." ||
+    rel.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(rel);
+const safeEvidenceSrc = (raw) => {
+    const s = String(raw ?? "").trim();
+    if (
+        !s ||
+        s.includes("\0") ||
+        s.includes("\\") ||
+        s.includes("%") ||
+        /[?#]/.test(s)
+    )
+        throw new Error("unsafe evidence src rejected");
+    if (
+        s.startsWith("//") ||
+        s.startsWith("/") ||
+        /^[A-Za-z]:/.test(s) ||
+        /^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)
+    )
+        throw new Error("unsafe evidence src rejected");
+    const parts = s.split("/");
+    if (parts.some((p) => p === "" || p === "." || p === ".."))
+        throw new Error("unsafe evidence src rejected");
+    const absolute = path.resolve(dir, ...parts);
+    const inside = path.relative(EVIDENCE_ROOT, absolute);
+    if (escapesRoot(inside)) throw new Error("unsafe evidence src rejected");
+    // Reject reparse points (POSIX symlinks AND Windows symlinks/junctions/mount points) on every
+    // component, then re-check containment on the fully resolved realpath. lstat() is what distinguishes a
+    // link from its target; on Windows a junction reports isSymbolicLink() === true for lstat, and any
+    // other reparse point still resolves differently under realpath, which the containment re-check below
+    // catches. Missing files are allowed to fail the realpath step and be rejected.
+    let walk = EVIDENCE_ROOT;
+    for (const part of path.relative(EVIDENCE_ROOT, absolute).split(path.sep)) {
+        walk = path.join(walk, part);
+        let st;
+        try {
+            st = fs.lstatSync(walk);
+        } catch {
+            throw new Error("unsafe evidence src rejected");
+        }
+        if (st.isSymbolicLink())
+            throw new Error("unsafe evidence src rejected");
+    }
+    let real;
+    try {
+        real = fs.realpathSync(absolute);
+    } catch {
+        throw new Error("unsafe evidence src rejected");
+    }
+    const realInside = path.relative(EVIDENCE_ROOT, real);
+    if (escapesRoot(realInside))
+        throw new Error("unsafe evidence src rejected");
+    return path.relative(dir, absolute).split(path.sep).join("/");
 };
 // Aggregate, don't throw on the first bad path: a run with three broken sources should report all three
 // with the OWNING segment id and the offending src, not one anonymous "unsafe evidence src rejected".
 const srcErrors = [];
 const checkedSrc = (raw, segmentId, where) => {
-  try { return safeEvidenceSrc(raw); }
-  catch { srcErrors.push(`segment "${segmentId}" ${where}: a source is not a contained evidence-pack path (named by position and deliberately not quoted)`); return null; }
+    try {
+        return safeEvidenceSrc(raw);
+    } catch {
+        srcErrors.push(
+            `segment "${segmentId}" ${where}: a source is not a contained evidence-pack path (named by position and deliberately not quoted)`,
+        );
+        return null;
+    }
 };
 const assertNoSrcErrors = () => {
-  if (srcErrors.length) throw new Error(`unsafe evidence src rejected — ${srcErrors.length} invalid source(s):\n  - ${srcErrors.join('\n  - ')}`);
+    if (srcErrors.length)
+        throw new Error(
+            `unsafe evidence src rejected — ${srcErrors.length} invalid source(s):\n  - ${srcErrors.join("\n  - ")}`,
+        );
 };
 
 // ---- footage (real user clip) metadata, resolved from clip-video output --------------------------
@@ -402,22 +546,60 @@ const assertNoSrcErrors = () => {
 // the error hid the message, not the read). readOptionalEngineJson keeps them apart, reserves
 // null for ENOENT alone, and is told the shape each caller below actually iterates — so a
 // present-but-empty file can never arrive here disguised as an absent one.
-let FOOTAGE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'footage', 'clips.json'), 'footage clips.json', { clips: 'array' })) ?? {};
-let MANIFEST = guard(() => readOptionalEngineJson(dir, 'manifest.json', 'manifest.json', { stages: 'object' })) ?? {};
-const DERIVED_FOOTAGE = MANIFEST.stages?.['materialize-footage']?.derivedFootage || null;
+let FOOTAGE =
+    guard(() =>
+        readOptionalEngineJson(
+            dir,
+            path.join("evidence-pack", "footage", "clips.json"),
+            "footage clips.json",
+            { clips: "array" },
+        ),
+    ) ?? {};
+let MANIFEST =
+    guard(() =>
+        readOptionalEngineJson(dir, "manifest.json", "manifest.json", {
+            stages: "object",
+        }),
+    ) ?? {};
+const DERIVED_FOOTAGE =
+    MANIFEST.stages?.["materialize-footage"]?.derivedFootage || null;
 // C-11: evidence-pack.json is the SINGLE source of truth for what may appear on-screen. clips.json alone
 // is NOT sufficient — a tampered clips.json must not be able to smuggle an unapproved clip in.
-let EVIDENCE = guard(() => readOptionalEngineJson(dir, path.join('evidence-pack', 'evidence-pack.json'), 'evidence-pack.json', { assets: 'array' })) ?? {};
-const evidenceApprovedClip = id => !!id && (EVIDENCE.assets || []).some(a => a && a.kind === 'clip' && a.approvedForUse === true && a.id === id);
+let EVIDENCE =
+    guard(() =>
+        readOptionalEngineJson(
+            dir,
+            path.join("evidence-pack", "evidence-pack.json"),
+            "evidence-pack.json",
+            { assets: "array" },
+        ),
+    ) ?? {};
+const evidenceApprovedClip = (id) =>
+    !!id &&
+    (EVIDENCE.assets || []).some(
+        (a) =>
+            a && a.kind === "clip" && a.approvedForUse === true && a.id === id,
+    );
 // clipId is used verbatim as a path segment; force it to a single safe token (no separators / `..`)
 // so neither the fallback path nor the frame URLs can escape evidence-pack/footage/.
-const safeClipId = id => { const s = String(id || ''); return (TOKEN_RE.test(s) && s !== '.' && s !== '..') ? s : ''; };
-const footageClip = id => { const cid = safeClipId(id); return cid ? ((FOOTAGE.clips || []).find(c => c.id === cid) || null) : null; };
+const safeClipId = (id) => {
+    const s = String(id || "");
+    return TOKEN_RE.test(s) && s !== "." && s !== ".." ? s : "";
+};
+const footageClip = (id) => {
+    const cid = safeClipId(id);
+    return cid ? (FOOTAGE.clips || []).find((c) => c.id === cid) || null : null;
+};
 // C-3/C-11: a clip may only be composited when it is approved AND redaction-clear in clips.json AND has
 // a matching approved evidence-pack asset (kind:"clip", approvedForUse:true, id===clipId) — the manifest
 // is the authoritative gate, so a tampered clips.json can never approve a clip on its own.
-const footageApproved = c => !!c && c.approvedForUse === true && c.redaction === 'clear' && evidenceApprovedClip(c.id);
-const footageUsable = seg => footageApproved(footageClip(seg.visual?.footage?.clipId));
+const footageApproved = (c) =>
+    !!c &&
+    c.approvedForUse === true &&
+    c.redaction === "clear" &&
+    evidenceApprovedClip(c.id);
+const footageUsable = (seg) =>
+    footageApproved(footageClip(seg.visual?.footage?.clipId));
 // A segment renders as `footage` ONLY when its clip is approved + redaction-clear; otherwise it falls
 // back to a synthetic mode (explicit visual.mode, else inferred diagram/live/narrative) so the panel is
 // never blank and autoTriggers() still generates the reveal/diagram/live triggers (schema/docs promise).
@@ -425,124 +607,250 @@ const footageUsable = seg => footageApproved(footageClip(seg.visual?.footage?.cl
 // is both markup injection and an unscreened author string. `if (v.mode && v.mode !== 'footage') return v.mode`
 // returned whatever the author wrote. The supported set is closed — `body()` dispatches on
 // exactly these — so anything else is a refusal, not a silent passthrough.
-const MODES = new Set(['footage', 'code', 'diagram', 'live', 'narrative', 'statement', 'endcard']);
-const mode = seg => { const v = seg.visual || {}; if ((v.mode === 'footage' || (!v.mode && v.footage)) && footageUsable(seg)) return 'footage'; if (v.mode && v.mode !== 'footage') { if (!MODES.has(v.mode)) throw new CliError(`segments[${timing.segments.indexOf(seg)}].visual.mode is not one of ${[...MODES].join(', ')}. It is named by position and deliberately not quoted.`); return v.mode; } return v.nodes ? 'diagram' : (v.shot || v.fields || v.hotspots) ? 'live' : 'narrative'; };
+const MODES = new Set([
+    "footage",
+    "code",
+    "diagram",
+    "live",
+    "narrative",
+    "statement",
+    "endcard",
+]);
+const mode = (seg) => {
+    const v = seg.visual || {};
+    if ((v.mode === "footage" || (!v.mode && v.footage)) && footageUsable(seg))
+        return "footage";
+    if (v.mode && v.mode !== "footage") {
+        if (!MODES.has(v.mode))
+            throw new CliError(
+                `segments[${timing.segments.indexOf(seg)}].visual.mode is not one of ${[...MODES].join(", ")}. It is named by position and deliberately not quoted.`,
+            );
+        return v.mode;
+    }
+    return v.nodes
+        ? "diagram"
+        : v.shot || v.fields || v.hotspots
+          ? "live"
+          : "narrative";
+};
 // Playback metadata is security-sensitive: frameCount changes where playback clamps, while fps changes
 // timestamp-to-frame mapping. Derive count from the exact independently enumerated frame set, bind fps
 // to storyboard-protected timing.project.fps, and require clips.json + manifest lineage to agree.
 const FRAME_FILE_RE = /^frame_[0-9]{5}\.(?:jpg|jpeg|png|webp)$/i;
 const containedRelative = (root, candidate, where) => {
-  const rel = path.relative(root, candidate);
-  if (escapesRoot(rel)) throw new Error(`footage lineage mismatch: ${where} escaped its clip root`);
-  return rel;
+    const rel = path.relative(root, candidate);
+    if (escapesRoot(rel))
+        throw new Error(
+            `footage lineage mismatch: ${where} escaped its clip root`,
+        );
+    return rel;
 };
-const frameSetFacts = id => {
-  const cid = safeClipId(id);
-  if (!cid) throw new Error(`footage lineage mismatch: unsafe clip id ${JSON.stringify(id)}`);
-  const clipRoot = path.resolve(EVIDENCE_ROOT, 'footage', cid);
-  let rootStat;
-  try { rootStat = fs.lstatSync(clipRoot); } catch { throw new Error(`footage lineage mismatch: missing frame root for ${cid}`); }
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error(`footage lineage mismatch: invalid frame root for ${cid}`);
-  const clipReal = fs.realpathSync(clipRoot);
-  containedRelative(EVIDENCE_ROOT, clipReal, `${cid} frame root`);
-  const frames = [];
-  const walk = current => {
-    for (const name of fs.readdirSync(current)) {
-      const candidate = path.join(current, name);
-      const st = fs.lstatSync(candidate);
-      if (st.isSymbolicLink()) throw new Error(`footage lineage mismatch: linked frame path for ${cid}`);
-      const real = fs.realpathSync(candidate);
-      containedRelative(clipReal, real, `${cid}/${name}`);
-      if (st.isDirectory()) { walk(candidate); continue; }
-      if (!FRAME_FILE_RE.test(name)) continue;
-      if (!st.isFile()) throw new Error(`footage lineage mismatch: non-regular frame for ${cid}`);
-      frames.push({ relative: path.relative(clipReal, real).split(path.sep).join('/'), real });
+const frameSetFacts = (id) => {
+    const cid = safeClipId(id);
+    if (!cid)
+        throw new Error(
+            `footage lineage mismatch: unsafe clip id ${JSON.stringify(id)}`,
+        );
+    const clipRoot = path.resolve(EVIDENCE_ROOT, "footage", cid);
+    let rootStat;
+    try {
+        rootStat = fs.lstatSync(clipRoot);
+    } catch {
+        throw new Error(
+            `footage lineage mismatch: missing frame root for ${cid}`,
+        );
     }
-  };
-  walk(clipRoot);
-  if (!frames.length) throw new Error(`footage lineage mismatch: empty frame set for ${cid}`);
-  frames.sort((a, b) => a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0);
-  const digest = crypto.createHash('sha256');
-  digest.update(Buffer.from('sizzlecraft-frame-set-v1', 'utf8'));
-  digest.update(Buffer.from([0]));
-  for (const frame of frames) {
-    const bytes = fs.readFileSync(frame.real);
-    digest.update(Buffer.from(frame.relative, 'utf8'));
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory())
+        throw new Error(
+            `footage lineage mismatch: invalid frame root for ${cid}`,
+        );
+    const clipReal = fs.realpathSync(clipRoot);
+    containedRelative(EVIDENCE_ROOT, clipReal, `${cid} frame root`);
+    const frames = [];
+    const walk = (current) => {
+        for (const name of fs.readdirSync(current)) {
+            const candidate = path.join(current, name);
+            const st = fs.lstatSync(candidate);
+            if (st.isSymbolicLink())
+                throw new Error(
+                    `footage lineage mismatch: linked frame path for ${cid}`,
+                );
+            const real = fs.realpathSync(candidate);
+            containedRelative(clipReal, real, `${cid}/${name}`);
+            if (st.isDirectory()) {
+                walk(candidate);
+                continue;
+            }
+            if (!FRAME_FILE_RE.test(name)) continue;
+            if (!st.isFile())
+                throw new Error(
+                    `footage lineage mismatch: non-regular frame for ${cid}`,
+                );
+            frames.push({
+                relative: path
+                    .relative(clipReal, real)
+                    .split(path.sep)
+                    .join("/"),
+                real,
+            });
+        }
+    };
+    walk(clipRoot);
+    if (!frames.length)
+        throw new Error(`footage lineage mismatch: empty frame set for ${cid}`);
+    frames.sort((a, b) =>
+        a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0,
+    );
+    const digest = crypto.createHash("sha256");
+    digest.update(Buffer.from("sizzlecraft-frame-set-v1", "utf8"));
     digest.update(Buffer.from([0]));
-    digest.update(Buffer.from(String(bytes.length), 'ascii'));
-    digest.update(Buffer.from([0]));
-    digest.update(bytes);
-    digest.update(Buffer.from([0]));
-  }
-  return { frameSetSha: digest.digest('hex'), frameCount: frames.length };
+    for (const frame of frames) {
+        const bytes = fs.readFileSync(frame.real);
+        digest.update(Buffer.from(frame.relative, "utf8"));
+        digest.update(Buffer.from([0]));
+        digest.update(Buffer.from(String(bytes.length), "ascii"));
+        digest.update(Buffer.from([0]));
+        digest.update(bytes);
+        digest.update(Buffer.from([0]));
+    }
+    return { frameSetSha: digest.digest("hex"), frameCount: frames.length };
 };
 const VERIFIED_FOOTAGE_META = new Map();
 const verifyFootageLineage = () => {
-  const approved = (FOOTAGE.clips || []).filter(c => c?.approvedForUse === true);
-  if (!approved.length) return;
-  if (DERIVED_FOOTAGE?.kind !== 'footage-frame-set-v1' || DERIVED_FOOTAGE?.producer !== 'materialize-footage' || !Array.isArray(DERIVED_FOOTAGE.clips)) {
-    throw new Error('footage lineage mismatch: approved clips require materialize-footage lineage');
-  }
-  const projectFps = timing.project?.fps;
-  if (!Number.isSafeInteger(projectFps) || projectFps < 1) throw new Error('footage lineage mismatch: timing.project.fps must be a positive integer');
-  const lineageById = new Map(DERIVED_FOOTAGE.clips.map(c => [c?.id, c]));
-  if (lineageById.size !== DERIVED_FOOTAGE.clips.length) throw new Error('footage lineage mismatch: duplicate lineage clip id');
-  const approvedIds = new Set(approved.map(c => c?.id));
-  if (approvedIds.size !== approved.length) throw new Error('footage lineage mismatch: duplicate approved clip id');
-  const projection = approved
-    .slice()
-    .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-    .map(c => {
-      const cid = safeClipId(c.id), lineage = lineageById.get(cid), facts = frameSetFacts(cid);
-      if (!lineage) throw new Error(`footage lineage mismatch: missing lineage clip ${cid}`);
-      if (c.frameSetSha !== facts.frameSetSha || lineage.frameSetSha !== facts.frameSetSha) throw new Error(`footage lineage mismatch: frameSetSha differs for ${cid}`);
-      if (!Number.isSafeInteger(c.frameCount) || c.frameCount !== facts.frameCount || lineage.frameCount !== facts.frameCount) throw new Error(`footage lineage mismatch: frameCount differs for ${cid}`);
-      if (!Number.isSafeInteger(c.fps) || c.fps !== projectFps || lineage.fps !== projectFps) throw new Error(`footage lineage mismatch: fps differs for ${cid}`);
-      if (lineage.redaction !== c.redaction) throw new Error(`footage lineage mismatch: redaction differs for ${cid}`);
-      VERIFIED_FOOTAGE_META.set(cid, { frameCount: facts.frameCount, fps: projectFps });
-      return { id: cid, frameSetSha: facts.frameSetSha, frameCount: facts.frameCount, fps: projectFps, redaction: c.redaction };
-    });
-  if (lineageById.size !== projection.length) throw new Error('footage lineage mismatch: lineage clip set differs');
-  const projectionSha = crypto.createHash('sha256').update(Buffer.from(JSON.stringify(projection), 'utf8')).digest('hex');
-  if (DERIVED_FOOTAGE.sha256 !== projectionSha) throw new Error('footage lineage mismatch: derived projection hash differs');
+    const approved = (FOOTAGE.clips || []).filter(
+        (c) => c?.approvedForUse === true,
+    );
+    if (!approved.length) return;
+    if (
+        DERIVED_FOOTAGE?.kind !== "footage-frame-set-v1" ||
+        DERIVED_FOOTAGE?.producer !== "materialize-footage" ||
+        !Array.isArray(DERIVED_FOOTAGE.clips)
+    ) {
+        throw new Error(
+            "footage lineage mismatch: approved clips require materialize-footage lineage",
+        );
+    }
+    const projectFps = timing.project?.fps;
+    if (!Number.isSafeInteger(projectFps) || projectFps < 1)
+        throw new Error(
+            "footage lineage mismatch: timing.project.fps must be a positive integer",
+        );
+    const lineageById = new Map(DERIVED_FOOTAGE.clips.map((c) => [c?.id, c]));
+    if (lineageById.size !== DERIVED_FOOTAGE.clips.length)
+        throw new Error("footage lineage mismatch: duplicate lineage clip id");
+    const approvedIds = new Set(approved.map((c) => c?.id));
+    if (approvedIds.size !== approved.length)
+        throw new Error("footage lineage mismatch: duplicate approved clip id");
+    const projection = approved
+        .slice()
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((c) => {
+            const cid = safeClipId(c.id),
+                lineage = lineageById.get(cid),
+                facts = frameSetFacts(cid);
+            if (!lineage)
+                throw new Error(
+                    `footage lineage mismatch: missing lineage clip ${cid}`,
+                );
+            if (
+                c.frameSetSha !== facts.frameSetSha ||
+                lineage.frameSetSha !== facts.frameSetSha
+            )
+                throw new Error(
+                    `footage lineage mismatch: frameSetSha differs for ${cid}`,
+                );
+            if (
+                !Number.isSafeInteger(c.frameCount) ||
+                c.frameCount !== facts.frameCount ||
+                lineage.frameCount !== facts.frameCount
+            )
+                throw new Error(
+                    `footage lineage mismatch: frameCount differs for ${cid}`,
+                );
+            if (
+                !Number.isSafeInteger(c.fps) ||
+                c.fps !== projectFps ||
+                lineage.fps !== projectFps
+            )
+                throw new Error(
+                    `footage lineage mismatch: fps differs for ${cid}`,
+                );
+            if (lineage.redaction !== c.redaction)
+                throw new Error(
+                    `footage lineage mismatch: redaction differs for ${cid}`,
+                );
+            VERIFIED_FOOTAGE_META.set(cid, {
+                frameCount: facts.frameCount,
+                fps: projectFps,
+            });
+            return {
+                id: cid,
+                frameSetSha: facts.frameSetSha,
+                frameCount: facts.frameCount,
+                fps: projectFps,
+                redaction: c.redaction,
+            };
+        });
+    if (lineageById.size !== projection.length)
+        throw new Error("footage lineage mismatch: lineage clip set differs");
+    const projectionSha = crypto
+        .createHash("sha256")
+        .update(Buffer.from(JSON.stringify(projection), "utf8"))
+        .digest("hex");
+    if (DERIVED_FOOTAGE.sha256 !== projectionSha)
+        throw new Error(
+            "footage lineage mismatch: derived projection hash differs",
+        );
 };
-guard(() => verifyFootageLineage());   // seventh guard() site: it throws on invalid approved-clip lineage at module top level, which exited with a native stack rather than a clean refusal
-const footageMeta = id => {
-  const meta = VERIFIED_FOOTAGE_META.get(safeClipId(id));
-  if (!meta) throw new Error(`footage lineage mismatch: unverified playback metadata for ${String(id)}`);
-  return meta;
+guard(() => verifyFootageLineage()); // seventh guard() site: it throws on invalid approved-clip lineage at module top level, which exited with a native stack rather than a clean refusal
+const footageMeta = (id) => {
+    const meta = VERIFIED_FOOTAGE_META.get(safeClipId(id));
+    if (!meta)
+        throw new Error(
+            `footage lineage mismatch: unverified playback metadata for ${String(id)}`,
+        );
+    return meta;
 };
 // Frame dirs are attacker-influenced (timing.json) and are used to build Image.src. Canonically resolve
 // them under evidence-pack first, then require containment in this clip's own subtree.
 const safeFrameDir = (raw, clipId) => {
-  const base = `evidence-pack/footage/${clipId}`;
-  if (!raw) return base;
-  try {
-    const norm = safeEvidenceSrc(raw);
-    const absolute = path.resolve(dir, norm);
-    const clipRoot = path.resolve(EVIDENCE_ROOT, 'footage', clipId);
-    const inside = path.relative(clipRoot, absolute);
-    // NOT escapesRoot(): this is the one site where an EMPTY relative is accepted, because
-    // here it means "the candidate IS the clip root" rather than "it is not inside one".
-    // Spelled out on purpose — the four conditions match that helper and the verdict does
-    // not, so collapsing them would invert this check.
-    return (!inside || (!inside.startsWith(`..${path.sep}`) && inside !== '..' && !path.isAbsolute(inside))) ? norm : base;
-  } catch {
-    return base;
-  }
+    const base = `evidence-pack/footage/${clipId}`;
+    if (!raw) return base;
+    try {
+        const norm = safeEvidenceSrc(raw);
+        const absolute = path.resolve(dir, norm);
+        const clipRoot = path.resolve(EVIDENCE_ROOT, "footage", clipId);
+        const inside = path.relative(clipRoot, absolute);
+        // NOT escapesRoot(): this is the one site where an EMPTY relative is accepted, because
+        // here it means "the candidate IS the clip root" rather than "it is not inside one".
+        // Spelled out on purpose — the four conditions match that helper and the verdict does
+        // not, so collapsing them would invert this check.
+        return !inside ||
+            (!inside.startsWith(`..${path.sep}`) &&
+                inside !== ".." &&
+                !path.isAbsolute(inside))
+            ? norm
+            : base;
+    } catch {
+        return base;
+    }
 };
-const hasFootage = guard(() => timing.segments.some(s => mode(s) === 'footage'));  // mode() now refuses an unknown mode, and this is the FIRST call of it — at module top level, where an unguarded throw is a stack trace rather than a refusal. Sixth instance of that mistake in this file.e clip is approved + redaction-clear
+const hasFootage = guard(() =>
+    timing.segments.some((s) => mode(s) === "footage"),
+); // mode() now refuses an unknown mode, and this is the FIRST call of it — at module top level, where an unguarded throw is a stack trace rather than a refusal. Sixth instance of that mistake in this file.e clip is approved + redaction-clear
 function footageLayer(seg) {
-  const f = seg.visual?.footage || {}, clipId = safeClipId(f.clipId);
-  const clip = footageClip(clipId);
-  if (!footageApproved(clip)) {
-    // Fail closed: never pull an unapproved / unredacted clip into the output. Emit an inert
-    // placeholder (no frame source) so the segment falls back to synthetic content instead.
-    return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, 'generated element id'))}" class="footage-layer footage-blocked" data-clip="${esc(clipId, segWhere(seg, 'visual.footage.clipId'))}"></div>`;
-  }
-  const fdir = safeFrameDir(f.frameDir, clipId);
-  const fit = f.fit === 'cover' ? 'cover' : 'contain', meta = footageMeta(clipId);
-  return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, 'generated element id'))}" class="footage-layer" data-clip="${esc(clipId, segWhere(seg, 'visual.footage.clipId'))}" data-framedir="${esc(fdir, segWhere(seg, 'visual.footage.frameDir'))}" data-framecount="${meta.frameCount}" data-fps="${meta.fps}" data-startms="${Number(f.startAtMs || 0)}" data-segstart="${seg.startMs}" data-segend="${seg.endMs}" style="background-size:${fit}"></div>`;
+    const f = seg.visual?.footage || {},
+        clipId = safeClipId(f.clipId);
+    const clip = footageClip(clipId);
+    if (!footageApproved(clip)) {
+        // Fail closed: never pull an unapproved / unredacted clip into the output. Emit an inert
+        // placeholder (no frame source) so the segment falls back to synthetic content instead.
+        return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, "generated element id"))}" class="footage-layer footage-blocked" data-clip="${esc(clipId, segWhere(seg, "visual.footage.clipId"))}"></div>`;
+    }
+    const fdir = safeFrameDir(f.frameDir, clipId);
+    const fit = f.fit === "cover" ? "cover" : "contain",
+        meta = footageMeta(clipId);
+    return `<div id="${elId(`${seg.id}-footage`, segWhere(seg, "generated element id"))}" class="footage-layer" data-clip="${esc(clipId, segWhere(seg, "visual.footage.clipId"))}" data-framedir="${esc(fdir, segWhere(seg, "visual.footage.frameDir"))}" data-framecount="${meta.frameCount}" data-fps="${meta.fps}" data-startms="${Number(f.startAtMs || 0)}" data-segstart="${seg.startMs}" data-segend="${seg.endMs}" style="background-size:${fit}"></div>`;
 }
 
 // ---- background choice + Azure-multicolor components -----------------------
@@ -551,94 +859,157 @@ function footageLayer(seg) {
 // are decoupled — the same multicolor components read cleanly on any background, and
 // text/surface vars adapt to the background's light|dark mode for AA contrast.
 const PALETTE = BRAND_PALETTE;
-const ca = j => PALETTE[j % PALETTE.length];
+const ca = (j) => PALETTE[j % PALETTE.length];
 const BACKGROUNDS = {
-  white: { mode: 'light', stage: `radial-gradient(circle at 7% 6%,rgba(0,120,212,.10),transparent 30%),radial-gradient(circle at 93% 7%,rgba(227,0,140,.07),transparent 32%),radial-gradient(circle at 91% 94%,rgba(16,124,16,.07),transparent 32%),radial-gradient(circle at 9% 93%,rgba(247,99,12,.07),transparent 32%),linear-gradient(160deg,#FFFFFF,#F5F8FC)` },
-  slate: { mode: 'light', stage: `linear-gradient(160deg,#EEF1F6,#DFE5EE)` },
-  midnight: { mode: 'dark', stage: `radial-gradient(circle at 78% 12%,rgba(80,230,255,.16),transparent 30%),linear-gradient(135deg,#0B1020,#0c1a3a)` },
-  transparent: { mode: 'light', stage: `#FFFFFF` } // MP4 has no alpha — transparent renders as white
+    white: {
+        mode: "light",
+        stage: `radial-gradient(circle at 7% 6%,rgba(0,120,212,.10),transparent 30%),radial-gradient(circle at 93% 7%,rgba(227,0,140,.07),transparent 32%),radial-gradient(circle at 91% 94%,rgba(16,124,16,.07),transparent 32%),radial-gradient(circle at 9% 93%,rgba(247,99,12,.07),transparent 32%),linear-gradient(160deg,#FFFFFF,#F5F8FC)`,
+    },
+    slate: { mode: "light", stage: `linear-gradient(160deg,#EEF1F6,#DFE5EE)` },
+    midnight: {
+        mode: "dark",
+        stage: `radial-gradient(circle at 78% 12%,rgba(80,230,255,.16),transparent 30%),linear-gradient(135deg,#0B1020,#0c1a3a)`,
+    },
+    transparent: { mode: "light", stage: `#FFFFFF` }, // MP4 has no alpha — transparent renders as white
 };
-const bgKey = String(timing.project?.background || timing.intake?.background || '').toLowerCase();
-const bg = BACKGROUNDS[bgKey] || null;       // a chosen background (else null → legacy theme path)
-const multicolor = !!bg;                      // multicolor components turn on with a chosen background
-const bgVars = !bg ? '' : (bg.mode === 'light'
-  ? '--color-text-primary:#201F1E;--color-text-secondary:#2B2A29;--color-card-bg:#FFFFFF;--color-card-border:rgba(0,0,0,.10);--color-accent-1:#0078D4;--color-accent-2:#00B7C3;--color-bg-primary:#FFFFFF;--color-bg-secondary:#F3F5F9'
-  : '--color-text-primary:#FFFFFF;--color-text-secondary:#B7C6DE;--color-card-bg:rgba(255,255,255,.05);--color-card-border:rgba(255,255,255,.12);--color-bg-primary:#0B1020;--color-bg-secondary:#0c1a3a');
+const bgKey = String(
+    timing.project?.background || timing.intake?.background || "",
+).toLowerCase();
+const bg = BACKGROUNDS[bgKey] || null; // a chosen background (else null → legacy theme path)
+const multicolor = !!bg; // multicolor components turn on with a chosen background
+const bgVars = !bg
+    ? ""
+    : bg.mode === "light"
+      ? "--color-text-primary:#201F1E;--color-text-secondary:#2B2A29;--color-card-bg:#FFFFFF;--color-card-border:rgba(0,0,0,.10);--color-accent-1:#0078D4;--color-accent-2:#00B7C3;--color-bg-primary:#FFFFFF;--color-bg-secondary:#F3F5F9"
+      : "--color-text-primary:#FFFFFF;--color-text-secondary:#B7C6DE;--color-card-bg:rgba(255,255,255,.05);--color-card-border:rgba(255,255,255,.12);--color-bg-primary:#0B1020;--color-bg-secondary:#0c1a3a";
 
 // ---- per-mode slide body -------------------------------------------------
 function narrative(seg) {
-  const v = seg.visual || {};
-  const cards = (v.items || []).slice(0, 6).map((it, j) => {
-    const accent = multicolor ? ca(j) : null;
-    const cstyle = accent ? ` style="--ca:${accent};border-top:4px solid ${accent}"` : '';
-    const statCls = accent ? 'stat' : 'stat gradient-text';
-    return `<div id="${elId(`${seg.id}-item-${j}`, segWhere(seg, 'generated element id'))}" class="el card"${cstyle}><div class="kicker">${esc(it.label || 'Point ' + (j + 1), segWhere(seg, `visual.items[${j}].label`))}</div>${it.value ? `<div class="${statCls}">${esc(it.value, segWhere(seg, `visual.items[${j}].value`))}</div>` : ''}<div class="body">${esc(it.text || it.title || '', segWhere(seg, `visual.items[${j}].text`))}</div></div>`;
-  }).join('');
-  const shots = (v.shots || (v.image ? [{ src: v.image, label: v.imageLabel }] : [])).slice(0, 4).map((s, j) => {
-    const src = checkedSrc(s.src, seg.id, 'visual.shots[].src');   // aggregates via safeEvidenceSrc(s.src); null => reported below, nothing emitted
-    if (!src) return '';
-    return `<figure id="${elId(`${seg.id}-shot-${j}`, segWhere(seg, 'generated element id'))}" class="el shot"><img src="${esc(src, segWhere(seg, `visual.shots[${j}].src`))}" alt="${esc(s.label || '', segWhere(seg, `visual.shots[${j}].label`))}" loading="eager"/>${s.label ? `<figcaption>${esc(s.label, segWhere(seg, `visual.shots[${j}].label`))}</figcaption>` : ''}</figure>`;
-  }).join('');
-  return `${cards ? `<div class="grid">${cards}</div>` : ''}${shots ? `<div class="shots">${shots}</div>` : ''}`;
+    const v = seg.visual || {};
+    const cards = (v.items || [])
+        .slice(0, 6)
+        .map((it, j) => {
+            const accent = multicolor ? ca(j) : null;
+            const cstyle = accent
+                ? ` style="--ca:${accent};border-top:4px solid ${accent}"`
+                : "";
+            const statCls = accent ? "stat" : "stat gradient-text";
+            return `<div id="${elId(`${seg.id}-item-${j}`, segWhere(seg, "generated element id"))}" class="el card"${cstyle}><div class="kicker">${esc(it.label || "Point " + (j + 1), segWhere(seg, `visual.items[${j}].label`))}</div>${it.value ? `<div class="${statCls}">${esc(it.value, segWhere(seg, `visual.items[${j}].value`))}</div>` : ""}<div class="body">${esc(it.text || it.title || "", segWhere(seg, `visual.items[${j}].text`))}</div></div>`;
+        })
+        .join("");
+    const shots = (
+        v.shots || (v.image ? [{ src: v.image, label: v.imageLabel }] : [])
+    )
+        .slice(0, 4)
+        .map((s, j) => {
+            const src = checkedSrc(s.src, seg.id, "visual.shots[].src"); // aggregates via safeEvidenceSrc(s.src); null => reported below, nothing emitted
+            if (!src) return "";
+            return `<figure id="${elId(`${seg.id}-shot-${j}`, segWhere(seg, "generated element id"))}" class="el shot"><img src="${esc(src, segWhere(seg, `visual.shots[${j}].src`))}" alt="${esc(s.label || "", segWhere(seg, `visual.shots[${j}].label`))}" loading="eager"/>${s.label ? `<figcaption>${esc(s.label, segWhere(seg, `visual.shots[${j}].label`))}</figcaption>` : ""}</figure>`;
+        })
+        .join("");
+    return `${cards ? `<div class="grid">${cards}</div>` : ""}${shots ? `<div class="shots">${shots}</div>` : ""}`;
 }
 
 function diagram(seg) {
-  const v = seg.visual || {}, nodes = v.nodes || [], edges = v.edges || [];
-  const nodeAt = id => nodes.find(n => n.id === id) || {};
-  const cx = n => Number(n.x || ND.x) + Number(n.w || ND.w) / 2, cy = n => Number(n.y || ND.y) + Number(n.h || ND.h) / 2;
-  // point on node n's border along the line toward (tx,ty), with a small gap so the arrowhead clears the box
-  const border = (n, tx, ty, gap = 10) => {
-    const nx = Number(n.x || ND.x), ny = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
-    const px = nx + nw / 2, py = ny + nh / 2, dx = tx - px, dy = ty - py;
-    if (!dx && !dy) return [px, py];
-    const s = Math.min(dx ? (nw / 2 + gap) / Math.abs(dx) : Infinity, dy ? (nh / 2 + gap) / Math.abs(dy) : Infinity);
-    return [px + dx * s, py + dy * s];
-  };
-  const nodeSvg = nodes.map((n, j) => {
-    const x = Number(n.x || ND.x), y = Number(n.y || ND.y), nw = Number(n.w || ND.w), nh = Number(n.h || ND.h);
-    const st = multicolor ? ` style="--ca:${ca(j)}"` : '';
-    // Node label uses a wrapping HTML block (foreignObject) instead of a single SVG <text> line so long
-    // labels wrap + fit INSIDE the box (no overflow past the rounded rect). See `.nodelabel` CSS.
-    return `<g id="${elId(`${seg.id}-node-${n.id}`, segWhere(seg, 'generated element id'))}" class="el dnode"${st}><rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="14"/><foreignObject x="${x}" y="${y}" width="${nw}" height="${nh}"><div xmlns="http://www.w3.org/1999/xhtml" class="nodelabel">${esc(n.label || n.id || '', segWhere(seg, `visual.nodes[${j}].label`))}</div></foreignObject></g>`;
-  }).join('');
-  const edgeSvg = edges.map((e, j) => {
-    const a = nodeAt(e.from), b = nodeAt(e.to);
-    const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
-    const st = multicolor ? ` style="--ce:${ca(j)}"` : '';
-    const marker = multicolor ? generatedElId(seg.id, 'arr', e, j) : 'arrow';
-    return `<path id="${elId(generatedElId(seg.id, 'edge', e, j), segWhere(seg, 'generated element id'))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
-  }).join('');
-  // Edge labels are emitted AFTER the nodes so they paint on TOP (never hidden behind a box or an
-  // arrowhead) and carry a stroke halo (see `.delabel` CSS) so the text stays legible over any line.
-  // Each keeps its `el`/`-edgelabel-` id so the runtime reveals it together with its edge (drawEdge) —
-  // previously edge labels carried `el` (visibility:hidden) but no trigger ever showed them.
-  const labelSvg = edges.map((e, j) => {
-    if (!e.label) return '';
-    const a = nodeAt(e.from), b = nodeAt(e.to);
-    const [ax, ay] = border(a, cx(b), cy(b)), [bx, by] = border(b, cx(a), cy(a));
-    return `<text id="${elId(generatedElId(seg.id, 'edgelabel', e, j), segWhere(seg, 'generated element id'))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
-  }).join('');
-  // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
-  // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
-  // direction read at video scale, but at 10 the heads read as heavy blobs on a 4K frame —
-  // reported across three separate segments before it was recognised as a global default
-  // rather than a per-diagram choice. refX tracks the width at the same 0.8 ratio so the
-  // head still meets the line.
-const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
-  const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
-  const multiMarkers = multicolor ? edges.map((e, j) =>
-    `<marker id="${elId(generatedElId(seg.id, 'arr', e, j), segWhere(seg, 'generated element id'))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`).join('') : '';
-  return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX, segWhere(seg, 'visual.viewBox'))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
+    const v = seg.visual || {},
+        nodes = v.nodes || [],
+        edges = v.edges || [];
+    const nodeAt = (id) => nodes.find((n) => n.id === id) || {};
+    const cx = (n) => Number(n.x || ND.x) + Number(n.w || ND.w) / 2,
+        cy = (n) => Number(n.y || ND.y) + Number(n.h || ND.h) / 2;
+    // point on node n's border along the line toward (tx,ty), with a small gap so the arrowhead clears the box
+    const border = (n, tx, ty, gap = 10) => {
+        const nx = Number(n.x || ND.x),
+            ny = Number(n.y || ND.y),
+            nw = Number(n.w || ND.w),
+            nh = Number(n.h || ND.h);
+        const px = nx + nw / 2,
+            py = ny + nh / 2,
+            dx = tx - px,
+            dy = ty - py;
+        if (!dx && !dy) return [px, py];
+        const s = Math.min(
+            dx ? (nw / 2 + gap) / Math.abs(dx) : Infinity,
+            dy ? (nh / 2 + gap) / Math.abs(dy) : Infinity,
+        );
+        return [px + dx * s, py + dy * s];
+    };
+    const nodeSvg = nodes
+        .map((n, j) => {
+            const x = Number(n.x || ND.x),
+                y = Number(n.y || ND.y),
+                nw = Number(n.w || ND.w),
+                nh = Number(n.h || ND.h);
+            const st = multicolor ? ` style="--ca:${ca(j)}"` : "";
+            // Node label uses a wrapping HTML block (foreignObject) instead of a single SVG <text> line so long
+            // labels wrap + fit INSIDE the box (no overflow past the rounded rect). See `.nodelabel` CSS.
+            return `<g id="${elId(`${seg.id}-node-${n.id}`, segWhere(seg, "generated element id"))}" class="el dnode"${st}><rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="14"/><foreignObject x="${x}" y="${y}" width="${nw}" height="${nh}"><div xmlns="http://www.w3.org/1999/xhtml" class="nodelabel">${esc(n.label || n.id || "", segWhere(seg, `visual.nodes[${j}].label`))}</div></foreignObject></g>`;
+        })
+        .join("");
+    const edgeSvg = edges
+        .map((e, j) => {
+            const a = nodeAt(e.from),
+                b = nodeAt(e.to);
+            const [ax, ay] = border(a, cx(b), cy(b)),
+                [bx, by] = border(b, cx(a), cy(a));
+            const st = multicolor ? ` style="--ce:${ca(j)}"` : "";
+            const marker = multicolor
+                ? generatedElId(seg.id, "arr", e, j)
+                : "arrow";
+            return `<path id="${elId(generatedElId(seg.id, "edge", e, j), segWhere(seg, "generated element id"))}" class="el dedge"${st} d="M ${ax} ${ay} L ${bx} ${by}" marker-end="url(#${marker})"/>`;
+        })
+        .join("");
+    // Edge labels are emitted AFTER the nodes so they paint on TOP (never hidden behind a box or an
+    // arrowhead) and carry a stroke halo (see `.delabel` CSS) so the text stays legible over any line.
+    // Each keeps its `el`/`-edgelabel-` id so the runtime reveals it together with its edge (drawEdge) —
+    // previously edge labels carried `el` (visibility:hidden) but no trigger ever showed them.
+    const labelSvg = edges
+        .map((e, j) => {
+            if (!e.label) return "";
+            const a = nodeAt(e.from),
+                b = nodeAt(e.to);
+            const [ax, ay] = border(a, cx(b), cy(b)),
+                [bx, by] = border(b, cx(a), cy(a));
+            return `<text id="${elId(generatedElId(seg.id, "edgelabel", e, j), segWhere(seg, "generated element id"))}" class="el delabel" x="${(ax + bx) / 2}" y="${(ay + by) / 2 - 14}" text-anchor="middle">${esc(e.label, segWhere(seg, `visual.edges[${j}].label`))}</text>`;
+        })
+        .join("");
+    // Arrowhead size is per-visual (visual.arrowSize), so one diagram can change it without
+    // changing every other diagram in every project. Default 6. It was 10, raised from 7 so
+    // direction read at video scale, but at 10 the heads read as heavy blobs on a 4K frame —
+    // reported across three separate segments before it was recognised as a global default
+    // rather than a per-diagram choice. refX tracks the width at the same 0.8 ratio so the
+    // head still meets the line.
+    const aSize = Number(v.arrowSize) > 0 ? Number(v.arrowSize) : 6;
+    const arrowDims = `refX="${+(aSize * 0.8).toFixed(2)}" refY="5" markerWidth="${aSize}" markerHeight="${aSize}"`;
+    const multiMarkers = multicolor
+        ? edges
+              .map(
+                  (e, j) =>
+                      `<marker id="${elId(generatedElId(seg.id, "arr", e, j), segWhere(seg, "generated element id"))}" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${ca(j)}"/></marker>`,
+              )
+              .join("")
+        : "";
+    return `<svg class="diagram-svg" viewBox="${esc(v.viewBox || DIAGRAM_VIEWBOX, segWhere(seg, "visual.viewBox"))}" preserveAspectRatio="xMidYMid meet"><defs><marker id="arrow" viewBox="0 0 10 10" ${arrowDims} orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>${multiMarkers}</defs>${edgeSvg}${nodeSvg}${labelSvg}</svg>`;
 }
 
 function live(seg) {
-  const v = seg.visual || {}, url = v.url || 'app.localhost', shot = v.shot || v.image;
-  const shotSrc = shot ? (checkedSrc(shot, seg.id, 'visual.shot') || '') : '';   // aggregates via safeEvidenceSrc(shot)
-  const fields = (v.fields || []).map((f, j) =>
-    `<div id="${elId(generatedElId(seg.id, 'field', f, j), segWhere(seg, 'generated element id'))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || '', segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || '', segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`).join('');
-  const hotspots = (v.hotspots || []).map((hp, j) =>
-    `<div id="${elId(generatedElId(seg.id, 'hotspot', hp, j), segWhere(seg, 'generated element id'))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || '', segWhere(seg, `visual.hotspots[${j}].label`))}</div>`).join('');
-  return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url, segWhere(seg, 'visual.url'))}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc, segWhere(seg, 'visual.shot'))}" alt=""/>` : ''}${fields}${hotspots}<div id="${elId(`${seg.id}-cursor`, segWhere(seg, 'generated element id'))}" class="cursor"></div></div></div>`;
+    const v = seg.visual || {},
+        url = v.url || "app.localhost",
+        shot = v.shot || v.image;
+    const shotSrc = shot ? checkedSrc(shot, seg.id, "visual.shot") || "" : ""; // aggregates via safeEvidenceSrc(shot)
+    const fields = (v.fields || [])
+        .map(
+            (f, j) =>
+                `<div id="${elId(generatedElId(seg.id, "field", f, j), segWhere(seg, "generated element id"))}" class="el livefield" style="left:${Number(f.x || 4)}%;top:${Number(f.y || 12)}%;width:${Number(f.w || 30)}%"><span class="livelabel">${esc(f.label || "", segWhere(seg, `visual.fields[${j}].label`))}</span><span class="liveinput" data-text="${esc(f.text || "", segWhere(seg, `visual.fields[${j}].text`))}"></span></div>`,
+        )
+        .join("");
+    const hotspots = (v.hotspots || [])
+        .map(
+            (hp, j) =>
+                `<div id="${elId(generatedElId(seg.id, "hotspot", hp, j), segWhere(seg, "generated element id"))}" class="el hotspot" style="left:${Number(hp.x || 50)}%;top:${Number(hp.y || 50)}%">${esc(hp.label || "", segWhere(seg, `visual.hotspots[${j}].label`))}</div>`,
+        )
+        .join("");
+    return `<div class="browser"><div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><div class="urlbar">${esc(url, segWhere(seg, "visual.url"))}</div></div><div class="viewport">${shotSrc ? `<img class="liveshot" src="${esc(shotSrc, segWhere(seg, "visual.shot"))}" alt=""/>` : ""}${fields}${hotspots}<div id="${elId(`${seg.id}-cursor`, segWhere(seg, "generated element id"))}" class="cursor"></div></div></div>`;
 }
 
 // ---- code mode: a real JSON object on screen, addressable field by field ----
@@ -647,431 +1018,726 @@ function live(seg) {
 // of authored copy. Two guards below exist only because of that.
 
 const codePathId = (segId, p) =>
-  `${segId}-path-${String(p).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
+    `${segId}-path-${String(p)
+        .replace(/[^A-Za-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .toLowerCase()}`;
 
 /** Renders one JSON value, recording every addressable path it emits. */
 function jsonHtml(value, segId, at, depth, paths) {
-  const pad = n => '  '.repeat(n);
-  const entry = (p, inner, block) => {
-    paths.push(p);
-    return `<span class="j-entry${block ? ' j-block' : ''}" id="${elId(codePathId(segId, p), `code JSON path id for ${at || '(root)'}`)}" data-path="${esc(p, `code JSON path ${at || '(root)'}`)}">${inner}</span>`;
-  };
+    const pad = (n) => "  ".repeat(n);
+    const entry = (p, inner, block) => {
+        paths.push(p);
+        return `<span class="j-entry${block ? " j-block" : ""}" id="${elId(codePathId(segId, p), `code JSON path id for ${at || "(root)"}`)}" data-path="${esc(p, `code JSON path ${at || "(root)"}`)}">${inner}</span>`;
+    };
 
-  if (Array.isArray(value)) {
-    if (!value.length) return '<span class="j-punc">[]</span>';
-    const items = value
-      .map((v, i) => {
-        const p = `${at}[${i}]`;
-        // The separator lives INSIDE the entry. A block-level container would otherwise
-        // orphan the comma onto its own line once the highlight makes it display:block.
-        const inner = jsonHtml(v, segId, p, depth + 1, paths) +
-          (i < value.length - 1 ? '<span class="j-punc">,</span>' : '');
-        return `${pad(depth + 1)}${entry(p, inner, v !== null && typeof v === 'object')}`;
-      })
-      .join('\n');
-    return `<span class="j-punc">[</span>\n${items}\n${pad(depth)}<span class="j-punc">]</span>`;
-  }
-  if (value && typeof value === 'object') {
-    const keys = Object.keys(value);
-    if (!keys.length) return '<span class="j-punc">{}</span>';
-    const items = keys
-      .map((k, i) => {
-        const p = at ? `${at}.${k}` : k;
-        const inner = `<span class="j-key">"${esc(k, `code JSON key under ${at || '(root)'}`)}"</span><span class="j-punc">: </span>` +
-          jsonHtml(value[k], segId, p, depth + 1, paths) +
-          (i < keys.length - 1 ? '<span class="j-punc">,</span>' : '');
-        return `${pad(depth + 1)}${entry(p, inner, value[k] !== null && typeof value[k] === 'object')}`;
-      })
-      .join('\n');
-    return `<span class="j-punc">{</span>\n${items}\n${pad(depth)}<span class="j-punc">}</span>`;
-  }
-  if (typeof value === 'string') return `<span class="j-str">"${esc(value, `code JSON value at ${at || '(root)'}`)}"</span>`;
-  if (typeof value === 'number') return `<span class="j-num">${esc(value, `code JSON value at ${at || '(root)'}`)}</span>`;
-  if (typeof value === 'boolean') return `<span class="j-bool">${esc(value, `code JSON value at ${at || '(root)'}`)}</span>`;
-  return `<span class="j-null">${esc('null', `code JSON value at ${at || '(root)'}`)}</span>`;
+    if (Array.isArray(value)) {
+        if (!value.length) return '<span class="j-punc">[]</span>';
+        const items = value
+            .map((v, i) => {
+                const p = `${at}[${i}]`;
+                // The separator lives INSIDE the entry. A block-level container would otherwise
+                // orphan the comma onto its own line once the highlight makes it display:block.
+                const inner =
+                    jsonHtml(v, segId, p, depth + 1, paths) +
+                    (i < value.length - 1
+                        ? '<span class="j-punc">,</span>'
+                        : "");
+                return `${pad(depth + 1)}${entry(p, inner, v !== null && typeof v === "object")}`;
+            })
+            .join("\n");
+        return `<span class="j-punc">[</span>\n${items}\n${pad(depth)}<span class="j-punc">]</span>`;
+    }
+    if (value && typeof value === "object") {
+        const keys = Object.keys(value);
+        if (!keys.length) return '<span class="j-punc">{}</span>';
+        const items = keys
+            .map((k, i) => {
+                const p = at ? `${at}.${k}` : k;
+                const inner =
+                    `<span class="j-key">"${esc(k, `code JSON key under ${at || "(root)"}`)}"</span><span class="j-punc">: </span>` +
+                    jsonHtml(value[k], segId, p, depth + 1, paths) +
+                    (i < keys.length - 1
+                        ? '<span class="j-punc">,</span>'
+                        : "");
+                return `${pad(depth + 1)}${entry(p, inner, value[k] !== null && typeof value[k] === "object")}`;
+            })
+            .join("\n");
+        return `<span class="j-punc">{</span>\n${items}\n${pad(depth)}<span class="j-punc">}</span>`;
+    }
+    if (typeof value === "string")
+        return `<span class="j-str">"${esc(value, `code JSON value at ${at || "(root)"}`)}"</span>`;
+    if (typeof value === "number")
+        return `<span class="j-num">${esc(value, `code JSON value at ${at || "(root)"}`)}</span>`;
+    if (typeof value === "boolean")
+        return `<span class="j-bool">${esc(value, `code JSON value at ${at || "(root)"}`)}</span>`;
+    return `<span class="j-null">${esc("null", `code JSON value at ${at || "(root)"}`)}</span>`;
 }
 
 function codeBlock(seg) {
-  const v = seg.visual || {};
-  let data = v.json;
+    const v = seg.visual || {};
+    let data = v.json;
 
-  if (data === undefined && v.jsonFile) {
-    // CONFINED AT RESOLUTION TIME, NOT AT RENDER TIME.
-    //
-    // My first version compared `path.relative(dir, abs)` — lexical only, so it could not
-    // see a link that stays inside the project as TEXT while pointing outside it once
-    // followed. resolveWithinRoot canonicalises and re-checks after following links.
-    //
-    // The boundary matters more here than anywhere else in this file. Every other visual
-    // mode renders authored copy; `code` mode renders the file's contents straight into
-    // the frame. An escaping read is not a log line someone might notice — it is
-    // composited into the video and encoded. And the guard must run BEFORE the read,
-    // because JSON.parse quotes the first bytes it parsed in its error message, so a
-    // parse failure discloses the file whether or not it is ever drawn.
-    //
-    // No-go patterns cannot cover this: they match content you predicted, and a link
-    // redirect changes WHICH FILE you read.
-    // SCREEN BEFORE THE DIAGNOSTICS THAT QUOTE THEM. Every refusal below names `v.jsonFile`,
-    // and the `pick` refusal names `v.pick` and the component it stopped at. None of those
-    // values is part of the walked JSON — a missing file and an unresolved path are
-    // precisely the cases where the no-go scan never runs — so without this they are quoted
-    // unscreened. Screened here, a disclosing value refuses by position and the quotes below
-    // are only reachable for a safe one.
-    assertNotDisclosing(String(v.jsonFile ?? ''), segWhere(seg, 'visual.jsonFile'));
-    if (v.pick != null) assertNotDisclosing(String(v.pick), segWhere(seg, 'visual.pick'));
-    const abs = resolveWithinRoot(dir, v.jsonFile, `segment "${seg.id}" visual.jsonFile`);
-    if (!fs.existsSync(abs)) throw new CliError(`segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`);
-    try { data = JSON.parse(fs.readFileSync(abs, 'utf8')); }
-    catch (e) {
-      // Do NOT echo the parser message: it embeds file contents.
-      throw new CliError(`segment "${seg.id}": visual.jsonFile is not valid JSON (${v.jsonFile})`);
-    }
-    if (v.pick) {
-      // `k in data` walks the prototype chain and does not check the container's type, so
-      // `__proto__` resolves without existing in the JSON, and descending into a STRING
-      // throws a native error that can quote that string — before the no-go guard has run.
-      // Own properties of objects and arrays only, and a content-free refusal.
-      for (const k of String(v.pick).split('.')) {
-        const isContainer = data !== null && typeof data === 'object';
-        if (!isContainer || !Object.prototype.hasOwnProperty.call(data, k)) {
-          throw new CliError(`segment "${seg.id}": visual.pick path "${v.pick}" does not resolve in ${v.jsonFile} (stopped at "${k}")`);
+    if (data === undefined && v.jsonFile) {
+        // CONFINED AT RESOLUTION TIME, NOT AT RENDER TIME.
+        //
+        // My first version compared `path.relative(dir, abs)` — lexical only, so it could not
+        // see a link that stays inside the project as TEXT while pointing outside it once
+        // followed. resolveWithinRoot canonicalises and re-checks after following links.
+        //
+        // The boundary matters more here than anywhere else in this file. Every other visual
+        // mode renders authored copy; `code` mode renders the file's contents straight into
+        // the frame. An escaping read is not a log line someone might notice — it is
+        // composited into the video and encoded. And the guard must run BEFORE the read,
+        // because JSON.parse quotes the first bytes it parsed in its error message, so a
+        // parse failure discloses the file whether or not it is ever drawn.
+        //
+        // No-go patterns cannot cover this: they match content you predicted, and a link
+        // redirect changes WHICH FILE you read.
+        // SCREEN BEFORE THE DIAGNOSTICS THAT QUOTE THEM. Every refusal below names `v.jsonFile`,
+        // and the `pick` refusal names `v.pick` and the component it stopped at. None of those
+        // values is part of the walked JSON — a missing file and an unresolved path are
+        // precisely the cases where the no-go scan never runs — so without this they are quoted
+        // unscreened. Screened here, a disclosing value refuses by position and the quotes below
+        // are only reachable for a safe one.
+        assertNotDisclosing(
+            String(v.jsonFile ?? ""),
+            segWhere(seg, "visual.jsonFile"),
+        );
+        if (v.pick != null)
+            assertNotDisclosing(String(v.pick), segWhere(seg, "visual.pick"));
+        const abs = resolveWithinRoot(
+            dir,
+            v.jsonFile,
+            `segment "${seg.id}" visual.jsonFile`,
+        );
+        if (!fs.existsSync(abs))
+            throw new CliError(
+                `segment "${seg.id}": visual.jsonFile not found — ${v.jsonFile}`,
+            );
+        try {
+            data = JSON.parse(fs.readFileSync(abs, "utf8"));
+        } catch (e) {
+            // Do NOT echo the parser message: it embeds file contents.
+            throw new CliError(
+                `segment "${seg.id}": visual.jsonFile is not valid JSON (${v.jsonFile})`,
+            );
         }
-        data = data[k];
-      }
-    }
-  }
-  if (data === undefined) throw new CliError(`segment "${seg.id}": code mode needs visual.json or visual.jsonFile`);
-
-  // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
-  // This is the only mode that renders data nobody wrote for the screen, so the patterns
-  // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
-  //
-  // The refusal names the PATTERN'S INDEX and the JSON PATH, never the pattern's source
-  // text and never the matched value. An earlier version printed 80 characters of the
-  // match "so the author could see what tripped" — which moves the very content the
-  // pattern exists to contain into the console and the render log. A guard that discloses
-  // what it refuses has done the damage it was preventing.
-  //
-  // That reasoning was written here, applied to the match, and NOT applied to the pattern,
-  // which this stage went on to print on both refusal paths. A no-go list is by
-  // construction a list of the strings an author wants kept off the screen — on the one
-  // real sample project they are internal hostnames — so echoing the pattern leaks the
-  // same class of value, through the path that fires when the guard SUCCEEDS.
-  // validate-scene.mjs:748 had already ruled the other way for the same field: "The
-  // pattern is no safer than the match." The index is the handle; it says which pattern
-  // without saying what it is, and the author can read it in their own file.
-  const patterns = timing.project?.noGoPatterns;
-  if (!Array.isArray(patterns)) {
-    // ABSENT IS NOT PERMISSION. Defaulting to "no patterns" makes the frame-boundary
-    // guarantee inert exactly where it matters — a project that never configured it is
-    // the one least likely to have reviewed its source data. Opting out has to be said
-    // out loud, so an empty array is accepted and a missing key is refused.
-    throw new CliError(
-      `segment "${seg.id}": code mode requires timing.project.noGoPatterns.\n` +
-      'This mode renders source data straight into the frame, and unlike authored copy it\n' +
-      'gets no human review, so the no-go list is mandatory rather than optional.\n' +
-      'Set it to [] to state explicitly that this object needs no redaction.');
-  }
-  if (patterns.length) {
-    // The shape is cli-support's `noGoPatternsProblem`, shared with validate-scene. This
-    // stage previously checked only `Array.isArray`, so `[123]` was coerced to "123" by
-    // `new RegExp` and became a live pattern, and neither the count nor each pattern's
-    // length was bounded. The absence refusal above stays local: it is this stage's own
-    // code-mode rule, and a render stage refusing is not the same act as a report stage
-    // recording a finding.
-    const shape = noGoPatternsProblem(patterns, 'timing.project.noGoPatterns');
-    if (shape) throw new CliError(shape);
-    const hits = [];
-    // Compile every pattern BEFORE walking, so a key can be tested against all of them.
-    // A key is disclosed through the path of any hit beneath it, not just its own, so the
-    // decision to print it cannot depend on which pattern is currently being walked.
-    const compiled = patterns.map((src, index) => {
-      try { return { index, src, re: new RegExp(src, 'i') }; }
-      catch { throw new CliError(`timing.project.noGoPatterns[${index}] is not a valid regular expression`); }
-    });
-    // A KEY IS PRINTABLE ONLY IF IT DISCLOSES NOTHING. It is withheld when it matches any
-    // pattern — a matching key IS the matched value — and also when it carries a pattern's
-    // source text literally, which is how an author who names a key after their own regex
-    // would otherwise have that regex echoed. Everything else is ordinary structure and is
-    // kept, because the path is the author's only locator and a refusal nobody can act on
-    // is its own defect.
-    //
-    // `i` is the key's position in Object.keys() ENUMERATION order, which is not the order
-    // in the file: V8 emits integer-like keys first. The trailing note below says so rather
-    // than letting the number read as a line position.
-    const discloses = (s) => compiled.some(c => c.re.test(s) || s.includes(c.src));
-    // A DEGENERATE PATTERN DEGRADES THIS, AND THAT IS CORRECT. `.*` makes `discloses` true
-    // for every string, so every component is withheld and the refusal keeps only the
-    // pattern's index. But `.*` also matches every value in the data, so that project
-    // refuses whatever it contains: the locators are uninformative because the pattern is,
-    // not because the screening is wrong. `noGoPatternsProblem` bounds count and length and
-    // deliberately does not judge what a pattern matches.
-    const shownKey = (k, i) => (discloses(k) ? `key #${i}` : k);
-    // AN ARRAY INDEX IS A PATH COMPONENT TOO, and it is screened the same way. Unlike a key
-    // there is no non-disclosing substitute that is still a locator — the index IS the
-    // digits that would collide — so the component is dropped. The containing path and the
-    // pattern's index remain, which is enough to find it in the source file.
-    const shownIndex = (i) => (discloses(String(i)) ? '[…]' : `[${i}]`);
-    // AND THE FINISHED PATH IS SCREENED TOO. Screening each component is not the same as
-    // screening what is printed: with pattern `foo.bar`, the keys `foo` and `bar` each pass
-    // on their own and the path they assemble into does not. There is no safe partial form
-    // of a string whose whole is the disclosure, so it is withheld; the pattern's index
-    // remains, and the author can run that pattern over their own file.
-    const shownPath = (at) => (discloses(at) ? '(path withheld — it would itself disclose)' : at);
-    for (const { index, re } of compiled) {
-      // Walk values rather than the serialised blob, so a hit can be reported by path.
-      //
-      // IT DOES NOT DETECT:
-      //   1. Authored copy — titles, labels, subtitles, voiceover. Only `visual.json` source
-      //      data is walked, because copy is human-reviewed and source data is not. Those
-      //      strings are screened where they are EMITTED instead, by `esc(value, where)`.
-      //   2. Anything outside this segment's rendered object. Identifiers are screened at the
-      //      top of this stage, and derived identifiers by `elId()` where they are formed.
-      //
-      // IT NO LONGER FAILS TO DETECT booleans or null. The walk still tests strings and
-      // numbers only, so a pattern matching the literal `true`, `false` or `null` does not
-      // refuse HERE — but `jsonHtml` renders every scalar through `esc(value, …)`, which
-      // screens what is actually about to appear on screen whatever its type. The gap closed
-      // without this walk changing, which is the point of screening at emission.
-      //
-      // The walk carries TWO paths. `at` is what gets PRINTED, with disclosing components
-      // already substituted. `real` is the path as `jsonHtml` will emit it in `data-path`
-      // (`:441`), and it is screened in its own right: with pattern `foo.bar` and data
-      // `{foo:{bar:"safe"}}`, no key and no value matches, yet `data-path="foo.bar"` shipped
-      // in the HTML at exit 0. MEASURED before this check existed.
-      const walk = (val, at, real) => {
-        if (typeof val === 'string' || typeof val === 'number') {
-          if (re.test(String(val))) hits.push({ index, at: at || '(root)' });
-        } else if (Array.isArray(val)) {
-          val.forEach((v, i) => walk(v, `${at}${shownIndex(i)}`, `${real}[${i}]`));
-        } else if (val && typeof val === 'object') {
-          Object.keys(val).forEach((k, i) => {
-            const shown = shownKey(k, i);
-            const here = at ? `${at}.${shown}` : shown;
-            const realHere = real ? `${real}.${k}` : k;
-            if (re.test(k)) hits.push({ index, at: here });
-            // The assembled path ships even when neither end of it matches. Only tested
-            // below the root, where it differs from the key already tested above.
-            else if (real && re.test(realHere)) hits.push({ index, at: here });
-            walk(val[k], here, realHere);
-          });
+        if (v.pick) {
+            // `k in data` walks the prototype chain and does not check the container's type, so
+            // `__proto__` resolves without existing in the JSON, and descending into a STRING
+            // throws a native error that can quote that string — before the no-go guard has run.
+            // Own properties of objects and arrays only, and a content-free refusal.
+            for (const k of String(v.pick).split(".")) {
+                const isContainer = data !== null && typeof data === "object";
+                if (
+                    !isContainer ||
+                    !Object.prototype.hasOwnProperty.call(data, k)
+                ) {
+                    throw new CliError(
+                        `segment "${seg.id}": visual.pick path "${v.pick}" does not resolve in ${v.jsonFile} (stopped at "${k}")`,
+                    );
+                }
+                data = data[k];
+            }
         }
-      };
-      walk(data, '', '');
     }
-    if (hits.length) {
-      throw new CliError(
-        `segment "${seg.id}": code mode refused — ${hits.length} no-go match(es).\n` +
-        hits.slice(0, 10).map(h => `  timing.project.noGoPatterns[${h.index}] matched at ${shownPath(h.at)}`).join('\n') +
-        (hits.length > 10 ? `\n  …and ${hits.length - 10} more` : '') +
-        '\n\nThe matched text and the pattern are both withheld deliberately — read them in\n' +
-        'the source file. A path component shown as `key #N` or `[…]` is one that would\n' +
-        'itself have disclosed one of them; N counts keys in JavaScript enumeration order,\n' +
-        'which puts integer-like keys first and so is not the order they appear in the file.\n' +
-        'Redact the source object or narrow visual.pick; do not render it and rely on it\n' +
-        'being small on screen.');
-    }
-  }
+    if (data === undefined)
+        throw new CliError(
+            `segment "${seg.id}": code mode needs visual.json or visual.jsonFile`,
+        );
 
-  const paths = [];
-  const html = jsonHtml(data, seg.id, '', 0, paths);
-  const emitted = new Set(paths);
-
-  // GUARD 2 — a highlight that addresses a path which does not exist must FAIL THE BUILD.
-  // Rendering nothing is indistinguishable from a highlight the viewer simply missed, and
-  // that failure mode has already cost this pipeline a card: a trigger whose target did not
-  // resolve returned null, animated nothing, and reported success. A check that cannot fire
-  // looks exactly like a check that passed.
-  const near = p => {
-    const want = String(p).toLowerCase();
-    const best = paths.filter(c => c.toLowerCase().includes(want.split(/[.[]/)[0])).slice(0, 6);
-    return best.length ? `\n  did you mean: ${best.join(', ')}` : `\n  available: ${paths.slice(0, 12).join(', ')}${paths.length > 12 ? ', …' : ''}`;
-  };
-  for (const [hi, h] of (v.highlights || []).entries()) {
-    if (!emitted.has(h.path)) {
-      // SCREEN BEFORE QUOTING. A highlight path that does NOT exist was never walked, so
-      // the no-go scan has not seen it — and this diagnostic quotes it. Screening it here is
-      // what makes the quote below safe: a disclosing path refuses first, by position.
-      assertNotDisclosing(String(h.path ?? ''), segWhere(seg, `visual.highlights[${hi}].path`));
-      throw new CliError(`segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`);
+    // GUARD 1 — no-go strings. Authored copy is reviewed by a human; source data is not.
+    // This is the only mode that renders data nobody wrote for the screen, so the patterns
+    // are enforced HERE, at the point the data reaches a frame, rather than trusted upstream.
+    //
+    // The refusal names the PATTERN'S INDEX and the JSON PATH, never the pattern's source
+    // text and never the matched value. An earlier version printed 80 characters of the
+    // match "so the author could see what tripped" — which moves the very content the
+    // pattern exists to contain into the console and the render log. A guard that discloses
+    // what it refuses has done the damage it was preventing.
+    //
+    // That reasoning was written here, applied to the match, and NOT applied to the pattern,
+    // which this stage went on to print on both refusal paths. A no-go list is by
+    // construction a list of the strings an author wants kept off the screen — on the one
+    // real sample project they are internal hostnames — so echoing the pattern leaks the
+    // same class of value, through the path that fires when the guard SUCCEEDS.
+    // validate-scene.mjs:748 had already ruled the other way for the same field: "The
+    // pattern is no safer than the match." The index is the handle; it says which pattern
+    // without saying what it is, and the author can read it in their own file.
+    const patterns = timing.project?.noGoPatterns;
+    if (!Array.isArray(patterns)) {
+        // ABSENT IS NOT PERMISSION. Defaulting to "no patterns" makes the frame-boundary
+        // guarantee inert exactly where it matters — a project that never configured it is
+        // the one least likely to have reviewed its source data. Opting out has to be said
+        // out loud, so an empty array is accepted and a missing key is refused.
+        throw new CliError(
+            `segment "${seg.id}": code mode requires timing.project.noGoPatterns.\n` +
+                "This mode renders source data straight into the frame, and unlike authored copy it\n" +
+                "gets no human review, so the no-go list is mandatory rather than optional.\n" +
+                "Set it to [] to state explicitly that this object needs no redaction.",
+        );
     }
-  }
-  const prefix = `${seg.id}-path-`;
-  for (const t of seg.triggers || []) {
-    if (typeof t.target === 'string' && t.target.startsWith(prefix)) {
-      const ok = paths.some(p => codePathId(seg.id, p) === t.target);
-      if (!ok) throw new CliError(`segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`);
+    if (patterns.length) {
+        // The shape is cli-support's `noGoPatternsProblem`, shared with validate-scene. This
+        // stage previously checked only `Array.isArray`, so `[123]` was coerced to "123" by
+        // `new RegExp` and became a live pattern, and neither the count nor each pattern's
+        // length was bounded. The absence refusal above stays local: it is this stage's own
+        // code-mode rule, and a render stage refusing is not the same act as a report stage
+        // recording a finding.
+        const shape = noGoPatternsProblem(
+            patterns,
+            "timing.project.noGoPatterns",
+        );
+        if (shape) throw new CliError(shape);
+        const hits = [];
+        // Compile every pattern BEFORE walking, so a key can be tested against all of them.
+        // A key is disclosed through the path of any hit beneath it, not just its own, so the
+        // decision to print it cannot depend on which pattern is currently being walked.
+        const compiled = patterns.map((src, index) => {
+            try {
+                return { index, src, re: new RegExp(src, "i") };
+            } catch {
+                throw new CliError(
+                    `timing.project.noGoPatterns[${index}] is not a valid regular expression`,
+                );
+            }
+        });
+        // A KEY IS PRINTABLE ONLY IF IT DISCLOSES NOTHING. It is withheld when it matches any
+        // pattern — a matching key IS the matched value — and also when it carries a pattern's
+        // source text literally, which is how an author who names a key after their own regex
+        // would otherwise have that regex echoed. Everything else is ordinary structure and is
+        // kept, because the path is the author's only locator and a refusal nobody can act on
+        // is its own defect.
+        //
+        // `i` is the key's position in Object.keys() ENUMERATION order, which is not the order
+        // in the file: V8 emits integer-like keys first. The trailing note below says so rather
+        // than letting the number read as a line position.
+        const discloses = (s) =>
+            compiled.some((c) => c.re.test(s) || s.includes(c.src));
+        // A DEGENERATE PATTERN DEGRADES THIS, AND THAT IS CORRECT. `.*` makes `discloses` true
+        // for every string, so every component is withheld and the refusal keeps only the
+        // pattern's index. But `.*` also matches every value in the data, so that project
+        // refuses whatever it contains: the locators are uninformative because the pattern is,
+        // not because the screening is wrong. `noGoPatternsProblem` bounds count and length and
+        // deliberately does not judge what a pattern matches.
+        const shownKey = (k, i) => (discloses(k) ? `key #${i}` : k);
+        // AN ARRAY INDEX IS A PATH COMPONENT TOO, and it is screened the same way. Unlike a key
+        // there is no non-disclosing substitute that is still a locator — the index IS the
+        // digits that would collide — so the component is dropped. The containing path and the
+        // pattern's index remain, which is enough to find it in the source file.
+        const shownIndex = (i) => (discloses(String(i)) ? "[…]" : `[${i}]`);
+        // AND THE FINISHED PATH IS SCREENED TOO. Screening each component is not the same as
+        // screening what is printed: with pattern `foo.bar`, the keys `foo` and `bar` each pass
+        // on their own and the path they assemble into does not. There is no safe partial form
+        // of a string whose whole is the disclosure, so it is withheld; the pattern's index
+        // remains, and the author can run that pattern over their own file.
+        const shownPath = (at) =>
+            discloses(at) ? "(path withheld — it would itself disclose)" : at;
+        for (const { index, re } of compiled) {
+            // Walk values rather than the serialised blob, so a hit can be reported by path.
+            //
+            // IT DOES NOT DETECT:
+            //   1. Authored copy — titles, labels, subtitles, voiceover. Only `visual.json` source
+            //      data is walked, because copy is human-reviewed and source data is not. Those
+            //      strings are screened where they are EMITTED instead, by `esc(value, where)`.
+            //   2. Anything outside this segment's rendered object. Identifiers are screened at the
+            //      top of this stage, and derived identifiers by `elId()` where they are formed.
+            //
+            // IT NO LONGER FAILS TO DETECT booleans or null. The walk still tests strings and
+            // numbers only, so a pattern matching the literal `true`, `false` or `null` does not
+            // refuse HERE — but `jsonHtml` renders every scalar through `esc(value, …)`, which
+            // screens what is actually about to appear on screen whatever its type. The gap closed
+            // without this walk changing, which is the point of screening at emission.
+            //
+            // The walk carries TWO paths. `at` is what gets PRINTED, with disclosing components
+            // already substituted. `real` is the path as `jsonHtml` will emit it in `data-path`
+            // (`:441`), and it is screened in its own right: with pattern `foo.bar` and data
+            // `{foo:{bar:"safe"}}`, no key and no value matches, yet `data-path="foo.bar"` shipped
+            // in the HTML at exit 0. MEASURED before this check existed.
+            const walk = (val, at, real) => {
+                if (typeof val === "string" || typeof val === "number") {
+                    if (re.test(String(val)))
+                        hits.push({ index, at: at || "(root)" });
+                } else if (Array.isArray(val)) {
+                    val.forEach((v, i) =>
+                        walk(v, `${at}${shownIndex(i)}`, `${real}[${i}]`),
+                    );
+                } else if (val && typeof val === "object") {
+                    Object.keys(val).forEach((k, i) => {
+                        const shown = shownKey(k, i);
+                        const here = at ? `${at}.${shown}` : shown;
+                        const realHere = real ? `${real}.${k}` : k;
+                        if (re.test(k)) hits.push({ index, at: here });
+                        // The assembled path ships even when neither end of it matches. Only tested
+                        // below the root, where it differs from the key already tested above.
+                        else if (real && re.test(realHere))
+                            hits.push({ index, at: here });
+                        walk(val[k], here, realHere);
+                    });
+                }
+            };
+            walk(data, "", "");
+        }
+        if (hits.length) {
+            throw new CliError(
+                `segment "${seg.id}": code mode refused — ${hits.length} no-go match(es).\n` +
+                    hits
+                        .slice(0, 10)
+                        .map(
+                            (h) =>
+                                `  timing.project.noGoPatterns[${h.index}] matched at ${shownPath(h.at)}`,
+                        )
+                        .join("\n") +
+                    (hits.length > 10
+                        ? `\n  …and ${hits.length - 10} more`
+                        : "") +
+                    "\n\nThe matched text and the pattern are both withheld deliberately — read them in\n" +
+                    "the source file. A path component shown as `key #N` or `[…]` is one that would\n" +
+                    "itself have disclosed one of them; N counts keys in JavaScript enumeration order,\n" +
+                    "which puts integer-like keys first and so is not the order they appear in the file.\n" +
+                    "Redact the source object or narrow visual.pick; do not render it and rely on it\n" +
+                    "being small on screen.",
+            );
+        }
     }
-  }
 
-  const cap = v.caption ? `<figcaption class="codecap">${esc(v.caption, segWhere(seg, 'visual.caption'))}</figcaption>` : '';
-  return `<figure class="codewrap el" id="${elId(`${seg.id}-code`, segWhere(seg, 'generated element id'))}"><pre class="codeblock" data-seg="${esc(seg.id, segWhere(seg, 'id'))}">${html}</pre>${cap}</figure>`;
+    const paths = [];
+    const html = jsonHtml(data, seg.id, "", 0, paths);
+    const emitted = new Set(paths);
+
+    // GUARD 2 — a highlight that addresses a path which does not exist must FAIL THE BUILD.
+    // Rendering nothing is indistinguishable from a highlight the viewer simply missed, and
+    // that failure mode has already cost this pipeline a card: a trigger whose target did not
+    // resolve returned null, animated nothing, and reported success. A check that cannot fire
+    // looks exactly like a check that passed.
+    const near = (p) => {
+        const want = String(p).toLowerCase();
+        const best = paths
+            .filter((c) => c.toLowerCase().includes(want.split(/[.[]/)[0]))
+            .slice(0, 6);
+        return best.length
+            ? `\n  did you mean: ${best.join(", ")}`
+            : `\n  available: ${paths.slice(0, 12).join(", ")}${paths.length > 12 ? ", …" : ""}`;
+    };
+    for (const [hi, h] of (v.highlights || []).entries()) {
+        if (!emitted.has(h.path)) {
+            // SCREEN BEFORE QUOTING. A highlight path that does NOT exist was never walked, so
+            // the no-go scan has not seen it — and this diagnostic quotes it. Screening it here is
+            // what makes the quote below safe: a disclosing path refuses first, by position.
+            assertNotDisclosing(
+                String(h.path ?? ""),
+                segWhere(seg, `visual.highlights[${hi}].path`),
+            );
+            throw new CliError(
+                `segment "${seg.id}": visual.highlights path "${h.path}" does not exist in the rendered JSON.${near(h.path)}`,
+            );
+        }
+    }
+    const prefix = `${seg.id}-path-`;
+    for (const t of seg.triggers || []) {
+        if (typeof t.target === "string" && t.target.startsWith(prefix)) {
+            const ok = paths.some((p) => codePathId(seg.id, p) === t.target);
+            if (!ok)
+                throw new CliError(
+                    `segment "${seg.id}": trigger target "${t.target}" addresses no field in the rendered JSON.${near(t.target.slice(prefix.length))}`,
+                );
+        }
+    }
+
+    const cap = v.caption
+        ? `<figcaption class="codecap">${esc(v.caption, segWhere(seg, "visual.caption"))}</figcaption>`
+        : "";
+    return `<figure class="codewrap el" id="${elId(`${seg.id}-code`, segWhere(seg, "generated element id"))}"><pre class="codeblock" data-seg="${esc(seg.id, segWhere(seg, "id"))}">${html}</pre>${cap}</figure>`;
 }
 
-function body(seg) { const m = mode(seg); return m === 'footage' ? '' : m === 'code' ? codeBlock(seg) : m === 'diagram' ? diagram(seg) : m === 'live' ? live(seg) : narrative(seg); }
+function body(seg) {
+    const m = mode(seg);
+    return m === "footage"
+        ? ""
+        : m === "code"
+          ? codeBlock(seg)
+          : m === "diagram"
+            ? diagram(seg)
+            : m === "live"
+              ? live(seg)
+              : narrative(seg);
+}
 
 function slide(seg, i) {
-  const v = seg.visual || {}, m = mode(seg);
-  if (m === 'footage') {
-    const f = v.footage || {}, ov = f.overlays || ['lowerThird', 'brandBug'];
-    const lt = ov.includes('lowerThird')
-      ? `<div class="safe safe-footage"><div id="${elId(`${seg.id}-lt`, segWhere(seg, 'generated element id'))}" class="el lower-third"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo', segWhere(seg, 'visual.kicker'))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, 'generated element id'))}" class="title lt-title">${esc(v.title || seg.title || '', segWhere(seg, 'visual.title'))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, 'generated element id'))}" class="subtitle lt-sub">${esc(v.subtitle, segWhere(seg, 'visual.subtitle'))}</p>` : ''}</div></div>`
-      : `<div class="safe safe-footage"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="el kicker" style="visibility:hidden">${esc(v.title || seg.title || 'Demo', segWhere(seg, 'visual.title'))}</div></div>`;
-    const bug = ov.includes('brandBug') ? `<div class="brand-bug">${esc(timing.project?.title || 'SizzleCraft', 'project.title')}</div>` : '';
-    return `<section id="seg-${i}" class="sl ${i === 0 ? 'on' : ''}" data-mode="footage"><div class="footage-fullbleed">${footageLayer(seg)}</div>${bug}${lt}</section>`;
-  }
-  return `<section id="seg-${i}" class="sl ${i === 0 ? 'on' : ''}" data-mode="${m}"><div class="safe" style="--fit:1"><div id="${elId(`${seg.id}-label`, segWhere(seg, 'generated element id'))}" class="el kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || 'Demo', segWhere(seg, 'visual.kicker'))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, 'generated element id'))}" class="el title">${esc(v.title || seg.title || '', segWhere(seg, 'visual.title'))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, 'generated element id'))}" class="el subtitle">${esc(v.subtitle, segWhere(seg, 'visual.subtitle'))}</p>` : ''}<div class="stage-body ${m}">${body(seg)}</div></div></section>`;
+    const v = seg.visual || {},
+        m = mode(seg);
+    if (m === "footage") {
+        const f = v.footage || {},
+            ov = f.overlays || ["lowerThird", "brandBug"];
+        const lt = ov.includes("lowerThird")
+            ? `<div class="safe safe-footage"><div id="${elId(`${seg.id}-lt`, segWhere(seg, "generated element id"))}" class="el lower-third"><div id="${elId(`${seg.id}-label`, segWhere(seg, "generated element id"))}" class="kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || "Demo", segWhere(seg, "visual.kicker"))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, "generated element id"))}" class="title lt-title">${esc(v.title || seg.title || "", segWhere(seg, "visual.title"))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, "generated element id"))}" class="subtitle lt-sub">${esc(v.subtitle, segWhere(seg, "visual.subtitle"))}</p>` : ""}</div></div>`
+            : `<div class="safe safe-footage"><div id="${elId(`${seg.id}-label`, segWhere(seg, "generated element id"))}" class="el kicker" style="visibility:hidden">${esc(v.title || seg.title || "Demo", segWhere(seg, "visual.title"))}</div></div>`;
+        const bug = ov.includes("brandBug")
+            ? `<div class="brand-bug">${esc(timing.project?.title || "SizzleCraft", "project.title")}</div>`
+            : "";
+        return `<section id="seg-${i}" class="sl ${i === 0 ? "on" : ""}" data-mode="footage"><div class="footage-fullbleed">${footageLayer(seg)}</div>${bug}${lt}</section>`;
+    }
+    return `<section id="seg-${i}" class="sl ${i === 0 ? "on" : ""}" data-mode="${m}"><div class="safe" style="--fit:1"><div id="${elId(`${seg.id}-label`, segWhere(seg, "generated element id"))}" class="el kicker">${esc(v.kicker || timing.project?.title || timing.project?.slug || "Demo", segWhere(seg, "visual.kicker"))}</div><h1 id="${elId(`${seg.id}-title`, segWhere(seg, "generated element id"))}" class="el title">${esc(v.title || seg.title || "", segWhere(seg, "visual.title"))}</h1>${v.subtitle ? `<p id="${elId(`${seg.id}-subtitle`, segWhere(seg, "generated element id"))}" class="el subtitle">${esc(v.subtitle, segWhere(seg, "visual.subtitle"))}</p>` : ""}<div class="stage-body ${m}">${body(seg)}</div></div></section>`;
 }
 
 // ---- triggers (segment-relative atMs -> absolute seconds) -----------------
 function autoTriggers(seg) {
-  const v = seg.visual || {}, m = mode(seg), dur = Math.max(1, seg.endMs - seg.startMs);
-  const out = [{ atMs: 0, target: `${seg.id}-label`, action: 'rise', withSegment: true }, { atMs: 0, target: `${seg.id}-title`, action: 'rise', withSegment: true }];
-  if (v.subtitle) out.push({ atMs: 450, target: `${seg.id}-subtitle`, action: 'rise' });
-  if ((seg.triggers || []).some(t => t.target)) return out; // author drives the rest
-  if (m === 'diagram') {
-    const seq = [...(v.nodes || []).map(n => ({ target: `${seg.id}-node-${n.id}`, action: 'revealNode' })),
-                 ...(v.edges || []).map((e, j) => ({ target: generatedElId(seg.id, 'edge', e, j), action: 'drawEdge' }))];
-    const step = Math.min(900, (dur * 0.7) / (seq.length || 1));
-    seq.forEach((t, k) => out.push({ atMs: Math.round(700 + k * step), target: t.target, action: t.action }));
-    // Standard+ engagement: interactive-animation-enabled workflow by default — numbered step badges,
-    // flowing edge particles, and an active-path pulse that walks the flow node-by-node so the viewer
-    // follows how it works (C-17). `minimal` keeps clean reveals only. All positioned by seek (deterministic).
-    const lvl = timing.project?.engagementLevel || timing.intake?.engagementLevel || 'standard';
-    if (lvl !== 'minimal') {
-      const base = Math.round(700 + seq.length * step) + 400;
-      const particles = lvl === 'rich' ? 4 : 2;
-      (v.nodes || []).forEach((n, k) => out.push({ atMs: base + k * 120, target: `${seg.id}-node-${n.id}`, action: 'stepBadge', payload: { stepIndex: k + 1 } }));
-      (v.edges || []).forEach((e, j) => out.push({ atMs: base + 500 + j * 160, target: generatedElId(seg.id, 'edge', e, j), action: 'flowEdge', payload: { particles } }));
-      (v.edges || []).forEach((e, j) => { const eid = generatedElId(seg.id, 'edge', e, j); out.push({ atMs: base + 500 + j * 220, target: eid, action: 'pulsePath', payload: { chain: [`${seg.id}-node-${e.from}`, eid, `${seg.id}-node-${e.to}`] } }); });
+    const v = seg.visual || {},
+        m = mode(seg),
+        dur = Math.max(1, seg.endMs - seg.startMs);
+    const out = [
+        {
+            atMs: 0,
+            target: `${seg.id}-label`,
+            action: "rise",
+            withSegment: true,
+        },
+        {
+            atMs: 0,
+            target: `${seg.id}-title`,
+            action: "rise",
+            withSegment: true,
+        },
+    ];
+    if (v.subtitle)
+        out.push({ atMs: 450, target: `${seg.id}-subtitle`, action: "rise" });
+    if ((seg.triggers || []).some((t) => t.target)) return out; // author drives the rest
+    if (m === "diagram") {
+        const seq = [
+            ...(v.nodes || []).map((n) => ({
+                target: `${seg.id}-node-${n.id}`,
+                action: "revealNode",
+            })),
+            ...(v.edges || []).map((e, j) => ({
+                target: generatedElId(seg.id, "edge", e, j),
+                action: "drawEdge",
+            })),
+        ];
+        const step = Math.min(900, (dur * 0.7) / (seq.length || 1));
+        seq.forEach((t, k) =>
+            out.push({
+                atMs: Math.round(700 + k * step),
+                target: t.target,
+                action: t.action,
+            }),
+        );
+        // Standard+ engagement: interactive-animation-enabled workflow by default — numbered step badges,
+        // flowing edge particles, and an active-path pulse that walks the flow node-by-node so the viewer
+        // follows how it works (C-17). `minimal` keeps clean reveals only. All positioned by seek (deterministic).
+        const lvl =
+            timing.project?.engagementLevel ||
+            timing.intake?.engagementLevel ||
+            "standard";
+        if (lvl !== "minimal") {
+            const base = Math.round(700 + seq.length * step) + 400;
+            const particles = lvl === "rich" ? 4 : 2;
+            (v.nodes || []).forEach((n, k) =>
+                out.push({
+                    atMs: base + k * 120,
+                    target: `${seg.id}-node-${n.id}`,
+                    action: "stepBadge",
+                    payload: { stepIndex: k + 1 },
+                }),
+            );
+            (v.edges || []).forEach((e, j) =>
+                out.push({
+                    atMs: base + 500 + j * 160,
+                    target: generatedElId(seg.id, "edge", e, j),
+                    action: "flowEdge",
+                    payload: { particles },
+                }),
+            );
+            (v.edges || []).forEach((e, j) => {
+                const eid = generatedElId(seg.id, "edge", e, j);
+                out.push({
+                    atMs: base + 500 + j * 220,
+                    target: eid,
+                    action: "pulsePath",
+                    payload: {
+                        chain: [
+                            `${seg.id}-node-${e.from}`,
+                            eid,
+                            `${seg.id}-node-${e.to}`,
+                        ],
+                    },
+                });
+            });
+        }
+    } else if (m === "code") {
+        // The block carries `.el`, so like every other element it stays hidden until something
+        // reveals it. Nothing else will: codeFocus targets a FIELD, and showing a field does not
+        // show its hidden ancestor. Reveal the block itself first or the whole segment renders
+        // blank — with no error, because a trigger that resolves and animates an invisible
+        // element reports success exactly like one that worked.
+        out.push({ atMs: 300, target: `${seg.id}-code`, action: "rise" });
+        // Walk the authored highlights in order. Each focus releases the previous one, so
+        // exactly one field is ever emphasised — the viewer is never asked which box to read.
+        const hs = v.highlights || [];
+        const step = Math.min(2600, (dur * 0.8) / (hs.length || 1));
+        hs.forEach((h, k) =>
+            out.push({
+                atMs: Math.round(h.atMs ?? 900 + k * step),
+                target: codePathId(seg.id, h.path),
+                action: "codeFocus",
+                payload: { label: h.label || "" },
+            }),
+        );
+        if (hs.length)
+            out.push({
+                atMs: Math.round(
+                    (hs[hs.length - 1].atMs ?? 900 + (hs.length - 1) * step) +
+                        Math.min(2200, step),
+                ),
+                target: `${seg.id}-code`,
+                action: "codeFocus",
+                payload: { release: true },
+            });
+    } else if (m === "live") {
+        let at = 600;
+        (v.hotspots || []).forEach((hp) => {
+            out.push({
+                atMs: at,
+                target: `${seg.id}-cursor`,
+                action: "moveCursor",
+                payload: { toId: `${seg.id}-hotspot-${hp.id}` },
+            });
+            at += 650;
+            out.push({
+                atMs: at,
+                target: `${seg.id}-hotspot-${hp.id}`,
+                action: "click",
+            });
+            at += 500;
+        });
+        (v.fields || []).forEach((f) => {
+            out.push({
+                atMs: at,
+                target: `${seg.id}-cursor`,
+                action: "moveCursor",
+                payload: { toId: `${seg.id}-field-${f.id}` },
+            });
+            at += 450;
+            out.push({
+                atMs: at,
+                target: `${seg.id}-field-${f.id}`,
+                action: "type",
+            });
+            at += 900;
+        });
+    } else if (m === "footage") {
+        // Real footage plays full-bleed. Reveal the lower-third WRAPPER (it carries `.el`, so it stays
+        // hidden until revealed — its title/subtitle children ride inside it). No card/shot reveals: the
+        // pixels are real, so we don't composite synthetic content over them.
+        if (
+            (v.footage?.overlays || ["lowerThird", "brandBug"]).includes(
+                "lowerThird",
+            )
+        )
+            out.push({ atMs: 400, target: `${seg.id}-lt`, action: "rise" });
+    } else {
+        // Narrative: reveal cards (visual.items) then screenshots (visual.shots). Both use `.el`
+        // (visibility:hidden until revealed), so each needs a pop trigger or the panel renders blank.
+        const items = (v.items || [])
+            .slice(0, 6)
+            .map((_, j) => `${seg.id}-item-${j}`);
+        const shots = (v.shots || (v.image ? [1] : []))
+            .slice(0, 4)
+            .map((_, j) => `${seg.id}-shot-${j}`);
+        [...items, ...shots].forEach((target, j) =>
+            out.push({ atMs: 500 + j * 260, target, action: "pop" }),
+        );
     }
-  } else if (m === 'code') {
-    // The block carries `.el`, so like every other element it stays hidden until something
-    // reveals it. Nothing else will: codeFocus targets a FIELD, and showing a field does not
-    // show its hidden ancestor. Reveal the block itself first or the whole segment renders
-    // blank — with no error, because a trigger that resolves and animates an invisible
-    // element reports success exactly like one that worked.
-    out.push({ atMs: 300, target: `${seg.id}-code`, action: 'rise' });
-    // Walk the authored highlights in order. Each focus releases the previous one, so
-    // exactly one field is ever emphasised — the viewer is never asked which box to read.
-    const hs = v.highlights || [];
-    const step = Math.min(2600, (dur * 0.8) / (hs.length || 1));
-    hs.forEach((h, k) => out.push({
-      atMs: Math.round(h.atMs ?? (900 + k * step)),
-      target: codePathId(seg.id, h.path),
-      action: 'codeFocus',
-      payload: { label: h.label || '' },
-    }));
-    if (hs.length) out.push({ atMs: Math.round((hs[hs.length - 1].atMs ?? (900 + (hs.length - 1) * step)) + Math.min(2200, step)), target: `${seg.id}-code`, action: 'codeFocus', payload: { release: true } });
-  } else if (m === 'live') {
-    let at = 600;
-    (v.hotspots || []).forEach(hp => { out.push({ atMs: at, target: `${seg.id}-cursor`, action: 'moveCursor', payload: { toId: `${seg.id}-hotspot-${hp.id}` } }); at += 650; out.push({ atMs: at, target: `${seg.id}-hotspot-${hp.id}`, action: 'click' }); at += 500; });
-    (v.fields || []).forEach(f => { out.push({ atMs: at, target: `${seg.id}-cursor`, action: 'moveCursor', payload: { toId: `${seg.id}-field-${f.id}` } }); at += 450; out.push({ atMs: at, target: `${seg.id}-field-${f.id}`, action: 'type' }); at += 900; });
-  } else if (m === 'footage') {
-    // Real footage plays full-bleed. Reveal the lower-third WRAPPER (it carries `.el`, so it stays
-    // hidden until revealed — its title/subtitle children ride inside it). No card/shot reveals: the
-    // pixels are real, so we don't composite synthetic content over them.
-    if ((v.footage?.overlays || ['lowerThird', 'brandBug']).includes('lowerThird')) out.push({ atMs: 400, target: `${seg.id}-lt`, action: 'rise' });
-  } else {
-    // Narrative: reveal cards (visual.items) then screenshots (visual.shots). Both use `.el`
-    // (visibility:hidden until revealed), so each needs a pop trigger or the panel renders blank.
-    const items = (v.items || []).slice(0, 6).map((_, j) => `${seg.id}-item-${j}`);
-    const shots = (v.shots || (v.image ? [1] : [])).slice(0, 4).map((_, j) => `${seg.id}-shot-${j}`);
-    [...items, ...shots].forEach((target, j) => out.push({ atMs: 500 + j * 260, target, action: 'pop' }));
-  }
-  // Never let an auto-generated trigger land past the segment's own end: a later-firing effect would
-  // run while a LATER slide is active, accumulate hidden-slide overlays, and break seek determinism/QC.
-  // (Author-supplied triggers are the author's responsibility and are scheduled elsewhere.)
-  const lastMs = Math.max(0, dur - 50);
-  out.forEach(o => { if (o.atMs > lastMs) o.atMs = lastMs; });
-  return out;
+    // Never let an auto-generated trigger land past the segment's own end: a later-firing effect would
+    // run while a LATER slide is active, accumulate hidden-slide overlays, and break seek determinism/QC.
+    // (Author-supplied triggers are the author's responsibility and are scheduled elsewhere.)
+    const lastMs = Math.max(0, dur - 50);
+    out.forEach((o) => {
+        if (o.atMs > lastMs) o.atMs = lastMs;
+    });
+    return out;
 }
 
-const segs = timing.segments.map((s, i) => ({ slide: i + 1, id: s.id, audioStart: s.startMs / 1000, audioEnd: s.endMs / 1000 }));
-const trs = guard(() => timing.segments.flatMap((s, i) => {
-  // AN EXPLICIT TRIGGER PAYLOAD IS AUTHOR TEXT THAT REACHES A FRAME. It is serialised into
-  // `elementTriggers` and the runtime paints `payload.label`/`payload.text` into callouts,
-  // rollover tips and step badges. `jsonScript` makes that embedding script-SAFE; it does
-  // nothing about whether the text should be on screen, which is a different question and
-  // the one this guard exists to answer.
-  const screenPayload = (p, where) => {
-    // EVERY SERIALISED SCALAR, NOT A LIST OF FIELD NAMES. The whole payload is serialised
-    // into `elementTriggers` and ships, so `{extra: "…"}` or `{chain: ["…"]}` reached the
-    // artefact while a six-name list looked thorough. A hand-maintained field list is the
-    // same rot that has already bitten this task twice in the completeness guard's
-    // allowlist — so it is gone, replaced by a walk over what actually gets serialised.
-    //
-    // The runtime stringifies whatever it paints: MEASURED, `String(['protected-value'])` is
-    // `'protected-value'`, so arrays disclose their contents and a `typeof === 'string'`
-    // test would miss them — the same coercion bug as `[123]` becoming `/123/i`.
-    const walk = (v, at) => {
-      if (v == null) return;
-      if (Array.isArray(v)) { v.forEach((x, k) => walk(x, `${at}[${k}]`)); return; }
-      if (typeof v === 'object') {
-        // KEYS SHIP TOO. `{"cortex-supportgraph": "safe"}` serialises the key verbatim into
-        // `elementTriggers`, so walking only the values repeats, in the payload, exactly the
-        // matching-key defect already fixed in the code-block walk: a key that matches IS the
-        // disclosed string.
-        //
-        // AND THE LOCATION LABEL MUST NOT DISCLOSE EITHER. Building `at` from the keys it
-        // walks meant a nested value's refusal printed the assembled key path — with pattern
-        // `foo.bar` and payload `{foo:{bar:"…"}}` the message announcing the match contained
-        // it. That is the defect this whole task began with, reproduced inside the screen.
-        //
-        // A key is therefore named only when naming it discloses nothing, and replaced by its
-        // ordinal when it would — the same rule, and the same wording, as `shownKey` in the
-        // code-block walk. Replacing every key with an ordinal would have been safe too, and
-        // would have made every payload refusal unreadable for the sake of the rare one.
-        Object.keys(v).forEach((k, ki) => {
-          assertNotDisclosing(k, `${at} key #${ki}`);
-          const safe = !noGoScreen || !noGoScreen(`${at}.${k}`);
-          walk(v[k], safe ? `${at}.${k}` : `${at}.key #${ki}`);
-        });
-        return;
-      }
-      assertNotDisclosing(String(v), at);
-    };
-    walk(p, where);
-    return p ?? null;
-  };
-  const explicit = (s.triggers || []).filter(t => t.target).map((t, ti) => {
-    // `action` is serialised as `kind` into `elementTriggers` and ships in the artefact, so
-    // it is author text like any other — the payload is not the only part of a trigger that
-    // leaves the build.
-    // SHAPE, NOT A COERCION — the same rule already applied to `target`. An object `action`
-    // screens as `[object Object]`, which discloses nothing, and then ships unchanged as
-    // `kind` with its keys intact. Screening a coercion is not screening the value.
-    if (t.action != null) {
-      if (typeof t.action !== 'string') throw new CliError(`segments[${i}].triggers[${ti}].action must be a string. It is named by position and deliberately not quoted.`);
-      assertNotDisclosing(t.action, `segments[${i}].triggers[${ti}].action`);
-    }
-    return { atMs: Number(t.atMs || 0), target: t.target, action: t.action || 'rise', withSegment: !!(t.withSegment || t.withSlide), payload: screenPayload(t.payload, `segments[${i}].triggers[${ti}].payload`) };
-  });
-  // EVERY SERIALISED TARGET, NOT ONLY THE ONES THAT BECOME ELEMENTS. `autoTriggers` derives
-  // targets like `${seg.id}-title` and `${seg.id}-cursor` and they ship in `elementTriggers`
-  // whether or not a matching element is ever rendered — a footage slide without `lowerThird`
-  // emits no title element but still emits the trigger. Screening at `elId()` therefore
-  // covers only the subset that reaches the DOM. This is the chokepoint where ALL of them,
-  // author-written and engine-derived alike, are about to leave the build.
-  return [...autoTriggers(s), ...explicit].map(t => {
-    assertNotDisclosing(String(t.target ?? ''), `segments[${i}] trigger target`);
-    return { t: (s.startMs + Number(t.atMs || 0)) / 1000, s: i + 1, a: t.target, kind: t.action || 'rise', withSegment: !!t.withSegment, payload: screenPayload(t.payload, `segments[${i}] trigger payload`) };
-  });
-}).map((t, i) => ({ ...t, _i: i }))  // stable source-order index (autoTriggers then explicit, per segment) — the canonical tiebreaker below
-  .sort((a, b) => (a.t - b.t) || (a.s - b.s) || (a._i - b._i)));  // strict TOTAL order: triggers that clamp/collapse to the same (t, slide) keep a single deterministic order so non-commutative effects (pulsePath clears, overlays) converge to one final state under parallel-worker seeks
+const segs = timing.segments.map((s, i) => ({
+    slide: i + 1,
+    id: s.id,
+    audioStart: s.startMs / 1000,
+    audioEnd: s.endMs / 1000,
+}));
+const trs = guard(() =>
+    timing.segments
+        .flatMap((s, i) => {
+            // AN EXPLICIT TRIGGER PAYLOAD IS AUTHOR TEXT THAT REACHES A FRAME. It is serialised into
+            // `elementTriggers` and the runtime paints `payload.label`/`payload.text` into callouts,
+            // rollover tips and step badges. `jsonScript` makes that embedding script-SAFE; it does
+            // nothing about whether the text should be on screen, which is a different question and
+            // the one this guard exists to answer.
+            const screenPayload = (p, where) => {
+                // EVERY SERIALISED SCALAR, NOT A LIST OF FIELD NAMES. The whole payload is serialised
+                // into `elementTriggers` and ships, so `{extra: "…"}` or `{chain: ["…"]}` reached the
+                // artefact while a six-name list looked thorough. A hand-maintained field list is the
+                // same rot that has already bitten this task twice in the completeness guard's
+                // allowlist — so it is gone, replaced by a walk over what actually gets serialised.
+                //
+                // The runtime stringifies whatever it paints: MEASURED, `String(['protected-value'])` is
+                // `'protected-value'`, so arrays disclose their contents and a `typeof === 'string'`
+                // test would miss them — the same coercion bug as `[123]` becoming `/123/i`.
+                const walk = (v, at) => {
+                    if (v == null) return;
+                    if (Array.isArray(v)) {
+                        v.forEach((x, k) => walk(x, `${at}[${k}]`));
+                        return;
+                    }
+                    if (typeof v === "object") {
+                        // KEYS SHIP TOO. `{"cortex-supportgraph": "safe"}` serialises the key verbatim into
+                        // `elementTriggers`, so walking only the values repeats, in the payload, exactly the
+                        // matching-key defect already fixed in the code-block walk: a key that matches IS the
+                        // disclosed string.
+                        //
+                        // AND THE LOCATION LABEL MUST NOT DISCLOSE EITHER. Building `at` from the keys it
+                        // walks meant a nested value's refusal printed the assembled key path — with pattern
+                        // `foo.bar` and payload `{foo:{bar:"…"}}` the message announcing the match contained
+                        // it. That is the defect this whole task began with, reproduced inside the screen.
+                        //
+                        // A key is therefore named only when naming it discloses nothing, and replaced by its
+                        // ordinal when it would — the same rule, and the same wording, as `shownKey` in the
+                        // code-block walk. Replacing every key with an ordinal would have been safe too, and
+                        // would have made every payload refusal unreadable for the sake of the rare one.
+                        Object.keys(v).forEach((k, ki) => {
+                            assertNotDisclosing(k, `${at} key #${ki}`);
+                            const safe =
+                                !noGoScreen || !noGoScreen(`${at}.${k}`);
+                            walk(
+                                v[k],
+                                safe ? `${at}.${k}` : `${at}.key #${ki}`,
+                            );
+                        });
+                        return;
+                    }
+                    assertNotDisclosing(String(v), at);
+                };
+                walk(p, where);
+                return p ?? null;
+            };
+            const explicit = (s.triggers || [])
+                .filter((t) => t.target)
+                .map((t, ti) => {
+                    // `action` is serialised as `kind` into `elementTriggers` and ships in the artefact, so
+                    // it is author text like any other — the payload is not the only part of a trigger that
+                    // leaves the build.
+                    // SHAPE, NOT A COERCION — the same rule already applied to `target`. An object `action`
+                    // screens as `[object Object]`, which discloses nothing, and then ships unchanged as
+                    // `kind` with its keys intact. Screening a coercion is not screening the value.
+                    if (t.action != null) {
+                        if (typeof t.action !== "string")
+                            throw new CliError(
+                                `segments[${i}].triggers[${ti}].action must be a string. It is named by position and deliberately not quoted.`,
+                            );
+                        assertNotDisclosing(
+                            t.action,
+                            `segments[${i}].triggers[${ti}].action`,
+                        );
+                    }
+                    return {
+                        atMs: Number(t.atMs || 0),
+                        target: t.target,
+                        action: t.action || "rise",
+                        withSegment: !!(t.withSegment || t.withSlide),
+                        payload: screenPayload(
+                            t.payload,
+                            `segments[${i}].triggers[${ti}].payload`,
+                        ),
+                    };
+                });
+            // EVERY SERIALISED TARGET, NOT ONLY THE ONES THAT BECOME ELEMENTS. `autoTriggers` derives
+            // targets like `${seg.id}-title` and `${seg.id}-cursor` and they ship in `elementTriggers`
+            // whether or not a matching element is ever rendered — a footage slide without `lowerThird`
+            // emits no title element but still emits the trigger. Screening at `elId()` therefore
+            // covers only the subset that reaches the DOM. This is the chokepoint where ALL of them,
+            // author-written and engine-derived alike, are about to leave the build.
+            return [...autoTriggers(s), ...explicit].map((t) => {
+                assertNotDisclosing(
+                    String(t.target ?? ""),
+                    `segments[${i}] trigger target`,
+                );
+                return {
+                    t: (s.startMs + Number(t.atMs || 0)) / 1000,
+                    s: i + 1,
+                    a: t.target,
+                    kind: t.action || "rise",
+                    withSegment: !!t.withSegment,
+                    payload: screenPayload(
+                        t.payload,
+                        `segments[${i}] trigger payload`,
+                    ),
+                };
+            });
+        })
+        .map((t, i) => ({ ...t, _i: i })) // stable source-order index (autoTriggers then explicit, per segment) — the canonical tiebreaker below
+        .sort((a, b) => a.t - b.t || a.s - b.s || a._i - b._i),
+); // strict TOTAL order: triggers that clamp/collapse to the same (t, slide) keep a single deterministic order so non-commutative effects (pulsePath clears, overlays) converge to one final state under parallel-worker seeks
 
 // ---- background themes (user-selectable preset) ---------------------------
 const THEMES = {
-  midnight: { label: 'Midnight (default) — deep navy + cyan glow', stage: `radial-gradient(circle at 78% 12%,rgba(80,230,255,.20),transparent 30%),linear-gradient(135deg,#0B1020,#0c1a3a)`, size: 'auto', anim: '' },
-  light: { label: 'Light — clean Fluent white (dark text)', stage: `radial-gradient(circle at 80% 10%,rgba(0,120,212,.10),transparent 34%),linear-gradient(160deg,#FFFFFF,#F3F2F1)`, size: 'auto', anim: '', vars: '--color-text-primary:#1B1A19;--color-text-secondary:#323130;--color-accent-1:#0078D4;--color-accent-2:#00A4EF;--color-card-bg:rgba(0,90,158,.06);--color-card-border:rgba(0,0,0,.12);--color-bg-primary:#FFFFFF;--color-bg-secondary:#F3F2F1' },
-  microsoft: { label: 'Microsoft — light with brand accents (blue + green)', stage: `radial-gradient(circle at 12% 88%,rgba(127,186,0,.10),transparent 40%),radial-gradient(circle at 85% 12%,rgba(0,164,239,.12),transparent 38%),linear-gradient(150deg,#FFFFFF,#EEF3FB)`, size: 'auto', anim: '', vars: '--color-text-primary:#201F1E;--color-text-secondary:#2B2A29;--color-accent-1:#0078D4;--color-accent-2:#7FBA00;--color-card-bg:rgba(0,120,212,.06);--color-card-border:rgba(0,0,0,.12);--color-bg-primary:#FFFFFF;--color-bg-secondary:#EEF3FB' },
-  azure: { label: 'Azure — deep azure-blue gradient', stage: `linear-gradient(135deg,#0A2540,#0F4C81,#0078D4,#0A2540)`, size: '300% 300%', anim: '#stage{animation:bgAzure 20s ease infinite}@keyframes bgAzure{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}', vars: '--color-accent-1:#50E6FF;--color-accent-2:#C3F1FF' },
-  aurora: { label: 'Aurora — slow-shifting indigo / teal / violet', stage: `linear-gradient(120deg,#0a0e29,#11324a,#1a1040,#0a0e29)`, size: '300% 300%', anim: '#stage{animation:bgAurora 18s ease infinite}@keyframes bgAurora{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}' },
-  mesh: { label: 'Mesh — drifting multi-colour blobs', stage: `radial-gradient(40% 50% at 20% 25%,rgba(80,230,255,.22),transparent 60%),radial-gradient(45% 55% at 80% 30%,rgba(155,240,11,.16),transparent 60%),radial-gradient(50% 60% at 50% 88%,rgba(120,90,255,.20),transparent 60%),#0a0f22`, size: '180% 180%,180% 180%,180% 180%,auto', anim: '#stage{animation:bgMesh 26s ease-in-out infinite}@keyframes bgMesh{0%{background-position:0% 0%,100% 0%,50% 100%,0 0}50%{background-position:30% 25%,70% 35%,50% 70%,0 0}100%{background-position:0% 0%,100% 0%,50% 100%,0 0}}' },
-  slate: { label: 'Slate — clean minimal neutral (no motion)', stage: `linear-gradient(160deg,#1b2230,#10151f)`, size: 'auto', anim: '' },
-  dawn: { label: 'Dawn — warm plum + amber glow', stage: `radial-gradient(circle at 75% 15%,rgba(255,140,90,.18),transparent 35%),linear-gradient(140deg,#1a1030,#2a1430,#0d0a1e)`, size: 'auto', anim: '' }
+    midnight: {
+        label: "Midnight (default) — deep navy + cyan glow",
+        stage: `radial-gradient(circle at 78% 12%,rgba(80,230,255,.20),transparent 30%),linear-gradient(135deg,#0B1020,#0c1a3a)`,
+        size: "auto",
+        anim: "",
+    },
+    light: {
+        label: "Light — clean Fluent white (dark text)",
+        stage: `radial-gradient(circle at 80% 10%,rgba(0,120,212,.10),transparent 34%),linear-gradient(160deg,#FFFFFF,#F3F2F1)`,
+        size: "auto",
+        anim: "",
+        vars: "--color-text-primary:#1B1A19;--color-text-secondary:#323130;--color-accent-1:#0078D4;--color-accent-2:#00A4EF;--color-card-bg:rgba(0,90,158,.06);--color-card-border:rgba(0,0,0,.12);--color-bg-primary:#FFFFFF;--color-bg-secondary:#F3F2F1",
+    },
+    microsoft: {
+        label: "Microsoft — light with brand accents (blue + green)",
+        stage: `radial-gradient(circle at 12% 88%,rgba(127,186,0,.10),transparent 40%),radial-gradient(circle at 85% 12%,rgba(0,164,239,.12),transparent 38%),linear-gradient(150deg,#FFFFFF,#EEF3FB)`,
+        size: "auto",
+        anim: "",
+        vars: "--color-text-primary:#201F1E;--color-text-secondary:#2B2A29;--color-accent-1:#0078D4;--color-accent-2:#7FBA00;--color-card-bg:rgba(0,120,212,.06);--color-card-border:rgba(0,0,0,.12);--color-bg-primary:#FFFFFF;--color-bg-secondary:#EEF3FB",
+    },
+    azure: {
+        label: "Azure — deep azure-blue gradient",
+        stage: `linear-gradient(135deg,#0A2540,#0F4C81,#0078D4,#0A2540)`,
+        size: "300% 300%",
+        anim: "#stage{animation:bgAzure 20s ease infinite}@keyframes bgAzure{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}",
+        vars: "--color-accent-1:#50E6FF;--color-accent-2:#C3F1FF",
+    },
+    aurora: {
+        label: "Aurora — slow-shifting indigo / teal / violet",
+        stage: `linear-gradient(120deg,#0a0e29,#11324a,#1a1040,#0a0e29)`,
+        size: "300% 300%",
+        anim: "#stage{animation:bgAurora 18s ease infinite}@keyframes bgAurora{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}",
+    },
+    mesh: {
+        label: "Mesh — drifting multi-colour blobs",
+        stage: `radial-gradient(40% 50% at 20% 25%,rgba(80,230,255,.22),transparent 60%),radial-gradient(45% 55% at 80% 30%,rgba(155,240,11,.16),transparent 60%),radial-gradient(50% 60% at 50% 88%,rgba(120,90,255,.20),transparent 60%),#0a0f22`,
+        size: "180% 180%,180% 180%,180% 180%,auto",
+        anim: "#stage{animation:bgMesh 26s ease-in-out infinite}@keyframes bgMesh{0%{background-position:0% 0%,100% 0%,50% 100%,0 0}50%{background-position:30% 25%,70% 35%,50% 70%,0 0}100%{background-position:0% 0%,100% 0%,50% 100%,0 0}}",
+    },
+    slate: {
+        label: "Slate — clean minimal neutral (no motion)",
+        stage: `linear-gradient(160deg,#1b2230,#10151f)`,
+        size: "auto",
+        anim: "",
+    },
+    dawn: {
+        label: "Dawn — warm plum + amber glow",
+        stage: `radial-gradient(circle at 75% 15%,rgba(255,140,90,.18),transparent 35%),linear-gradient(140deg,#1a1030,#2a1430,#0d0a1e)`,
+        size: "auto",
+        anim: "",
+    },
 };
-const theme = THEMES[(timing.project?.theme || timing.theme || timing.intake?.theme || 'midnight')] || THEMES.midnight;
+const theme =
+    THEMES[
+        timing.project?.theme ||
+            timing.theme ||
+            timing.intake?.theme ||
+            "midnight"
+    ] || THEMES.midnight;
 
 // ---- version end-card (Feature B) -----------------------------------------
 // One extra brand-styled slide appended after the segments, revealed at contentMs and held through the
@@ -1080,14 +1746,30 @@ const theme = THEMES[(timing.project?.theme || timing.theme || timing.intake?.th
 // `validVersion` defensively rejects empty / whitespace / the literal "undefined"/"null" strings so a buggy
 // upstream stamp can never surface on screen (graceful-omit — the whole end-card is dropped instead).
 const bvRaw = timing.builderVersion;
-const validVersion = (typeof bvRaw === 'string' && bvRaw.trim() !== '' && !['undefined','null'].includes(bvRaw.trim().toLowerCase())) ? bvRaw.trim() : null;
-const endCardOn = !!(timing.endCard && timing.endCard.enabled !== false && validVersion && Number.isFinite(timing.contentMs));
-const endCardIndex = timing.segments.length;                 // 0-based section index => slide number endCardIndex+1
-const endCardText = endCardOn ? `${String(timing.endCard.tagline || 'Created by SizzleCraft')} ${validVersion}`.trim() : '';
+const validVersion =
+    typeof bvRaw === "string" &&
+    bvRaw.trim() !== "" &&
+    !["undefined", "null"].includes(bvRaw.trim().toLowerCase())
+        ? bvRaw.trim()
+        : null;
+const endCardOn = !!(
+    timing.endCard &&
+    timing.endCard.enabled !== false &&
+    validVersion &&
+    Number.isFinite(timing.contentMs)
+);
+const endCardIndex = timing.segments.length; // 0-based section index => slide number endCardIndex+1
+const endCardText = endCardOn
+    ? `${String(timing.endCard.tagline || "Created by SizzleCraft")} ${validVersion}`.trim()
+    : "";
 // No `.el` on the children, so they are visible whenever the slide is `.on` (deterministic — no trigger
 // needed). Reuses `.title` (AA-contrast: --color-text-primary adapts to the background mode) + `.safe`
 // (safe-area + fitLayout), so visual-qc/a11y pass on any theme/background.
-const endCardSlide = guard(() => endCardOn ? `<section id="seg-${endCardIndex}" class="sl" data-mode="endcard"><div class="safe" style="--fit:1"><h1 id="endcard-title" class="title">${esc(endCardText, 'endCard.tagline')}</h1></div></section>` : '');
+const endCardSlide = guard(() =>
+    endCardOn
+        ? `<section id="seg-${endCardIndex}" class="sl" data-mode="endcard"><div class="safe" style="--fit:1"><h1 id="endcard-title" class="title">${esc(endCardText, "endCard.tagline")}</h1></div></section>`
+        : "",
+);
 
 // ---- styles + runtime -----------------------------------------------------
 // The opacity of a code field dimmed around the focused one. The CSS rule and the
@@ -1095,8 +1777,8 @@ const endCardSlide = guard(() => endCardOn ? `<section id="seg-${endCardIndex}" 
 const CODE_DIM_OPACITY = 0.28;
 const css = `:root{--color-bg-primary:#0B1020;--color-bg-secondary:#0c1a3a;--color-accent-1:#50E6FF;--color-accent-2:#9BF00B;--color-text-primary:#fff;--color-text-secondary:#8aa4c8;--color-card-bg:rgba(255,255,255,.04);--color-card-border:rgba(255,255,255,.10);--font-display:'Aptos Display','Segoe UI Variable Display',sans-serif;--font-body:'Aptos','Segoe UI Variable Text',sans-serif}
 html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden;font-family:var(--font-body);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
-#stage{width:${w}px;height:${h}px;position:relative;overflow:hidden;color:var(--color-text-primary);background:${bg ? bg.stage : theme.stage};background-size:${bg ? 'auto' : theme.size}${bg ? ';' + bgVars : (theme.vars ? ';' + theme.vars : '')}}
-${bg ? '' : theme.anim}
+#stage{width:${w}px;height:${h}px;position:relative;overflow:hidden;color:var(--color-text-primary);background:${bg ? bg.stage : theme.stage};background-size:${bg ? "auto" : theme.size}${bg ? ";" + bgVars : theme.vars ? ";" + theme.vars : ""}}
+${bg ? "" : theme.anim}
 .sl{position:absolute;inset:0;visibility:hidden;opacity:0;overflow:hidden}.sl.on{visibility:visible;opacity:1}
 .safe{position:absolute;left:6%;right:6%;top:6%;bottom:7%;display:grid;gap:calc(var(--fit) * 2vh);align-content:center;justify-items:center;text-align:center}
 .el{visibility:hidden}.el.show{visibility:visible}
@@ -1357,7 +2039,7 @@ function progressBar(tr){const host=fxHost(tr,null);if(!host)return;let bar=host
 function apply(tr){__curT=tr.t||0;switch(tr.kind){case 'drawEdge':return drawEdge(tr.a);case 'revealNode':return reveal(tr.a,'pop');case 'moveCursor':return void(once(tr)&&moveCursor(tr.a,(tr.payload&&tr.payload.toId)||tr.a));case 'hover':case 'rollover':return void(once(tr)&&hover(tr.a,tr));case 'click':case 'clickRipple':return void(once(tr)&&clickAt(tr.a));case 'type':return typeInto(tr.a,tr);case 'spotlight':return void(once(tr)&&spotlight(tr.a,tr));case 'emphasize':return void(once(tr)&&emphasize(tr.a,tr));case 'codeFocus':return void(once(tr)&&codeFocus(tr.a,tr));case 'zoomFocus':return void(once(tr)&&zoomFocus(tr.a,tr));case 'callout':return void(once(tr)&&callout(tr.a,tr));case 'flowEdge':return void(once(tr)&&flowEdge(tr.a,tr));case 'pulsePath':return void(once(tr)&&pulsePath(tr));case 'stepBadge':return void(once(tr)&&stepBadge(tr.a,tr));case 'progress':return void(once(tr)&&progressBar(tr));default:return reveal(tr.a,tr.kind);}}
 // A slide lingers LINGER seconds past its narration, but never into the next narration. Uncapped,
 // a seam shorter than LINGER showed the next slide late, after its opening triggers had fired unseen.
-const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:Math.min(segments[i].audioEnd+LINGER,segments[i+1].audioStart)});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ''}
+const slideShowTimes=[{slide:1,showAt:0}];for(let i=0;i<segments.length-1;i++)slideShowTimes.push({slide:segments[i+1].slide,showAt:Math.min(segments[i].audioEnd+LINGER,segments[i+1].audioStart)});${endCardOn ? `slideShowTimes.push({slide:${endCardIndex + 1},showAt:${jsonScript(timing.contentMs / 1000)}});` : ""}
 // --- footage frame injection (real user clip). Maps absolute time -> extracted frame file and swaps
 // the full-bleed background. Pure index->file map so per-frame seek stays deterministic + resumable.
 // Preview calls it fire-and-forget from fireTriggersUpTo; the capture script awaits it before screenshot.
@@ -1440,15 +2122,15 @@ Promise.all([...document.images].map(im=>im.complete?0:new Promise(r=>{im.addEve
 elementTriggers.filter(t=>t.s===1&&t.withSegment).forEach(apply);`;
 
 // Inline GSAP from the local install so video-auto.html runs fully offline (C-8) — no CDN, no network, no external supply chain.
-const gsapPath = path.join(dir, 'node_modules', 'gsap', 'dist', 'gsap.min.js');
+const gsapPath = path.join(dir, "node_modules", "gsap", "dist", "gsap.min.js");
 if (!fs.existsSync(gsapPath)) {
-  console.error(
-    `error: gsap not installed locally at ${gsapPath} — run \`npm install gsap\` in ${dir} ` +
-      `(a local-first render must not depend on a CDN)`,
-  );
-  process.exit(EXIT.USAGE);
+    console.error(
+        `error: gsap not installed locally at ${gsapPath} — run \`npm install gsap\` in ${dir} ` +
+            `(a local-first render must not depend on a CDN)`,
+    );
+    process.exit(EXIT.USAGE);
 }
-const gsapInline = `<script>${fs.readFileSync(gsapPath, 'utf8')}</script>`;
+const gsapInline = `<script>${fs.readFileSync(gsapPath, "utf8")}</script>`;
 // Materialize EVERY slide first. narrative()/live() call checkedSrc(), so asserting before this map
 // would inspect an empty srcErrors list and silently omit unsafe imagery from the final HTML.
 //
@@ -1456,17 +2138,25 @@ const gsapInline = `<script>${fs.readFileSync(gsapPath, 'utf8')}</script>`;
 // boundary, a highlight addressing a field that does not exist, a no-go match. Unguarded,
 // those surfaced as a raw stack trace, which reads as an engine crash rather than as the
 // deliberate refusal it is, and buries the one line the author needs.
-const slideHtml = guard(() => timing.segments.map(slide).join(''));
-guard(() => assertNoSrcErrors());   // every invalid evidence source, named by segment id, reported in ONE error
+const slideHtml = guard(() => timing.segments.map(slide).join(""));
+guard(() => assertNoSrcErrors()); // every invalid evidence source, named by segment id, reported in ONE error
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=${w},height=${h},initial-scale=1">${gsapInline}<style>${css}</style></head><body><div id="stage">${slideHtml}${endCardSlide}<audio id="vo" preload="auto" src="voiceover.mp3"></audio></div><script>${runtime}</script></body></html>`;
-const outPath = guard(() => resolveOutput(dir, cli.values.out ?? 'video-auto.html', { apply: cli.apply, replace: cli.replace, label: 'output' }));
+const outPath = guard(() =>
+    resolveOutput(dir, cli.values.out ?? "video-auto.html", {
+        apply: cli.apply,
+        replace: cli.replace,
+        label: "output",
+    }),
+);
 if (!cli.apply) {
-  console.log(`plan: build the scene for ${timing.segments?.length ?? 0} segment(s)`);
-  console.log(`  source ${path.join(dir, 'timing.json')}`);
-  console.log(`  output ${outPath} — ${describeWrite(outPath, cli.replace)}`);
-  console.log(`  size   ${html.length} bytes of generated HTML`);
-  planFooter();
-  process.exit(EXIT.OK);
+    console.log(
+        `plan: build the scene for ${timing.segments?.length ?? 0} segment(s)`,
+    );
+    console.log(`  source ${path.join(dir, "timing.json")}`);
+    console.log(`  output ${outPath} — ${describeWrite(outPath, cli.replace)}`);
+    console.log(`  size   ${html.length} bytes of generated HTML`);
+    planFooter();
+    process.exit(EXIT.OK);
 }
 fs.writeFileSync(outPath, html);
-console.log('wrote video-auto.html (' + timing.segments.length + ' segments)');
+console.log("wrote video-auto.html (" + timing.segments.length + " segments)");

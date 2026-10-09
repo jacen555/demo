@@ -37,11 +37,22 @@
  * check nobody remembers to pass a flag to is a check that does not run. The full report
  * still prints before the refusal.
  */
-import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import { parseArgs } from 'node:util';
-import { EXIT, CliError, runCli, requireExistingFile, resolveFfmpegOrOverride as resolveFfmpeg } from './cli-support.mjs';
-import { readAstatsLevels, formatLevels, describeUnusableLevels, judgeDeliveredLevels } from './astats-levels.mjs';
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import {
+    EXIT,
+    CliError,
+    runCli,
+    requireExistingFile,
+    resolveFfmpegOrOverride as resolveFfmpeg,
+} from "./cli-support.mjs";
+import {
+    readAstatsLevels,
+    formatLevels,
+    describeUnusableLevels,
+    judgeDeliveredLevels,
+} from "./astats-levels.mjs";
 
 const USAGE = `
 check-levels — report RMS/peak audio levels for rendered video files.
@@ -75,85 +86,103 @@ ffmpeg failed, a window was unmeasurable, or the render carries no audio · 2 ba
 `.trimStart();
 
 await runCli(() => {
-  let values;
-  let positionals;
-  try {
-    ({ values, positionals } = parseArgs({
-      options: {
-        file: { type: 'string', multiple: true, default: [] },
-        project: { type: 'string' },
-        ffmpeg: { type: 'string' },
-        'allow-silent': { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
-      },
-      allowPositionals: true,
-      strict: true,
-    }));
-  } catch (err) {
-    throw new CliError(`${err.message}\n\n${USAGE}`);
-  }
-
-  if (values.help) {
-    console.log(USAGE);
-    return EXIT.OK;
-  }
-
-  const projectDir = path.resolve(values.project ?? process.cwd());
-  const specs = [...values.file, ...positionals];
-  if (specs.length === 0) {
-    throw new CliError(`no files to measure — pass --file <path> at least once\n\n${USAGE}`);
-  }
-
-  const files = specs.map((spec) => {
-    // "label=path", but only split on the first '=' so a path containing '=' survives.
-    const eq = spec.indexOf('=');
-    const hasLabel = eq > 0;
-    const rawPath = hasLabel ? spec.slice(eq + 1) : spec;
-    const abs = requireExistingFile(projectDir, rawPath, `input file "${rawPath}"`);
-    return { label: hasLabel ? spec.slice(0, eq) : path.basename(rawPath), file: abs };
-  });
-
-  const FF = resolveFfmpeg(projectDir, values.ffmpeg);
-
-  // The third window is the TAIL, not necessarily an end card. It was labelled
-  // "end card — music only", which is true only for a project that has one: with
-  // endCard.enabled false there is no end card, and the last 2s may still carry
-  // narration. The measurement is useful either way; the label just has to stop
-  // asserting a configuration it cannot see from here.
-  const sections = [
-    ['whole file', [], { wholeFile: true, audioExpected: !values['allow-silent'] }],
-    ['lead-in (first 1.5s — music only, no speech yet)', ['-t', '1.5'], {}],
-    ['last 2s (tail — music only when the project ends on an end card)', ['-sseof', '-2'], {}],
-  ];
-
-  const labelWidth = Math.max(...files.map((f) => f.label.length), 20);
-  const refusals = [];
-  let first = true;
-  for (const [heading, args, gate] of sections) {
-    console.log(first ? heading : `\n${heading}`);
-    first = false;
-    for (const { label, file } of files) {
-      const s = stats(FF, file, args);
-      console.log(`  ${label.padEnd(labelWidth)} ${formatLevels(s)}`);
-      // Judged AFTER the line is printed, and collected rather than thrown, so the whole
-      // report reaches the reader. A gate that stops at the first bad window hides the
-      // other measurements, which are the context for deciding what went wrong.
-      const refusal = judgeDeliveredLevels(s, { label: `${label} — ${heading}`, ...gate });
-      if (refusal) refusals.push(refusal);
+    let values;
+    let positionals;
+    try {
+        ({ values, positionals } = parseArgs({
+            options: {
+                file: { type: "string", multiple: true, default: [] },
+                project: { type: "string" },
+                ffmpeg: { type: "string" },
+                "allow-silent": { type: "boolean", default: false },
+                help: { type: "boolean", short: "h", default: false },
+            },
+            allowPositionals: true,
+            strict: true,
+        }));
+    } catch (err) {
+        throw new CliError(`${err.message}\n\n${USAGE}`);
     }
-  }
 
-  if (refusals.length > 0) {
-    throw new CliError(
-      `${refusals.length} delivered file(s) carry no audio — this render must not be delivered:\n` +
-        refusals.map((r) => `  ${r}`).join('\n'),
-      EXIT.FAILED,
-    );
-  }
-  return EXIT.OK;
+    if (values.help) {
+        console.log(USAGE);
+        return EXIT.OK;
+    }
+
+    const projectDir = path.resolve(values.project ?? process.cwd());
+    const specs = [...values.file, ...positionals];
+    if (specs.length === 0) {
+        throw new CliError(
+            `no files to measure — pass --file <path> at least once\n\n${USAGE}`,
+        );
+    }
+
+    const files = specs.map((spec) => {
+        // "label=path", but only split on the first '=' so a path containing '=' survives.
+        const eq = spec.indexOf("=");
+        const hasLabel = eq > 0;
+        const rawPath = hasLabel ? spec.slice(eq + 1) : spec;
+        const abs = requireExistingFile(
+            projectDir,
+            rawPath,
+            `input file "${rawPath}"`,
+        );
+        return {
+            label: hasLabel ? spec.slice(0, eq) : path.basename(rawPath),
+            file: abs,
+        };
+    });
+
+    const FF = resolveFfmpeg(projectDir, values.ffmpeg);
+
+    // The third window is the TAIL, not necessarily an end card. It was labelled
+    // "end card — music only", which is true only for a project that has one: with
+    // endCard.enabled false there is no end card, and the last 2s may still carry
+    // narration. The measurement is useful either way; the label just has to stop
+    // asserting a configuration it cannot see from here.
+    const sections = [
+        [
+            "whole file",
+            [],
+            { wholeFile: true, audioExpected: !values["allow-silent"] },
+        ],
+        ["lead-in (first 1.5s — music only, no speech yet)", ["-t", "1.5"], {}],
+        [
+            "last 2s (tail — music only when the project ends on an end card)",
+            ["-sseof", "-2"],
+            {},
+        ],
+    ];
+
+    const labelWidth = Math.max(...files.map((f) => f.label.length), 20);
+    const refusals = [];
+    let first = true;
+    for (const [heading, args, gate] of sections) {
+        console.log(first ? heading : `\n${heading}`);
+        first = false;
+        for (const { label, file } of files) {
+            const s = stats(FF, file, args);
+            console.log(`  ${label.padEnd(labelWidth)} ${formatLevels(s)}`);
+            // Judged AFTER the line is printed, and collected rather than thrown, so the whole
+            // report reaches the reader. A gate that stops at the first bad window hides the
+            // other measurements, which are the context for deciding what went wrong.
+            const refusal = judgeDeliveredLevels(s, {
+                label: `${label} — ${heading}`,
+                ...gate,
+            });
+            if (refusal) refusals.push(refusal);
+        }
+    }
+
+    if (refusals.length > 0) {
+        throw new CliError(
+            `${refusals.length} delivered file(s) carry no audio — this render must not be delivered:\n` +
+                refusals.map((r) => `  ${r}`).join("\n"),
+            EXIT.FAILED,
+        );
+    }
+    return EXIT.OK;
 });
-
-
 
 /**
  * Measures RMS and peak for `file`. Throws rather than returning NaN: a level this
@@ -163,21 +192,45 @@ await runCli(() => {
  * measurement of this pipeline's deliberate lead-in looks like.
  */
 function stats(FF, file, args = []) {
-  const r = spawnSync(FF, ['-hide_banner', ...args, '-i', file,
-    '-af', 'astats=metadata=1:reset=0', '-f', 'null', '-'], { encoding: 'utf8' });
+    const r = spawnSync(
+        FF,
+        [
+            "-hide_banner",
+            ...args,
+            "-i",
+            file,
+            "-af",
+            "astats=metadata=1:reset=0",
+            "-f",
+            "null",
+            "-",
+        ],
+        { encoding: "utf8" },
+    );
 
-  if (r.error) {
-    throw new CliError(`could not run ffmpeg at "${FF}" — ${r.error.message}`, EXIT.FAILED);
-  }
-  if (r.status !== 0) {
-    const tail = ((r.stderr || '').trim().split('\n').slice(-5).join('\n')) || '(no stderr)';
-    throw new CliError(`ffmpeg exited ${r.status} while measuring ${file}:\n${tail}`, EXIT.FAILED);
-  }
+    if (r.error) {
+        throw new CliError(
+            `could not run ffmpeg at "${FF}" — ${r.error.message}`,
+            EXIT.FAILED,
+        );
+    }
+    if (r.status !== 0) {
+        const tail =
+            (r.stderr || "").trim().split("\n").slice(-5).join("\n") ||
+            "(no stderr)";
+        throw new CliError(
+            `ffmpeg exited ${r.status} while measuring ${file}:\n${tail}`,
+            EXIT.FAILED,
+        );
+    }
 
-  const out = (r.stdout || '') + (r.stderr || ''); // astats reports on stderr
-  const levels = readAstatsLevels(out);
-  if (levels.state === 'unmeasurable') {
-    throw new CliError(describeUnusableLevels(file, out, levels), EXIT.FAILED);
-  }
-  return levels;
+    const out = (r.stdout || "") + (r.stderr || ""); // astats reports on stderr
+    const levels = readAstatsLevels(out);
+    if (levels.state === "unmeasurable") {
+        throw new CliError(
+            describeUnusableLevels(file, out, levels),
+            EXIT.FAILED,
+        );
+    }
+    return levels;
 }

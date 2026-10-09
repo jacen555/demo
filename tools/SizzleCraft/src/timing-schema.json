@@ -8,7 +8,16 @@
   "$defs": {
     "theme": {
       "description": "A shipped background theme. write-build-html looks the name up in THEMES and silently falls back to midnight on a miss, so an unknown name or an object rendered the wrong theme instead of failing.",
-      "enum": ["midnight", "light", "microsoft", "azure", "aurora", "mesh", "slate", "dawn"]
+      "enum": [
+        "midnight",
+        "light",
+        "microsoft",
+        "azure",
+        "aurora",
+        "mesh",
+        "slate",
+        "dawn"
+      ]
     }
   },
   "properties": {
@@ -51,7 +60,11 @@
       "description": "Authoring calibration. wordsPerSecond x wpsSafetyMargin gives the word budget ceiling.",
       "properties": {
         "wordsPerSecond": { "type": "number", "exclusiveMinimum": 0 },
-        "wpsSafetyMargin": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "wpsSafetyMargin": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
         "theme": { "$ref": "#/$defs/theme" }
       },
       "additionalProperties": true

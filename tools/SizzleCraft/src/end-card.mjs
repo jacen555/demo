@@ -14,7 +14,11 @@
  */
 
 /** Every field that exists only to describe an end card. */
-export const END_CARD_ONLY_FIELDS = Object.freeze(['builderVersion', 'contentMs', 'outroMs']);
+export const END_CARD_ONLY_FIELDS = Object.freeze([
+    "builderVersion",
+    "contentMs",
+    "outroMs",
+]);
 
 /**
  * Applies the end-card contract to a timing object, in place.
@@ -27,14 +31,14 @@ export const END_CARD_ONLY_FIELDS = Object.freeze(['builderVersion', 'contentMs'
  * @returns {object} the same object, mutated
  */
 export function normalizeEndCardFields(timing, { contentMs, outroMs }) {
-  if (timing?.endCard?.enabled) {
-    timing.contentMs = contentMs;
-    timing.outroMs = outroMs;
-    timing.durationMs = contentMs + outroMs;
-    return timing;
-  }
+    if (timing?.endCard?.enabled) {
+        timing.contentMs = contentMs;
+        timing.outroMs = outroMs;
+        timing.durationMs = contentMs + outroMs;
+        return timing;
+    }
 
-  for (const field of END_CARD_ONLY_FIELDS) delete timing[field];
-  timing.durationMs = contentMs;
-  return timing;
+    for (const field of END_CARD_ONLY_FIELDS) delete timing[field];
+    timing.durationMs = contentMs;
+    return timing;
 }
