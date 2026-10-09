@@ -23,9 +23,8 @@
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const VERDICTS = new Set(['different', 'absent', 'unavailable', 'unchecked']);
 
@@ -37,11 +36,7 @@ if (!params.get('dir') || !name || !VERDICTS.has(verdict)) {
     `confuse-after-rename: its --import URL must carry dir, name and verdict (${[...VERDICTS].join(', ')})`,
   );
 }
-const dir = fs.realpathSync.native(params.get('dir'));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
-  throw new Error(`confuse-after-rename: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
-}
+const dir = requireTestOwnedDir(params.get('dir'), 'confuse-after-rename');
 
 /** The destination path whose lstat is altered, once the rename onto it has happened. */
 let confused = null;
