@@ -130,7 +130,7 @@ describe('entry-point detection: identity, not spelling', () => {
     // cli-support.mjs and canonical-json.mjs already import each other; the helper must
     // stay outside that cycle.
     const body = fs.readFileSync(path.join(SRC_DIR, 'entry-point.mjs'), 'utf8');
-    const specifiers = [...body.matchAll(/^import\s[^;]*?from\s+'([^']+)'/gm)].map((m) => m[1]);
+    const specifiers = [...body.matchAll(/^import\s[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[1]);
     assert.ok(specifiers.length > 0);
     assert.deepEqual(specifiers.filter((s) => !s.startsWith('node:')), []);
   });
