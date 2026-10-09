@@ -21,7 +21,7 @@ import { EXIT, resolveWithinRoot, parseBoundedNumber, requirePositiveNumber, Cli
 import { normalizeEndCardFields } from '../src/end-card.mjs';
 import { classifyGainPin, describeGainPinRefusal, describeGainPinPlan } from '../src/gain-pin.mjs';
 import { MIX_PARAMETERS, NOT_IN_FORCE } from '../src/mix-parameters.mjs';
-import { assertCleanExit, pcmWav, removeFixture } from './_helpers.mjs';
+import { assertCleanExit, makeProject, pcmWav, removeFixture } from './_helpers.mjs';
 
 /**
  * What a pin records for the CONDITIONAL pinned parameters when they are not in force.
@@ -58,18 +58,6 @@ const PROBEABLE_MEDIA = Object.freeze({
 });
 
 const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
-
-/** Creates a throwaway project dir, removed when the test ends. */
-function makeProject(t, files = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sizzlecraft-test-'));
-  t.after(() => removeFixture(dir));
-  for (const [rel, body] of Object.entries(files)) {
-    const target = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, body);
-  }
-  return dir;
-}
 
 /** Runs an engine script as a real CLI in `cwd` and returns its exit code + streams. */
 function runScript(script, args, cwd) {
