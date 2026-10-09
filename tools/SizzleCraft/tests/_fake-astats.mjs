@@ -36,6 +36,6 @@ if (!params.get('ffmpeg') || !params.get('whole')) {
   throw new Error('fake-astats: its --import URL must carry ffmpeg and whole');
 }
 
-const hooks = new URL('./_fake-astats-hooks.mjs', import.meta.url);
-hooks.search = params.toString();
-register(hooks.href, import.meta.url);
+const backend = new URL('./_fake-astats-backend.mjs', import.meta.url);
+backend.search = params.toString();
+register('./fixtures/child-process-hooks.mjs', import.meta.url, { data: { backend: backend.href } });
