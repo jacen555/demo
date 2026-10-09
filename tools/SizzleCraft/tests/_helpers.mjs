@@ -596,9 +596,9 @@ export async function probeFootageFrames(sceneHtml, atMsList) {
  */
 export function gsapStubWithout(methodName) {
   const source = fs.readFileSync(path.join(fixturesDir, 'gsap-stub.js'), 'utf8');
-  const pattern = new RegExp(String.raw`^[ \t]*${methodName}: function \([^)]*\) \{[^\n]*\},?[ \t]*\r?\n`, 'm');
+  const pattern = new RegExp(String.raw`^([ \t]*)${methodName}: function \([^)]*\) \{(?:[^\n]*\},?[ \t]*\r?\n|[ \t]*\r?\n[\s\S]*?^\1\},?[ \t]*\r?\n)`, 'm');
   if (!pattern.test(source)) {
-    throw new Error(`gsap-stub.js does not define ${methodName}() on a single line — cannot derive a broken variant from it`);
+    throw new Error(`gsap-stub.js does not define ${methodName}() as a method on its own line(s) — cannot derive a broken variant from it`);
   }
   const broken = source.replace(pattern, '');
   if (broken === source) throw new Error(`removing ${methodName}() from gsap-stub.js changed nothing`);
