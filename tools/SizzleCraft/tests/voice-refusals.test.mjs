@@ -32,17 +32,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { EXIT } from '../src/cli-support.mjs';
-import { makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, FAKE_AUDIO, brandTokens } from './_helpers.mjs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const fixture = (name) => pathToFileURL(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', name),
-).href;
+import { makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, FAKE_AUDIO, brandTokens, fixtureUrl } from './_helpers.mjs';
 
 /** Makes music-metadata's parseFile throw after N real calls. */
-const FAIL_PROBE = fixture('fail-probe.mjs');
+const FAIL_PROBE = fixtureUrl('fail-probe.mjs');
 /** Makes one publish rename fail, inside the child, with no race. */
-const FAIL_RENAME = fixture('fail-rename-dest.mjs');
+const FAIL_RENAME = fixtureUrl('fail-rename-dest.mjs');
 
 /** Two narrated segments whose windows comfortably fit the fake service's output. */
 const narrated = () => [

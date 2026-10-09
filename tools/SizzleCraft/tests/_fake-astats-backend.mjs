@@ -1,4 +1,4 @@
-// The wrapper _fake-astats-hooks.mjs puts in front of `node:child_process`. It re-exports
+// The wrapper child-process-hooks.mjs puts in front of `node:child_process`. It re-exports
 // the real module and replaces `spawnSync` for ONE executable — the marker path the test
 // passes as --ffmpeg. _fake-astats.mjs explains the model and the limits.
 //

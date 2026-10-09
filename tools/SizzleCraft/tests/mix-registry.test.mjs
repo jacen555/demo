@@ -23,12 +23,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 
 import { CliError, EXIT } from '../src/cli-support.mjs';
 import { MIX_PARAMETERS, createMixAudit } from '../src/mix-parameters.mjs';
 import { classifyGainPin, confirmedLockRecord } from '../src/gain-pin.mjs';
-import { makeProject, runScript, assertCleanExit, pcmWav } from './_helpers.mjs';
+import { makeProject, runScript, assertCleanExit, pcmWav, fixtureUrl } from './_helpers.mjs';
 
 /** Declares the set remux-music declares, at the shipped defaults, with ducking OFF. */
 function declaredMix() {
@@ -750,11 +749,7 @@ describe('remux-music publishes the gain pin', () => {
       ...extra,
     });
 
-  const fakeFfmpeg = (dir, extra = {}) => {
-    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'fake-ffmpeg.mjs'));
-    url.search = new URLSearchParams({ dir, ffmpeg: FAKE_FFMPEG, ...extra }).toString();
-    return url.href;
-  };
+  const fakeFfmpeg = (dir, extra = {}) => fixtureUrl('fake-ffmpeg.mjs', { dir, ffmpeg: FAKE_FFMPEG, ...extra });
 
   const remux = (dir, extra = []) =>
     runScript(

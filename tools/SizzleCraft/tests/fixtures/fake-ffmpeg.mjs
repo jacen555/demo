@@ -49,6 +49,6 @@ if (!params.get('dir') || !params.get('ffmpeg')) {
   throw new Error('fake-ffmpeg: its --import URL must carry dir and ffmpeg');
 }
 
-const hooks = new URL('./fake-ffmpeg-hooks.mjs', import.meta.url);
-hooks.search = params.toString();
-register(hooks.href, import.meta.url);
+const backend = new URL('./fake-ffmpeg-backend.mjs', import.meta.url);
+backend.search = params.toString();
+register('./child-process-hooks.mjs', import.meta.url, { data: { backend: backend.href } });

@@ -23,7 +23,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 
 import { EXIT, CliError, resolveEngineOutput } from '../src/cli-support.mjs';
 import { createMixAudit, MIX_PARAMETERS } from '../src/mix-parameters.mjs';
@@ -46,7 +45,7 @@ import {
 } from '../src/envelope-ducking.mjs';
 import {
   makeProject, makeOutsideDir, runScript, assertCleanExit, tryMakeFileLink, pcmWav, plantOnMarker, MISSING_FFMPEG,
-  FAKE_AUDIO, refuseUnlink, failClose, tryMakeDirLink, removeFixture,
+  FAKE_AUDIO, refuseUnlink, failClose, tryMakeDirLink, removeFixture, fixtureUrl,
 } from './_helpers.mjs';
 import { frames, VOICED_LEVEL } from './fixtures/fake-audio-backends.mjs';
 
@@ -2287,15 +2286,12 @@ describe('the bed make-music names for itself is published, not written through'
   const PLANTED = 'ORIGINAL VICTIM';
 
   /** The --import URL that plants a link at `music.wav` inside make-music's own log call. */
-  const plantingALinkAtTheBed = (dir) => {
-    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'plant-link-on-marker.mjs'));
-    url.search = new URLSearchParams({
+  const plantingALinkAtTheBed = (dir) =>
+    fixtureUrl('plant-link-on-marker.mjs', {
       marker: 'raw peak',
       target: path.join(dir, 'music.wav'),
       victim: path.join(dir, VICTIM),
-    }).toString();
-    return url.href;
-  };
+    });
 
   const makeMusicPlantingALink = (dir, extra = []) =>
     runScript('make-music.mjs', ['--seconds', '2', '--apply', ...extra], dir, {
@@ -2431,12 +2427,6 @@ describe('a failed bed publish removes only its own temp, and says what it left'
   const RECORD = 'music.wav.duck.json';
   const BED_TEMP_FRAGMENT = 'music.wav.part-';
 
-  const fixtureUrl = (name, params) => {
-    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', name));
-    url.search = new URLSearchParams(params).toString();
-    return url.href;
-  };
-
   test('makeMusic_bedTempNameNoLongerHoldsThisRunsFileWhenTheRenameFails_leavesItAndSaysSo', (t) => {
     const dir = makeProject(t);
 
@@ -2558,11 +2548,8 @@ describe('the identity check keeps its verdicts apart', () => {
 // --------------------------------------------------------------------------------------
 
 describe('a bed whose name cannot be confirmed says which thing it found', () => {
-  const confusingTheBed = (dir, verdict) => {
-    const url = pathToFileURL(path.join(import.meta.dirname, 'fixtures', 'confuse-after-rename.mjs'));
-    url.search = new URLSearchParams({ dir, name: 'music.wav', verdict }).toString();
-    return url.href;
-  };
+  const confusingTheBed = (dir, verdict) =>
+    fixtureUrl('confuse-after-rename.mjs', { dir, name: 'music.wav', verdict });
 
   for (const [verdict, why] of [
     ['different', /another entry took its place as it was renamed/],

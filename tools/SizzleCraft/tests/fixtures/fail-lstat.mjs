@@ -24,20 +24,15 @@
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const names = params.getAll('name');
 if (!params.get('dir') || names.length === 0 || names.some((n) => n === '' || n !== path.basename(n))) {
   throw new Error('fail-lstat: its --import URL must carry dir and at least one name, each a bare entry name');
 }
-const dir = fs.realpathSync.native(params.get('dir'));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
-  throw new Error(`fail-lstat: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
-}
+const dir = requireTestOwnedDir(params.get('dir'), 'fail-lstat');
 
 // Whether `candidate` is one of the named entries of the directory. Its parent is resolved,
 // not the path itself, so the entry is matched whatever it is. Asked for every lstat, so it

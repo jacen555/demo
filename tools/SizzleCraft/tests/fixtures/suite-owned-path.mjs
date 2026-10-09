@@ -12,6 +12,20 @@ import path from 'node:path';
 export const TEST_DIR_PREFIX = 'sizzlecraft-test-';
 
 /**
+ * The real path of `candidate`, a fixture's armed DIRECTORY, which must be a `sizzlecraft-test-*`
+ * directory that is a direct child of realpath(os.tmpdir()). Anything else throws, labelled with the
+ * fixture. Unlike requireTestOwnedPath this validates the directory itself, not a file inside it.
+ */
+export function requireTestOwnedDir(candidate, label) {
+  const dir = fs.realpathSync.native(candidate);
+  const tmp = fs.realpathSync.native(os.tmpdir());
+  if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
+    throw new Error(`${label}: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
+  }
+  return dir;
+}
+
+/**
  * The real path of `candidate`, which must lie inside a `sizzlecraft-test-*` directory
  * directly under realpath(os.tmpdir()). It must be a regular file, or absent when
  * `mayBeAbsent`, and never a link. Anything else throws, loudly: a fixture that skipped

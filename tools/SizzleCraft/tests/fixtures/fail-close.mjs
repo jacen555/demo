@@ -23,18 +23,13 @@
 //
 // It is a TEST fixture. Nothing in src/ may import it.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { TEST_DIR_PREFIX } from './suite-owned-path.mjs';
+import { requireTestOwnedDir } from './suite-owned-path.mjs';
 
 const params = new URL(import.meta.url).searchParams;
 const fragment = params.get('fragment');
 if (!params.get('dir') || !fragment) throw new Error('fail-close: its --import URL must carry dir and fragment');
-const dir = fs.realpathSync.native(params.get('dir'));
-const tmp = fs.realpathSync.native(os.tmpdir());
-if (path.dirname(dir) !== tmp || !path.basename(dir).startsWith(TEST_DIR_PREFIX)) {
-  throw new Error(`fail-close: ${dir} is not a ${TEST_DIR_PREFIX}* directory directly under ${tmp}`);
-}
+const dir = requireTestOwnedDir(params.get('dir'), 'fail-close');
 
 // Checked after the open has succeeded, so it must not throw: that would leak the descriptor.
 const staged = (name) => {
