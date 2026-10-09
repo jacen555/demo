@@ -377,13 +377,9 @@ const esc = (s, where) => {
   return out.replace(
     /[&<>"']/g,
     (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[c],
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
   );
 };
 // THE DERIVED IDENTIFIER, SCREENED WHERE IT IS FORMED.
@@ -1356,18 +1352,8 @@ function autoTriggers(seg) {
     m = mode(seg),
     dur = Math.max(1, seg.endMs - seg.startMs);
   const out = [
-    {
-      atMs: 0,
-      target: `${seg.id}-label`,
-      action: "rise",
-      withSegment: true,
-    },
-    {
-      atMs: 0,
-      target: `${seg.id}-title`,
-      action: "rise",
-      withSegment: true,
-    },
+    { atMs: 0, target: `${seg.id}-label`, action: "rise", withSegment: true },
+    { atMs: 0, target: `${seg.id}-title`, action: "rise", withSegment: true },
   ];
   if (v.subtitle)
     out.push({ atMs: 450, target: `${seg.id}-subtitle`, action: "rise" });
@@ -1483,11 +1469,7 @@ function autoTriggers(seg) {
         payload: { toId: `${seg.id}-field-${f.id}` },
       });
       at += 450;
-      out.push({
-        atMs: at,
-        target: `${seg.id}-field-${f.id}`,
-        action: "type",
-      });
+      out.push({ atMs: at, target: `${seg.id}-field-${f.id}`, action: "type" });
       at += 900;
     });
   } else if (m === "footage") {

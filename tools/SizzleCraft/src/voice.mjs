@@ -104,11 +104,7 @@ const voice = stable.voice;
 // still be reached, and never fire. A threshold that cannot be compared does not relax
 // the check, it deletes it.
 const speed = guard(() =>
-  requireFiniteNumber(stable.speed, {
-    name: "intake.speed",
-    min: 0.5,
-    max: 2,
-  }),
+  requireFiniteNumber(stable.speed, { name: "intake.speed", min: 0.5, max: 2 }),
 );
 const toleranceMs = guard(() =>
   requireFiniteNumber(stable.toleranceMs, {
@@ -400,9 +396,7 @@ async function synthOnce(text, stageBytes) {
   await tts.setMetadata(voice, "audio-24khz-96kbitrate-mono-mp3", {
     wordBoundaryEnabled: true,
   });
-  const { audioStream, metadataStream } = tts.toStream(text, {
-    rate: ratePct,
-  });
+  const { audioStream, metadataStream } = tts.toStream(text, { rate: ratePct });
   const chunks = [],
     words = [];
   metadataStream.on("data", (buf) => {

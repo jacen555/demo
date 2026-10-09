@@ -513,11 +513,7 @@ describe("drift tolerance validation", () => {
   test("remix_nonNumericToleranceMs_exitsUsageError", (t) => {
     const dir = makeProject(t, {
       "timing.json": timingFixture(contiguousSegments, {
-        intake: {
-          leadInMs: 2000,
-          perceivedGapMs: 2000,
-          toleranceMs: "oops",
-        },
+        intake: { leadInMs: 2000, perceivedGapMs: 2000, toleranceMs: "oops" },
       }),
     });
     const r = runScript("remix.mjs", [], dir);
@@ -554,10 +550,7 @@ describe("envelope input validation", () => {
   const boundEnvelopeProject = (t, envelope) =>
     makeProject(t, {
       "voiceover.mp3": voice,
-      "env.json": JSON.stringify({
-        ...envelope,
-        measuredFrom: boundTo(voice),
-      }),
+      "env.json": JSON.stringify({ ...envelope, measuredFrom: boundTo(voice) }),
     });
 
   test("makeMusic_envelopeWithEmptyRms_refusesBeforeWriting", (t) => {
@@ -936,10 +929,7 @@ describe("complete write set", () => {
   };
 
   test("voice_voiceoverLinkedToASegmentClip_isRefusedBeforeSynthesis", (t) => {
-    const dir = makeProject(t, {
-      ...voiceFiles,
-      "segment_01.mp3": "clip one",
-    });
+    const dir = makeProject(t, { ...voiceFiles, "segment_01.mp3": "clip one" });
     if (
       !tryMakeFileLink(
         path.join(dir, "voiceover.mp3"),
@@ -1895,12 +1885,7 @@ describe("write-build-html engine-chosen reads", () => {
 describe("validate-timing refuses to judge malformed timing", () => {
   test("validateTiming_finalSegmentEndMsNotNumeric_failsRatherThanExitingZero", (t) => {
     const segments = [
-      {
-        id: "one",
-        startMs: 0,
-        endMs: 2000,
-        voiceoverText: "a word or two",
-      },
+      { id: "one", startMs: 0, endMs: 2000, voiceoverText: "a word or two" },
       {
         id: "two",
         startMs: 2000,
@@ -3694,10 +3679,7 @@ describe("author content is screened where it is emitted, and scaffolding is not
         mode: "statement",
         title: "One scenario",
         shots: [
-          {
-            src: "evidence-pack/cortex-supportgraph.png",
-            label: "a shot",
-          },
+          { src: "evidence-pack/cortex-supportgraph.png", label: "a shot" },
         ],
       },
     };
@@ -3918,11 +3900,7 @@ describe("emission screening reaches the derived id, the payload and the null li
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4014,11 +3992,7 @@ describe("screening covers non-string payloads and unwalked diagnostic paths", (
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4110,11 +4084,7 @@ describe("author values are screened before any diagnostic quotes them", () => {
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4206,11 +4176,7 @@ describe("author values are screened before any diagnostic quotes them", () => {
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     const timing = JSON.parse(timingFixture([seg]));
     timing.project.noGoPatterns = [];
@@ -4255,11 +4221,7 @@ describe("screening is enforced by the act of quoting, and covers action and dim
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4307,11 +4269,7 @@ describe("screening is enforced by the act of quoting, and covers action and dim
     // only part of a trigger that leaves the build.
     const { run } = build(t, ["cortex-supportgraph"], (s) => {
       s.triggers = [
-        {
-          atMs: 100,
-          target: "scenario-label",
-          action: "cortex-supportgraph",
-        },
+        { atMs: 100, target: "scenario-label", action: "cortex-supportgraph" },
       ];
     });
 
@@ -4353,11 +4311,7 @@ describe("screening is enforced by the act of quoting, and covers action and dim
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     const timing = JSON.parse(timingFixture([seg]));
     timing.project.noGoPatterns = [];
@@ -4389,11 +4343,7 @@ describe("everything serialised into the trigger data is screened, not a list of
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4458,11 +4408,7 @@ describe("everything serialised into the trigger data is screened, not a list of
     // object's properties serialise unchanged and ship.
     const { run } = build(t, ["cortex-supportgraph"], (s) => {
       s.triggers = [
-        {
-          atMs: 100,
-          target: { id: "cortex-supportgraph" },
-          action: "rise",
-        },
+        { atMs: 100, target: { id: "cortex-supportgraph" }, action: "rise" },
       ];
     });
 
@@ -4519,11 +4465,7 @@ describe("keys, modes and every serialised trigger target are screened", () => {
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));
@@ -4631,11 +4573,7 @@ describe("round 7: coercion, the screens own label, and unguarded top-level thro
       startMs: 0,
       endMs: 6000,
       voiceoverText: "one scenario field by field",
-      visual: {
-        mode: "code",
-        title: "One scenario",
-        json: { safe: "v" },
-      },
+      visual: { mode: "code", title: "One scenario", json: { safe: "v" } },
     };
     mutate(seg);
     const timing = JSON.parse(timingFixture([seg]));

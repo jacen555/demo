@@ -547,10 +547,7 @@ describe("path confinement reaches the CLI", () => {
   test("remuxMusic_gainLockIsLinkToOutsideVictim_refusesWithoutClobberingIt", (t) => {
     // A timeline, so the apply run can size the mix and reach the pin.
     const root = remuxProject(t, {
-      "timing.json": JSON.stringify({
-        project: { fps: 30 },
-        durationMs: 4000,
-      }),
+      "timing.json": JSON.stringify({ project: { fps: 30 }, durationMs: 4000 }),
     });
     const outside = makeOutsideDir(t, { "victim.json": "ORIGINAL VICTIM" });
     const link = path.join(root, "music-gain.lock.json");

@@ -296,12 +296,7 @@ describe("voice --apply against a controlled TTS service", () => {
       voiceoverText: "",
       silence: { caption: "[music]" },
     },
-    {
-      id: "four",
-      startMs: 2640,
-      endMs: 3840,
-      voiceoverText: NARRATION.four,
-    },
+    { id: "four", startMs: 2640, endMs: 3840, voiceoverText: NARRATION.four },
   ];
   let dir;
   let r;
@@ -908,12 +903,7 @@ describe("voice refuses a timeline its gate refuses before it writes anything", 
       voiceoverText: "",
       silence: { caption: "[music]" },
     },
-    {
-      id: "four",
-      startMs: 2640,
-      endMs: 3840,
-      voiceoverText: NARRATION.four,
-    },
+    { id: "four", startMs: 2640, endMs: 3840, voiceoverText: NARRATION.four },
   ];
   const SENTINELS = {
     "segment_01.mp3": frames(1),
@@ -1858,19 +1848,13 @@ describe("remix regenerates declared silence from the authored window", () => {
     });
   };
   const remix = (dir, args = ["--apply", "--replace"]) =>
-    runScript("remix.mjs", args, dir, {
-      nodeArgs: ["--import", FAKE_AUDIO],
-    });
+    runScript("remix.mjs", args, dir, { nodeArgs: ["--import", FAKE_AUDIO] });
   const readText = (dir, f) => fs.readFileSync(path.join(dir, f), "utf8");
   const readBytes = (dir, f) => fs.readFileSync(path.join(dir, f));
   const byId = (timing) =>
     Object.fromEntries(timing.segments.map((s) => [s.id, s]));
   const shifted = (list, ms) =>
-    list.map((w) => ({
-      ...w,
-      startMs: w.startMs + ms,
-      endMs: w.endMs + ms,
-    }));
+    list.map((w) => ({ ...w, startMs: w.startMs + ms, endMs: w.endMs + ms }));
   // One whole line of output, from a literal start to a literal end. Anchored at both ends, it
   // fails when the advice that ends a refusal loses its tail or gains one.
   const wholeLine = (start, end) =>

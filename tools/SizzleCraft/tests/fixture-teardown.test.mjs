@@ -238,10 +238,7 @@ describe("fixture teardown survives a busy machine", () => {
     test(
       `removeFixture_directoryHeldByALiveChildProcess${where}_succeedsOnceTheHandleIsReleased`,
       async (t) => {
-        const { dir, ready } = heldDirectory(t, {
-          holdMs: 2500,
-          holdAt,
-        });
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
         await ready;
 
         // The handle outlives the first attempt by seconds, so this can only pass by retrying.
@@ -261,10 +258,7 @@ describe("fixture teardown survives a busy machine", () => {
       async (t) => {
         // THE POSITIVE CONTROL. Identical setup, retry budget removed. If this ever passes,
         // the directory was not locked and the test above is vacuous.
-        const { dir, ready } = heldDirectory(t, {
-          holdMs: 2500,
-          holdAt,
-        });
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
         await ready;
 
         const err = captureError(() =>
@@ -294,10 +288,7 @@ describe("fixture teardown survives a busy machine", () => {
         // `runScript` spawns every engine CLI with cwd set to the fixture, so a held
         // DIRECTORY is this suite's common shape. Relying on the built-in option would have
         // shipped a retry that cannot fire on it.
-        const { dir, ready } = heldDirectory(t, {
-          holdMs: 2500,
-          holdAt,
-        });
+        const { dir, ready } = heldDirectory(t, { holdMs: 2500, holdAt });
         await ready;
 
         // NO WALL CLOCK. An earlier draft asserted "gave up in under retryDelay ms", which
@@ -308,11 +299,7 @@ describe("fixture teardown survives a busy machine", () => {
         // still raises EBUSY can only mean the retry never happened. Nothing is timed.
         const generous = { maxRetries: 10, retryDelay: 1000 };
         const err = captureError(() =>
-          fs.rmSync(dir, {
-            recursive: true,
-            force: true,
-            ...generous,
-          }),
+          fs.rmSync(dir, { recursive: true, force: true, ...generous }),
         );
 
         assert.equal(

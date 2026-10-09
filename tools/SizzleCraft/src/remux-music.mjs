@@ -234,11 +234,7 @@ const GAIN_SMALLEST = 0.000001;
 
 /** A linear gain: 0 (mute), or a plain decimal from GAIN_SMALLEST to GAIN_MAX. */
 function parseGain(raw, name) {
-  const gain = parseBoundedNumber(raw, {
-    name,
-    min: GAIN_MIN,
-    max: GAIN_MAX,
-  });
+  const gain = parseBoundedNumber(raw, { name, min: GAIN_MIN, max: GAIN_MAX });
   if (gain !== 0 && gain < GAIN_SMALLEST) {
     throw new CliError(
       `${name} ${raw} is below the smallest gain this stage renders — use ${GAIN_MIN} (mute) or ` +
@@ -557,10 +553,7 @@ await runCli(async () => {
       );
     }
 
-    const speech = measureSpeech({
-      rms: envelope.rms,
-      hopMs: envelope.hopMs,
-    });
+    const speech = measureSpeech({ rms: envelope.rms, hopMs: envelope.hopMs });
     if (speech.speechRms === null) {
       throw new CliError(
         `${envelopePath} has no frame above the speech threshold (${SPEECH_RMS_THRESHOLD}), so there is no\n` +

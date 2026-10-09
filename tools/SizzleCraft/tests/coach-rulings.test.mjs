@@ -535,11 +535,7 @@ describe("the keying rule, against the shipped EvalLoopDemo script", () => {
   const BASE = sentenceContaining(realScript, REAL_QUOTE);
   const EDITS = [
     { label: "identical", edit: (s) => s, reopens: false },
-    {
-      label: "trailing whitespace",
-      edit: (s) => `${s}   `,
-      reopens: false,
-    },
+    { label: "trailing whitespace", edit: (s) => `${s}   `, reopens: false },
     {
       label: "re-wrapped onto two lines",
       edit: (s) => s.replace(" so slow", "\nso slow"),

@@ -409,12 +409,7 @@ describe("frame-capture plan accuracy", () => {
     const dir = makeProject(t, {
       ...baseFiles,
       "timing.json": timingFixture(contiguousSegments, {
-        project: {
-          name: "demo",
-          fps: "thirty",
-          width: 1280,
-          height: 720,
-        },
+        project: { name: "demo", fps: "thirty", width: 1280, height: 720 },
       }),
       "frames/frame_00000.png": SENTINEL,
     });
@@ -946,9 +941,7 @@ describe("write-chapters destroy-by-default", () => {
     ],
     [
       "segmentsOutOfOrder",
-      timingFixture([...contiguousSegments].reverse(), {
-        durationMs: 4000,
-      }),
+      timingFixture([...contiguousSegments].reverse(), { durationMs: 4000 }),
       /in time order/,
     ],
     [

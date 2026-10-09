@@ -131,10 +131,7 @@ await runCli(async () => {
   const rel = (p) => path.relative(projectDir, p).split(path.sep).join("/");
   const collect = (name, label) => {
     const p = requireExistingFile(projectDir, name, label);
-    return {
-      ...fingerprintBuffer(fs.readFileSync(p), rel(p)),
-      role: label,
-    };
+    return { ...fingerprintBuffer(fs.readFileSync(p), rel(p)), role: label };
   };
 
   const files = [collect("script.md", "script")];

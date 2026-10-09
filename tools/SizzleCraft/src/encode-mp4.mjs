@@ -514,9 +514,7 @@ try {
     },
   );
 
-  await page.goto(pathToFileURL(encoderHtml).toString(), {
-    waitUntil: "load",
-  });
+  await page.goto(pathToFileURL(encoderHtml).toString(), { waitUntil: "load" });
   const ready = await page.evaluate(() => window.__sizzleEncoderReady === true);
   if (!ready)
     throw new Error("Chromium does not expose WebCodecs plus the muxer");

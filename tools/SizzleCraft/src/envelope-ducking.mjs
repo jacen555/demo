@@ -361,12 +361,7 @@ export function calibrateDuckThreshold({
     Math.max(SIDECHAIN_THRESHOLD_MIN, rounded),
   );
 
-  const delivered = achievedDuckDb({
-    threshold,
-    speechRms,
-    voiceGain,
-    ratio,
-  });
+  const delivered = achievedDuckDb({ threshold, speechRms, voiceGain, ratio });
   if (Math.abs(delivered - duckDb) <= DUCK_DEPTH_TOLERANCE_DB) return threshold;
 
   const narration = `the narration reaches the sidechain at ${sidechainDb.toFixed(2)} dBFS`;

@@ -122,11 +122,7 @@ function knobs(extra = {}) {
       voice: { voice: "en-US-AvaNeural", speed: 1 },
       timing: { leadInMs: 2000, perceivedGapMs: 2000 },
       audio: {
-        music: {
-          generated: true,
-          preset: "calm-bed",
-          attribution: null,
-        },
+        music: { generated: true, preset: "calm-bed", attribution: null },
       },
       ...extra,
     },
@@ -461,16 +457,10 @@ describe("A · trigger and element integrity", () => {
       },
       triggers: [
         { atMs: 300, target: "config-code", action: "rise" },
-        {
-          atMs: 900,
-          target: "config-path-render-fps",
-          action: "codeFocus",
-        },
+        { atMs: 900, target: "config-path-render-fps", action: "codeFocus" },
       ],
     };
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [seg] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
     assertClean(run(dir));
   });
 
@@ -639,9 +629,7 @@ describe("B · diagram geometry", () => {
       visual: { mode: "code", title: "Configuration", json: { fps: 30 } },
       triggers: [{ atMs: 300, target: "config-code", action: "rise" }],
     };
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [seg] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
     assertClean(run(dir));
   });
 
@@ -703,9 +691,7 @@ describe("C · timeline shape", () => {
     const a = diagramSeg();
     const b = narrativeSeg();
     b.startMs = 7000; // inside a's 0..8000 window
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [a, b] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [a, b] }) });
     assertFlags(run(dir), "C1");
   });
 
@@ -726,9 +712,7 @@ describe("C · timeline shape", () => {
     const b = narrativeSeg();
     b.startMs = 20000;
     b.endMs = 26000;
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [a, b] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [a, b] }) });
     assertClean(run(dir));
   });
 
@@ -868,9 +852,7 @@ describe("D · content safety", () => {
       },
       triggers: [{ atMs: 300, target: "config-code", action: "rise" }],
     };
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [seg] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
     assertFlags(run(dir), "D1");
   });
 
@@ -983,9 +965,7 @@ describe("knobs.json · C4 and E1-E3", () => {
     // divergence, where knobs recorded 0.055 and the shipped mix used 0.85.
     const dir = makeProject(t, {
       "timing.json": scene(),
-      "knobs.json": knobs({
-        render: { fps: 15, width: 1920, height: 1080 },
-      }),
+      "knobs.json": knobs({ render: { fps: 15, width: 1920, height: 1080 } }),
     });
     assertFlags(run(dir), "C4");
   });
@@ -993,9 +973,7 @@ describe("knobs.json · C4 and E1-E3", () => {
   test("C4_voiceDriftBetweenTheTwoFiles_isRefused", (t) => {
     const dir = makeProject(t, {
       "timing.json": scene(),
-      "knobs.json": knobs({
-        voice: { voice: "en-GB-SoniaNeural", speed: 1 },
-      }),
+      "knobs.json": knobs({ voice: { voice: "en-GB-SoniaNeural", speed: 1 } }),
     });
     assertFlags(run(dir), "C4");
   });
@@ -1180,9 +1158,7 @@ describe("counterexamples · a guard that runs and is still wrong", () => {
       },
       triggers: [{ atMs: 400, target: "clip-footage", action: "rise" }],
     };
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [seg] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
     const r = run(dir);
     assertCleanExit(r, EXIT.OK);
     assert.match(
@@ -1345,9 +1321,7 @@ describe("counterexamples · a guard that runs and is still wrong", () => {
     // Node offers no regex timeout, so the bound on catastrophic backtracking is a bound
     // on the inputs. An unbounded pattern must be refused rather than quietly run.
     const dir = makeProject(t, {
-      "timing.json": scene({
-        project: { noGoPatterns: ["a".repeat(5000)] },
-      }),
+      "timing.json": scene({ project: { noGoPatterns: ["a".repeat(5000)] } }),
     });
     assertCleanExit(run(dir), EXIT.USAGE);
   });
@@ -1788,9 +1762,7 @@ describe("round 2 · reveal semantics read from the renderer", () => {
       },
       triggers: [{ atMs: 400, target: "clip-item-7", action: "pop" }],
     };
-    const dir = makeProject(t, {
-      "timing.json": scene({ segments: [seg] }),
-    });
+    const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
     assertFlags(run(dir), "A1");
   });
 
@@ -1810,13 +1782,8 @@ describe("round 2 · reveal semantics read from the renderer", () => {
       },
     };
     for (const target of ["clip-footage", "clip-item-0"]) {
-      const seg = {
-        ...base,
-        triggers: [{ atMs: 400, target, action: "pop" }],
-      };
-      const dir = makeProject(t, {
-        "timing.json": scene({ segments: [seg] }),
-      });
+      const seg = { ...base, triggers: [{ atMs: 400, target, action: "pop" }] };
+      const dir = makeProject(t, { "timing.json": scene({ segments: [seg] }) });
       assertClean(run(dir), `target ${target}: `);
     }
   });
@@ -1825,9 +1792,7 @@ describe("round 2 · reveal semantics read from the renderer", () => {
     // A length bound is a weak control — `(a|aa){30}$` is twelve characters — but it is a
     // cheap one, and it bounds the cost of the scan that actually enforces the limit.
     const dir = makeProject(t, {
-      "timing.json": scene({
-        project: { noGoPatterns: ["a".repeat(5000)] },
-      }),
+      "timing.json": scene({ project: { noGoPatterns: ["a".repeat(5000)] } }),
     });
     assertCleanExit(run(dir), EXIT.USAGE);
   });
@@ -2354,10 +2319,7 @@ describe("scan outcome classification: report the ending that happened", () => {
         "timing.json": scene({
           project: { noGoPatterns: ["https?://"] },
           segments: [
-            {
-              ...diagramSeg(),
-              voiceoverText: "go to https://example.com",
-            },
+            { ...diagramSeg(), voiceoverText: "go to https://example.com" },
             narrativeSeg(),
           ],
         }),

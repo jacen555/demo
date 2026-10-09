@@ -256,9 +256,7 @@ describe("word budget vs measured audio", () => {
           "far too many words for a single second of narration here",
       },
     ];
-    const dir = makeProject(t, {
-      "timing.json": timingFixture(overBudget),
-    });
+    const dir = makeProject(t, { "timing.json": timingFixture(overBudget) });
     const r = runScript("validate-timing.mjs", ["--no-schema"], dir);
 
     assert.equal(r.code, EXIT.OK, r.all);
@@ -312,9 +310,7 @@ describe("word budget vs measured audio", () => {
   test("wordBudget_measuredWindowsAndDefaultRate_stillAppliesTheBudget", (t) => {
     // Measured windows against a PLANNING estimate is also a real comparison: it says
     // the audio came out faster than planned. Only measurement-against-itself is void.
-    const dir = makeProject(t, {
-      "timing.json": JSON.stringify(REAL.timing),
-    });
+    const dir = makeProject(t, { "timing.json": JSON.stringify(REAL.timing) });
     const r = runScript("validate-timing.mjs", ["--no-schema"], dir);
 
     assert.equal(r.code, EXIT.OK, r.all);

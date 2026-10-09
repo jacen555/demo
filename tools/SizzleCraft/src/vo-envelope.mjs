@@ -123,11 +123,7 @@ await runCli(async () => {
         }
         rms.push(Math.sqrt(s / n));
       }
-      return {
-        durationMs: Math.round(buf.duration * 1000),
-        hopMs: 20,
-        rms,
-      };
+      return { durationMs: Math.round(buf.duration * 1000), hopMs: 20, rms };
     }, b64);
     // The binding names the buffer that was decoded, so it names the bytes measured.
     fs.writeFileSync(

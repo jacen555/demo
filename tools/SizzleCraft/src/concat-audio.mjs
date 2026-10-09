@@ -262,9 +262,7 @@ await runCli(() => {
     for (const e of entries) {
       let st;
       try {
-        st = fs.lstatSync(path.join(boundary.root, e), {
-          bigint: true,
-        });
+        st = fs.lstatSync(path.join(boundary.root, e), { bigint: true });
       } catch {
         return unknown("uninspectable");
       }

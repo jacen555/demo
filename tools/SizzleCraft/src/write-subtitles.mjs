@@ -438,10 +438,7 @@ const { vttPath, srtPath, embed } = guard(() => {
     ],
     "write-subtitles --embed",
   );
-  return {
-    ...sidecars,
-    embed: { source, out, ff: resolveFfmpeg(projectDir) },
-  };
+  return { ...sidecars, embed: { source, out, ff: resolveFfmpeg(projectDir) } };
 });
 
 if (apply) {

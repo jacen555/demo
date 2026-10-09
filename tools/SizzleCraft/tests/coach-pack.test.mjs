@@ -970,9 +970,7 @@ describe("coach-pack collects an input set and binds it with a manifest", () => 
   // while silently dropping every future file in that folder out of `git status`.
   test("coachPackIgnore_ignoresTheGeneratedPackWhileTheRubricStaysTracked", () => {
     const check = (p) => {
-      const r = spawnSync("git", ["check-ignore", "-q", p], {
-        cwd: SRC_DIR,
-      });
+      const r = spawnSync("git", ["check-ignore", "-q", p], { cwd: SRC_DIR });
       return r.status === 0;
     };
 

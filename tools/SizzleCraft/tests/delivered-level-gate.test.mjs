@@ -271,10 +271,7 @@ describe("check-levels — the CLI is wired to the gate", () => {
     // once the caller declares the timeline silent. Paired with the refusal immediately
     // above, this is what shows the flag is read rather than ignored — and that the gate
     // is not simply off.
-    const r = checkLevels(t, {
-      whole: "-inf,-inf",
-      args: ["--allow-silent"],
-    });
+    const r = checkLevels(t, { whole: "-inf,-inf", args: ["--allow-silent"] });
 
     assert.equal(
       r.code,

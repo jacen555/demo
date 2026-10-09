@@ -973,10 +973,7 @@ function firstNarratedClipCollision(dir, segs, resolved, cleared) {
     )
     .map((n) => ({ ...n, path: recordedClipPath(dir, n.s) }))
     .filter((n) => n.path !== null)
-    .map((n) => ({
-      ...n,
-      ...identityOf(n.path, `segment ${n.s.id} audio`),
-    }));
+    .map((n) => ({ ...n, ...identityOf(n.path, `segment ${n.s.id} audio`) }));
   for (const o of resolved) {
     const { id, name } = identityOf(o.path, o.label);
     const owner = owners.find(

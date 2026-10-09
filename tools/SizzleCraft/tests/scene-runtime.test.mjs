@@ -671,11 +671,7 @@ describe("legibility audit (C-14)", () => {
       const title = issues.find((i) => i.id === "one-title");
       assert.deepEqual(
         title,
-        {
-          id: "one-title",
-          reason: "contrast-unverified",
-          backdrop: "footage",
-        },
+        { id: "one-title", reason: "contrast-unverified", backdrop: "footage" },
         `got ${JSON.stringify(issues)}`,
       );
       assert.deepEqual(
@@ -766,13 +762,7 @@ describe("legibility audit (C-14)", () => {
     const scene = await openScene(
       t,
       buildScene(t, [
-        {
-          id: "d",
-          startMs: 0,
-          endMs: 4000,
-          voiceoverText: "words",
-          visual,
-        },
+        { id: "d", startMs: 0, endMs: 4000, voiceoverText: "words", visual },
       ]),
     );
     await scene.frameAt(3.5);
@@ -825,11 +815,7 @@ describe("legibility audit (C-14)", () => {
     const spread = issues.find((i) => i.id === "spread");
     assert.deepEqual(
       spread,
-      {
-        id: "spread",
-        reason: "contrast-unverified",
-        backdrop: "unsampled",
-      },
+      { id: "spread", reason: "contrast-unverified", backdrop: "unsampled" },
       `got ${JSON.stringify(issues)}`,
     );
   });
@@ -916,13 +902,7 @@ describe("legibility audit (C-14)", () => {
     const scene = await openScene(
       t,
       buildScene(t, [
-        {
-          id: "d",
-          startMs: 0,
-          endMs: 4000,
-          voiceoverText: "words",
-          visual,
-        },
+        { id: "d", startMs: 0, endMs: 4000, voiceoverText: "words", visual },
       ]),
     );
     await scene.frameAt(3.5);

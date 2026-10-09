@@ -692,9 +692,7 @@ async function captureFrame(page, frameNo, state, skipWrite = false) {
       // state as a warm 0→t progression with no extra work — no wall-clock settling hack is needed.
       // Compute the visual signature on the SAME round-trip, AFTER seek+trigger+freeze, so it reflects the
       // exact pixels about to be captured (no extra page.evaluate).
-      return {
-        sig: window.__frameSig ? window.__frameSig(fno) : "f" + fno,
-      };
+      return { sig: window.__frameSig ? window.__frameSig(fno) : "f" + fno };
     },
     [t, isAudit, frameNo],
   );

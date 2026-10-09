@@ -423,9 +423,8 @@ describe("resolveKnob", () => {
   test("resolveBooleanKnob_envTruthyString_readsAsTrue", () => {
     for (const raw of ["1", "true", "TRUE", "yes", "on"]) {
       assert.equal(
-        resolveBooleanKnob("RESUME", {
-          env: { SIZZLECRAFT_RESUME: raw },
-        }).value,
+        resolveBooleanKnob("RESUME", { env: { SIZZLECRAFT_RESUME: raw } })
+          .value,
         true,
         raw,
       );
@@ -435,9 +434,8 @@ describe("resolveKnob", () => {
   test("resolveBooleanKnob_envFalsyString_readsAsFalse", () => {
     for (const raw of ["0", "false", "no", "off"]) {
       assert.equal(
-        resolveBooleanKnob("RESUME", {
-          env: { SIZZLECRAFT_RESUME: raw },
-        }).value,
+        resolveBooleanKnob("RESUME", { env: { SIZZLECRAFT_RESUME: raw } })
+          .value,
         false,
         raw,
       );
@@ -470,9 +468,7 @@ describe("resolveKnob", () => {
     // never having set it — a typo silently disabling a flag the user asked for.
     assert.throws(
       () =>
-        resolveBooleanKnob("RESUME", {
-          env: { SIZZLECRAFT_RESUME: "ture" },
-        }),
+        resolveBooleanKnob("RESUME", { env: { SIZZLECRAFT_RESUME: "ture" } }),
       CliError,
     );
   });

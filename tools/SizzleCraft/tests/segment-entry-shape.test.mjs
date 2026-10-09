@@ -797,12 +797,7 @@ describe("an id-less segment is named by its index, not by an index dressed as a
     test(`concatAudio_${mode}WithAnIdlessSilentSegment_namesItByIndexNotUndefined`, (t) => {
       const dir = makeProject(t, {
         "timing.json": JSON.stringify({
-          project: {
-            name: "demo",
-            fps: 30,
-            width: 1280,
-            height: 720,
-          },
+          project: { name: "demo", fps: 30, width: 1280, height: 720 },
           durationMs: 1920,
           contentMs: 1920,
           segments: [
@@ -877,12 +872,7 @@ describe("an id-less segment is named by its index, not by an index dressed as a
         outroMs: 2500,
         intake: { voice: "en-US-AvaNeural", speed: 1 },
         segments: [
-          {
-            id: "one",
-            startMs: 0,
-            endMs: 960,
-            voiceoverText: "hello",
-          },
+          { id: "one", startMs: 0, endMs: 960, voiceoverText: "hello" },
           {
             startMs: 960,
             endMs: 1920,
