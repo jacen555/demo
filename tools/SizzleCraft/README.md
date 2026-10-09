@@ -945,7 +945,8 @@ the point of use, not closed.
 ```powershell
 npm install                 # first time — pulls playwright, msedge-tts, music-metadata, ajv
 node --test                 # run the tests
-
+npm run format:check        # verify formatting (Prettier, pinned locally)
+npm run format              # rewrite files to the Prettier format
 # verification
 node src/validate-timing.mjs                      # schema + contiguity + word rate
 node src/validate-timing.mjs --strict             # also fail on over-budget segments
@@ -1082,6 +1083,17 @@ spawning `silence-gen` at all; **external project build sequences must add the f
 
 `gsap` and `mp4-muxer` are used by the *generated* scene HTML, not by these scripts,
 so they belong to the consuming project rather than here.
+
+**Dev dependency — `prettier` (exactly `3.9.9`).** The one dev dependency, and a
+liability the constitution asks us to justify: the alternative to a pinned local copy is
+`npx prettier`, which fetches whatever is current over the network on every run, so two
+machines can format the same file differently. Prettier has no stdlib equivalent in
+Node, and it is a single package with no runtime dependencies. It runs from
+`node_modules/.bin`, uses its defaults (no `.prettierrc`; `.editorconfig` supplies
+indentation), and is never imported by the engine. There is no `.prettierignore`:
+Prettier already skips `node_modules` and honours `.gitignore`, which covers the
+generated `coach/pack/` and the `.tool-fixture-*/` copies, and nothing else tracked
+here is generated or third-party.
 
 ## Gotchas
 
